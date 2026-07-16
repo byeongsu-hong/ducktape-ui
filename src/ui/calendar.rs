@@ -1024,8 +1024,16 @@ where
     }
 
     fn header(&self, width: f32) -> Element<'a, Message> {
-        let previous_month = self.state.month.previous();
-        let next_month = self.state.month.next();
+        let previous_month = self.state.month.previous().filter(|month| {
+            self.constraints
+                .minimum()
+                .is_none_or(|minimum| *month >= minimum.month())
+        });
+        let next_month = self.state.month.next().filter(|month| {
+            self.constraints
+                .maximum()
+                .is_none_or(|maximum| *month <= maximum.month())
+        });
         let previous = button("‹", &self.theme)
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Small)
@@ -1637,6 +1645,17 @@ mod tests {
         }
 
         assert_eq!(messages, [CalendarEvent::MonthChanged(august)]);
+    }
+
+    #[test]
+    fn month_navigation_stops_at_hard_date_bounds() {
+        let august = month(2024, 8);
+        let state = CalendarState::new(august, CalendarSelection::Single(None));
+        let calendar = controlled_calendar("bounded-month", &state, |_| (), &LIGHT)
+            .min(Some(date(2024, 8, 12)))
+            .max(Some(date(2024, 8, 20)));
+
+        assert_eq!(focusable_count(calendar.header(CALENDAR_WIDTH)), 0);
     }
 
     #[test]

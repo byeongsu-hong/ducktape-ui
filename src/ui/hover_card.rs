@@ -412,6 +412,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
                     viewport: *viewport,
                     config: self.config,
                 },
+                trigger_focus: &mut state.focus,
                 presence: &mut state.presence,
                 content_hovered: &mut state.content_hovered,
                 content_focused: &mut state.content_focused,
@@ -431,6 +432,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
 
 struct HoverCardOverlay<'a, 'b, Message> {
     floating: FloatingContent<'a, 'b, Message>,
+    trigger_focus: &'b mut FocusFlag,
     presence: &'b mut DelayedPresence,
     content_hovered: &'b mut bool,
     content_focused: &'b mut bool,
@@ -490,6 +492,11 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
         let was_visible = self.presence.is_visible();
         let was_present = self.presence.is_present();
         if is_escape(event) {
+            if *self.content_focused {
+                let mut unfocus = widget::operation::focusable::unfocus::<()>();
+                self.floating.operate(layout, renderer, &mut unfocus);
+                self.trigger_focus.focus();
+            }
             dismiss(self.presence, self.content_hovered, self.content_focused);
             shell.capture_event();
             request_transition(self.presence, was_visible, was_present, shell);
@@ -697,7 +704,7 @@ mod tests {
             &layout::Limits::new(Size::ZERO, viewport.size()),
         );
 
-        let mut focus_trigger = widget::operation::focusable::focus::<()>(trigger);
+        let mut focus_trigger = widget::operation::focusable::focus::<()>(trigger.clone());
         operate_all(
             &mut component,
             &mut tree,
@@ -707,7 +714,7 @@ mod tests {
             &mut focus_trigger,
         );
 
-        let mut focus_first = widget::operation::focusable::focus::<()>(first);
+        let mut focus_first = widget::operation::focusable::focus::<()>(first.clone());
         operate_all(
             &mut component,
             &mut tree,
@@ -742,6 +749,70 @@ mod tests {
         );
         assert!(!tree.state.downcast_ref::<State>().content_focused);
         assert!(!tree.state.downcast_ref::<State>().presence.is_present());
+
+        let mut focus_trigger = widget::operation::focusable::focus::<()>(trigger);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_trigger,
+        );
+        let mut focus_first = widget::operation::focusable::focus::<()>(first);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_first,
+        );
+
+        let mut overlay = component
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open hover card overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let key = iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape);
+        let escape = Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        overlay.as_overlay_mut().update(
+            &escape,
+            Layout::new(&overlay_node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        drop(overlay);
+
+        assert!(tree.state.downcast_ref::<State>().focus.is_focused());
+        assert!(!tree.state.downcast_ref::<State>().presence.is_present());
+        let content_layout = Layout::new(&overlay_node).children().next().unwrap();
+        assert!(!focus_within(|operation| {
+            component.content.as_widget_mut().operate(
+                &mut tree.children[1],
+                content_layout,
+                &renderer,
+                operation,
+            );
+        }));
     }
 
     #[test]
