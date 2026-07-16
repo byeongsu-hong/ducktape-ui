@@ -1,6 +1,7 @@
 use super::theme::{Theme, alpha};
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{Row, Stack, container, text, text_input};
-use iced::{Background, Border, Color, Element, Length};
+use iced::{Background, Border, Color, Element};
 
 const SLOT_SIZE: f32 = 40.0;
 const SLOT_GAP: f32 = 2.0;
@@ -126,7 +127,8 @@ where
                     container(text("–").color(self.theme.palette.muted_foreground))
                         .width(SEPARATOR_WIDTH)
                         .height(SLOT_SIZE)
-                        .center(Length::Fill),
+                        .align_x(Horizontal::Center)
+                        .align_y(Vertical::Center),
                 );
             }
         }
@@ -200,7 +202,8 @@ where
     container(text(copy).size(theme.typography.lg).color(foreground))
         .width(SLOT_SIZE)
         .height(SLOT_SIZE)
-        .center(Length::Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
         .style(move |_iced_theme| slot_style(&style_theme, active, invalid, disabled))
         .into()
 }
@@ -235,26 +238,13 @@ pub fn slot_style(
 }
 
 pub fn overlay_style(
-    theme: &Theme,
-    invalid: bool,
-    status: iced::widget::text_input::Status,
+    _theme: &Theme,
+    _invalid: bool,
+    _status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
-    use iced::widget::text_input::Status;
-
-    let focused = matches!(status, Status::Focused { .. });
-    let border_color = if invalid {
-        theme.palette.destructive
-    } else {
-        theme.palette.ring
-    };
-
     iced::widget::text_input::Style {
         background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: border_color,
-            width: if focused { 2.0 } else { 0.0 },
-            radius: theme.radius.md.into(),
-        },
+        border: Border::default(),
         icon: Color::TRANSPARENT,
         placeholder: Color::TRANSPARENT,
         value: Color::TRANSPARENT,
@@ -287,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_and_focus_styles_use_semantic_feedback() {
+    fn invalid_slots_keep_feedback_without_a_second_group_outline() {
         let invalid = slot_style(&LIGHT, false, true, false);
         let focused = overlay_style(
             &LIGHT,
@@ -297,8 +287,7 @@ mod tests {
 
         assert_eq!(invalid.border.color, LIGHT.palette.destructive);
         assert_eq!(invalid.border.width, 2.0);
-        assert_eq!(focused.border.color, LIGHT.palette.ring);
-        assert_eq!(focused.border.width, 2.0);
+        assert_eq!(focused.border.width, 0.0);
         assert_eq!(focused.value, Color::TRANSPARENT);
     }
 }

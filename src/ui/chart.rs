@@ -8,7 +8,7 @@ use iced::advanced::text::Alignment as TextAlignment;
 use iced::alignment::{Horizontal, Vertical};
 use iced::mouse;
 use iced::widget::canvas::{self, Path, Stroke};
-use iced::widget::{Canvas, Column, Container, Row, Space, container, row, text};
+use iced::widget::{Canvas, Column, Container, Row, Space, Stack, container, row, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Pixels, Point, Radians, Rectangle,
     Shadow, Vector,
@@ -872,8 +872,10 @@ where
         self
     }
 
-    fn into_widget(self) -> Canvas<CartesianProgram<'a, Message>, Message> {
-        Canvas::new(CartesianProgram {
+    fn into_widget(self) -> Stack<'a, Message> {
+        let width = self.width;
+        let height = self.height;
+        let canvas = Canvas::new(CartesianProgram {
             config: self.config,
             data: self.data,
             options: self.options,
@@ -881,8 +883,15 @@ where
             on_hover: self.on_hover,
             theme: self.theme,
         })
-        .width(self.width)
-        .height(self.height)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        Stack::new()
+            .width(width)
+            .height(height)
+            .clip(true)
+            .push(Space::new().width(width).height(height))
+            .push(canvas)
     }
 }
 
@@ -1425,8 +1434,10 @@ where
         self
     }
 
-    fn into_widget(self) -> Canvas<PieProgram<'a, Message>, Message> {
-        Canvas::new(PieProgram {
+    fn into_widget(self) -> Stack<'a, Message> {
+        let width = self.width;
+        let height = self.height;
+        let canvas = Canvas::new(PieProgram {
             config: self.config,
             data: self.data,
             inner_ratio: self.inner_ratio,
@@ -1434,8 +1445,15 @@ where
             on_hover: self.on_hover,
             theme: self.theme,
         })
-        .width(self.width)
-        .height(self.height)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        Stack::new()
+            .width(width)
+            .height(height)
+            .clip(true)
+            .push(Space::new().width(width).height(height))
+            .push(canvas)
     }
 }
 
@@ -1597,17 +1615,25 @@ fn pie_path(center: Point, outer: f32, inner: f32, start: f32, end: f32) -> Path
         });
         if inner > 0.0 {
             path.line_to(radial_point(center, inner, end));
-            path.arc(canvas::path::Arc {
-                center,
-                radius: inner,
-                start_angle: Radians(end),
-                end_angle: Radians(start),
-            });
+            for point in reverse_arc_points(center, inner, start, end) {
+                path.line_to(point);
+            }
         } else {
             path.line_to(center);
         }
         path.close();
     })
+}
+
+fn reverse_arc_points(center: Point, radius: f32, start: f32, end: f32) -> Vec<Point> {
+    // ponytail: 64 segments per circle; use Bezier arcs if zoomable charts need subpixel curves.
+    let segments = (((end - start).abs() / TAU * 64.0).ceil() as usize).max(2);
+    (1..=segments)
+        .map(|step| {
+            let ratio = step as f32 / segments as f32;
+            radial_point(center, radius, end + (start - end) * ratio)
+        })
+        .collect()
 }
 
 fn radial_point(center: Point, radius: f32, angle: f32) -> Point {
@@ -2290,6 +2316,10 @@ mod tests {
             pie_geometry(&config(), &pie, bounds(), 1.0),
             Err(ChartError::InvalidInnerRadius)
         );
+
+        let inner = reverse_arc_points(Point::ORIGIN, 10.0, 0.0, PI / 2.0);
+        assert!((inner.last().unwrap().x - 10.0).abs() < 0.001);
+        assert!(inner.last().unwrap().y.abs() < 0.001);
     }
 
     #[test]

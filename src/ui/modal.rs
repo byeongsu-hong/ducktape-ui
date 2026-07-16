@@ -143,14 +143,10 @@ pub fn modal<'a, Message>(
 where
     Message: 'a,
 {
-    let underlay = underlay.into();
-    if !open {
-        return underlay;
-    }
-
     Element::new(Modal {
-        underlay,
+        underlay: underlay.into(),
         content: content.into(),
+        open,
         focus: focus.clone(),
         dismiss,
         on_event: Box::new(on_event),
@@ -168,6 +164,7 @@ pub fn backdrop_color(theme: &Theme) -> Color {
 struct Modal<'a, Message> {
     underlay: Element<'a, Message>,
     content: Element<'a, Message>,
+    open: bool,
     focus: FocusScope,
     dismiss: DismissRules,
     on_event: Box<dyn Fn(ModalEvent) -> Message + 'a>,
@@ -243,15 +240,24 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         renderer: &iced::Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        let content_layout = layout.children().nth(1).expect("modal content layout");
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
-            self.content.as_widget_mut().operate(
-                &mut tree.children[1],
-                content_layout,
-                renderer,
-                operation,
-            );
+            let mut layouts = layout.children();
+            if self.open {
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[1],
+                    layouts.nth(1).expect("modal content layout"),
+                    renderer,
+                    operation,
+                );
+            } else {
+                self.underlay.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layouts.next().expect("modal underlay layout"),
+                    renderer,
+                    operation,
+                );
+            }
         });
     }
 
@@ -266,6 +272,20 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if !self.open {
+            self.underlay.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                layout.children().next().expect("modal underlay layout"),
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+            return;
+        }
+
         let content_layout = layout.children().nth(1).expect("modal content layout");
         let content_bounds = content_layout.bounds();
         let state = tree.state.downcast_mut::<State>();
@@ -332,6 +352,16 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
+        if !self.open {
+            return self.underlay.as_widget().mouse_interaction(
+                &tree.children[0],
+                layout.children().next().expect("modal underlay layout"),
+                cursor,
+                viewport,
+                renderer,
+            );
+        }
+
         let content_layout = layout.children().nth(1).expect("modal content layout");
         if cursor.is_over(content_layout.bounds()) {
             self.content.as_widget().mouse_interaction(
@@ -368,25 +398,33 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
             theme,
             style,
             underlay_layout,
-            mouse::Cursor::Unavailable,
-            viewport,
-        );
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: layout.bounds(),
-                ..renderer::Quad::default()
+            if self.open {
+                mouse::Cursor::Unavailable
+            } else {
+                cursor
             },
-            Background::Color(self.backdrop),
-        );
-        self.content.as_widget().draw(
-            &tree.children[1],
-            renderer,
-            theme,
-            style,
-            content_layout,
-            cursor,
             viewport,
         );
+        if self.open {
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: layout.bounds(),
+                        ..renderer::Quad::default()
+                    },
+                    Background::Color(self.backdrop),
+                );
+                self.content.as_widget().draw(
+                    &tree.children[1],
+                    renderer,
+                    theme,
+                    style,
+                    content_layout,
+                    cursor,
+                    viewport,
+                );
+            });
+        }
     }
 
     fn overlay<'a>(
@@ -397,14 +435,23 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'a, Message, iced::Theme, iced::Renderer>> {
-        let content_layout = layout.children().nth(1).expect("modal content layout");
-        self.content.as_widget_mut().overlay(
-            &mut tree.children[1],
-            content_layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        if self.open {
+            self.content.as_widget_mut().overlay(
+                &mut tree.children[1],
+                layout.children().nth(1).expect("modal content layout"),
+                renderer,
+                viewport,
+                translation,
+            )
+        } else {
+            self.underlay.as_widget_mut().overlay(
+                &mut tree.children[0],
+                layout.children().next().expect("modal underlay layout"),
+                renderer,
+                viewport,
+                translation,
+            )
+        }
     }
 }
 
@@ -589,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn only_open_modal_adds_the_two_layer_widget_tree() {
+    fn modal_keeps_a_stable_tree_across_visibility_changes() {
         let focus = FocusScope::new(widget::Id::new("first"), widget::Id::new("restore"));
         let closed: Element<'_, ()> = modal(
             text("page"),
@@ -610,8 +657,9 @@ mod tests {
             &LIGHT,
         );
 
-        assert!(closed.as_widget().children().is_empty());
+        assert_eq!(closed.as_widget().children().len(), 2);
         assert_eq!(open.as_widget().children().len(), 2);
+        assert_eq!(closed.as_widget().tag(), open.as_widget().tag());
     }
 
     #[test]
