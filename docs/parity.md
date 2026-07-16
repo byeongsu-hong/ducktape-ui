@@ -41,7 +41,7 @@ Status on 2026-07-16:
 | Hover Card | Planned | Delayed hover/focus disclosure. |
 | Input | Shipped | Default and invalid native text inputs. |
 | Input Group | Shipped | Shared-border leading/input/trailing composition and borderless native input. |
-| Input OTP | Planned | Multi-cell input state and paste/keyboard behavior. |
+| Input OTP | Shipped | Controlled grouped slots over one native focusable input with numeric/alphanumeric filtering, paste, disabled, and invalid states. |
 | Item | Shipped | Reusable leading/content/trailing row composition. |
 | Kbd | Shipped | Semantic keyboard-key visual. |
 | Label | Shipped | Consistent visible control labels. |
@@ -54,7 +54,7 @@ Status on 2026-07-16:
 | Pagination | Shipped | Controlled previous/page/ellipsis/next composition. |
 | Popover | Planned | Anchored overlay with dismissal and focus ownership. |
 | Progress | Shipped | Four semantic visual progress variants; callers pair visible status text. |
-| Radio Group | Planned | Single-selection group with roving focus and arrow keys. |
+| Radio Group | Shipped | Controlled exclusive selection with disabled-aware arrows/Home/End and stable focus helpers. |
 | Resizable | Planned | Pointer and keyboard resizable panel group. |
 | Scroll Area | Shipped | Styled native scrollable retaining sizing, direction, and callbacks. |
 | Select | Planned | Keyboard-capable select overlay and controlled value. |
@@ -62,16 +62,16 @@ Status on 2026-07-16:
 | Sheet | Planned | Side sheet with modal/non-modal focus behavior. |
 | Sidebar | Planned | Controlled collapsible navigation system and shortcut. |
 | Skeleton | Shipped | Static, reduced-motion-safe loading placeholders with native sizing. |
-| Slider | Planned | Focusable range control with full keyboard operation. |
+| Slider | Shipped | Controlled single/range/multi-thumb values with pointer/touch drag, full keyboard steps, vertical, reversed/RTL, disabled, and invalid modes. |
 | Sonner | Planned | Timed toast stack with pause, dismissal, and announcement model. |
 | Spinner | Shipped | Controlled indeterminate frames with reduced-motion freeze. |
-| Switch | Planned | Focusable binary control with keyboard operation. |
+| Switch | Shipped | Controlled binary control with stable focus, pointer/touch, Enter/Space, two sizes, and disabled styling. |
 | Table | Shipped | Native generic table plus header, cell, caption, and frame helpers. |
-| Tabs | Foundation | `segmented-control` is shipped; real Tabs still needs focus and arrow-key behavior. |
+| Tabs | Shipped | Controlled panels with stable trigger focus, disabled-aware arrows/Home/End, automatic/manual activation, and horizontal/vertical default/line variants. |
 | Textarea | Shipped | Styled, focusable native text editor with default/invalid states. |
 | Toast | Planned | Controlled legacy toast stack. |
-| Toggle | Planned | Pressed-state button with keyboard operation. |
-| Toggle Group | Planned | Single/multiple controlled toggles with roving focus. |
+| Toggle | Shipped | Controlled two-state control with centered size geometry, default/outline styles, and complete activation behavior. |
+| Toggle Group | Shipped | Single/multiple controlled toggles with configurable spacing/orientation and disabled-aware roving focus helpers. |
 | Tooltip | Planned | Hover and focus trigger with nonessential content constraints. |
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 

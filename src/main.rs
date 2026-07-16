@@ -27,6 +27,7 @@ use ui::empty_state::empty_state;
 use ui::field::{FieldHint, field};
 use ui::input::{InputVariant, input, input_with_variant};
 use ui::input_group::{group_input, input_group};
+use ui::input_otp::{OtpPattern, input_otp, is_complete, normalize};
 use ui::item::item;
 use ui::kbd::kbd;
 use ui::label::label;
@@ -36,11 +37,17 @@ use ui::message_scroller::message_scroller;
 use ui::native_select::native_select;
 use ui::pagination::{PaginationItem, pagination};
 use ui::progress::{ProgressVariant, progress};
+use ui::radio_group::{RadioOption, RadioOrientation, focus_radio, radio_group, radio_option};
 use ui::scroll_area::scroll_area;
 use ui::segmented_control::segmented_control;
+use ui::slider::{SliderOrientation, focus_slider_thumb, slider};
 use ui::surface::{SurfaceVariant, surface};
+use ui::switch::{SwitchSize, switch};
+use ui::tabs::{TabsActivation, TabsEvent, TabsOrientation, TabsState, TabsVariant, tab, tabs};
 use ui::textarea::{TextareaVariant, textarea};
 use ui::theme::{ACCENTS, DARK, LIGHT, Theme};
+use ui::toggle::{ToggleSize, ToggleVariant, toggle};
+use ui::toggle_group::{ToggleGroupOrientation, ToggleGroupState, toggle_group, toggle_group_item};
 use ui::typography::{TextRole, inline_code, typography};
 
 struct Showcase {
@@ -61,10 +68,21 @@ struct Showcase {
     calendar_month: Month,
     calendar_selected: Option<Date>,
     carousel_state: CarouselState,
+    tabs_automatic: TabsState<&'static str>,
+    tabs_manual: TabsState<&'static str>,
+    otp: String,
+    radio_selected: &'static str,
+    slider_values: Vec<f32>,
+    standalone_toggle: bool,
+    toggle_group_state: ToggleGroupState<&'static str>,
+    switch_on: bool,
 }
 
 impl Default for Showcase {
     fn default() -> Self {
+        let mut tabs_automatic = TabsState::new("overview");
+        tabs_automatic.select("overview");
+
         Self {
             dark: false,
             email: String::new(),
@@ -87,6 +105,14 @@ impl Default for Showcase {
             calendar_month: Month::new(2026, 7).expect("showcase month is valid"),
             calendar_selected: Some(Date::new(2026, 7, 16).expect("showcase selection is valid")),
             carousel_state: CarouselState::new(0, 3, CarouselBoundary::Wrap),
+            tabs_automatic,
+            tabs_manual: TabsState::new("account"),
+            otp: "123".into(),
+            radio_selected: "comfortable",
+            slider_values: vec![25.0, 75.0],
+            standalone_toggle: false,
+            toggle_group_state: ToggleGroupState::Multiple(vec!["bold"]),
+            switch_on: true,
         }
     }
 }
@@ -117,6 +143,16 @@ enum Message {
     CalendarSelected(Date),
     Carousel(CarouselCommand),
     FocusTraversal { backwards: bool },
+    TabsAutomatic(TabsEvent<&'static str>),
+    TabsManual(TabsEvent<&'static str>),
+    OtpChanged(String),
+    RadioSelected(&'static str),
+    SliderChanged(Vec<f32>),
+    FocusFirstSliderThumb,
+    StandaloneToggle,
+    ToggleGroupValue(&'static str),
+    ToggleGroupNavigate(usize),
+    SwitchToggle,
 }
 
 fn main() -> iced::Result {
@@ -170,6 +206,39 @@ impl Showcase {
                     iced::widget::operation::focus_next()
                 };
             }
+            Message::TabsAutomatic(event) => {
+                self.tabs_automatic.apply(&event);
+                return event.focus_task();
+            }
+            Message::TabsManual(event) => {
+                self.tabs_manual.apply(&event);
+                return event.focus_task();
+            }
+            Message::OtpChanged(value) => self.otp = value,
+            Message::RadioSelected(value) => {
+                self.radio_selected = value;
+                let index = ["default", "comfortable", "compact", "disabled"]
+                    .iter()
+                    .position(|candidate| candidate == &value)
+                    .unwrap_or(0);
+                return focus_radio("density", index);
+            }
+            Message::SliderChanged(values) => self.slider_values = values,
+            Message::FocusFirstSliderThumb => return focus_slider_thumb("temperature", 0),
+            Message::StandaloneToggle => self.standalone_toggle = !self.standalone_toggle,
+            Message::ToggleGroupValue(value) => {
+                self.toggle_group_state = self.toggle_group_state.toggled(value);
+            }
+            Message::ToggleGroupNavigate(index) => {
+                let id = ["bold", "italic", "underline"]
+                    .get(index)
+                    .copied()
+                    .unwrap_or("bold");
+                return iced::widget::operation::focus(iced::widget::Id::from(format!(
+                    "toggle-group-{id}"
+                )));
+            }
+            Message::SwitchToggle => self.switch_on = !self.switch_on,
         }
 
         iced::Task::none()
@@ -615,6 +684,7 @@ impl Showcase {
                     button("How is it installed?", &theme)
                         .variant(ButtonVariant::Ghost)
                         .width(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Left)
                         .on_press(Message::AccordionToggle("install")),
                     text("The CLI copies editable Rust source into src/ui."),
                 ),
@@ -623,6 +693,7 @@ impl Showcase {
                     button("Who owns state?", &theme)
                         .variant(ButtonVariant::Ghost)
                         .width(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Left)
                         .on_press(Message::AccordionToggle("state")),
                     text("The application owns controlled state and messages."),
                 ),
@@ -754,6 +825,295 @@ impl Showcase {
         let focusable = focusable
             .disabled(false)
             .style(move |_iced_theme, status| ui::focus_control::style(&focus_theme, status));
+
+        let disabled_reports = tab(
+            "reports",
+            iced::widget::Id::new("tabs-reports"),
+            text("Reports").size(theme.typography.sm),
+            text("Disabled reports panel"),
+        )
+        .disabled(true);
+        let _disabled_focus_id = disabled_reports.focus_id().clone();
+        let disabled_tab_info = format!(
+            "{} disabled={}",
+            disabled_reports.id(),
+            disabled_reports.is_disabled()
+        );
+        let automatic_tabs = tabs(
+            &self.tabs_automatic,
+            [
+                tab(
+                    "overview",
+                    iced::widget::Id::new("tabs-overview"),
+                    text("Overview").size(theme.typography.sm),
+                    surface(
+                        text("Overview panel: arrow keys move focus and selection."),
+                        SurfaceVariant::Muted,
+                        &theme,
+                    )
+                    .padding(theme.spacing.md),
+                ),
+                tab(
+                    "analytics",
+                    iced::widget::Id::new("tabs-analytics"),
+                    text("Analytics").size(theme.typography.sm),
+                    surface(text("Analytics panel"), SurfaceVariant::Muted, &theme)
+                        .padding(theme.spacing.md),
+                ),
+                disabled_reports,
+            ],
+            TabsOrientation::Horizontal,
+            TabsActivation::Automatic,
+            TabsVariant::Default,
+            Message::TabsAutomatic,
+            &theme,
+        );
+        let manual_tabs = tabs(
+            &self.tabs_manual,
+            [
+                tab(
+                    "account",
+                    iced::widget::Id::new("tabs-manual-account"),
+                    text("Account").size(theme.typography.sm),
+                    text("Manual tabs move focus first; Enter or Space selects."),
+                ),
+                tab(
+                    "password",
+                    iced::widget::Id::new("tabs-manual-password"),
+                    text("Password").size(theme.typography.sm),
+                    text("Password panel"),
+                ),
+            ],
+            TabsOrientation::Vertical,
+            TabsActivation::Manual,
+            TabsVariant::Line,
+            Message::TabsManual,
+            &theme,
+        );
+        let mut cleared_tabs = self.tabs_manual.clone();
+        cleared_tabs.clear();
+
+        let otp_complete = is_complete(&self.otp, 6, OtpPattern::Digits);
+        let otp_example = input_otp(
+            &self.otp,
+            6,
+            OtpPattern::Digits,
+            Message::OtpChanged,
+            &theme,
+        )
+        .groups([3, 3])
+        .id(iced::widget::Id::new("showcase-otp"))
+        .invalid(self.otp == "000000")
+        .disabled(false);
+        let disabled_otp = input_otp(
+            "A1B2",
+            4,
+            OtpPattern::Alphanumeric,
+            Message::OtpChanged,
+            &theme,
+        )
+        .disabled(true);
+        let custom_otp = normalize(
+            "ABcd12",
+            4,
+            OtpPattern::Custom(|character| character.is_ascii_uppercase()),
+        );
+
+        let density_radio = radio_group(
+            "density",
+            [
+                radio_option("default", "Default", &theme),
+                RadioOption::new(
+                    "comfortable",
+                    column![
+                        text("Comfortable").size(theme.typography.sm),
+                        text("More room between items")
+                            .size(theme.typography.xs)
+                            .color(theme.palette.muted_foreground),
+                    ]
+                    .spacing(theme.spacing.xs),
+                ),
+                radio_option("compact", "Compact", &theme),
+                radio_option("disabled", "Unavailable", &theme).disabled(true),
+            ],
+            Some(self.radio_selected),
+            Message::RadioSelected,
+            &theme,
+        )
+        .orientation(RadioOrientation::Vertical)
+        .disabled(false)
+        .invalid(false);
+        let disabled_radio = radio_group(
+            "disabled-density",
+            [
+                radio_option("one", "Disabled one", &theme),
+                radio_option("two", "Disabled two", &theme),
+            ],
+            Some("one"),
+            Message::RadioSelected,
+            &theme,
+        )
+        .orientation(RadioOrientation::Horizontal)
+        .disabled(true)
+        .invalid(true);
+
+        let temperature_slider = slider(
+            "temperature",
+            self.slider_values.clone(),
+            0.0..=100.0,
+            5.0,
+            Message::SliderChanged,
+            &theme,
+        )
+        .orientation(SliderOrientation::Horizontal)
+        .reversed(false)
+        .disabled(false)
+        .invalid(false)
+        .page_step(20.0)
+        .width(Length::Fill)
+        .height(32);
+        let vertical_slider = slider(
+            "vertical-disabled",
+            vec![35.0],
+            0.0..=100.0,
+            1.0,
+            Message::SliderChanged,
+            &theme,
+        )
+        .orientation(SliderOrientation::Vertical)
+        .reversed(true)
+        .disabled(true)
+        .invalid(true)
+        .width(32)
+        .height(120);
+
+        let standalone_toggles = row![
+            toggle(
+                iced::widget::Id::new("toggle-bookmark"),
+                text("Bookmark").size(theme.typography.sm),
+                self.standalone_toggle,
+                Message::StandaloneToggle,
+                &theme,
+            )
+            .variant(ToggleVariant::Default)
+            .size(ToggleSize::Small)
+            .disabled(false),
+            toggle(
+                iced::widget::Id::new("toggle-outline"),
+                text("Outline").size(theme.typography.sm),
+                self.standalone_toggle,
+                Message::StandaloneToggle,
+                &theme,
+            )
+            .variant(ToggleVariant::Outline)
+            .size(ToggleSize::Large),
+            toggle(
+                iced::widget::Id::new("toggle-disabled"),
+                text("Disabled").size(theme.typography.sm),
+                false,
+                Message::StandaloneToggle,
+                &theme,
+            )
+            .disabled(true),
+        ]
+        .spacing(theme.spacing.sm)
+        .align_y(iced::Alignment::Center);
+
+        let format_group = toggle_group(
+            [
+                toggle_group_item(
+                    iced::widget::Id::new("toggle-group-bold"),
+                    "bold",
+                    text("Bold").size(theme.typography.sm),
+                    Message::ToggleGroupValue("bold"),
+                ),
+                toggle_group_item(
+                    iced::widget::Id::new("toggle-group-italic"),
+                    "italic",
+                    text("Italic").size(theme.typography.sm),
+                    Message::ToggleGroupValue("italic"),
+                ),
+                toggle_group_item(
+                    iced::widget::Id::new("toggle-group-underline"),
+                    "underline",
+                    text("Underline").size(theme.typography.sm),
+                    Message::ToggleGroupValue("underline"),
+                )
+                .disabled(true),
+            ],
+            &self.toggle_group_state,
+            ToggleGroupOrientation::Horizontal,
+            Message::ToggleGroupNavigate,
+            &theme,
+        )
+        .variant(ToggleVariant::Outline)
+        .size(ToggleSize::Default)
+        .spacing(0.0)
+        .disabled(false);
+        let single_toggle_state = ToggleGroupState::Single(Some("top"));
+        let vertical_toggle_group = toggle_group(
+            [
+                toggle_group_item(
+                    iced::widget::Id::new("toggle-group-top"),
+                    "top",
+                    text("Top").size(theme.typography.sm),
+                    Message::Clicked,
+                ),
+                toggle_group_item(
+                    iced::widget::Id::new("toggle-group-bottom"),
+                    "bottom",
+                    text("Bottom").size(theme.typography.sm),
+                    Message::Clicked,
+                ),
+            ],
+            &self.toggle_group_state,
+            ToggleGroupOrientation::Vertical,
+            Message::ToggleGroupNavigate,
+            &theme,
+        )
+        .variant(ToggleVariant::Default)
+        .size(ToggleSize::Large)
+        .spacing(2.0)
+        .disabled(true);
+
+        let switches = row![
+            switch(
+                iced::widget::Id::new("switch-default"),
+                self.switch_on,
+                Message::SwitchToggle,
+                &theme,
+            )
+            .size(SwitchSize::Default)
+            .disabled(false),
+            switch(
+                iced::widget::Id::new("switch-small"),
+                !self.switch_on,
+                Message::SwitchToggle,
+                &theme,
+            )
+            .size(SwitchSize::Small),
+            switch(
+                iced::widget::Id::new("switch-disabled"),
+                true,
+                Message::SwitchToggle,
+                &theme,
+            )
+            .disabled(true),
+        ]
+        .spacing(theme.spacing.md)
+        .align_y(iced::Alignment::Center);
+        let toggle_style = ui::toggle::style(
+            &theme,
+            ToggleVariant::Outline,
+            self.standalone_toggle,
+            ui::focus_control::Status::Active,
+        );
+        let toggle_target = ui::toggle_group::item_target(
+            0,
+            3,
+            &iced::keyboard::Key::Named(iced::keyboard::key::Named::End),
+            ToggleGroupOrientation::Horizontal,
+        );
 
         let invalid = self.email.is_empty();
         let form = column![
@@ -915,6 +1275,62 @@ impl Showcase {
             .color(theme.palette.muted_foreground),
             text("Focus control").size(theme.typography.xl),
             focusable,
+            text("Tabs").size(theme.typography.xl),
+            automatic_tabs,
+            text(format!(
+                "selected={:?}; {disabled_tab_info}; cleared={:?}",
+                self.tabs_automatic.selected(),
+                cleared_tabs.selected(),
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
+            manual_tabs,
+            text("Input OTP").size(theme.typography.xl),
+            row![otp_example, disabled_otp]
+                .spacing(theme.spacing.md)
+                .align_y(iced::Alignment::Center),
+            text(format!(
+                "controlled={:?}, complete={otp_complete}, custom-filter={custom_otp:?}",
+                self.otp,
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
+            text("Radio group").size(theme.typography.xl),
+            density_radio,
+            disabled_radio,
+            text("Slider").size(theme.typography.xl),
+            row![
+                column![
+                    temperature_slider,
+                    text(format!("Range: {:?}", self.slider_values))
+                        .size(theme.typography.sm)
+                        .color(theme.palette.muted_foreground),
+                    button("Focus first thumb", &theme)
+                        .variant(ButtonVariant::Outline)
+                        .size(ButtonSize::Small)
+                        .on_press(Message::FocusFirstSliderThumb),
+                ]
+                .spacing(theme.spacing.sm)
+                .width(Length::Fill),
+                vertical_slider,
+            ]
+            .spacing(theme.spacing.md)
+            .align_y(iced::Alignment::Center),
+            text("Toggle + Toggle Group").size(theme.typography.xl),
+            standalone_toggles,
+            row![format_group, vertical_toggle_group]
+                .spacing(theme.spacing.md)
+                .align_y(iced::Alignment::Start),
+            text(format!(
+                "multiple={:?}; single-next={:?}; end={toggle_target:?}; outline={:?}",
+                self.toggle_group_state,
+                single_toggle_state.toggled("bottom"),
+                toggle_style.border,
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
+            text("Switch").size(theme.typography.xl),
+            switches,
             text("Calendar").size(theme.typography.xl),
             calendar_example,
             text(calendar_meta)

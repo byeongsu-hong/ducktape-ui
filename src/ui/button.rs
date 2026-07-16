@@ -1,6 +1,7 @@
 use super::theme::{Theme, alpha, mix};
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::IntoFragment;
-use iced::widget::{Button as IcedButton, button as iced_button, text};
+use iced::widget::{Button as IcedButton, button as iced_button, container, text};
 use iced::{Background, Border, Color, Element, Length};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,6 +35,7 @@ where
     size: ButtonSize,
     disabled: bool,
     width: Length,
+    alignment: Horizontal,
     theme: Theme,
 }
 
@@ -56,6 +58,7 @@ where
             size: ButtonSize::Default,
             disabled: false,
             width: Length::Shrink,
+            alignment: Horizontal::Center,
             theme: *theme,
         }
     }
@@ -90,6 +93,13 @@ where
         self
     }
 
+    /// Sets horizontal content alignment when the button is wider than its label.
+    #[must_use]
+    pub fn align_x(mut self, alignment: Horizontal) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
     pub fn into_widget(self) -> IcedButton<'a, Message> {
         let (vertical, horizontal, height) = match self.size {
             ButtonSize::Small => (6.0, 12.0, 32.0),
@@ -102,9 +112,19 @@ where
         } else {
             self.width
         };
+        let content_width = if width == Length::Shrink {
+            Length::Shrink
+        } else {
+            Length::Fill
+        };
+        let content = container(self.content)
+            .width(content_width)
+            .height(Length::Fill)
+            .align_x(self.alignment)
+            .align_y(Vertical::Center);
         let theme = self.theme;
         let variant = self.variant;
-        iced_button(self.content)
+        iced_button(content)
             .padding([vertical, horizontal])
             .width(width)
             .height(height)
@@ -206,5 +226,14 @@ mod tests {
             iced_button::Status::Disabled,
         );
         assert!(disabled.text_color.a < active.text_color.a);
+    }
+
+    #[test]
+    fn content_alignment_is_explicit_and_configurable() {
+        let centered: Button<'_, ()> = button("Centered", &LIGHT);
+        assert_eq!(centered.alignment, Horizontal::Center);
+
+        let leading: Button<'_, ()> = button("Leading", &LIGHT).align_x(Horizontal::Left);
+        assert_eq!(leading.alignment, Horizontal::Left);
     }
 }

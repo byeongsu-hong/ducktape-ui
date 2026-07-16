@@ -87,6 +87,13 @@ fn init_add_composed_components_and_compile_owned_source() {
             "data-table",
             "focus-control",
             "native-select",
+            "input-otp",
+            "radio-group",
+            "slider",
+            "switch",
+            "tabs",
+            "toggle",
+            "toggle-group",
         ],
         project.path(),
     )
@@ -123,6 +130,13 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("data_table.rs"));
     assert!(output.contains("focus_control.rs"));
     assert!(output.contains("native_select.rs"));
+    assert!(output.contains("input_otp.rs"));
+    assert!(output.contains("radio_group.rs"));
+    assert!(output.contains("slider.rs"));
+    assert!(output.contains("switch.rs"));
+    assert!(output.contains("tabs.rs"));
+    assert!(output.contains("toggle.rs"));
+    assert!(output.contains("toggle_group.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),

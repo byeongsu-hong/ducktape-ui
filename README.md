@@ -69,10 +69,12 @@ The current foundation includes:
 - controlled accordion and collapsible state, a searchable combobox, and a styled native pick list
 - validated month grids, bounded or wrapping carousel state, and a headless data-table recipe
 - an iced-specific focus-control shell with stable IDs, visible focus, and pointer, touch, Enter, and Space activation
+- keyboard-complete tabs, radio groups, toggles, toggle groups, and switches
+- grouped native OTP input plus draggable single-, range-, and multi-thumb sliders
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 
-`segmented-control` is deliberately not named `tabs`: it does not yet provide tab-style roving focus and arrow-key behavior. Accordion, Calendar, and Carousel are likewise tracked as foundations until their navigation helpers own focus routing instead of requiring application wiring. `native-select` documents iced 0.14's pointer/touch-only pick-list limitation.
+`segmented-control` remains a lightweight pointer/touch selector; the separate `tabs` component owns stable focus and arrow-key behavior. Accordion, Calendar, and Carousel are still tracked as foundations until their navigation helpers own focus routing instead of requiring application wiring. `native-select` documents iced 0.14's pointer/touch-only pick-list limitation.
 
 Full shadcn/ui coverage is tracked component-by-component in [the parity matrix](docs/parity.md). Components stay at **Foundation** until their focus, keyboard, overlay, and state contracts are complete; visual similarity alone is not parity.
 

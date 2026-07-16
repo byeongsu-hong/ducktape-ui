@@ -50,6 +50,7 @@ pub fn style(theme: &UiTheme, _status: Status) -> Style {
 }
 
 type StyleFn<'a, Theme> = dyn Fn(&Theme, Status) -> Style + 'a;
+type KeyPressFn<'a, Message> = dyn Fn(keyboard::Key, keyboard::Modifiers) -> Option<Message> + 'a;
 
 /// Persistent focus and press state exposed through iced widget operations.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -111,6 +112,7 @@ where
     id: widget::Id,
     content: Element<'a, Message, Theme, Renderer>,
     on_activate: Message,
+    on_key_press: Option<Box<KeyPressFn<'a, Message>>>,
     disabled: bool,
     style: Box<StyleFn<'a, Theme>>,
 }
@@ -144,6 +146,7 @@ where
             id,
             content: content.into(),
             on_activate,
+            on_key_press: None,
             disabled: false,
             style: Box::new(move |_iced_theme, status| style(&theme, status)),
         }
@@ -156,6 +159,20 @@ where
     #[must_use]
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Publishes a caller-selected message for additional focused key presses.
+    ///
+    /// Use this for compound-control navigation such as arrow keys, Home, and
+    /// End. If the callback returns a message, the key event is captured and
+    /// normal Enter/Space activation does not run for that press.
+    #[must_use]
+    pub fn on_key_press(
+        mut self,
+        handler: impl Fn(keyboard::Key, keyboard::Modifiers) -> Option<Message> + 'a,
+    ) -> Self {
+        self.on_key_press = Some(Box::new(handler));
         self
     }
 
@@ -268,6 +285,16 @@ where
                 state.unfocus();
             }
 
+            return;
+        }
+
+        if handle_key_press(
+            state,
+            event,
+            !self.disabled,
+            self.on_key_press.as_deref(),
+            shell,
+        ) {
             return;
         }
 
@@ -497,6 +524,36 @@ fn handle_event<Message: Clone>(
     }
 }
 
+fn handle_key_press<Message>(
+    state: &State,
+    event: &Event,
+    enabled: bool,
+    handler: Option<&KeyPressFn<'_, Message>>,
+    shell: &mut Shell<'_, Message>,
+) -> bool {
+    let Event::Keyboard(keyboard::Event::KeyPressed {
+        key,
+        modifiers,
+        repeat,
+        ..
+    }) = event
+    else {
+        return false;
+    };
+
+    if !enabled || !state.is_focused() || *repeat {
+        return false;
+    }
+
+    let Some(message) = handler.and_then(|handler| handler(key.clone(), *modifiers)) else {
+        return false;
+    };
+
+    shell.publish(message);
+    shell.capture_event();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,5 +700,39 @@ mod tests {
         state.press = Some(Press::Space);
         assert_eq!(status(&state, false, false), Status::Pressed);
         assert_eq!(status(&state, true, true), Status::Disabled);
+    }
+
+    #[test]
+    fn additional_key_binding_requires_focus_and_captures_a_match() {
+        let handler = |key: keyboard::Key, _modifiers| {
+            (key == keyboard::Key::Named(key::Named::ArrowRight)).then_some(11)
+        };
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            assert!(!handle_key_press(
+                &state,
+                &key_event(key::Named::ArrowRight, true),
+                true,
+                Some(&handler),
+                &mut shell,
+            ));
+        }
+
+        state.focus();
+        {
+            let mut shell = Shell::new(&mut messages);
+            assert!(handle_key_press(
+                &state,
+                &key_event(key::Named::ArrowRight, true),
+                true,
+                Some(&handler),
+                &mut shell,
+            ));
+            assert_eq!(shell.event_status(), event::Status::Captured);
+        }
+        assert_eq!(messages, [11]);
     }
 }

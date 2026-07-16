@@ -298,6 +298,55 @@
       "description": "Controlled bounded or wrapping slide state, viewport, and keyboard command reducer.",
       "dependencies": ["focus-control"],
       "files": [{ "source": "carousel.rs", "target": "carousel.rs" }]
+    },
+    {
+      "name": "input-otp",
+      "type": "component",
+      "description": "Controlled numeric or alphanumeric OTP slots with native typing and paste behavior.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "input_otp.rs", "target": "input_otp.rs" }]
+    },
+    {
+      "name": "radio-group",
+      "type": "component",
+      "description": "Controlled exclusive selection with disabled-aware keyboard navigation and focus helpers.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "radio_group.rs", "target": "radio_group.rs" }]
+    },
+    {
+      "name": "slider",
+      "type": "component",
+      "description": "Controlled multi-thumb slider with drag, touch, keyboard, vertical, and reversed modes.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "slider.rs", "target": "slider.rs" }]
+    },
+    {
+      "name": "switch",
+      "type": "component",
+      "description": "Controlled binary switch with centered geometry and complete activation behavior.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "switch.rs", "target": "switch.rs" }]
+    },
+    {
+      "name": "tabs",
+      "type": "component",
+      "description": "Controlled tabs with stable focus, automatic/manual activation, and line/default variants.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "tabs.rs", "target": "tabs.rs" }]
+    },
+    {
+      "name": "toggle",
+      "type": "component",
+      "description": "Controlled two-state control with centered sizes, outline styling, and keyboard activation.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "toggle.rs", "target": "toggle.rs" }]
+    },
+    {
+      "name": "toggle-group",
+      "type": "component",
+      "description": "Single or multiple toggle selection with orientation, spacing, and roving focus helpers.",
+      "dependencies": ["toggle"],
+      "files": [{ "source": "toggle_group.rs", "target": "toggle_group.rs" }]
     }
   ]
 }
