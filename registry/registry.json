@@ -18,6 +18,13 @@
       "files": [{ "source": "surface.rs", "target": "surface.rs" }]
     },
     {
+      "name": "alert",
+      "type": "component",
+      "description": "Composable default, success, warning, and destructive notices.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "alert.rs", "target": "alert.rs" }]
+    },
+    {
       "name": "button",
       "type": "component",
       "description": "Button with six variants, four sizes, and disabled states.",
@@ -30,6 +37,20 @@
       "description": "Text input with default and invalid states.",
       "dependencies": ["theme"],
       "files": [{ "source": "input.rs", "target": "input.rs" }]
+    },
+    {
+      "name": "textarea",
+      "type": "component",
+      "description": "Focusable native text editor with default and invalid states.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "textarea.rs", "target": "textarea.rs" }]
+    },
+    {
+      "name": "checkbox",
+      "type": "component",
+      "description": "Styled native checkbox with active, hovered, and disabled states.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "checkbox.rs", "target": "checkbox.rs" }]
     },
     {
       "name": "field",
@@ -51,6 +72,20 @@
       "description": "Compact labels and status pills with six variants and two sizes.",
       "dependencies": ["theme"],
       "files": [{ "source": "badge.rs", "target": "badge.rs" }]
+    },
+    {
+      "name": "empty",
+      "type": "component",
+      "description": "Centered empty state with optional leading content and visible copy.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "empty_state.rs", "target": "empty_state.rs" }]
+    },
+    {
+      "name": "progress",
+      "type": "component",
+      "description": "Semantic visual progress bars with bounded percentage input.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "progress.rs", "target": "progress.rs" }]
     },
     {
       "name": "separator",

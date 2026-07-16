@@ -54,6 +54,11 @@ fn init_add_composed_components_and_compile_owned_source() {
             "input",
             "badge",
             "segmented-control",
+            "alert",
+            "checkbox",
+            "empty",
+            "progress",
+            "textarea",
         ],
         project.path(),
     )
@@ -63,6 +68,11 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("surface.rs"));
     assert!(output.contains("field.rs"));
     assert!(output.contains("segmented_control.rs"));
+    assert!(output.contains("alert.rs"));
+    assert!(output.contains("checkbox.rs"));
+    assert!(output.contains("empty_state.rs"));
+    assert!(output.contains("progress.rs"));
+    assert!(output.contains("textarea.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),
@@ -72,6 +82,8 @@ fn init_add_composed_components_and_compile_owned_source() {
 enum Message {
     EmailChanged(String),
     SectionSelected(Section),
+    Accepted(bool),
+    Notes(iced::widget::text_editor::Action),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +92,7 @@ enum Section {
     Advanced,
 }
 
-fn view() -> iced::Element<'static, Message> {
+fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Message> {
     let theme = ui::theme::LIGHT;
     let field = ui::field::field(
         "Email",
@@ -97,12 +109,33 @@ fn view() -> iced::Element<'static, Message> {
         Message::SectionSelected,
         &theme,
     );
+    let notes = ui::textarea::textarea(
+        content,
+        "Write a note",
+        Message::Notes,
+        ui::textarea::TextareaVariant::Default,
+        &theme,
+    );
 
     iced::widget::column![
         ui::card::card(field, &theme).max_width(480),
         ui::badge::badge("Operational", ui::badge::BadgeVariant::Success, &theme)
             .size(ui::badge::BadgeSize::Small)
             .dot(),
+        ui::alert::alert(
+            iced::widget::text("Saved"),
+            ui::alert::AlertVariant::Success,
+            &theme,
+        ),
+        ui::checkbox::checkbox("Accepted", false, &theme).on_toggle(Message::Accepted),
+        ui::progress::progress(42.0, ui::progress::ProgressVariant::Default, &theme),
+        ui::empty_state::empty_state(
+            Some(ui::badge::badge("New", ui::badge::BadgeVariant::Default, &theme).into()),
+            "Nothing here",
+            "Create the first item.",
+            &theme,
+        ),
+        notes,
         sections,
     ]
     .into()

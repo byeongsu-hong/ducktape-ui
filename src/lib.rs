@@ -511,15 +511,20 @@ fn simple_diff(path: &Path, local: &str, incoming: &str) -> String {
 
 fn template(path: &str) -> Option<&'static str> {
     match path {
+        "alert.rs" => Some(include_str!("ui/alert.rs")),
         "theme.rs" => Some(include_str!("ui/theme.rs")),
         "button.rs" => Some(include_str!("ui/button.rs")),
         "input.rs" => Some(include_str!("ui/input.rs")),
         "card.rs" => Some(include_str!("ui/card.rs")),
+        "checkbox.rs" => Some(include_str!("ui/checkbox.rs")),
+        "empty_state.rs" => Some(include_str!("ui/empty_state.rs")),
         "field.rs" => Some(include_str!("ui/field.rs")),
         "badge.rs" => Some(include_str!("ui/badge.rs")),
+        "progress.rs" => Some(include_str!("ui/progress.rs")),
         "separator.rs" => Some(include_str!("ui/separator.rs")),
         "segmented_control.rs" => Some(include_str!("ui/segmented_control.rs")),
         "surface.rs" => Some(include_str!("ui/surface.rs")),
+        "textarea.rs" => Some(include_str!("ui/textarea.rs")),
         _ => None,
     }
 }

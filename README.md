@@ -12,7 +12,7 @@ cargo new my-iced-app
 cd my-iced-app
 
 ducktape-ui init
-ducktape-ui add button input field card badge separator segmented-control
+ducktape-ui add button input textarea checkbox field card badge alert progress empty separator segmented-control
 ```
 
 Then expose the generated module from your app:
@@ -60,10 +60,14 @@ The current foundation includes:
 - visible field labels with help and error text
 - semantic surfaces and composable cards
 - badge variants, sizes, and labeled status markers
+- alerts, bounded progress bars, and reusable empty states
+- styled native checkboxes and multiline text editors
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 
 `segmented-control` is deliberately not named `tabs`: iced's native buttons do not expose the focus and keyboard hooks required for honest tab semantics yet.
+
+Full shadcn/ui coverage is tracked component-by-component in [the parity matrix](docs/parity.md). Components that need stronger focus, keyboard, or overlay behavior are implemented as source-owned iced widgets instead of being marked complete with visual styling alone.
 
 Every component is an ordinary `.rs` file under `src/ui`. Edit `theme.rs` once to change semantic colors, radii, spacing, and typography across the installed set. The defaults mirror Ducktape's warm light/dark palettes and support its three runtime accents with `Theme::with_accent`.
 

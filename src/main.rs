@@ -2,13 +2,18 @@ mod ui;
 
 use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Theme as IcedTheme};
+use ui::alert::{AlertVariant, alert};
 use ui::badge::{BadgeSize, BadgeVariant, badge};
 use ui::button::{ButtonSize, ButtonVariant, button};
 use ui::card::{card, card_header};
+use ui::checkbox::checkbox;
+use ui::empty_state::empty_state;
 use ui::field::{FieldHint, field};
 use ui::input::{InputVariant, input, input_with_variant};
+use ui::progress::{ProgressVariant, progress};
 use ui::segmented_control::segmented_control;
 use ui::surface::{SurfaceVariant, surface};
+use ui::textarea::{TextareaVariant, textarea};
 use ui::theme::{ACCENTS, DARK, LIGHT, Theme};
 
 #[derive(Default)]
@@ -18,6 +23,8 @@ struct Showcase {
     clicks: u32,
     accent: usize,
     section: Section,
+    accepted: bool,
+    notes: iced::widget::text_editor::Content,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,6 +41,8 @@ enum Message {
     Clicked,
     CycleAccent,
     SectionSelected(Section),
+    AcceptedChanged(bool),
+    NotesChanged(iced::widget::text_editor::Action),
 }
 
 fn main() -> iced::Result {
@@ -51,6 +60,8 @@ impl Showcase {
             Message::Clicked => self.clicks += 1,
             Message::CycleAccent => self.accent = (self.accent + 1) % ACCENTS.len(),
             Message::SectionSelected(section) => self.section = section,
+            Message::AcceptedChanged(accepted) => self.accepted = accepted,
+            Message::NotesChanged(action) => self.notes.perform(action),
         }
     }
 
@@ -129,6 +140,60 @@ impl Showcase {
             ],
             self.section,
             Message::SectionSelected,
+            &theme,
+        );
+
+        let alerts = column![
+            alert(
+                text("Default: configuration is ready."),
+                AlertVariant::Default,
+                &theme,
+            ),
+            alert(
+                text("Success: local checks passed."),
+                AlertVariant::Success,
+                &theme,
+            ),
+            alert(
+                text("Warning: review the generated source."),
+                AlertVariant::Warning,
+                &theme,
+            ),
+            alert(
+                text("Error: the operation could not finish."),
+                AlertVariant::Destructive,
+                &theme,
+            ),
+        ]
+        .spacing(theme.spacing.sm);
+
+        let progress_value = (self.clicks % 11) as f32 * 10.0;
+        let progress_examples = column![
+            progress(progress_value, ProgressVariant::Default, &theme),
+            progress(progress_value, ProgressVariant::Success, &theme),
+            progress(progress_value, ProgressVariant::Warning, &theme),
+            progress(progress_value, ProgressVariant::Destructive, &theme),
+            text(format!("{progress_value:.0}% — press a button to advance"))
+                .size(theme.typography.sm)
+                .color(theme.palette.muted_foreground),
+        ]
+        .spacing(theme.spacing.sm);
+
+        let notes_invalid = self.notes.text().trim().is_empty();
+        let notes = field(
+            "Notes",
+            textarea(
+                &self.notes,
+                "Write a multiline note…",
+                Message::NotesChanged,
+                if notes_invalid {
+                    TextareaVariant::Invalid
+                } else {
+                    TextareaVariant::Default
+                },
+                &theme,
+            ),
+            notes_invalid.then_some(FieldHint::Error("A note is required.")),
             &theme,
         );
 
@@ -215,6 +280,20 @@ impl Showcase {
             ]
             .spacing(theme.spacing.sm)
             .align_y(iced::Alignment::Center),
+            text("Feedback").size(theme.typography.xl),
+            alerts,
+            progress_examples,
+            text("Checkbox + textarea").size(theme.typography.xl),
+            checkbox("I reviewed the generated source", self.accepted, &theme)
+                .on_toggle(Message::AcceptedChanged),
+            notes,
+            text("Empty state").size(theme.typography.xl),
+            empty_state(
+                Some(badge("Ready", BadgeVariant::Success, &theme).into()),
+                "No saved presets",
+                "Create one when this configuration is ready to reuse.",
+                &theme,
+            ),
             text("Card + field").size(theme.typography.xl),
             card(form, &theme).width(Length::Fill),
         ]
