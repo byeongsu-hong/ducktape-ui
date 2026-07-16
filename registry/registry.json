@@ -1,0 +1,49 @@
+{
+  "$schema": "./schema.json",
+  "name": "ducktape-ui",
+  "version": 1,
+  "items": [
+    {
+      "name": "theme",
+      "type": "theme",
+      "description": "Editable semantic light and dark design tokens.",
+      "cargoDependencies": { "iced": "=0.14.0" },
+      "files": [{ "source": "theme.rs", "target": "theme.rs" }]
+    },
+    {
+      "name": "button",
+      "type": "component",
+      "description": "Button with six variants, four sizes, and disabled states.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "button.rs", "target": "button.rs" }]
+    },
+    {
+      "name": "input",
+      "type": "component",
+      "description": "Text input with default and invalid states.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "input.rs", "target": "input.rs" }]
+    },
+    {
+      "name": "card",
+      "type": "component",
+      "description": "Composable card container and header.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "card.rs", "target": "card.rs" }]
+    },
+    {
+      "name": "badge",
+      "type": "component",
+      "description": "Compact status label with four variants.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "badge.rs", "target": "badge.rs" }]
+    },
+    {
+      "name": "separator",
+      "type": "component",
+      "description": "Horizontal and vertical semantic separators.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "separator.rs", "target": "separator.rs" }]
+    }
+  ]
+}
