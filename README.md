@@ -71,6 +71,7 @@ The current foundation includes:
 - an iced-specific focus-control shell with stable IDs, visible focus, and pointer, touch, Enter, and Space activation
 - keyboard-complete tabs, radio groups, toggles, toggle groups, and switches
 - grouped native OTP input plus draggable single-, range-, and multi-thumb sliders
+- horizontal/vertical resizable panel groups with keyboard, pointer, and touch handles
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 

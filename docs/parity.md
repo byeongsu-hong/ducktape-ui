@@ -55,7 +55,7 @@ Status on 2026-07-16:
 | Popover | Planned | Anchored overlay with dismissal and focus ownership. |
 | Progress | Shipped | Four semantic visual progress variants; callers pair visible status text. |
 | Radio Group | Shipped | Controlled exclusive selection with disabled-aware arrows/Home/End and stable focus helpers. |
-| Resizable | Planned | Pointer and keyboard resizable panel group. |
+| Resizable | Shipped | Controlled arbitrary panel groups with constrained shares, pointer/touch drag, full keyboard resizing, horizontal/vertical layouts, and optional grips. |
 | Scroll Area | Shipped | Styled native scrollable retaining sizing, direction, and callbacks. |
 | Select | Planned | Keyboard-capable select overlay and controlled value. |
 | Separator | Shipped | Horizontal and vertical semantic separators. |

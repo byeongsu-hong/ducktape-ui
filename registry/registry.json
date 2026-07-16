@@ -347,6 +347,13 @@
       "description": "Single or multiple toggle selection with orientation, spacing, and roving focus helpers.",
       "dependencies": ["toggle"],
       "files": [{ "source": "toggle_group.rs", "target": "toggle_group.rs" }]
+    },
+    {
+      "name": "resizable",
+      "type": "component",
+      "description": "Controlled multi-panel groups with pointer/touch drag, keyboard resizing, and visible grips.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "resizable.rs", "target": "resizable.rs" }]
     }
   ]
 }

@@ -94,6 +94,7 @@ fn init_add_composed_components_and_compile_owned_source() {
             "tabs",
             "toggle",
             "toggle-group",
+            "resizable",
         ],
         project.path(),
     )
@@ -137,6 +138,7 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("tabs.rs"));
     assert!(output.contains("toggle.rs"));
     assert!(output.contains("toggle_group.rs"));
+    assert!(output.contains("resizable.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),

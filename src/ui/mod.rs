@@ -32,6 +32,7 @@ pub mod native_select;
 pub mod pagination;
 pub mod progress;
 pub mod radio_group;
+pub mod resizable;
 pub mod scroll_area;
 pub mod segmented_control;
 pub mod separator;

@@ -38,6 +38,9 @@ use ui::native_select::native_select;
 use ui::pagination::{PaginationItem, pagination};
 use ui::progress::{ProgressVariant, progress};
 use ui::radio_group::{RadioOption, RadioOrientation, focus_radio, radio_group, radio_option};
+use ui::resizable::{
+    ResizableHandle, ResizableLayout, ResizableOrientation, focus_resizable_handle, resizable,
+};
 use ui::scroll_area::scroll_area;
 use ui::segmented_control::segmented_control;
 use ui::slider::{SliderOrientation, focus_slider_thumb, slider};
@@ -76,6 +79,7 @@ struct Showcase {
     standalone_toggle: bool,
     toggle_group_state: ToggleGroupState<&'static str>,
     switch_on: bool,
+    resizable_sizes: Vec<f32>,
 }
 
 impl Default for Showcase {
@@ -113,6 +117,7 @@ impl Default for Showcase {
             standalone_toggle: false,
             toggle_group_state: ToggleGroupState::Multiple(vec!["bold"]),
             switch_on: true,
+            resizable_sizes: vec![0.25, 0.5, 0.25],
         }
     }
 }
@@ -153,6 +158,8 @@ enum Message {
     ToggleGroupValue(&'static str),
     ToggleGroupNavigate(usize),
     SwitchToggle,
+    Resized(Vec<f32>),
+    FocusFirstResizeHandle,
 }
 
 fn main() -> iced::Result {
@@ -239,6 +246,8 @@ impl Showcase {
                 )));
             }
             Message::SwitchToggle => self.switch_on = !self.switch_on,
+            Message::Resized(sizes) => self.resizable_sizes = sizes,
+            Message::FocusFirstResizeHandle => return focus_resizable_handle("workspace", 0),
         }
 
         iced::Task::none()
@@ -1115,6 +1124,55 @@ impl Showcase {
             ToggleGroupOrientation::Horizontal,
         );
 
+        let resize_panels: Vec<Element<'_, Message>> = ["Navigation", "Editor", "Inspector"]
+            .into_iter()
+            .map(|label| {
+                surface(text(label), SurfaceVariant::Muted, &theme)
+                    .center(Length::Fill)
+                    .into()
+            })
+            .collect();
+        let workspace_resizable = resizable(
+            "workspace",
+            resize_panels,
+            self.resizable_sizes.clone(),
+            vec![0.15, 0.20, 0.15],
+            Message::Resized,
+            &theme,
+        )
+        .orientation(ResizableOrientation::Horizontal)
+        .with_handles(true)
+        .handle(0, ResizableHandle::new().disabled(false).with_grip(true))
+        .handle(1, ResizableHandle::new().with_grip(false))
+        .disabled(false)
+        .keyboard_step(0.05)
+        .pointer_hit_size(12.0)
+        .touch_hit_size(32.0)
+        .width(Length::Fill)
+        .height(180);
+        let vertical_resizable = resizable(
+            "vertical-disabled",
+            vec![
+                surface(text("Top"), SurfaceVariant::Muted, &theme)
+                    .center(Length::Fill)
+                    .into(),
+                surface(text("Bottom"), SurfaceVariant::Muted, &theme)
+                    .center(Length::Fill)
+                    .into(),
+            ],
+            vec![0.5, 0.5],
+            vec![0.2, 0.2],
+            Message::Resized,
+            &theme,
+        )
+        .orientation(ResizableOrientation::Vertical)
+        .handle(0, ResizableHandle::new().disabled(true).with_grip(true))
+        .disabled(true)
+        .width(160)
+        .height(120);
+        let normalized_resize = ResizableLayout::new(3, &self.resizable_sizes, &[0.15, 0.20, 0.15]);
+        let resize_minimums = normalized_resize.minimums().to_vec();
+
         let invalid = self.email.is_empty();
         let form = column![
             card_header(
@@ -1331,6 +1389,23 @@ impl Showcase {
             .color(theme.palette.muted_foreground),
             text("Switch").size(theme.typography.xl),
             switches,
+            text("Resizable").size(theme.typography.xl),
+            workspace_resizable,
+            row![
+                button("Focus first handle", &theme)
+                    .variant(ButtonVariant::Outline)
+                    .size(ButtonSize::Small)
+                    .on_press(Message::FocusFirstResizeHandle),
+                text(format!(
+                    "sizes={:?}, minimums={resize_minimums:?}",
+                    self.resizable_sizes,
+                ))
+                .size(theme.typography.sm)
+                .color(theme.palette.muted_foreground),
+            ]
+            .spacing(theme.spacing.sm)
+            .align_y(iced::Alignment::Center),
+            vertical_resizable,
             text("Calendar").size(theme.typography.xl),
             calendar_example,
             text(calendar_meta)

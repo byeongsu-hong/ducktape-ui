@@ -1,6 +1,6 @@
 use super::theme::{Theme, mix};
 use iced::widget::{Container, container};
-use iced::{Background, Border, Element};
+use iced::{Background, Border, Element, Length};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AlertVariant {
@@ -23,6 +23,7 @@ where
     let theme = *theme;
     container(content)
         .padding(theme.spacing.lg)
+        .width(Length::Fill)
         .style(move |_iced_theme| style(&theme, variant))
 }
 

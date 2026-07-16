@@ -632,6 +632,7 @@ fn template(path: &str) -> Option<&'static str> {
         "badge.rs" => Some(include_str!("ui/badge.rs")),
         "progress.rs" => Some(include_str!("ui/progress.rs")),
         "radio_group.rs" => Some(include_str!("ui/radio_group.rs")),
+        "resizable.rs" => Some(include_str!("ui/resizable.rs")),
         "scroll_area.rs" => Some(include_str!("ui/scroll_area.rs")),
         "separator.rs" => Some(include_str!("ui/separator.rs")),
         "segmented_control.rs" => Some(include_str!("ui/segmented_control.rs")),
