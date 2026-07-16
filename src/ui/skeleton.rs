@@ -25,8 +25,8 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::DARK;
     use super::*;
-    use crate::ui::theme::DARK;
 
     #[test]
     fn placeholder_uses_semantic_muted_surface() {

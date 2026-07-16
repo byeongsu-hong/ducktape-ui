@@ -12,7 +12,7 @@ pub enum PaginationItem {
     Next(Option<usize>),
 }
 
-/// Builds pagination from native iced buttons without storing application state.
+/// Builds pagination from shared keyboard-focusable buttons without storing state.
 pub fn pagination<'a, Message>(
     items: impl IntoIterator<Item = PaginationItem>,
     on_select: impl Fn(usize) -> Message,

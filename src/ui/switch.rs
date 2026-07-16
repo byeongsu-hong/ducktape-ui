@@ -201,8 +201,8 @@ fn thumb_style(color: Color) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[derive(Debug, Clone)]
     enum Message {

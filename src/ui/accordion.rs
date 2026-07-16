@@ -319,8 +319,8 @@ pub fn navigation_target(current: usize, enabled: &[bool], key: &keyboard::Key) 
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::advanced::widget::Tree;
 
     #[test]

@@ -191,8 +191,8 @@ fn metrics(size: BadgeSize, theme: &Theme) -> Metrics {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn every_badge_label_meets_normal_text_contrast() {

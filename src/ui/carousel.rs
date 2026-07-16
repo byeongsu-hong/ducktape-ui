@@ -352,9 +352,19 @@ struct ViewportState {
 }
 
 impl ViewportState {
-    fn unfocus(&mut self) {
+    fn unfocus(&mut self) -> bool {
+        let changed = self.focused || self.drag.is_some();
         self.focused = false;
         self.drag = None;
+        changed
+    }
+
+    fn take_drag(&mut self, source: DragSource) -> Option<Drag> {
+        if self.drag.is_some_and(|drag| drag.source == source) {
+            self.drag.take()
+        } else {
+            None
+        }
     }
 }
 
@@ -482,6 +492,10 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
         let interaction = tree.state.downcast_mut::<ViewportState>();
 
         if let Some((source, position)) = pointer_press(event, cursor) {
+            if interaction.drag.is_some() {
+                return;
+            }
+
             let focused = enabled && bounds.contains(position) && !shell.is_event_captured();
             if interaction.focused != focused {
                 interaction.focused = focused;
@@ -497,13 +511,15 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
         }
 
         if matches!(event, Event::Window(window::Event::Unfocused)) {
-            interaction.unfocus();
+            if interaction.unfocus() {
+                shell.request_redraw();
+            }
             return;
         }
 
         if shell.is_event_captured() {
-            if is_pointer_event(event) {
-                interaction.drag = None;
+            if let Some(source) = pointer_source(event) {
+                interaction.take_drag(source);
             }
             return;
         }
@@ -546,7 +562,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
         }
 
         if let Some((source, position)) = pointer_release(event, cursor) {
-            let Some(drag) = interaction.drag.take().filter(|drag| drag.source == source) else {
+            let Some(drag) = interaction.take_drag(source) else {
                 return;
             };
             let command = swipe_command(
@@ -566,16 +582,14 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
         }
 
         if matches!(event, Event::Mouse(mouse::Event::CursorLeft)) {
-            interaction.drag = None;
+            interaction.take_drag(DragSource::Mouse);
             return;
         }
 
         if let Event::Touch(touch::Event::FingerLost { id, .. }) = event
-            && interaction
-                .drag
-                .is_some_and(|drag| drag.source == DragSource::Touch(*id))
+            && let Some(drag) = interaction.take_drag(DragSource::Touch(*id))
         {
-            let claimed = interaction.drag.take().is_some_and(|drag| drag.claimed);
+            let claimed = drag.claimed;
             if claimed {
                 shell.capture_event();
             }
@@ -710,8 +724,22 @@ fn pointer_release(event: &Event, cursor: mouse::Cursor) -> Option<(DragSource, 
     }
 }
 
-fn is_pointer_event(event: &Event) -> bool {
-    matches!(event, Event::Mouse(_) | Event::Touch(_))
+fn pointer_source(event: &Event) -> Option<DragSource> {
+    match event {
+        Event::Mouse(
+            mouse::Event::CursorMoved { .. }
+            | mouse::Event::CursorLeft
+            | mouse::Event::ButtonPressed(mouse::Button::Left)
+            | mouse::Event::ButtonReleased(mouse::Button::Left),
+        ) => Some(DragSource::Mouse),
+        Event::Touch(
+            touch::Event::FingerPressed { id, .. }
+            | touch::Event::FingerMoved { id, .. }
+            | touch::Event::FingerLifted { id, .. }
+            | touch::Event::FingerLost { id, .. },
+        ) => Some(DragSource::Touch(*id)),
+        _ => None,
+    }
 }
 
 /// Composes a clipped active slide with caller-owned previous/next controls.
@@ -992,8 +1020,8 @@ fn indicator_style(theme: &Theme, selected: bool, status: Status) -> focus_contr
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::widget::{Column, button};
 
     fn point(x: f32, y: f32) -> Point {
@@ -1106,6 +1134,45 @@ mod tests {
             ),
             Some(CarouselCommand::Next)
         );
+    }
+
+    #[test]
+    fn drag_cleanup_is_scoped_to_its_pointer_source() {
+        let first = touch::Finger(1);
+        let second = touch::Finger(2);
+        let drag = Drag {
+            source: DragSource::Touch(first),
+            start: point(0.0, 0.0),
+            current: point(10.0, 0.0),
+            claimed: true,
+        };
+        let mut state = ViewportState {
+            focused: true,
+            drag: Some(drag),
+        };
+
+        assert_eq!(state.take_drag(DragSource::Touch(second)), None);
+        assert_eq!(state.drag, Some(drag));
+        assert_eq!(state.take_drag(DragSource::Touch(first)), Some(drag));
+        assert_eq!(state.drag, None);
+    }
+
+    #[test]
+    fn window_unfocus_clears_focus_and_drag() {
+        let mut state = ViewportState {
+            focused: true,
+            drag: Some(Drag {
+                source: DragSource::Mouse,
+                start: point(0.0, 0.0),
+                current: point(10.0, 0.0),
+                claimed: true,
+            }),
+        };
+
+        assert!(state.unfocus());
+
+        assert_eq!(state, ViewportState::default());
+        assert!(!state.unfocus());
     }
 
     #[test]

@@ -33,8 +33,8 @@ fn label_style(theme: &Theme) -> LabelStyle {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn label_uses_semantic_text_tokens() {

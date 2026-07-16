@@ -253,8 +253,8 @@ pub fn panel_style(theme: &Theme) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::advanced::widget::Tree;
     use iced::widget::{Space, row};
 

@@ -1,24 +1,71 @@
+use super::focus_control::FocusControl;
 use super::theme::{Theme, alpha, mix};
 use iced::widget::text::IntoFragment;
-use iced::widget::{Checkbox, checkbox as iced_checkbox};
-use iced::{Background, Border};
+use iced::widget::{Checkbox as IcedCheckbox, checkbox as iced_checkbox};
+use iced::{Background, Border, Element};
 
-/// A styled native checkbox. Chain `on_toggle` to make it interactive.
+/// A styled native checkbox with keyboard focus and Space/Enter activation.
+pub struct Checkbox<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    widget: IcedCheckbox<'a, Message>,
+    checked: bool,
+    on_toggle: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    theme: Theme,
+}
+
 pub fn checkbox<'a, Message>(
     label: impl IntoFragment<'a>,
     checked: bool,
     theme: &Theme,
 ) -> Checkbox<'a, Message>
 where
-    Message: 'a,
+    Message: Clone + 'a,
 {
     let theme = *theme;
-    iced_checkbox(checked)
-        .label(label)
-        .size(16)
-        .spacing(theme.spacing.sm)
-        .text_size(theme.typography.sm)
-        .style(move |_iced_theme, status| style(&theme, status))
+    Checkbox {
+        widget: iced_checkbox(checked)
+            .label(label)
+            .size(16)
+            .spacing(theme.spacing.sm)
+            .text_size(theme.typography.sm)
+            .style(move |_iced_theme, status| style(&theme, status)),
+        checked,
+        on_toggle: None,
+        theme,
+    }
+}
+
+impl<'a, Message> Checkbox<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    #[must_use]
+    pub fn on_toggle(mut self, on_toggle: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_toggle = Some(Box::new(on_toggle));
+        self
+    }
+
+    pub fn into_widget(self) -> Element<'a, Message> {
+        match self.on_toggle {
+            Some(on_toggle) => {
+                let message = on_toggle(!self.checked);
+                FocusControl::anonymous(self.widget.on_toggle(on_toggle), message, &self.theme)
+                    .into()
+            }
+            None => self.widget.into(),
+        }
+    }
+}
+
+impl<'a, Message> From<Checkbox<'a, Message>> for Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    fn from(checkbox: Checkbox<'a, Message>) -> Self {
+        checkbox.into_widget()
+    }
 }
 
 pub fn style(theme: &Theme, status: iced_checkbox::Status) -> iced_checkbox::Style {
@@ -85,8 +132,10 @@ pub fn style(theme: &Theme, status: iced_checkbox::Status) -> iced_checkbox::Sty
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::State as FocusState;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
+    use iced::advanced::widget;
 
     #[test]
     fn state_styles_preserve_semantic_feedback() {
@@ -102,5 +151,14 @@ mod tests {
         let disabled = style(&LIGHT, iced_checkbox::Status::Disabled { is_checked: true });
         assert!(disabled.icon_color.a < checked.icon_color.a);
         assert!(disabled.text_color.unwrap().a < checked.text_color.unwrap().a);
+    }
+
+    #[test]
+    fn interactive_checkboxes_join_keyboard_focus_order() {
+        let checkbox: Element<'_, bool> = checkbox("Accept", false, &LIGHT)
+            .on_toggle(|checked| checked)
+            .into_widget();
+        let tree = widget::Tree::new(checkbox.as_widget());
+        assert!(!tree.state.downcast_ref::<FocusState>().is_focused());
     }
 }

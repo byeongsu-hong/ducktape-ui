@@ -322,8 +322,8 @@ impl<'a, Message: 'a> From<MinimumWidth<'a, Message>> for Element<'a, Message> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::widget::text;
 
     #[derive(Debug, Clone)]

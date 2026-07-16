@@ -524,6 +524,15 @@ where
                 item
             })
             .collect();
+        let tab_stop = self
+            .state
+            .focused
+            .filter(|index| {
+                infos
+                    .get(*index)
+                    .is_some_and(NavigationMenuItemInfo::enabled)
+            })
+            .or_else(|| infos.iter().position(NavigationMenuItemInfo::enabled));
         let open_index = self.state.open.filter(|index| {
             infos
                 .get(*index)
@@ -566,6 +575,7 @@ where
                     &self.theme,
                 )
                 .disabled(!infos[index].enabled())
+                .tab_stop(tab_stop == Some(index))
                 .on_key_press(move |key, _modifiers| {
                     let command = navigation_menu_command(
                         &key,
@@ -1383,9 +1393,10 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::popover::resolve_position;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::popover::resolve_position;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::{Point, Size};
 
     fn items() -> Vec<NavigationMenuItemInfo> {
@@ -1595,5 +1606,6 @@ mod tests {
         .viewport(true)
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
+        assert_eq!(focusable_count(element), 1);
     }
 }

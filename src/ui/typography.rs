@@ -153,8 +153,8 @@ fn inline_code_style(theme: &Theme) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn roles_map_to_theme_typography_and_palette() {

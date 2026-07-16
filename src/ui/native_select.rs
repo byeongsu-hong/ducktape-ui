@@ -18,7 +18,7 @@ use iced::widget::pick_list;
 use iced::widget::pick_list::{Handle, PickList};
 use iced::{
     Background, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow,
-    Size, Vector, touch,
+    Size, Vector, touch, window,
 };
 use std::borrow::Borrow;
 use std::rc::Rc;
@@ -349,6 +349,19 @@ where
             return;
         }
 
+        if matches!(event, Event::Window(window::Event::Unfocused)) {
+            tree.state.downcast_mut::<FocusState>().unfocus();
+            self.close_menu(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+            return;
+        }
+
         let bounds = layout.bounds();
         let focused = tree.state.downcast_ref::<FocusState>().is_focused();
 
@@ -549,6 +562,20 @@ where
             return false;
         };
 
+        if !repeat
+            && matches!(
+                key,
+                keyboard::Key::Named(key::Named::Escape | key::Named::Tab)
+            )
+        {
+            let closed = self.close_menu(tree, layout, renderer, clipboard, shell, viewport);
+
+            if closed && matches!(key, keyboard::Key::Named(key::Named::Escape)) {
+                shell.capture_event();
+                return true;
+            }
+        }
+
         if !modifiers.command() && !modifiers.alt() {
             if let Some(command) = key_command(key) {
                 let index = selection_index(self.options.len(), self.selected_index, command);
@@ -586,6 +613,43 @@ where
         }
 
         false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn close_menu(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) -> bool {
+        // PickList keeps its open state private. Its outside-press path is the
+        // only way to close it while preserving `on_close`.
+        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let mut messages = Vec::new();
+        let mut local_shell = Shell::new(&mut messages);
+        self.pick_list.update(
+            tree,
+            &event,
+            layout,
+            mouse::Cursor::Unavailable,
+            renderer,
+            clipboard,
+            &mut local_shell,
+            viewport,
+        );
+        let closed = local_shell.is_event_captured();
+        drop(local_shell);
+
+        for message in messages {
+            shell.publish(message);
+        }
+        if closed {
+            shell.request_redraw();
+        }
+        closed
     }
 }
 
@@ -740,8 +804,28 @@ pub fn menu_style(theme: &Theme) -> menu::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
+    use iced::advanced::renderer::Headless as _;
+    use iced::keyboard::{Location, Modifiers};
+
+    fn key_press(named: key::Named, modifiers: Modifiers) -> Event {
+        let key = keyboard::Key::Named(named);
+
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(match named {
+                key::Named::Escape => key::Code::Escape,
+                key::Named::Tab => key::Code::Tab,
+                _ => unreachable!(),
+            }),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
 
     #[test]
     fn opened_select_uses_ring_and_accent_roles() {
@@ -844,5 +928,86 @@ mod tests {
 
         assert_eq!(tree.children.len(), 1);
         assert!(!tree.state.downcast_ref::<FocusState>().is_focused());
+    }
+
+    #[test]
+    fn escape_tab_and_window_unfocus_close_with_expected_focus_behavior() {
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(320.0, 240.0));
+
+        for (event, captured, focused) in [
+            (key_press(key::Named::Escape, Modifiers::NONE), true, true),
+            (key_press(key::Named::Tab, Modifiers::NONE), false, true),
+            (key_press(key::Named::Tab, Modifiers::SHIFT), false, true),
+            (Event::Window(window::Event::Unfocused), false, false),
+        ] {
+            let mut select = native_select_with_id(
+                widget::Id::new("native-select-close-test"),
+                ["Light", "Dark"],
+                Some("Light"),
+                str::to_owned,
+                &LIGHT,
+            )
+            .on_close("closed".to_owned());
+            let mut tree = widget::Tree::new(&select as &dyn Widget<_, _, _>);
+            let node = select.layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let layout = Layout::new(&node);
+            let mut clipboard = iced::advanced::clipboard::Null;
+            let mut messages = Vec::new();
+
+            {
+                let mut shell = Shell::new(&mut messages);
+                select.update(
+                    &mut tree,
+                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    layout,
+                    mouse::Cursor::Available(layout.bounds().center()),
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                assert!(shell.is_event_captured());
+            }
+            assert!(
+                select
+                    .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+                    .is_some()
+            );
+
+            {
+                let mut shell = Shell::new(&mut messages);
+                select.update(
+                    &mut tree,
+                    &event,
+                    layout,
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                assert_eq!(shell.is_event_captured(), captured);
+            }
+            assert!(
+                select
+                    .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+                    .is_none()
+            );
+            assert_eq!(
+                tree.state.downcast_ref::<FocusState>().is_focused(),
+                focused
+            );
+            assert_eq!(messages, ["closed"]);
+        }
     }
 }

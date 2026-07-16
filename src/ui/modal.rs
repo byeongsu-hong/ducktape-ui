@@ -11,7 +11,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::keyboard::{self, key::Named};
 use iced::{
     Alignment, Background, Color, Element, Event, Length, Point, Rectangle, Size, Task, Vector,
-    touch,
+    touch, window,
 };
 
 const VIEWPORT_INSET: f32 = 16.0;
@@ -273,6 +273,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         viewport: &Rectangle,
     ) {
         if !self.open {
+            tree.state.downcast_mut::<State>().backdrop_press = None;
             self.underlay.as_widget_mut().update(
                 &mut tree.children[0],
                 event,
@@ -289,6 +290,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
         let content_layout = layout.children().nth(1).expect("modal content layout");
         let content_bounds = content_layout.bounds();
         let state = tree.state.downcast_mut::<State>();
+        if matches!(event, Event::Window(window::Event::Unfocused)) {
+            state.backdrop_press = None;
+        }
         state.focused = focused_index(
             &mut self.content,
             &mut tree.children[1],
@@ -554,24 +558,34 @@ fn handle_backdrop<Message>(
         event_position(event, cursor).is_some_and(|point| !content_bounds.contains(point));
 
     match event {
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if outside => {
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            if outside && state.backdrop_press.is_none() =>
+        {
             state.backdrop_press = Some(BackdropPress::Mouse);
             shell.capture_event();
         }
         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-            let clicked = state.backdrop_press.take() == Some(BackdropPress::Mouse) && outside;
-            if clicked && rules.backdrop {
+            let started = state.backdrop_press == Some(BackdropPress::Mouse);
+            if started {
+                state.backdrop_press = None;
+            }
+            if started && outside && rules.backdrop {
                 shell.publish(on_event(ModalEvent::Dismiss(DismissReason::Backdrop)));
             }
             shell.capture_event();
         }
-        Event::Touch(touch::Event::FingerPressed { id, .. }) if outside => {
+        Event::Touch(touch::Event::FingerPressed { id, .. })
+            if outside && state.backdrop_press.is_none() =>
+        {
             state.backdrop_press = Some(BackdropPress::Touch(*id));
             shell.capture_event();
         }
         Event::Touch(touch::Event::FingerLifted { id, .. }) => {
-            let clicked = state.backdrop_press.take() == Some(BackdropPress::Touch(*id)) && outside;
-            if clicked && rules.backdrop {
+            let started = state.backdrop_press == Some(BackdropPress::Touch(*id));
+            if started {
+                state.backdrop_press = None;
+            }
+            if started && outside && rules.backdrop {
                 shell.publish(on_event(ModalEvent::Dismiss(DismissReason::Backdrop)));
             }
             shell.capture_event();
@@ -589,8 +603,8 @@ fn handle_backdrop<Message>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::widget::text;
 
     #[test]
@@ -666,5 +680,53 @@ mod tests {
     fn dark_canvas_gets_the_stronger_backdrop() {
         assert_eq!(backdrop_color(&LIGHT).a, 0.52);
         assert_eq!(backdrop_color(&DARK).a, 0.68);
+    }
+
+    #[test]
+    fn backdrop_press_keeps_its_input_source_until_matching_release() {
+        let bounds = Rectangle::new(Point::new(20.0, 20.0), Size::new(40.0, 40.0));
+        let finger = touch::Finger(7);
+        let touch_press = Event::Touch(touch::Event::FingerPressed {
+            id: finger,
+            position: Point::new(5.0, 5.0),
+        });
+        let mouse_press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let mouse_release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let touch_release = Event::Touch(touch::Event::FingerLifted {
+            id: finger,
+            position: Point::new(5.0, 5.0),
+        });
+        let cursor = mouse::Cursor::Available(Point::new(5.0, 5.0));
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        for event in [&touch_press, &mouse_press, &mouse_release] {
+            let mut shell = Shell::new(&mut messages);
+            handle_backdrop(
+                &mut state,
+                event,
+                cursor,
+                bounds,
+                DismissRules::DIALOG,
+                &|event| event,
+                &mut shell,
+            );
+        }
+
+        assert_eq!(state.backdrop_press, Some(BackdropPress::Touch(finger)));
+        assert!(messages.is_empty());
+
+        let mut shell = Shell::new(&mut messages);
+        handle_backdrop(
+            &mut state,
+            &touch_release,
+            cursor,
+            bounds,
+            DismissRules::DIALOG,
+            &|event| event,
+            &mut shell,
+        );
+        assert_eq!(state.backdrop_press, None);
+        assert_eq!(messages, [ModalEvent::Dismiss(DismissReason::Backdrop)]);
     }
 }

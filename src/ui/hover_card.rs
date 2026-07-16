@@ -2,14 +2,14 @@
 //!
 //! The trigger is passive and receives one wrapper-owned focus stop. Unlike a
 //! tooltip, hover-card content is interactive and keeps the card open while
-//! the pointer crosses from the trigger into the floating surface.
+//! the pointer or keyboard focus moves through the floating surface.
 
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, draw_focus_ring,
     panel,
 };
 use super::theme::Theme as UiTheme;
-use super::tooltip::{DelayedPresence, event_time, request_transition};
+use super::tooltip::{DelayedPresence, event_time, focus_within, is_escape, request_transition};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
 use iced::time::{Duration, Instant};
 use iced::{Element, Event, Length, Padding, Rectangle, Size, Vector};
@@ -190,17 +190,28 @@ struct State {
     focus: FocusFlag,
     trigger_hovered: bool,
     content_hovered: bool,
+    content_focused: bool,
     presence: DelayedPresence,
 }
 
 impl State {
+    fn trigger_active(&self) -> bool {
+        self.trigger_hovered || self.focus.is_focused()
+    }
+
     fn active(&self) -> bool {
-        self.trigger_hovered || self.content_hovered || self.focus.is_focused()
+        self.trigger_active() || self.content_hovered || self.content_focused
     }
 
     fn sync(&mut self, enabled: bool, now: Instant, open: Duration, close: Duration) {
         self.presence
             .set_active(enabled && self.active(), now, open, close);
+    }
+
+    fn sync_trigger(&mut self, enabled: bool, now: Instant, open: Duration, close: Duration) {
+        if !enabled || self.trigger_active() || !self.presence.is_present() {
+            self.sync(enabled, now, open, close);
+        }
     }
 }
 
@@ -227,6 +238,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
             state.focus.unfocus();
             state.trigger_hovered = false;
             state.content_hovered = false;
+            state.content_focused = false;
             state.presence.close_now();
         }
     }
@@ -263,13 +275,6 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
         } else {
             operation.focusable(Some(&self.id.0), layout.bounds(), &mut state.focus);
         }
-        state.sync(
-            !self.disabled,
-            Instant::now(),
-            self.open_delay,
-            self.close_delay,
-        );
-
         operation.traverse(&mut |operation| {
             self.trigger.as_widget_mut().operate(
                 &mut tree.children[0],
@@ -278,6 +283,12 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
                 operation,
             );
         });
+        state.sync_trigger(
+            !self.disabled,
+            Instant::now(),
+            self.open_delay,
+            self.close_delay,
+        );
     }
 
     fn update(
@@ -371,14 +382,13 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
         let state = tree.state.downcast_mut::<State>();
-        state.sync(
+        state.sync_trigger(
             !self.disabled,
             Instant::now(),
             self.open_delay,
             self.close_delay,
         );
-        let active = state.active();
-        let content_hovered = state.content_hovered;
+        let trigger_active = state.trigger_active();
         let [trigger_tree, content_tree] = tree.children.as_mut_slice() else {
             return None;
         };
@@ -404,7 +414,8 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for HoverCardWidget<'
                 },
                 presence: &mut state.presence,
                 content_hovered: &mut state.content_hovered,
-                active_without_content: active && !content_hovered,
+                content_focused: &mut state.content_focused,
+                trigger_active,
                 open_delay: self.open_delay,
                 close_delay: self.close_delay,
             }))
@@ -422,7 +433,8 @@ struct HoverCardOverlay<'a, 'b, Message> {
     floating: FloatingContent<'a, 'b, Message>,
     presence: &'b mut DelayedPresence,
     content_hovered: &'b mut bool,
-    active_without_content: bool,
+    content_focused: &'b mut bool,
+    trigger_active: bool,
     open_delay: Duration,
     close_delay: Duration,
 }
@@ -457,7 +469,13 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             operation.traverse(&mut |operation| {
                 self.floating.operate(layout, renderer, operation);
             });
+            *self.content_focused = focus_within(|operation| {
+                self.floating.operate(layout, renderer, operation);
+            });
+        } else {
+            *self.content_focused = false;
         }
+        self.sync(Instant::now());
     }
 
     fn update(
@@ -471,22 +489,27 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     ) {
         let was_visible = self.presence.is_visible();
         let was_present = self.presence.is_present();
+        if is_escape(event) {
+            dismiss(self.presence, self.content_hovered, self.content_focused);
+            shell.capture_event();
+            request_transition(self.presence, was_visible, was_present, shell);
+            return;
+        }
         if matches!(event, Event::Mouse(_) | Event::Window(_)) {
             *self.content_hovered =
                 self.presence.is_visible() && cursor.is_over(self.floating.bounds(layout));
         }
-        self.presence.set_active(
-            self.active_without_content || *self.content_hovered,
-            event_time(event),
-            self.open_delay,
-            self.close_delay,
-        );
-        request_transition(self.presence, was_visible, was_present, shell);
-
         if self.presence.is_visible() {
             self.floating
                 .update(event, layout, cursor, renderer, clipboard, shell);
+            *self.content_focused = focus_within(|operation| {
+                self.floating.operate(layout, renderer, operation);
+            });
+        } else {
+            *self.content_focused = false;
         }
+        self.sync(event_time(event));
+        request_transition(self.presence, was_visible, was_present, shell);
     }
 
     fn mouse_interaction(
@@ -515,10 +538,28 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     }
 }
 
+impl<Message> HoverCardOverlay<'_, '_, Message> {
+    fn sync(&mut self, now: Instant) {
+        self.presence.set_active(
+            self.trigger_active || *self.content_hovered || *self.content_focused,
+            now,
+            self.open_delay,
+            self.close_delay,
+        );
+    }
+}
+
+fn dismiss(presence: &mut DelayedPresence, content_hovered: &mut bool, content_focused: &mut bool) {
+    *content_hovered = false;
+    *content_focused = false;
+    presence.dismiss();
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::FocusControl;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::advanced::Widget;
     use iced::widget::text;
 
@@ -578,6 +619,129 @@ mod tests {
         state.content_hovered = false;
         state.sync(true, start, Duration::ZERO, Duration::ZERO);
         assert!(state.presence.is_visible());
+    }
+
+    #[test]
+    fn dismissal_clears_content_hover_and_waits_for_trigger_deactivation() {
+        let start = Instant::now();
+        let mut state = State {
+            trigger_hovered: true,
+            content_hovered: true,
+            content_focused: true,
+            ..State::default()
+        };
+        state.sync(true, start, Duration::ZERO, DEFAULT_CLOSE_DELAY);
+
+        dismiss(
+            &mut state.presence,
+            &mut state.content_hovered,
+            &mut state.content_focused,
+        );
+        state.sync(true, start, DEFAULT_OPEN_DELAY, DEFAULT_CLOSE_DELAY);
+        assert!(!state.content_hovered);
+        assert!(!state.content_focused);
+        assert!(!state.presence.is_present());
+
+        state.trigger_hovered = false;
+        state.sync(true, start, DEFAULT_OPEN_DELAY, DEFAULT_CLOSE_DELAY);
+        state.trigger_hovered = true;
+        state.sync(true, start, DEFAULT_OPEN_DELAY, DEFAULT_CLOSE_DELAY);
+        assert_eq!(state.presence.deadline(), Some(start + DEFAULT_OPEN_DELAY));
+    }
+
+    #[test]
+    fn overlay_focus_transfer_holds_presence_until_focus_leaves() {
+        use iced::advanced::renderer::Headless as _;
+
+        fn operate_all(
+            component: &mut HoverCardWidget<'_, ()>,
+            tree: &mut widget::Tree,
+            node: &layout::Node,
+            renderer: &iced::Renderer,
+            viewport: &Rectangle,
+            operation: &mut dyn widget::Operation,
+        ) {
+            component.operate(tree, Layout::new(node), renderer, operation);
+            let mut overlay = component
+                .overlay(tree, Layout::new(node), renderer, viewport, Vector::ZERO)
+                .expect("open hover card overlay");
+            let overlay_node = overlay.as_overlay_mut().layout(renderer, viewport.size());
+            overlay
+                .as_overlay_mut()
+                .operate(Layout::new(&overlay_node), renderer, operation);
+        }
+
+        let card_id = HoverCardId::new("focused-content");
+        let trigger = card_id.0.clone();
+        let first = widget::Id::new("hover-card-first-control");
+        let second = widget::Id::new("hover-card-second-control");
+        let content = iced::widget::column![
+            FocusControl::new(first.clone(), text("first"), (), &LIGHT),
+            FocusControl::new(second.clone(), text("second"), (), &LIGHT),
+        ];
+        let mut component = hover_card(card_id, text("trigger"), content, &LIGHT)
+            .open_delay(Duration::ZERO)
+            .close_delay(Duration::ZERO)
+            .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&component as &dyn Widget<(), _, _>);
+        let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+        let node = component.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+
+        let mut focus_trigger = widget::operation::focusable::focus::<()>(trigger);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_trigger,
+        );
+
+        let mut focus_first = widget::operation::focusable::focus::<()>(first);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_first,
+        );
+        assert!(tree.state.downcast_ref::<State>().content_focused);
+        assert!(tree.state.downcast_ref::<State>().presence.is_visible());
+
+        let mut focus_second = widget::operation::focusable::focus::<()>(second);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_second,
+        );
+        assert!(tree.state.downcast_ref::<State>().content_focused);
+        assert!(tree.state.downcast_ref::<State>().presence.is_visible());
+
+        let mut unfocus = widget::operation::focusable::unfocus::<()>();
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut unfocus,
+        );
+        assert!(!tree.state.downcast_ref::<State>().content_focused);
+        assert!(!tree.state.downcast_ref::<State>().presence.is_present());
     }
 
     #[test]

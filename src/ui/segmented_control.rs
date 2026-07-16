@@ -3,10 +3,10 @@ use super::theme::Theme;
 use iced::widget::{Container, Row, container};
 use iced::{Background, Border};
 
-/// A controlled pointer/touch selector built from native iced buttons.
+/// A controlled Tab-focusable selector built from shared buttons.
 ///
-/// This intentionally does not claim tab semantics: iced buttons do not yet expose
-/// the focus and keyboard behavior needed for an accessible tabs primitive.
+/// This intentionally does not claim roving tab semantics; use `tabs` when arrow-key
+/// movement and a single composite tab stop are required.
 pub fn segmented_control<'a, Message, Value>(
     items: impl IntoIterator<Item = (Value, &'a str)>,
     selected: Value,

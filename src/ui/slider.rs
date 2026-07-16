@@ -106,7 +106,7 @@ pub fn style(theme: &UiTheme, disabled: bool, invalid: bool) -> SliderStyle {
         }
     } else {
         SliderStyle {
-            track: mix(theme.palette.background, theme.palette.foreground, 0.14),
+            track: theme.palette.input,
             range,
             thumb: theme.palette.card,
             thumb_border: range,
@@ -558,6 +558,15 @@ where
             tree.state.downcast_mut::<State>().active_thumb = focused;
         }
 
+        if reset_on_window_unfocus(
+            tree.state.downcast_mut::<State>(),
+            &mut tree.children,
+            event,
+        ) {
+            shell.request_redraw();
+            return;
+        }
+
         if matches!(event, Event::Keyboard(_)) {
             for ((thumb, tree), layout) in self
                 .thumbs
@@ -651,26 +660,7 @@ where
             return;
         }
 
-        let released = matches!(
-            (event, dragging),
-            (
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-                Some(Drag {
-                    source: DragSource::Mouse,
-                    ..
-                })
-            )
-        ) || matches!(
-            (event, dragging),
-            (
-                Event::Touch(touch::Event::FingerLifted { id, .. })
-                    | Event::Touch(touch::Event::FingerLost { id, .. }),
-                Some(Drag { source: DragSource::Touch(active), .. })
-            ) if *id == active
-        );
-
-        if released {
-            tree.state.downcast_mut::<State>().dragging = None;
+        if finish_drag(tree.state.downcast_mut::<State>(), event) {
             shell.capture_event();
             shell.request_redraw();
         }
@@ -786,6 +776,45 @@ fn focused_thumb(children: &[widget::Tree]) -> Option<usize> {
             .downcast_ref::<focus_control::State>()
             .is_focused()
     })
+}
+
+fn reset_on_window_unfocus(
+    state: &mut State,
+    children: &mut [widget::Tree],
+    event: &Event,
+) -> bool {
+    if !matches!(event, Event::Window(iced::window::Event::Unfocused)) {
+        return false;
+    }
+
+    state.dragging = None;
+    focus_thumb(children, None);
+    true
+}
+
+fn finish_drag(state: &mut State, event: &Event) -> bool {
+    let Some(drag) = state.dragging else {
+        return false;
+    };
+    let released = matches!(
+        (event, drag.source),
+        (
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            DragSource::Mouse
+        )
+    ) || matches!(
+        (event, drag.source),
+        (
+            Event::Touch(touch::Event::FingerLifted { id, .. })
+                | Event::Touch(touch::Event::FingerLost { id, .. }),
+            DragSource::Touch(active)
+        ) if *id == active
+    );
+
+    if released {
+        state.dragging = None;
+    }
+    released
 }
 
 fn focus_thumb(children: &mut [widget::Tree], target: Option<usize>) {
@@ -965,8 +994,8 @@ fn track_geometry(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn spec() -> SliderSpec {
         SliderSpec::new(0.0..=100.0, 5.0)
@@ -1169,7 +1198,55 @@ mod tests {
             assert!(disabled.range.a < normal.range.a);
             assert_eq!(invalid.range, theme.palette.destructive);
             assert_eq!(invalid.focus_ring, theme.palette.destructive);
+            assert!(contrast(normal.track, theme.palette.background) >= 3.0);
+            assert!(contrast(normal.thumb_border, normal.thumb) >= 3.0);
         }
+    }
+
+    #[test]
+    fn drags_require_a_matching_release_and_window_blur_clears_focus() {
+        let finger = touch::Finger(7);
+        let mut state = State {
+            dragging: Some(Drag {
+                thumb: 0,
+                source: DragSource::Touch(finger),
+            }),
+            ..State::default()
+        };
+
+        assert!(!finish_drag(
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ));
+        assert!(!finish_drag(
+            &mut state,
+            &Event::Touch(touch::Event::FingerLifted {
+                id: touch::Finger(8),
+                position: Point::ORIGIN,
+            }),
+        ));
+        assert!(state.dragging.is_some());
+
+        let widget = slider(
+            "blur",
+            vec![50.0],
+            0.0..=100.0,
+            1.0,
+            |values| values,
+            &LIGHT,
+        )
+        .into_widget();
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        *tree.state.downcast_mut::<State>() = state;
+        focus_thumb(&mut tree.children, Some(0));
+
+        assert!(reset_on_window_unfocus(
+            tree.state.downcast_mut::<State>(),
+            &mut tree.children,
+            &Event::Window(iced::window::Event::Unfocused),
+        ));
+        assert!(tree.state.downcast_ref::<State>().dragging.is_none());
+        assert_eq!(focused_thumb(&tree.children), None);
     }
 
     #[test]
@@ -1198,5 +1275,22 @@ mod tests {
 
         assert_eq!(horizontal.as_widget().children().len(), 2);
         assert_eq!(vertical.as_widget().children().len(), 1);
+    }
+
+    fn contrast(left: Color, right: Color) -> f32 {
+        let left = luminance(left);
+        let right = luminance(right);
+        (left.max(right) + 0.05) / (left.min(right) + 0.05)
+    }
+
+    fn luminance(color: Color) -> f32 {
+        let channel = |value: f32| {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
     }
 }

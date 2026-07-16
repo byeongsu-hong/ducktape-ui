@@ -1,4 +1,4 @@
-use super::theme::{Theme, alpha};
+use super::theme::Theme;
 use iced::widget::scrollable::{self as iced_scrollable, Rail, Scroller, Status};
 use iced::widget::{Scrollable, scrollable};
 use iced::{Background, Border, Element, Length};
@@ -46,10 +46,11 @@ pub fn style(theme: &Theme, status: Status) -> iced_scrollable::Style {
         background: None,
         border: Border::default(),
         scroller: Scroller {
-            background: Background::Color(alpha(
-                theme.palette.muted_foreground,
-                if active { 0.85 } else { 0.45 },
-            )),
+            background: Background::Color(if active {
+                theme.palette.muted_foreground
+            } else {
+                theme.palette.input
+            }),
             border: Border {
                 radius: 999.0.into(),
                 ..Default::default()
@@ -66,7 +67,7 @@ pub fn style(theme: &Theme, status: Status) -> iced_scrollable::Style {
 
 #[cfg(test)]
 mod tests {
-    use super::super::theme::LIGHT;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
 
     #[test]
@@ -95,5 +96,38 @@ mod tests {
             active.vertical_rail.scroller.background,
             hovered.vertical_rail.scroller.background
         );
+    }
+
+    #[test]
+    fn scrollbar_thumbs_clear_non_text_contrast() {
+        for theme in [LIGHT, DARK] {
+            let idle = style(
+                &theme,
+                Status::Active {
+                    is_horizontal_scrollbar_disabled: false,
+                    is_vertical_scrollbar_disabled: false,
+                },
+            );
+            let hovered = style(
+                &theme,
+                Status::Hovered {
+                    is_horizontal_scrollbar_hovered: false,
+                    is_vertical_scrollbar_hovered: true,
+                    is_horizontal_scrollbar_disabled: false,
+                    is_vertical_scrollbar_disabled: false,
+                },
+            );
+
+            for thumb in [
+                idle.vertical_rail.scroller.background,
+                hovered.vertical_rail.scroller.background,
+            ] {
+                let Background::Color(thumb) = thumb else {
+                    panic!("scrollbar thumb must be a solid color");
+                };
+                assert_eq!(thumb.a, 1.0);
+                assert!(thumb.relative_contrast(theme.palette.background) >= 3.0);
+            }
+        }
     }
 }

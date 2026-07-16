@@ -43,8 +43,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::widget::text;
 
     #[test]

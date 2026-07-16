@@ -52,12 +52,10 @@ where
     Message: 'a,
 {
     let foreground = theme.palette.foreground;
-    container(content)
-        .width(Length::Fill)
-        .style(move |_| iced::widget::container::Style {
-            text_color: Some(foreground),
-            ..Default::default()
-        })
+    container(content).style(move |_| iced::widget::container::Style {
+        text_color: Some(foreground),
+        ..Default::default()
+    })
 }
 
 /// Adds the shadcn-like border and surface around a table.
@@ -100,6 +98,7 @@ pub fn frame_style(theme: &Theme) -> iced::widget::container::Style {
 mod tests {
     use super::super::theme::LIGHT;
     use super::*;
+    use iced::advanced::Widget;
 
     #[test]
     fn frame_uses_semantic_table_surface() {
@@ -109,5 +108,12 @@ mod tests {
             Some(Background::Color(LIGHT.palette.card))
         );
         assert_eq!(style.border.color, LIGHT.palette.border);
+    }
+
+    #[test]
+    fn cells_keep_intrinsic_width_for_shrink_columns() {
+        let cell = cell::<()>(text("Shipped"), &LIGHT);
+
+        assert_eq!(Widget::size(&cell).width, Length::Shrink);
     }
 }

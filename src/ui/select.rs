@@ -403,8 +403,10 @@ pub fn select_trigger_style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
+    use iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget};
+    use iced::{Event, Point, Rectangle, Size, Vector};
 
     fn groups() -> Vec<SelectGroup<u8>> {
         vec![
@@ -481,5 +483,83 @@ mod tests {
         .invalid(true)
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
+    }
+
+    #[test]
+    fn pointer_selects_clicked_option_instead_of_stale_focus() {
+        let groups = groups();
+        let state = MenuState {
+            focused: Some(vec![0, 0]),
+            ..MenuState::default()
+        };
+        let mut element: Element<'_, SelectEvent<u8>> = select(
+            SelectIds::new("pointer"),
+            groups,
+            None,
+            "Choose fruit",
+            &state,
+            true,
+            |event| event,
+            &LIGHT,
+        )
+        .into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(320.0, 240.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let layout = Layout::new(&node);
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+            .expect("open select overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let overlay_layout = Layout::new(&overlay_node);
+        let clicked = deepest_bottom_row(overlay_layout)
+            .expect("select menu row")
+            .center();
+        let cursor = mouse::Cursor::Available(clicked);
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+
+        for event in [
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            overlay.as_overlay_mut().update(
+                &event,
+                overlay_layout,
+                cursor,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+            );
+        }
+
+        assert_eq!(messages, [SelectEvent::Selected(3)]);
+    }
+
+    fn deepest_bottom_row(layout: Layout<'_>) -> Option<Rectangle> {
+        layout
+            .children()
+            .filter_map(deepest_bottom_row)
+            .chain(
+                ((layout.bounds().height - super::super::menu::MENU_ROW_HEIGHT).abs() < 0.1)
+                    .then_some(layout.bounds()),
+            )
+            .max_by(|left, right| {
+                left.y
+                    .total_cmp(&right.y)
+                    .then(left.width.total_cmp(&right.width))
+            })
     }
 }

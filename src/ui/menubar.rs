@@ -258,6 +258,11 @@ where
             .iter()
             .map(|menu| !self.disabled && !menu.disabled)
             .collect();
+        let tab_stop = self
+            .state
+            .focused
+            .filter(|index| enabled.get(*index) == Some(&true))
+            .or_else(|| enabled.iter().position(|enabled| *enabled));
         let triggers = self
             .menus
             .iter()
@@ -290,6 +295,7 @@ where
                         &self.theme,
                     )
                     .disabled(!enabled[index])
+                    .tab_stop(tab_stop == Some(index))
                     .on_key_press(move |key, _modifiers| {
                         let command = menubar_command(&key)?;
                         Some(key_event(MenubarEvent::StateChanged(reduce_menubar(
@@ -760,9 +766,10 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::menu::MenuItem;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::menu::MenuItem;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn top_level_navigation_wraps_skips_disabled_and_keeps_open() {
@@ -843,5 +850,6 @@ mod tests {
         let element: Element<'_, ()> =
             menubar("app", menus, &state, &menu_state, |_| (), &LIGHT).into();
         assert_eq!(element.as_widget().children().len(), 2);
+        assert_eq!(focusable_count(element), 1);
     }
 }

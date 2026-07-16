@@ -320,8 +320,8 @@ fn next_enabled(current: usize, enabled: &[bool]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::widget::text;
 
     #[derive(Debug, Clone)]

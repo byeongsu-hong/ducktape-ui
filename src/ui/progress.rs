@@ -28,8 +28,9 @@ pub fn style(theme: &Theme, variant: ProgressVariant) -> iced::widget::progress_
         )),
         bar: Background::Color(tone(theme, variant)),
         border: Border {
+            color: theme.palette.input,
+            width: 1.0,
             radius: 999.0.into(),
-            ..Default::default()
         },
     }
 }
@@ -53,8 +54,8 @@ fn normalized(percent: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn values_are_bounded_and_nan_is_empty() {
@@ -66,14 +67,36 @@ mod tests {
     }
 
     #[test]
-    fn variants_select_their_semantic_bar_color() {
-        for (variant, expected) in [
-            (ProgressVariant::Default, LIGHT.palette.primary),
-            (ProgressVariant::Success, LIGHT.palette.success),
-            (ProgressVariant::Warning, LIGHT.palette.warning),
-            (ProgressVariant::Destructive, LIGHT.palette.destructive),
-        ] {
-            assert_eq!(style(&LIGHT, variant).bar, Background::Color(expected));
+    fn variants_select_semantic_colors_with_non_text_contrast() {
+        for theme in [LIGHT, DARK] {
+            for variant in [
+                ProgressVariant::Default,
+                ProgressVariant::Success,
+                ProgressVariant::Warning,
+                ProgressVariant::Destructive,
+            ] {
+                let expected = tone(&theme, variant);
+                let appearance = style(&theme, variant);
+                let Background::Color(track) = appearance.background else {
+                    panic!("progress track must be a solid color");
+                };
+
+                assert_eq!(appearance.bar, Background::Color(expected));
+                assert!(
+                    appearance
+                        .border
+                        .color
+                        .relative_contrast(theme.palette.background)
+                        >= 3.0,
+                    "{} progress boundary",
+                    theme.name
+                );
+                assert!(
+                    expected.relative_contrast(track) >= 3.0,
+                    "{} {variant:?}",
+                    theme.name
+                );
+            }
         }
     }
 }

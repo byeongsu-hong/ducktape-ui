@@ -44,8 +44,8 @@ fn hint_style<'a>(hint: FieldHint<'a>, theme: &Theme) -> (&'a str, iced::Color) 
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn hint_kind_selects_semantic_text_color() {

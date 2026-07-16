@@ -119,19 +119,19 @@ impl<Value> CommandEvent<Value> {
         }
     }
 
-    /// Moves focus only for navigation that originated on a result item.
-    /// Input-originated navigation deliberately keeps native text editing focus.
-    pub fn focus_task<Message>(&self, command_id: &str) -> Task<Message> {
+    /// Keeps the active item visible and moves focus only when navigation
+    /// originated on a result item. Input-originated navigation deliberately
+    /// keeps native text editing focus.
+    pub fn focus_task<Message>(&self, command_id: &str) -> Task<Message>
+    where
+        Message: Send + 'static,
+    {
         match self {
             Self::Navigate {
                 item_id,
-                focus_item: true,
-            } => focus_command_item(command_id, item_id),
-            Self::QueryChanged(_)
-            | Self::Navigate {
-                focus_item: false, ..
-            }
-            | Self::Selected { .. } => Task::none(),
+                focus_item,
+            } => navigate_to_command_item(command_id, item_id, *focus_item),
+            Self::QueryChanged(_) | Self::Selected { .. } => Task::none(),
         }
     }
 }
@@ -303,6 +303,18 @@ pub fn command_move(key: &keyboard::Key) -> Option<CommandMove> {
         keyboard::Key::Named(Named::ArrowDown) => Some(CommandMove::Next),
         keyboard::Key::Named(Named::Home) => Some(CommandMove::First),
         keyboard::Key::Named(Named::End) => Some(CommandMove::Last),
+        _ => None,
+    }
+}
+
+fn command_input_move(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<CommandMove> {
+    if modifiers.shift() || modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+
+    match key {
+        keyboard::Key::Named(Named::ArrowUp) => Some(CommandMove::Previous),
+        keyboard::Key::Named(Named::ArrowDown) => Some(CommandMove::Next),
         _ => None,
     }
 }
@@ -562,6 +574,7 @@ where
                         &self.theme,
                     )
                     .disabled(disabled)
+                    .tab_stop(selected)
                     .on_key_press(move |key, _modifiers| {
                         let movement = command_move(&key)?;
                         let target = navigation_target(Some(index), &key_enabled, movement)?;
@@ -589,7 +602,9 @@ where
         } else {
             results.into()
         };
-        let results = scroll_area(results, &self.theme).height(self.results_height);
+        let results = scroll_area(results, &self.theme)
+            .id(command_results_id(&self.id))
+            .height(self.results_height);
         let theme = self.theme;
 
         container(
@@ -663,12 +678,113 @@ pub fn command_item_id(command_id: &str, item_id: &str) -> widget::Id {
     ))
 }
 
+/// Stable results viewport ID used to reveal the active command item.
+pub fn command_results_id(command_id: &str) -> widget::Id {
+    widget::Id::from(format!(
+        "ducktape-command-results:{}:{command_id}",
+        command_id.len()
+    ))
+}
+
 pub fn focus_command_input<Message>(command_id: &str) -> Task<Message> {
     iced::widget::operation::focus(command_input_id(command_id))
 }
 
 pub fn focus_command_item<Message>(command_id: &str, item_id: &str) -> Task<Message> {
     iced::widget::operation::focus(command_item_id(command_id, item_id))
+}
+
+fn navigate_to_command_item<Message>(
+    command_id: &str,
+    item_id: &str,
+    focus_item: bool,
+) -> Task<Message>
+where
+    Message: Send + 'static,
+{
+    widget::operate(RevealCommandItem {
+        results: command_results_id(command_id),
+        item: command_item_id(command_id, item_id),
+        focus_item,
+        viewport: None,
+        item_bounds: None,
+    })
+}
+
+struct RevealCommandItem {
+    results: widget::Id,
+    item: widget::Id,
+    focus_item: bool,
+    viewport: Option<(Rectangle, Vector)>,
+    item_bounds: Option<Rectangle>,
+}
+
+impl<T: 'static> widget::Operation<T> for RevealCommandItem {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation<T>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&widget::Id>,
+        bounds: Rectangle,
+        _content_bounds: Rectangle,
+        translation: Vector,
+        _state: &mut dyn widget::operation::Scrollable,
+    ) {
+        if id == Some(&self.results) {
+            self.viewport = Some((bounds, translation));
+        }
+    }
+
+    fn focusable(
+        &mut self,
+        id: Option<&widget::Id>,
+        bounds: Rectangle,
+        state: &mut dyn widget::operation::Focusable,
+    ) {
+        if id == Some(&self.item) {
+            self.item_bounds = Some(bounds);
+        }
+
+        if self.focus_item {
+            if id == Some(&self.item) {
+                state.focus();
+            } else {
+                state.unfocus();
+            }
+        }
+    }
+
+    fn finish(&self) -> widget::operation::Outcome<T> {
+        let Some((viewport, translation)) = self.viewport else {
+            return widget::operation::Outcome::None;
+        };
+        let Some(item) = self.item_bounds else {
+            return widget::operation::Outcome::None;
+        };
+        let Some(y) = visibility_delta(viewport, item, translation.y) else {
+            return widget::operation::Outcome::None;
+        };
+
+        widget::operation::Outcome::Chain(Box::new(widget::operation::scrollable::scroll_by(
+            self.results.clone(),
+            widget::operation::scrollable::AbsoluteOffset { x: 0.0, y },
+        )))
+    }
+}
+
+fn visibility_delta(viewport: Rectangle, item: Rectangle, scroll_y: f32) -> Option<f32> {
+    let top = item.y - scroll_y;
+    let bottom = item.y + item.height - scroll_y;
+
+    if top < viewport.y {
+        Some(top - viewport.y)
+    } else if bottom > viewport.y + viewport.height {
+        Some(bottom - viewport.y - viewport.height)
+    } else {
+        None
+    }
 }
 
 pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
@@ -827,8 +943,9 @@ where
 
         if focused
             && !shell.is_event_captured()
-            && let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
-            && let Some(message) = command_move(key).and_then(|movement| (self.on_key)(movement))
+            && let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
+            && let Some(message) =
+                command_input_move(key, *modifiers).and_then(|movement| (self.on_key)(movement))
         {
             shell.publish(message);
             shell.capture_event();
@@ -917,8 +1034,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn groups() -> Vec<CommandGroup<u8>> {
         vec![
@@ -1025,8 +1143,19 @@ mod tests {
     }
 
     #[test]
+    fn results_expose_only_the_active_item_as_a_tab_stop() {
+        let mut state = CommandState::default();
+        state.set_active("zoe");
+        let element: Element<'_, CommandEvent<u8>> =
+            command("palette", &state, groups(), |event| event, &LIGHT).into();
+
+        assert_eq!(focusable_count(element), 2); // native input + active result
+    }
+
+    #[test]
     fn ids_are_stable_and_do_not_alias_colon_boundaries() {
         assert_eq!(command_input_id("palette"), command_input_id("palette"));
+        assert_eq!(command_results_id("palette"), command_results_id("palette"));
         assert_eq!(
             command_item_id("palette", "open"),
             command_item_id("palette", "open")
@@ -1035,6 +1164,37 @@ mod tests {
         assert_ne!(
             command_item_id("first", "open"),
             command_item_id("second", "open")
+        );
+        assert_ne!(command_results_id("a:b"), command_results_id("a"));
+    }
+
+    #[test]
+    fn reveal_scrolls_only_enough_to_show_the_active_row() {
+        let viewport = Rectangle::new(iced::Point::new(0.0, 100.0), Size::new(200.0, 80.0));
+
+        assert_eq!(
+            visibility_delta(
+                viewport,
+                Rectangle::new(iced::Point::new(0.0, 60.0), Size::new(200.0, 20.0)),
+                0.0,
+            ),
+            Some(-40.0)
+        );
+        assert_eq!(
+            visibility_delta(
+                viewport,
+                Rectangle::new(iced::Point::new(0.0, 220.0), Size::new(200.0, 20.0)),
+                20.0,
+            ),
+            Some(40.0)
+        );
+        assert_eq!(
+            visibility_delta(
+                viewport,
+                Rectangle::new(iced::Point::new(0.0, 140.0), Size::new(200.0, 20.0)),
+                20.0,
+            ),
+            None
         );
     }
 
@@ -1090,5 +1250,22 @@ mod tests {
         );
         assert_eq!(command_move(&keyboard::Key::Named(Named::Enter)), None);
         assert_eq!(command_move(&keyboard::Key::Character("a".into())), None);
+
+        let none = keyboard::Modifiers::empty();
+        assert_eq!(
+            command_input_move(&keyboard::Key::Named(Named::ArrowDown), none),
+            Some(CommandMove::Next)
+        );
+        assert_eq!(
+            command_input_move(&keyboard::Key::Named(Named::Home), none),
+            None
+        );
+        assert_eq!(
+            command_input_move(
+                &keyboard::Key::Named(Named::ArrowDown),
+                keyboard::Modifiers::SHIFT,
+            ),
+            None
+        );
     }
 }

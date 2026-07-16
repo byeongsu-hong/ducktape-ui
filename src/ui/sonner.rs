@@ -1,10 +1,12 @@
 use super::focus_control::{self, focus_control};
 use super::theme::{Theme, mix};
 use super::toast::{DEFAULT_DURATION, TOAST_WIDTH, ToastData, ToastDuration, ToastVariant, toast};
+use iced::advanced::widget::Operation as _;
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::Weight;
 use iced::widget::{Container, Id, MouseArea, container, mouse_area, text};
-use iced::{Background, Border, Color, Element, Font, Length, Shadow};
+use iced::{Background, Border, Color, Element, Event, Font, Length, Rectangle, Shadow, Size};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -74,6 +76,7 @@ pub enum ToastInteraction {
 pub enum SonnerEvent {
     Dismiss(ToastId),
     Action(ToastId),
+    FocusChanged(Option<ToastId>),
     Interaction(ToastId, ToastInteraction),
 }
 
@@ -427,8 +430,60 @@ impl SonnerState {
                     SonnerOutcome::default()
                 }
             }
+            SonnerEvent::FocusChanged(focused) => {
+                for entry in &mut self.entries {
+                    let was_paused = entry.is_paused();
+                    entry.pause.focus = focused == Some(entry.id);
+                    let is_paused = entry.is_paused();
+
+                    if !was_paused && is_paused {
+                        entry.freeze(now);
+                    } else if was_paused && !is_paused {
+                        entry.resume(now);
+                    }
+                }
+
+                SonnerOutcome::None
+            }
             SonnerEvent::Interaction(id, interaction) => self.interact(id, interaction, now),
         }
+    }
+
+    /// Immediately queries which rendered toast owns focus. Focus changes are
+    /// otherwise reported on the next widget event; chain this after an iced
+    /// focus operation when the timer must synchronize in the same task batch.
+    pub fn focus_task(&self) -> iced::Task<SonnerEvent> {
+        iced::Task::batch(self.focus_targets().into_iter().map(|(toast, control)| {
+            iced::widget::operation::is_focused(control).map(move |focused| (toast, focused))
+        }))
+        .collect()
+        .map(|focused| {
+            SonnerEvent::FocusChanged(
+                focused
+                    .into_iter()
+                    .find_map(|(toast, focused)| focused.then_some(toast)),
+            )
+        })
+    }
+
+    fn focus_targets(&self) -> Vec<(ToastId, Id)> {
+        let mut targets = Vec::new();
+
+        for entry in self.visible() {
+            if entry.data.action_label().is_some() {
+                targets.push((entry.id, control_id(entry.id, "action")));
+            }
+            targets.push((entry.id, control_id(entry.id, "dismiss")));
+        }
+
+        targets
+    }
+
+    fn focused_toast(&self) -> Option<ToastId> {
+        self.entries
+            .iter()
+            .find(|entry| entry.pause.focus)
+            .map(|entry| entry.id)
     }
 
     fn interact(
@@ -523,10 +578,11 @@ impl SonnerState {
 
 /// Renders the visible Sonner stack over a fill-sized viewport.
 ///
-/// Hover messages pause deadlines automatically. Route focus changes from your
-/// focus operation to `ToastInteraction::Focused` to pause while a toast action
-/// owns keyboard focus. The stock mouse area exposes horizontal mouse dragging;
-/// it does not claim full touch-swipe support.
+/// Hover and descendant focus pause deadlines automatically. Use
+/// [`SonnerState::focus_task`] only to synchronize immediately after an iced
+/// focus operation instead of waiting for the next widget event. The stock
+/// mouse area exposes horizontal mouse dragging; it does not claim full
+/// touch-swipe support.
 pub fn sonner<'a, Message, F>(
     state: &'a SonnerState,
     on_event: F,
@@ -548,7 +604,14 @@ where
         stack = stack.push(render_entry(entry, on_event.clone(), theme));
     }
 
-    container(stack)
+    let focus_reporter = FocusReporter {
+        content: stack.into(),
+        targets: state.focus_targets(),
+        previous: state.focused_toast(),
+        on_change: Box::new(move |focused| on_event(SonnerEvent::FocusChanged(focused))),
+    };
+
+    container(Element::new(focus_reporter))
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(state.offset)
@@ -649,14 +712,136 @@ where
         .align_y(Vertical::Center);
     let style_theme = *theme;
 
-    focus_control(
-        Id::from(format!("ducktape-sonner-{kind}-{}", toast_id.get())),
-        content,
-        message,
-        theme,
-    )
-    .style(move |_iced_theme, status| control_style(&style_theme, outlined, status))
-    .into()
+    focus_control(control_id(toast_id, kind), content, message, theme)
+        .style(move |_iced_theme, status| control_style(&style_theme, outlined, status))
+        .into()
+}
+
+fn control_id(toast_id: ToastId, kind: &str) -> Id {
+    Id::from(format!("ducktape-sonner-{kind}-{}", toast_id.get()))
+}
+
+struct FocusReporter<'a, Message> {
+    content: Element<'a, Message>,
+    targets: Vec<(ToastId, Id)>,
+    previous: Option<ToastId>,
+    on_change: Box<dyn Fn(Option<ToastId>) -> Message + 'a>,
+}
+
+impl<Message> Widget<Message, iced::Theme, iced::Renderer> for FocusReporter<'_, Message> {
+    fn children(&self) -> Vec<widget::Tree> {
+        vec![widget::Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut widget::Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut widget::Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        let mut query = widget::operation::focusable::find_focused();
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            &mut widget::operation::black_box::<Id, ()>(&mut query),
+        );
+        let focused = match query.finish() {
+            widget::operation::Outcome::Some(id) => self
+                .targets
+                .iter()
+                .find_map(|(toast, target)| (target == &id).then_some(*toast)),
+            _ => None,
+        };
+        if focused != self.previous {
+            shell.publish((self.on_change)(focused));
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &widget::Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
 }
 
 fn control_style(
@@ -711,8 +896,8 @@ fn secondary_text_color(theme: &Theme, variant: ToastVariant) -> Color {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn seconds(value: u64) -> Duration {
         Duration::from_secs(value)
@@ -772,6 +957,81 @@ mod tests {
         assert_eq!(state.get(id).unwrap().deadline(), Some(seconds(28)));
         assert_eq!(state.tick(seconds(27)), []);
         assert_eq!(state.tick(seconds(28)), [id]);
+    }
+
+    #[test]
+    fn focus_snapshot_moves_pause_between_toasts_and_clears_it() {
+        let mut state = SonnerState::default();
+        let first = state.push(
+            ToastData::new("First").duration(seconds(10)),
+            Duration::ZERO,
+        );
+        let second = state.push(
+            ToastData::new("Second").duration(seconds(10)),
+            Duration::ZERO,
+        );
+
+        state.update(SonnerEvent::FocusChanged(Some(first)), seconds(2));
+        assert_eq!(state.get(first).unwrap().remaining(), Some(seconds(8)));
+        assert_eq!(state.get(first).unwrap().deadline(), None);
+
+        state.update(SonnerEvent::FocusChanged(Some(second)), seconds(4));
+        assert_eq!(state.get(first).unwrap().deadline(), Some(seconds(12)));
+        assert_eq!(state.get(second).unwrap().remaining(), Some(seconds(6)));
+        assert_eq!(state.get(second).unwrap().deadline(), None);
+
+        state.update(SonnerEvent::FocusChanged(None), seconds(5));
+        assert_eq!(state.get(second).unwrap().deadline(), Some(seconds(11)));
+    }
+
+    #[test]
+    fn rendered_control_focus_is_reported_on_the_next_widget_event() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::advanced::{Layout, clipboard, layout, widget};
+        use iced::{Pixels, Point, Rectangle, Size};
+
+        let mut state = SonnerState::default();
+        let id = state.push(ToastData::new("Saved").action("Undo"), Duration::ZERO);
+        let targets = state.focus_targets();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(state.focus_task().units(), 2);
+
+        let mut view: Element<'_, SonnerEvent> = sonner(&state, |event| event, &LIGHT).into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(view.as_widget());
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let layout = Layout::new(&node);
+        let target = control_id(id, "action");
+        let mut focus = widget::operation::focusable::focus::<()>(target);
+        view.as_widget_mut()
+            .operate(&mut tree, layout, &renderer, &mut focus);
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, [SonnerEvent::FocusChanged(Some(id))]);
     }
 
     #[test]

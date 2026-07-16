@@ -1,8 +1,9 @@
 //! Delayed pointer- and keyboard-triggered tooltips.
 //!
-//! The trigger must be passive content because this wrapper owns its focus
-//! stop. Tooltip content is deliberately noninteractive: it is drawn in an
-//! overlay but never receives events, focus operations, or nested overlays.
+//! By default the trigger is passive because this wrapper owns its focus stop.
+//! Use [`Tooltip::focusable`] with `false` when a nested trigger already owns focus;
+//! that mode observes the child's focus without adding a duplicate stop.
+//! Tooltip content is deliberately noninteractive and never receives events.
 
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, draw_focus_ring,
@@ -10,6 +11,7 @@ use super::popover::{
 };
 use super::theme::Theme as UiTheme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
+use iced::keyboard::{self, key};
 use iced::time::{Duration, Instant};
 use iced::widget::text::LineHeight;
 use iced::widget::{Text, text};
@@ -49,6 +51,7 @@ pub struct Tooltip<'a, Message> {
     close_delay: Duration,
     padding: Padding,
     disabled: bool,
+    focusable: bool,
     theme: UiTheme,
 }
 
@@ -71,6 +74,7 @@ pub fn tooltip<'a, Message>(
         close_delay: DEFAULT_CLOSE_DELAY,
         padding: Padding::new(6.0).horizontal(12.0),
         disabled: false,
+        focusable: true,
         theme: *theme,
     }
 }
@@ -135,6 +139,13 @@ impl<Message> Tooltip<'_, Message> {
         self.disabled = disabled;
         self
     }
+
+    /// Disables the wrapper's focus stop when the trigger already owns one.
+    #[must_use]
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
 }
 
 impl<'a, Message> Tooltip<'a, Message>
@@ -158,6 +169,7 @@ where
             open_delay: self.open_delay,
             close_delay: self.close_delay,
             disabled: self.disabled,
+            focusable: self.focusable,
             theme: self.theme,
         }
     }
@@ -180,14 +192,22 @@ struct TooltipWidget<'a, Message> {
     open_delay: Duration,
     close_delay: Duration,
     disabled: bool,
+    focusable: bool,
     theme: UiTheme,
 }
 
 #[derive(Debug, Default)]
 struct State {
     focus: FocusFlag,
+    trigger_focused: bool,
     hovered: bool,
     presence: DelayedPresence,
+}
+
+impl State {
+    fn active(&self) -> bool {
+        self.hovered || self.focus.is_focused() || self.trigger_focused
+    }
 }
 
 impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_, Message> {
@@ -211,8 +231,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
         if self.disabled {
             let state = tree.state.downcast_mut::<State>();
             state.focus.unfocus();
+            state.trigger_focused = false;
             state.hovered = false;
             state.presence.close_now();
+        } else if !self.focusable {
+            tree.state.downcast_mut::<State>().focus.unfocus();
         }
     }
 
@@ -243,19 +266,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
         operation: &mut dyn widget::Operation,
     ) {
         let state = tree.state.downcast_mut::<State>();
-        if self.disabled {
+        if self.disabled || !self.focusable {
             state.focus.unfocus();
         } else {
             operation.focusable(Some(&self.id.0), layout.bounds(), &mut state.focus);
         }
-        sync_presence(
-            state,
-            !self.disabled,
-            Instant::now(),
-            self.open_delay,
-            self.close_delay,
-        );
-
         operation.traverse(&mut |operation| {
             self.trigger.as_widget_mut().operate(
                 &mut tree.children[0],
@@ -264,6 +279,22 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
                 operation,
             );
         });
+        state.trigger_focused = !self.disabled
+            && focus_within(|operation| {
+                self.trigger.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    operation,
+                );
+            });
+        sync_presence(
+            state,
+            !self.disabled,
+            Instant::now(),
+            self.open_delay,
+            self.close_delay,
+        );
     }
 
     fn update(
@@ -288,15 +319,6 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
         } else if matches!(event, Event::Mouse(_) | Event::Window(_)) {
             state.hovered = cursor.is_over(layout.bounds());
         }
-        sync_presence(
-            state,
-            !self.disabled,
-            now,
-            self.open_delay,
-            self.close_delay,
-        );
-        request_transition(&state.presence, was_visible, was_present, shell);
-
         self.trigger.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -307,6 +329,23 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
             shell,
             viewport,
         );
+        state.trigger_focused = !self.disabled
+            && focus_within(|operation| {
+                self.trigger.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    operation,
+                );
+            });
+        sync_presence(
+            state,
+            !self.disabled,
+            now,
+            self.open_delay,
+            self.close_delay,
+        );
+        request_transition(&state.presence, was_visible, was_present, shell);
     }
 
     fn mouse_interaction(
@@ -369,6 +408,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
             self.open_delay,
             self.close_delay,
         );
+        let active = state.active();
         let [trigger_tree, content_tree] = tree.children.as_mut_slice() else {
             return None;
         };
@@ -393,7 +433,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
                     config: self.config,
                 },
                 presence: &mut state.presence,
-                active: state.hovered || state.focus.is_focused(),
+                active,
                 open_delay: self.open_delay,
                 close_delay: self.close_delay,
             }))
@@ -446,6 +486,12 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     ) {
         let was_visible = self.presence.is_visible();
         let was_present = self.presence.is_present();
+        if is_escape(event) {
+            self.presence.dismiss();
+            shell.capture_event();
+            request_transition(self.presence, was_visible, was_present, shell);
+            return;
+        }
         self.presence.set_active(
             self.active,
             event_time(event),
@@ -477,6 +523,40 @@ pub(crate) fn event_time(event: &Event) -> Instant {
     }
 }
 
+pub(crate) fn is_escape(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(key::Named::Escape),
+            ..
+        })
+    )
+}
+
+pub(crate) fn focus_within(operate: impl FnOnce(&mut dyn widget::Operation)) -> bool {
+    #[derive(Default)]
+    struct FindFocused(bool);
+
+    impl widget::Operation for FindFocused {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+            operate(self);
+        }
+
+        fn focusable(
+            &mut self,
+            _id: Option<&widget::Id>,
+            _bounds: Rectangle,
+            state: &mut dyn widget::operation::Focusable,
+        ) {
+            self.0 |= state.is_focused();
+        }
+    }
+
+    let mut query = FindFocused::default();
+    operate(&mut query);
+    query.0
+}
+
 fn sync_presence(
     state: &mut State,
     enabled: bool,
@@ -484,12 +564,9 @@ fn sync_presence(
     open_delay: Duration,
     close_delay: Duration,
 ) {
-    state.presence.set_active(
-        enabled && (state.hovered || state.focus.is_focused()),
-        now,
-        open_delay,
-        close_delay,
-    );
+    state
+        .presence
+        .set_active(enabled && state.active(), now, open_delay, close_delay);
 }
 
 pub(crate) fn request_transition<Message>(
@@ -519,6 +596,7 @@ enum Phase {
     Opening(Instant),
     Open,
     Closing(Instant),
+    Dismissed,
 }
 
 impl DelayedPresence {
@@ -527,18 +605,22 @@ impl DelayedPresence {
     }
 
     pub(crate) const fn is_present(self) -> bool {
-        !matches!(self.phase, Phase::Closed)
+        !matches!(self.phase, Phase::Closed | Phase::Dismissed)
     }
 
     pub(crate) const fn deadline(self) -> Option<Instant> {
         match self.phase {
             Phase::Opening(deadline) | Phase::Closing(deadline) => Some(deadline),
-            Phase::Closed | Phase::Open => None,
+            Phase::Closed | Phase::Open | Phase::Dismissed => None,
         }
     }
 
     pub(crate) fn close_now(&mut self) {
         self.phase = Phase::Closed;
+    }
+
+    pub(crate) fn dismiss(&mut self) {
+        self.phase = Phase::Dismissed;
     }
 
     pub(crate) fn set_active(
@@ -550,6 +632,8 @@ impl DelayedPresence {
     ) {
         self.advance(now);
         self.phase = match (active, self.phase) {
+            (false, Phase::Dismissed) => Phase::Closed,
+            (true, Phase::Dismissed) => Phase::Dismissed,
             (true, Phase::Closed) if open_delay.is_zero() => Phase::Open,
             (true, Phase::Closed) => Phase::Opening(now + open_delay),
             (true, Phase::Closing(_)) => Phase::Open,
@@ -572,8 +656,9 @@ impl DelayedPresence {
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::{FocusControl, focusable_count};
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::advanced::Widget;
     use iced::widget::text;
 
@@ -636,6 +721,24 @@ mod tests {
     }
 
     #[test]
+    fn dismissal_rearms_only_after_deactivation_and_keeps_the_open_delay() {
+        let start = Instant::now();
+        let open = Duration::from_millis(500);
+        let mut presence = DelayedPresence::default();
+        presence.set_active(true, start, Duration::ZERO, Duration::ZERO);
+
+        presence.dismiss();
+        presence.set_active(true, start + open, open, Duration::ZERO);
+        assert!(!presence.is_present());
+        assert_eq!(presence.deadline(), None);
+
+        presence.set_active(false, start + open, open, Duration::ZERO);
+        presence.set_active(true, start + open, open, Duration::ZERO);
+        assert_eq!(presence.deadline(), Some(start + open + open));
+        assert!(!presence.is_visible());
+    }
+
+    #[test]
     fn tooltip_tree_keeps_noninteractive_content_out_of_trigger_layout() {
         let widget = tooltip(
             TooltipId::new("tree"),
@@ -650,6 +753,67 @@ mod tests {
     }
 
     #[test]
+    fn an_interactive_trigger_can_remain_the_only_focus_stop() {
+        let trigger: Element<'_, ()> = FocusControl::new(
+            widget::Id::new("tooltip-child-trigger"),
+            text("trigger"),
+            (),
+            &LIGHT,
+        )
+        .into();
+        let element: Element<'_, ()> = tooltip(
+            TooltipId::new("interactive-trigger"),
+            trigger,
+            text("hint"),
+            &LIGHT,
+        )
+        .focusable(false)
+        .into();
+
+        assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn interactive_trigger_focus_opens_and_holds_without_a_wrapper_stop() {
+        use iced::advanced::renderer::Headless as _;
+
+        let trigger_id = widget::Id::new("tooltip-focused-child");
+        let mut component = tooltip(
+            TooltipId::new("focused-child"),
+            FocusControl::new(trigger_id.clone(), text("trigger"), (), &LIGHT),
+            text("hint"),
+            &LIGHT,
+        )
+        .focusable(false)
+        .open_delay(Duration::ZERO)
+        .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&component as &dyn Widget<(), _, _>);
+        let node = component.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(320.0, 200.0)),
+        );
+
+        let mut focus = widget::operation::focusable::focus::<()>(trigger_id);
+        component.operate(&mut tree, Layout::new(&node), &renderer, &mut focus);
+        let state = tree.state.downcast_ref::<State>();
+        assert!(state.trigger_focused);
+        assert!(state.presence.is_visible());
+
+        let mut unfocus = widget::operation::focusable::unfocus::<()>();
+        component.operate(&mut tree, Layout::new(&node), &renderer, &mut unfocus);
+        let state = tree.state.downcast_ref::<State>();
+        assert!(!state.trigger_focused);
+        assert!(!state.presence.is_present());
+    }
+
+    #[test]
     fn pixel_defaults_match_the_component_contract() {
         let component = tooltip::<()>(
             TooltipId::new("metrics"),
@@ -660,6 +824,7 @@ mod tests {
         assert_eq!(component.config.placement, Placement::Top);
         assert_eq!(component.config.max_width, 320.0);
         assert_eq!(component.padding, Padding::new(6.0).horizontal(12.0));
+        assert!(component.focusable);
         assert_eq!(DEFAULT_TEXT_SIZE, 12.0);
         assert_eq!(DEFAULT_LINE_HEIGHT, 16.0);
     }

@@ -333,9 +333,9 @@ pub fn reduce_menu(
                 };
             }
             let character = character.to_lowercase().collect::<String>();
-            if next.typeahead != character {
-                next.typeahead.push_str(&character);
-            }
+            // ponytail: single-character cycling avoids a timer; add timestamped
+            // buffering if multi-character typeahead becomes a real requirement.
+            next.typeahead = character;
             let query = next.typeahead.as_str();
             let start = enabled
                 .iter()
@@ -557,11 +557,27 @@ where
     Message: Clone + 'a,
 {
     pub fn into_element(self) -> Element<'a, Message> {
+        let visible = visible_items(&self.entries, &self.state);
+        let focused_is_enabled = self.state.focused.as_ref().is_some_and(|focused| {
+            visible
+                .iter()
+                .any(|(path, item)| path == focused && !item.disabled)
+        });
+        let state = if focused_is_enabled {
+            Rc::clone(&self.state)
+        } else {
+            let mut state = (*self.state).clone();
+            state.focused = visible
+                .into_iter()
+                .find(|(_, item)| !item.disabled)
+                .map(|(path, _)| path);
+            Rc::new(state)
+        };
         let mut children = Vec::new();
         render_entries(
             Rc::clone(&self.entries),
             &self.entries,
-            Rc::clone(&self.state),
+            state,
             &self.id,
             &[],
             0,
@@ -803,6 +819,7 @@ where
         theme,
     )
     .disabled(disabled)
+    .tab_stop(selected)
     .on_key_press(move |key, modifiers| {
         if modifiers.control() || modifiers.alt() || modifiers.logo() {
             return None;
@@ -909,8 +926,9 @@ pub fn menu_item_style(theme: &Theme, selected: bool, status: Status) -> focus_c
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn entries() -> Vec<MenuEntry> {
         vec![
@@ -993,6 +1011,19 @@ mod tests {
     }
 
     #[test]
+    fn a_new_typeahead_character_replaces_the_previous_one() {
+        let entries = entries();
+        let state = reduce_menu(
+            &MenuState::initial(&entries),
+            &entries,
+            MenuCommand::Character('a'),
+        )
+        .state;
+        let state = reduce_menu(&state, &entries, MenuCommand::Character('b')).state;
+        assert_eq!(state.typeahead, "b");
+    }
+
+    #[test]
     fn direction_swaps_submenu_arrows() {
         let right = keyboard::Key::Named(Named::ArrowRight);
         let left = keyboard::Key::Named(Named::ArrowLeft);
@@ -1055,5 +1086,14 @@ mod tests {
         let state = MenuState::initial(&entries);
         let element: Element<'_, ()> = menu("test", &entries, &state, |_| (), &LIGHT).into();
         assert_eq!(element.as_widget().children().len(), 5);
+    }
+
+    #[test]
+    fn menu_exposes_one_sequential_focus_stop() {
+        let entries = entries();
+        let state = MenuState::initial(&entries);
+        let element: Element<'_, ()> = menu("file", &entries, &state, |_| (), &LIGHT).into();
+
+        assert_eq!(focusable_count(element), 1);
     }
 }

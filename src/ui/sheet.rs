@@ -715,6 +715,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for SheetLayer<'_, Me
     ) {
         let panel_layout = layout.children().next().expect("sheet panel layout");
         let panel_bounds = panel_layout.bounds();
+        if matches!(event, Event::Window(iced::window::Event::Unfocused)) {
+            tree.state.downcast_mut::<State>().backdrop_press = None;
+        }
 
         if self.handle_escape && self.dismiss.escape && is_escape(event) {
             shell.publish((self.on_event)(ModalEvent::Dismiss(DismissReason::Escape)));
@@ -724,18 +727,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for SheetLayer<'_, Me
 
         let position = event_position(event, cursor);
         let inside = position.is_some_and(|position| panel_bounds.contains(position));
-        let release = matches!(
-            event,
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-                | Event::Touch(touch::Event::FingerLifted { .. } | touch::Event::FingerLost { .. })
-        );
-        let movement = matches!(
-            event,
-            Event::Mouse(mouse::Event::CursorMoved { .. })
-                | Event::Touch(touch::Event::FingerMoved { .. })
-        );
+        let backdrop_end = ends_backdrop_press(tree.state.downcast_ref::<State>(), event);
 
-        if inside || release || movement || matches!(event, Event::Keyboard(_)) {
+        if forwards_to_panel(event, inside, backdrop_end) {
             self.panel.as_widget_mut().update(
                 &mut tree.children[0],
                 event,
@@ -748,19 +742,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for SheetLayer<'_, Me
             );
         }
 
-        if inside && release {
-            let state = tree.state.downcast_mut::<State>();
-            let matching = match event {
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    state.backdrop_press == Some(BackdropPress::Mouse)
-                }
-                Event::Touch(touch::Event::FingerLifted { id, .. }) => {
-                    state.backdrop_press == Some(BackdropPress::Touch(*id))
-                }
-                _ => false,
-            };
-            if matching {
-                state.backdrop_press = None;
+        if inside && backdrop_end {
+            tree.state.downcast_mut::<State>().backdrop_press = None;
+            if self.inert_outside {
                 shell.capture_event();
             }
         }
@@ -774,7 +758,10 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for SheetLayer<'_, Me
                 self.on_event.as_ref(),
                 shell,
             );
-        } else if inside && matches!(event, Event::Mouse(_) | Event::Touch(_)) {
+        } else if inside
+            && matches!(event, Event::Mouse(_) | Event::Touch(_))
+            && (!backdrop_end || self.inert_outside)
+        {
             // Keep passive panel regions from clicking through to a non-modal
             // underlay.
             shell.capture_event();
@@ -932,54 +919,86 @@ fn handle_outside<Message>(
     on_event: &dyn Fn(ModalEvent) -> Message,
     shell: &mut Shell<'_, Message>,
 ) {
-    let mut capture = inert;
-
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-            if dismiss || inert {
+            if (dismiss || inert) && state.backdrop_press.is_none() {
                 state.backdrop_press = Some(BackdropPress::Mouse);
-                capture = true;
             }
         }
         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-            let clicked = state.backdrop_press.take() == Some(BackdropPress::Mouse);
+            let clicked = ends_backdrop_press(state, event);
+            if clicked {
+                state.backdrop_press = None;
+            }
             if clicked && dismiss {
                 shell.publish(on_event(ModalEvent::Dismiss(DismissReason::Backdrop)));
             }
-            capture |= clicked;
         }
         Event::Touch(touch::Event::FingerPressed { id, .. }) => {
-            if dismiss || inert {
+            if (dismiss || inert) && state.backdrop_press.is_none() {
                 state.backdrop_press = Some(BackdropPress::Touch(*id));
-                capture = true;
             }
         }
         Event::Touch(touch::Event::FingerLifted { id, .. }) => {
-            let clicked = state.backdrop_press.take() == Some(BackdropPress::Touch(*id));
+            let clicked = state.backdrop_press == Some(BackdropPress::Touch(*id));
+            if clicked {
+                state.backdrop_press = None;
+            }
             if clicked && dismiss {
                 shell.publish(on_event(ModalEvent::Dismiss(DismissReason::Backdrop)));
             }
-            capture |= clicked;
         }
         Event::Touch(touch::Event::FingerLost { id, .. }) => {
             if state.backdrop_press == Some(BackdropPress::Touch(*id)) {
                 state.backdrop_press = None;
-                capture = true;
             }
         }
         Event::Mouse(_) | Event::Touch(_) => {}
         _ => return,
     }
 
-    if capture {
+    if inert {
         shell.capture_event();
     }
 }
 
+fn ends_backdrop_press(state: &State, event: &Event) -> bool {
+    match (state.backdrop_press, event) {
+        (
+            Some(BackdropPress::Mouse),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ) => true,
+        (
+            Some(BackdropPress::Touch(active)),
+            Event::Touch(
+                touch::Event::FingerLifted { id, .. } | touch::Event::FingerLost { id, .. },
+            ),
+        ) => active == *id,
+        _ => false,
+    }
+}
+
+fn forwards_to_panel(event: &Event, inside: bool, backdrop_end: bool) -> bool {
+    !backdrop_end
+        && (inside
+            || matches!(
+                event,
+                Event::Mouse(
+                    mouse::Event::CursorMoved { .. }
+                        | mouse::Event::ButtonReleased(mouse::Button::Left)
+                ) | Event::Touch(
+                    touch::Event::FingerMoved { .. }
+                        | touch::Event::FingerLifted { .. }
+                        | touch::Event::FingerLost { .. }
+                )
+            )
+            || !matches!(event, Event::Mouse(_) | Event::Touch(_)))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::advanced::widget::Tree;
     use iced::widget::Space;
 
@@ -1126,5 +1145,69 @@ mod tests {
         assert_eq!(modal_tree.children.len(), 2);
         assert_eq!(non_modal_tree.children.len(), 2);
         assert_ne!(modal_tree.tag, non_modal_tree.tag);
+    }
+
+    #[test]
+    fn outside_dismissal_propagates_only_for_non_modal_sheets() {
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+
+        for inert in [false, true] {
+            let mut state = State::default();
+            let mut messages = Vec::new();
+            for event in [&press, &release] {
+                let mut shell = Shell::new(&mut messages);
+                handle_outside(&mut state, event, true, inert, &|event| event, &mut shell);
+                assert_eq!(shell.is_event_captured(), inert);
+            }
+            assert_eq!(messages, [ModalEvent::Dismiss(DismissReason::Backdrop)]);
+        }
+    }
+
+    #[test]
+    fn outside_press_keeps_its_input_source_until_matching_release() {
+        let finger = touch::Finger(7);
+        let touch_press = Event::Touch(touch::Event::FingerPressed {
+            id: finger,
+            position: Point::ORIGIN,
+        });
+        let mouse_press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let mouse_release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let touch_release = Event::Touch(touch::Event::FingerLifted {
+            id: finger,
+            position: Point::ORIGIN,
+        });
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        for event in [&touch_press, &mouse_press, &mouse_release] {
+            let mut shell = Shell::new(&mut messages);
+            handle_outside(&mut state, event, true, false, &|event| event, &mut shell);
+        }
+
+        assert_eq!(state.backdrop_press, Some(BackdropPress::Touch(finger)));
+        assert!(messages.is_empty());
+
+        let mut shell = Shell::new(&mut messages);
+        handle_outside(
+            &mut state,
+            &touch_release,
+            true,
+            false,
+            &|event| event,
+            &mut shell,
+        );
+        assert_eq!(state.backdrop_press, None);
+        assert_eq!(messages, [ModalEvent::Dismiss(DismissReason::Backdrop)]);
+    }
+
+    #[test]
+    fn window_events_reach_the_panel_but_matched_backdrop_releases_do_not() {
+        let unfocused = Event::Window(iced::window::Event::Unfocused);
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+
+        assert!(forwards_to_panel(&unfocused, false, false));
+        assert!(forwards_to_panel(&release, false, false));
+        assert!(!forwards_to_panel(&release, false, true));
     }
 }

@@ -42,6 +42,60 @@ impl Drop for TestProject {
 }
 
 #[test]
+fn dry_run_reports_an_inactive_dependency_without_writing() {
+    let project = TestProject::new();
+    let manifest_path = project.path().join("Cargo.toml");
+    let manifest = format!(
+        "{}\n[target.'cfg(windows)'.dependencies]\niced = {{ version = \"=0.14.0\", features = [\"advanced\"] }}\n",
+        fs::read_to_string(&manifest_path).unwrap(),
+    );
+    fs::write(&manifest_path, &manifest).unwrap();
+
+    ducktape_ui::execute(["init"], project.path()).unwrap();
+    let output = ducktape_ui::execute(["add", "button", "--dry-run"], project.path()).unwrap();
+
+    assert!(output.contains(&format!(
+        "would update {}: cargo add iced@=0.14.0 --features advanced",
+        manifest_path.display(),
+    )));
+    assert_eq!(fs::read_to_string(manifest_path).unwrap(), manifest);
+    assert!(!project.path().join("src/ui/button.rs").exists());
+}
+
+#[test]
+fn custom_ui_directory_keeps_component_tests_portable() {
+    let project = TestProject::new();
+
+    ducktape_ui::execute(["init", "--ui", "src/widgets"], project.path()).unwrap();
+    ducktape_ui::execute(["add", "button"], project.path()).unwrap();
+    fs::write(
+        project.path().join("src/main.rs"),
+        r#"mod widgets;
+
+fn main() {
+    let theme = widgets::theme::LIGHT;
+    let _: iced::Element<'_, ()> = widgets::button::button("Save", &theme)
+        .on_press(())
+        .into();
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new("cargo")
+        .args(["test", "--quiet"])
+        .current_dir(project.path())
+        .env("CARGO_TARGET_DIR", project.path().join("target"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "custom UI directory did not test:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn init_add_composed_components_and_compile_owned_source() {
     let project = TestProject::new();
 
@@ -361,14 +415,14 @@ fn main() {}
     .unwrap();
 
     let output = Command::new("cargo")
-        .args(["check", "--quiet"])
+        .args(["test", "--quiet", "--no-run"])
         .current_dir(project.path())
         .env("CARGO_TARGET_DIR", project.path().join("target"))
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "installed source did not compile:\n{}",
+        "installed source and its tests did not compile:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -84,8 +84,8 @@ pub fn style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn invalid_input_uses_destructive_border() {

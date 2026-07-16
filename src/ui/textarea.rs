@@ -1,6 +1,7 @@
 use super::theme::{Theme, alpha};
+use iced::advanced::text::highlighter;
 use iced::widget::text::IntoFragment;
-use iced::widget::{text_editor, text_editor::Content};
+use iced::widget::{TextEditor, text_editor, text_editor::Content};
 use iced::{Background, Border, Element};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -10,6 +11,34 @@ pub enum TextareaVariant {
     Invalid,
 }
 
+/// The styled native text editor returned by [`textarea_control`].
+pub type Textarea<'a, Message> = TextEditor<'a, highlighter::PlainText, Message>;
+
+/// Builds the styled native text editor without attaching an edit handler.
+///
+/// The result keeps native builders such as [`TextEditor::id`] and
+/// [`TextEditor::key_binding`]. It remains read-only unless the caller adds
+/// [`TextEditor::on_action`].
+pub fn textarea_control<'a, Message>(
+    content: &'a Content,
+    placeholder: impl IntoFragment<'a>,
+    variant: TextareaVariant,
+    theme: &Theme,
+) -> Textarea<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let theme = *theme;
+
+    text_editor(content)
+        .placeholder(placeholder)
+        .min_height(96)
+        .padding([theme.spacing.sm, theme.spacing.md])
+        .size(theme.typography.sm)
+        .style(move |_iced_theme, status| style(&theme, variant, status))
+}
+
+/// Builds an editable textarea with the standard ducktape styling.
 pub fn textarea<'a, Message>(
     content: &'a Content,
     placeholder: impl IntoFragment<'a>,
@@ -20,15 +49,8 @@ pub fn textarea<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let theme = *theme;
-
-    text_editor(content)
-        .placeholder(placeholder)
+    textarea_control(content, placeholder, variant, theme)
         .on_action(on_action)
-        .min_height(96)
-        .padding([theme.spacing.sm, theme.spacing.md])
-        .size(theme.typography.sm)
-        .style(move |_iced_theme, status| style(&theme, variant, status))
         .into()
 }
 
@@ -83,8 +105,8 @@ pub fn style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     const FOCUSED: text_editor::Status = text_editor::Status::Focused { is_hovered: false };
 
@@ -102,5 +124,17 @@ mod tests {
 
         assert_eq!(style.border.color, LIGHT.palette.destructive);
         assert_eq!(style.border.width, 2.0);
+    }
+
+    #[test]
+    fn control_exposes_native_read_only_and_id_builders() {
+        let content = Content::new();
+        let _: Textarea<'_, ()> = textarea_control(
+            &content,
+            "Read-only notes",
+            TextareaVariant::Default,
+            &LIGHT,
+        )
+        .id(iced::widget::Id::new("notes"));
     }
 }

@@ -1,4 +1,4 @@
-use super::theme::{Theme, mix};
+use super::theme::Theme;
 use iced::widget::scrollable::{self, AutoScroll, Rail, Scrollable, Scroller};
 use iced::widget::{Id, container, scrollable as iced_scrollable};
 use iced::{Background, Border, Element, Length, Shadow};
@@ -49,11 +49,7 @@ pub fn style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
         background: Background::Color(if active {
             theme.palette.ring
         } else {
-            mix(
-                theme.palette.background,
-                theme.palette.muted_foreground,
-                0.55,
-            )
+            theme.palette.muted_foreground
         }),
         border: Border {
             radius: 999.0.into(),
@@ -93,8 +89,8 @@ pub fn style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn interaction_highlights_the_native_scroll_handle() {
@@ -128,6 +124,15 @@ mod tests {
                 hovered.container.background,
                 Some(Background::Color(theme.palette.background))
             );
+            for thumb in [
+                normal.vertical_rail.scroller.background,
+                hovered.vertical_rail.scroller.background,
+            ] {
+                let Background::Color(thumb) = thumb else {
+                    panic!("message scrollbar thumb must be a solid color");
+                };
+                assert!(thumb.relative_contrast(theme.palette.muted) >= 3.0);
+            }
         }
     }
 }

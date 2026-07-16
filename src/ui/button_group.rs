@@ -35,7 +35,7 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(Background::Color(theme.palette.background)),
         border: Border {
-            color: theme.palette.border,
+            color: theme.palette.input,
             width: 1.0,
             radius: theme.radius.md.into(),
         },
@@ -45,8 +45,8 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::LIGHT;
     use iced::widget::text;
 
     #[test]
@@ -67,10 +67,19 @@ mod tests {
 
     #[test]
     fn group_owns_one_semantic_outline() {
-        let style = style(&LIGHT);
+        for theme in [LIGHT, DARK] {
+            let style = style(&theme);
 
-        assert_eq!(style.border.color, LIGHT.palette.border);
-        assert_eq!(style.border.width, 1.0);
-        assert_eq!(style.border.radius, LIGHT.radius.md.into());
+            assert_eq!(style.border.color, theme.palette.input);
+            assert_eq!(style.border.width, 1.0);
+            assert_eq!(style.border.radius, theme.radius.md.into());
+            assert!(
+                style
+                    .border
+                    .color
+                    .relative_contrast(theme.palette.background)
+                    >= 3.0
+            );
+        }
     }
 }

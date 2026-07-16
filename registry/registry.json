@@ -29,8 +29,8 @@
     {
       "name": "button",
       "type": "component",
-      "description": "Button with six variants, four sizes, and disabled states.",
-      "dependencies": ["theme"],
+      "description": "Keyboard-focusable button with six variants, four sizes, and disabled states.",
+      "dependencies": ["focus-control"],
       "files": [{ "source": "button.rs", "target": "button.rs" }]
     },
     {
@@ -50,8 +50,8 @@
     {
       "name": "checkbox",
       "type": "component",
-      "description": "Styled native checkbox with active, hovered, and disabled states.",
-      "dependencies": ["theme"],
+      "description": "Keyboard-focusable styled checkbox with active, hovered, and disabled states.",
+      "dependencies": ["focus-control"],
       "files": [{ "source": "checkbox.rs", "target": "checkbox.rs" }]
     },
     {
@@ -99,7 +99,7 @@
     {
       "name": "segmented-control",
       "type": "component",
-      "description": "Controlled pointer and touch selector built from native buttons.",
+      "description": "Controlled Tab-focusable selector built from shared buttons.",
       "dependencies": ["button"],
       "files": [{ "source": "segmented_control.rs", "target": "segmented_control.rs" }]
     },
@@ -267,7 +267,7 @@
     {
       "name": "native-select",
       "type": "component",
-      "description": "Styled controlled iced pick list with stable focus, keyboard selection/opening, disabled/invalid states, exact metrics, and RTL.",
+      "description": "Styled controlled iced pick list with stable focus, keyboard selection/opening/closing, disabled/invalid states, exact metrics, and RTL.",
       "dependencies": ["direction", "focus-control", "theme"],
       "files": [{ "source": "native_select.rs", "target": "native_select.rs" }]
     },
@@ -288,7 +288,7 @@
     {
       "name": "calendar",
       "type": "component",
-      "description": "Keyboard-complete controlled Gregorian calendar with single, range, and multiple selection plus constraints and stable day focus.",
+      "description": "Keyboard-complete controlled Gregorian calendar with one roving day focus stop, three selection modes, and constraints.",
       "dependencies": ["button", "direction", "focus-control", "native-select", "theme"],
       "files": [{ "source": "calendar.rs", "target": "calendar.rs" }]
     },
@@ -310,13 +310,13 @@
       "name": "input-otp",
       "type": "component",
       "description": "Controlled numeric or alphanumeric OTP slots with native typing and paste behavior.",
-      "dependencies": ["theme"],
+      "dependencies": ["focus-control"],
       "files": [{ "source": "input_otp.rs", "target": "input_otp.rs" }]
     },
     {
       "name": "radio-group",
       "type": "component",
-      "description": "Controlled exclusive selection with disabled-aware keyboard navigation and focus helpers.",
+      "description": "Controlled exclusive selection with one roving focus stop and disabled-aware keyboard navigation.",
       "dependencies": ["focus-control"],
       "files": [{ "source": "radio_group.rs", "target": "radio_group.rs" }]
     },
@@ -337,7 +337,7 @@
     {
       "name": "tabs",
       "type": "component",
-      "description": "Controlled tabs with stable focus, automatic/manual activation, and line/default variants.",
+      "description": "Controlled tabs with one roving focus stop, automatic/manual activation, and line/default variants.",
       "dependencies": ["focus-control"],
       "files": [{ "source": "tabs.rs", "target": "tabs.rs" }]
     },
@@ -400,7 +400,7 @@
     {
       "name": "command",
       "type": "component",
-      "description": "Searchable grouped command list with native text editing, disabled-aware keyboard navigation, and stable focus.",
+      "description": "Searchable grouped command list with native text editing, roving results, active-row reveal, and disabled-aware navigation.",
       "dependencies": ["theme", "focus-control", "input", "scroll-area"],
       "files": [{ "source": "command.rs", "target": "command.rs" }]
     },
@@ -431,14 +431,14 @@
     {
       "name": "tooltip",
       "type": "component",
-      "description": "Noninteractive hover/focus tooltip with exact delays, constrained copy, and collision-aware placement.",
-      "dependencies": ["popover", "theme"],
+      "description": "Noninteractive hover/focus tooltip with Escape dismissal, exact delays, constrained copy, and collision-aware placement.",
+      "dependencies": ["focus-control", "popover", "theme"],
       "files": [{ "source": "tooltip.rs", "target": "tooltip.rs" }]
     },
     {
       "name": "hover-card",
       "type": "component",
-      "description": "Delayed hover/focus card with collision placement and gap-safe pointer transfer into interactive content.",
+      "description": "Delayed pointer/trigger/descendant-focus card with collision placement, Escape dismissal, and gap-safe pointer transfer.",
       "dependencies": ["popover", "tooltip", "theme"],
       "files": [{ "source": "hover_card.rs", "target": "hover_card.rs" }]
     },
@@ -452,7 +452,7 @@
     {
       "name": "menu",
       "type": "component",
-      "description": "Shared controlled menu reducer and renderer with groups, checks, radios, shortcuts, submenus, RTL, and complete keyboard navigation.",
+      "description": "Shared controlled menu with one roving focus stop, rich item types, submenus, RTL, and complete keyboard navigation.",
       "dependencies": ["direction", "focus-control", "theme"],
       "files": [{ "source": "menu.rs", "target": "menu.rs" }]
     },
@@ -466,14 +466,14 @@
     {
       "name": "context-menu",
       "type": "component",
-      "description": "Right-click/touch-positioned menu with exact point anchoring, collision handling, and shared rich menu navigation.",
+      "description": "Right-click/touch-positioned menu with exact point re-anchoring, collision handling, and shared rich menu navigation.",
       "dependencies": ["menu", "popover"],
       "files": [{ "source": "context_menu.rs", "target": "context_menu.rs" }]
     },
     {
       "name": "menubar",
       "type": "component",
-      "description": "Keyboard-operated top-level menus with Left/Right switching and shared nested menu behavior.",
+      "description": "Keyboard-operated top-level menus with one roving trigger, Left/Right switching, and shared nested menu behavior.",
       "dependencies": ["menu", "popover", "focus-control"],
       "files": [{ "source": "menubar.rs", "target": "menubar.rs" }]
     },

@@ -259,8 +259,8 @@ fn semantic_tint(theme: &Theme, tone: Color) -> (Color, Color, Color) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::widget::text;
 
     #[test]

@@ -134,6 +134,9 @@ where
                 .iter()
                 .position(|option| &option.value == selected)
         });
+        let tab_stop = selected_index
+            .filter(|index| enabled[*index])
+            .or_else(|| enabled.iter().position(|enabled| *enabled));
         let values: Vec<Value> = self
             .options
             .iter()
@@ -165,6 +168,7 @@ where
 
             let control = FocusControl::new(radio_id(&id, index), content, activate, &theme)
                 .disabled(disabled)
+                .tab_stop(tab_stop == Some(index))
                 .on_key_press(move |key, _modifiers| {
                     let command = keyboard_command(&key, orientation)?;
                     let target = reduce_selection(selected_index, &key_enabled, command)?;
@@ -357,8 +361,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn reducer_wraps_and_skips_disabled_items() {
@@ -458,5 +463,23 @@ mod tests {
 
         assert_eq!(horizontal.as_widget().children().len(), 2);
         assert_eq!(vertical.as_widget().children().len(), 2);
+    }
+
+    #[test]
+    fn group_exposes_one_sequential_focus_stop() {
+        let element: Element<'_, ()> = radio_group(
+            "plan",
+            [
+                radio_option(1, "Free", &LIGHT),
+                radio_option(2, "Pro", &LIGHT),
+                radio_option(3, "Enterprise", &LIGHT).disabled(true),
+            ],
+            Some(2),
+            |_| (),
+            &LIGHT,
+        )
+        .into();
+
+        assert_eq!(focusable_count(element), 1);
     }
 }

@@ -1,7 +1,8 @@
+use super::focus_control::FocusControl;
 use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::IntoFragment;
-use iced::widget::{Button as IcedButton, button as iced_button, container, text};
+use iced::widget::{button as iced_button, container, text};
 use iced::{Background, Border, Color, Element, Length};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -100,7 +101,7 @@ where
         self
     }
 
-    pub fn into_widget(self) -> IcedButton<'a, Message> {
+    pub fn into_widget(self) -> Element<'a, Message> {
         let (vertical, horizontal, height) = match self.size {
             ButtonSize::Small => (6.0, 12.0, 32.0),
             ButtonSize::Default => (8.0, 16.0, 36.0),
@@ -124,12 +125,18 @@ where
             .align_y(Vertical::Center);
         let theme = self.theme;
         let variant = self.variant;
-        iced_button(content)
+        let on_press = (!self.disabled).then_some(self.on_press).flatten();
+        let widget = iced_button(content)
             .padding([vertical, horizontal])
             .width(width)
             .height(height)
-            .on_press_maybe((!self.disabled).then_some(self.on_press).flatten())
-            .style(move |_iced_theme, status| style(&theme, variant, status))
+            .on_press_maybe(on_press.clone())
+            .style(move |_iced_theme, status| style(&theme, variant, status));
+
+        match on_press {
+            Some(message) => FocusControl::anonymous(widget, message, &theme).into(),
+            None => widget.into(),
+        }
     }
 }
 
@@ -138,7 +145,7 @@ where
     Message: Clone + 'a,
 {
     fn from(button: Button<'a, Message>) -> Self {
-        button.into_widget().into()
+        button.into_widget()
     }
 }
 
@@ -179,6 +186,9 @@ pub fn style(
                 foreground = palette.accent_foreground;
             }
             ButtonVariant::Link => foreground = mix(foreground, palette.foreground, 0.25),
+            ButtonVariant::Destructive => {
+                background = background.map(|color| mix(color, palette.foreground, 0.08));
+            }
             _ => background = background.map(|color| mix(color, foreground, 0.08)),
         },
         iced_button::Status::Pressed => match variant {
@@ -187,6 +197,9 @@ pub fn style(
                 foreground = palette.accent_foreground;
             }
             ButtonVariant::Link => foreground = mix(foreground, palette.foreground, 0.40),
+            ButtonVariant::Destructive => {
+                background = background.map(|color| mix(color, palette.foreground, 0.16));
+            }
             _ => background = background.map(|color| mix(color, foreground, 0.16)),
         },
         iced_button::Status::Disabled => {
@@ -214,8 +227,10 @@ pub fn style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::State as FocusState;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::LIGHT;
+    use iced::advanced::widget;
 
     #[test]
     fn disabled_button_reduces_foreground_opacity() {
@@ -235,5 +250,43 @@ mod tests {
 
         let leading: Button<'_, ()> = button("Leading", &LIGHT).align_x(Horizontal::Left);
         assert_eq!(leading.alignment, Horizontal::Left);
+    }
+
+    #[test]
+    fn interactive_buttons_join_keyboard_focus_order() {
+        let button: Element<'_, ()> = button("Save", &LIGHT).on_press(()).into_widget();
+        let tree = widget::Tree::new(button.as_widget());
+        assert!(!tree.state.downcast_ref::<FocusState>().is_focused());
+    }
+
+    #[test]
+    fn enabled_button_labels_keep_normal_text_contrast() {
+        for theme in [LIGHT, DARK] {
+            for variant in [
+                ButtonVariant::Default,
+                ButtonVariant::Destructive,
+                ButtonVariant::Secondary,
+                ButtonVariant::Outline,
+                ButtonVariant::Ghost,
+                ButtonVariant::Link,
+            ] {
+                for status in [
+                    iced_button::Status::Active,
+                    iced_button::Status::Hovered,
+                    iced_button::Status::Pressed,
+                ] {
+                    let appearance = style(&theme, variant, status);
+                    let background = match appearance.background {
+                        Some(Background::Color(color)) => color,
+                        _ => theme.palette.background,
+                    };
+                    assert!(
+                        appearance.text_color.relative_contrast(background) >= 4.5,
+                        "{} {variant:?} {status:?}",
+                        theme.name
+                    );
+                }
+            }
+        }
     }
 }

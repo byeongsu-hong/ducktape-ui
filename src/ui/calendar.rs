@@ -1024,16 +1024,8 @@ where
     }
 
     fn header(&self, width: f32) -> Element<'a, Message> {
-        let previous_month = self
-            .state
-            .month
-            .previous()
-            .filter(|month| self.constraints.month_has_enabled_day(*month));
-        let next_month = self
-            .state
-            .month
-            .next()
-            .filter(|month| self.constraints.month_has_enabled_day(*month));
+        let previous_month = self.state.month.previous();
+        let next_month = self.state.month.next();
         let previous = button("‹", &self.theme)
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Small)
@@ -1191,6 +1183,8 @@ where
     }
 
     fn day_grid(&self, width: f32) -> Element<'a, Message> {
+        let tab_stop = self.day_tab_stop();
+
         self.state
             .month
             .visible_dates()
@@ -1198,7 +1192,7 @@ where
             .fold(Column::new().width(width), |column, week| {
                 let mut cells = week
                     .iter()
-                    .map(|date| self.day_cell(*date))
+                    .map(|date| self.day_cell(*date, tab_stop))
                     .collect::<Vec<_>>();
                 if self.week_numbers {
                     let week_number = week
@@ -1222,7 +1216,26 @@ where
             .into()
     }
 
-    fn day_cell(&self, date: Option<Date>) -> Element<'a, Message> {
+    fn day_tab_stop(&self) -> Option<Date> {
+        let enabled =
+            |date: Date| self.state.month.contains(date) && !self.constraints.is_disabled(date);
+        let visible = self.state.month.visible_dates();
+
+        self.state
+            .focused
+            .filter(|date| enabled(*date))
+            .or_else(|| {
+                visible
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .find(|date| enabled(*date) && self.state.selection.is_selected(*date))
+            })
+            .or_else(|| self.today.filter(|date| enabled(*date)))
+            .or_else(|| visible.into_iter().flatten().find(|date| enabled(*date)))
+    }
+
+    fn day_cell(&self, date: Option<Date>, tab_stop: Option<Date>) -> Element<'a, Message> {
         let Some(date) = date else {
             return Space::new()
                 .width(DAY_CELL_SIZE)
@@ -1267,6 +1280,7 @@ where
 
         FocusControl::new(day_focus_id(&self.id, date), content, activate, &self.theme)
             .disabled(disabled)
+            .tab_stop(tab_stop == Some(date))
             .on_key_press(move |key, modifiers| {
                 let command = keyboard_command(&key, modifiers, direction)?;
                 let target = navigation_target(date, command, &constraints)?;
@@ -1321,7 +1335,7 @@ where
     .align_y(Vertical::Center)
 }
 
-/// Compatibility calendar using native iced buttons and caller-supplied
+/// Compatibility calendar using shared keyboard-focusable buttons and caller-supplied
 /// previous/next messages. New code should use [`controlled_calendar`].
 pub fn calendar<'a, Message>(
     month: Month,
@@ -1433,8 +1447,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
+    use iced::advanced::renderer::Headless as _;
+    use iced::advanced::{Layout, Shell, clipboard, layout, widget};
+    use iced::{Event, Point, Rectangle, Size, mouse};
 
     fn month(year: i32, number: u8) -> Month {
         Month::new(year, number).unwrap()
@@ -1541,6 +1559,17 @@ mod tests {
     }
 
     #[test]
+    fn day_grid_exposes_one_sequential_focus_stop() {
+        let selected = date(2024, 5, 17);
+        let state = CalendarState::new(month(2024, 5), CalendarSelection::Single(Some(selected)));
+        let calendar =
+            controlled_calendar("booking", &state, |_| (), &LIGHT).today(Some(date(2024, 5, 18)));
+
+        assert_eq!(calendar.day_tab_stop(), Some(selected));
+        assert_eq!(focusable_count(calendar.day_grid(CALENDAR_WIDTH)), 1);
+    }
+
+    #[test]
     fn keyboard_navigation_changes_units_and_skips_disabled_dates() {
         let friday = date(2024, 3, 1);
         let constraints = CalendarConstraints::new()
@@ -1562,6 +1591,52 @@ mod tests {
             navigation_target(friday, CalendarCommand::NextMonth, &constraints),
             Some(date(2024, 4, 1))
         );
+    }
+
+    #[test]
+    fn pointer_month_navigation_crosses_a_fully_disabled_month() {
+        let july = month(2024, 7);
+        let august = month(2024, 8);
+        let state = CalendarState::new(july, CalendarSelection::Single(None));
+        let calendar = controlled_calendar("disabled-month", &state, |event| event, &LIGHT)
+            .disabled_dates(move |date| date.month() == august);
+        let mut header = calendar.header(CALENDAR_WIDTH);
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(CALENDAR_WIDTH, DAY_CELL_SIZE));
+        let mut tree = widget::Tree::new(header.as_widget());
+        let node = header.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let layout = Layout::new(&node);
+        let next = layout.children().last().unwrap().bounds().center();
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+
+        for event in [
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            header.as_widget_mut().update(
+                &mut tree,
+                &event,
+                layout,
+                mouse::Cursor::Available(next),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+
+        assert_eq!(messages, [CalendarEvent::MonthChanged(august)]);
     }
 
     #[test]

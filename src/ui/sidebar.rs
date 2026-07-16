@@ -746,9 +746,8 @@ where
                 .into();
 
         if tooltip_enabled(self.collapsed, self.disabled, self.tooltip.is_some()) {
-            // The shared tooltip supplies delayed hover/focus presentation. The
-            // nested button remains the activation owner until iced gains a
-            // semantic control+description relationship primitive.
+            // The nested button remains the sole focus stop; iced does not yet
+            // expose a semantic control+description relationship primitive.
             tooltip(
                 self.id.tooltip(),
                 control,
@@ -757,6 +756,7 @@ where
             )
             .placement(self.side.tooltip_placement())
             .side_offset(8.0)
+            .focusable(false)
             .into()
         } else {
             control
@@ -957,7 +957,7 @@ fn sidebar_rail<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let color = theme.palette.border;
+    let color = theme.palette.input;
     let seam: Element<'a, Message> = rule::vertical::<iced::Theme>(metrics.seam_width)
         .style(move |_theme| RuleStyle {
             color,
@@ -1154,8 +1154,8 @@ fn badge_style(theme: &Theme, active: bool) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn reducer_keeps_desktop_and_mobile_state_independent() {
