@@ -3,18 +3,26 @@ mod ui;
 use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Theme as IcedTheme};
 use ui::alert::{AlertVariant, alert};
+use ui::aspect_ratio::aspect_ratio;
+use ui::avatar::{AvatarSize, avatar_fallback};
 use ui::badge::{BadgeSize, BadgeVariant, badge};
+use ui::breadcrumb::{BreadcrumbItem, breadcrumb, breadcrumb_separator};
 use ui::button::{ButtonSize, ButtonVariant, button};
 use ui::card::{card, card_header};
 use ui::checkbox::checkbox;
 use ui::empty_state::empty_state;
 use ui::field::{FieldHint, field};
 use ui::input::{InputVariant, input, input_with_variant};
+use ui::item::item;
+use ui::kbd::kbd;
+use ui::label::label;
+use ui::pagination::{PaginationItem, pagination};
 use ui::progress::{ProgressVariant, progress};
 use ui::segmented_control::segmented_control;
 use ui::surface::{SurfaceVariant, surface};
 use ui::textarea::{TextareaVariant, textarea};
 use ui::theme::{ACCENTS, DARK, LIGHT, Theme};
+use ui::typography::{TextRole, inline_code, typography};
 
 #[derive(Default)]
 struct Showcase {
@@ -25,6 +33,7 @@ struct Showcase {
     section: Section,
     accepted: bool,
     notes: iced::widget::text_editor::Content,
+    page: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -43,6 +52,7 @@ enum Message {
     SectionSelected(Section),
     AcceptedChanged(bool),
     NotesChanged(iced::widget::text_editor::Action),
+    PageSelected(usize),
 }
 
 fn main() -> iced::Result {
@@ -62,6 +72,7 @@ impl Showcase {
             Message::SectionSelected(section) => self.section = section,
             Message::AcceptedChanged(accepted) => self.accepted = accepted,
             Message::NotesChanged(action) => self.notes.perform(action),
+            Message::PageSelected(page) => self.page = page,
         }
     }
 
@@ -197,6 +208,83 @@ impl Showcase {
             &theme,
         );
 
+        let breadcrumb_example = breadcrumb(
+            [
+                BreadcrumbItem::link(
+                    button("Home", &theme)
+                        .variant(ButtonVariant::Link)
+                        .on_press(Message::Clicked),
+                ),
+                BreadcrumbItem::link(
+                    button("Components", &theme)
+                        .variant(ButtonVariant::Link)
+                        .on_press(Message::Clicked),
+                ),
+                BreadcrumbItem::current(text("Showcase")),
+            ],
+            || breadcrumb_separator(&theme),
+            &theme,
+        );
+
+        let page = self.page.max(1);
+        let pagination_example = pagination(
+            [
+                PaginationItem::Previous((page > 1).then_some(page - 1)),
+                PaginationItem::Page {
+                    number: 1,
+                    current: page == 1,
+                },
+                PaginationItem::Page {
+                    number: 2,
+                    current: page == 2,
+                },
+                PaginationItem::Ellipsis,
+                PaginationItem::Page {
+                    number: 10,
+                    current: page == 10,
+                },
+                PaginationItem::Next((page < 10).then_some((page + 1).min(10))),
+            ],
+            Message::PageSelected,
+            &theme,
+        );
+
+        let item_example = item(
+            Some(avatar_fallback("DU", AvatarSize::Small, &theme).into()),
+            "ducktape-ui",
+            Some("Source-owned iced components"),
+            Some(badge("Local", BadgeVariant::Secondary, &theme).into()),
+            &theme,
+        );
+
+        let preview_theme = theme;
+        let ratio_example = aspect_ratio(16.0 / 9.0, move || {
+            surface(
+                text("16:9 responsive content"),
+                SurfaceVariant::Muted,
+                &preview_theme,
+            )
+            .center(Length::Fill)
+            .into()
+        })
+        .width(Length::Fill)
+        .height(180);
+
+        let type_examples = column![
+            typography("Heading one", TextRole::H1, &theme),
+            typography("Heading two", TextRole::H2, &theme),
+            typography("Heading three", TextRole::H3, &theme),
+            typography("Heading four", TextRole::H4, &theme),
+            typography("Paragraph role for body copy.", TextRole::Paragraph, &theme),
+            typography("Lead copy introduces a section.", TextRole::Lead, &theme),
+            typography("Large emphasized copy", TextRole::Large, &theme),
+            typography("Small supporting copy", TextRole::Small, &theme),
+            typography("Muted secondary copy", TextRole::Muted, &theme),
+            typography("plain_inline_code", TextRole::InlineCode, &theme),
+            inline_code("cargo add iced", &theme),
+        ]
+        .spacing(theme.spacing.sm);
+
         let invalid = self.email.is_empty();
         let form = column![
             card_header(
@@ -294,6 +382,30 @@ impl Showcase {
                 "Create one when this configuration is ready to reuse.",
                 &theme,
             ),
+            text("Content primitives").size(theme.typography.xl),
+            breadcrumb_example,
+            row![
+                avatar_fallback("S", AvatarSize::Small, &theme),
+                avatar_fallback("D", AvatarSize::Default, &theme),
+                avatar_fallback("L", AvatarSize::Large, &theme),
+                label("Keyboard shortcut", &theme),
+                kbd("Ctrl", &theme),
+                text("+").color(theme.palette.muted_foreground),
+                kbd("K", &theme),
+            ]
+            .spacing(theme.spacing.sm)
+            .align_y(iced::Alignment::Center),
+            item_example,
+            pagination_example,
+            text("Aspect ratio + skeleton").size(theme.typography.xl),
+            ratio_example,
+            row![
+                ui::skeleton::skeleton(&theme).width(160).height(16),
+                ui::skeleton::skeleton(&theme).width(48).height(48),
+            ]
+            .spacing(theme.spacing.sm),
+            text("Typography").size(theme.typography.xl),
+            type_examples,
             text("Card + field").size(theme.typography.xl),
             card(form, &theme).width(Length::Fill),
         ]

@@ -100,6 +100,69 @@
       "description": "Controlled pointer and touch selector built from native buttons.",
       "dependencies": ["button"],
       "files": [{ "source": "segmented_control.rs", "target": "segmented_control.rs" }]
+    },
+    {
+      "name": "aspect-ratio",
+      "type": "component",
+      "description": "Responsive content constrained to a caller-selected aspect ratio.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "aspect_ratio.rs", "target": "aspect_ratio.rs" }]
+    },
+    {
+      "name": "avatar",
+      "type": "component",
+      "description": "Circular caller-owned image/content frame with text fallback and three sizes.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "avatar.rs", "target": "avatar.rs" }]
+    },
+    {
+      "name": "breadcrumb",
+      "type": "component",
+      "description": "Path items with caller-owned navigation controls and separators.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "breadcrumb.rs", "target": "breadcrumb.rs" }]
+    },
+    {
+      "name": "item",
+      "type": "component",
+      "description": "Content row with optional leading visual, description, and trailing action.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "item.rs", "target": "item.rs" }]
+    },
+    {
+      "name": "kbd",
+      "type": "component",
+      "description": "Semantic visual key cap for keyboard shortcut copy.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "kbd.rs", "target": "kbd.rs" }]
+    },
+    {
+      "name": "label",
+      "type": "component",
+      "description": "Consistent visible label text for native controls.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "label.rs", "target": "label.rs" }]
+    },
+    {
+      "name": "pagination",
+      "type": "component",
+      "description": "Controlled previous, page, ellipsis, and next navigation items.",
+      "dependencies": ["button"],
+      "files": [{ "source": "pagination.rs", "target": "pagination.rs" }]
+    },
+    {
+      "name": "skeleton",
+      "type": "component",
+      "description": "Static reduced-motion-safe loading placeholder with native dimensions.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "skeleton.rs", "target": "skeleton.rs" }]
+    },
+    {
+      "name": "typography",
+      "type": "component",
+      "description": "Theme-backed heading, paragraph, lead, small, muted, and code roles.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "typography.rs", "target": "typography.rs" }]
     }
   ]
 }

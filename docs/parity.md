@@ -13,11 +13,11 @@ Status on 2026-07-16:
 | Accordion | Planned | Controlled disclosure group with keyboard navigation. |
 | Alert | Shipped | Composable semantic container; visible text carries intent. |
 | Alert Dialog | Planned | Controlled modal pattern with focus restoration and Escape handling. |
-| Aspect Ratio | Planned | Constraint-preserving layout widget. |
+| Aspect Ratio | Shipped | Native responsive layout constrained to a caller-selected ratio. |
 | Attachment | Planned | File attachment composition and state model. |
-| Avatar | Planned | Image/fallback composition with optional iced image support. |
+| Avatar | Shipped | Circular caller-owned content frame and text fallback without forcing image support. |
 | Badge | Shipped | Six intents, two sizes, and optional redundant status marker. |
-| Breadcrumb | Planned | Composable path items, separators, and collapsed overflow. |
+| Breadcrumb | Shipped | Caller-owned navigation items, current page, and separators. |
 | Bubble | Planned | Message bubble composition. |
 | Button | Shipped | Six variants, four sizes, and disabled state. |
 | Button Group | Planned | Joined button layout with edge-aware styling. |
@@ -42,16 +42,16 @@ Status on 2026-07-16:
 | Input | Shipped | Default and invalid native text inputs. |
 | Input Group | Planned | Joined leading/trailing controls and input layout. |
 | Input OTP | Planned | Multi-cell input state and paste/keyboard behavior. |
-| Item | Planned | Reusable content/action row composition. |
-| Kbd | Planned | Keyboard-key visual. |
-| Label | Planned | Consistent visible control labels. |
+| Item | Shipped | Reusable leading/content/trailing row composition. |
+| Kbd | Shipped | Semantic keyboard-key visual. |
+| Label | Shipped | Consistent visible control labels. |
 | Marker | Planned | Map/content marker visual and state variants. |
 | Menubar | Planned | Keyboard-operated top-level menu model. |
 | Message | Planned | Structured chat message composition. |
 | Message Scroller | Planned | Follow-bottom and unread-message scrolling state. |
 | Native Select | Planned | Styled native pick list with documented iced interaction limits. |
 | Navigation Menu | Planned | Roving-focus navigation and disclosure panels. |
-| Pagination | Planned | Controlled page navigation composition. |
+| Pagination | Shipped | Controlled previous/page/ellipsis/next composition. |
 | Popover | Planned | Anchored overlay with dismissal and focus ownership. |
 | Progress | Shipped | Four semantic visual progress variants; callers pair visible status text. |
 | Radio Group | Planned | Single-selection group with roving focus and arrow keys. |
@@ -61,7 +61,7 @@ Status on 2026-07-16:
 | Separator | Shipped | Horizontal and vertical semantic separators. |
 | Sheet | Planned | Side sheet with modal/non-modal focus behavior. |
 | Sidebar | Planned | Controlled collapsible navigation system and shortcut. |
-| Skeleton | Planned | Static and reduced-motion-aware loading placeholders. |
+| Skeleton | Shipped | Static, reduced-motion-safe loading placeholders with native sizing. |
 | Slider | Planned | Focusable range control with full keyboard operation. |
 | Sonner | Planned | Timed toast stack with pause, dismissal, and announcement model. |
 | Spinner | Planned | Reduced-motion-aware indeterminate progress visual. |
@@ -73,6 +73,6 @@ Status on 2026-07-16:
 | Toggle | Planned | Pressed-state button with keyboard operation. |
 | Toggle Group | Planned | Single/multiple controlled toggles with roving focus. |
 | Tooltip | Planned | Hover and focus trigger with nonessential content constraints. |
-| Typography | Planned | Theme-backed text roles and prose composition. |
+| Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
 ducktape-ui also ships iced-specific `theme`, `surface`, and `segmented-control` primitives. Interactive components that iced 0.14 cannot operate correctly from the keyboard will use source-owned custom widgets instead of receiving a misleading visual-only port.

@@ -62,6 +62,8 @@ The current foundation includes:
 - badge variants, sizes, and labeled status markers
 - alerts, bounded progress bars, and reusable empty states
 - styled native checkboxes and multiline text editors
+- responsive aspect ratios, avatars, breadcrumbs, items, pagination, and skeletons
+- labels, key caps, and theme-backed typography roles
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 

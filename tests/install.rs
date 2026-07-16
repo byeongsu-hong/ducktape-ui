@@ -59,6 +59,15 @@ fn init_add_composed_components_and_compile_owned_source() {
             "empty",
             "progress",
             "textarea",
+            "aspect-ratio",
+            "avatar",
+            "breadcrumb",
+            "item",
+            "kbd",
+            "label",
+            "pagination",
+            "skeleton",
+            "typography",
         ],
         project.path(),
     )
@@ -73,6 +82,11 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("empty_state.rs"));
     assert!(output.contains("progress.rs"));
     assert!(output.contains("textarea.rs"));
+    assert!(output.contains("aspect_ratio.rs"));
+    assert!(output.contains("avatar.rs"));
+    assert!(output.contains("breadcrumb.rs"));
+    assert!(output.contains("pagination.rs"));
+    assert!(output.contains("typography.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),
@@ -84,6 +98,7 @@ enum Message {
     SectionSelected(Section),
     Accepted(bool),
     Notes(iced::widget::text_editor::Action),
+    PageSelected(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +131,36 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
         ui::textarea::TextareaVariant::Default,
         &theme,
     );
+    let crumbs = ui::breadcrumb::breadcrumb(
+        [
+            ui::breadcrumb::BreadcrumbItem::link(
+                ui::button::button("Home", &theme).on_press(Message::PageSelected(1)),
+            ),
+            ui::breadcrumb::BreadcrumbItem::current(iced::widget::text("Settings")),
+        ],
+        || ui::breadcrumb::breadcrumb_separator(&theme),
+        &theme,
+    );
+    let pages = ui::pagination::pagination(
+        [
+            ui::pagination::PaginationItem::Previous(None),
+            ui::pagination::PaginationItem::Page { number: 1, current: true },
+            ui::pagination::PaginationItem::Ellipsis,
+            ui::pagination::PaginationItem::Next(Some(2)),
+        ],
+        Message::PageSelected,
+        &theme,
+    );
+    let row_item = ui::item::item(
+        Some(ui::avatar::avatar_fallback("DU", ui::avatar::AvatarSize::Small, &theme).into()),
+        "ducktape-ui",
+        Some("Owned source"),
+        Some(ui::kbd::kbd("K", &theme).into()),
+        &theme,
+    );
+    let ratio = ui::aspect_ratio::aspect_ratio(1.0, || iced::widget::text("Square").into())
+        .width(100)
+        .height(100);
 
     iced::widget::column![
         ui::card::card(field, &theme).max_width(480),
@@ -137,6 +182,14 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
         ),
         notes,
         sections,
+        crumbs,
+        pages,
+        row_item,
+        ratio,
+        ui::label::label("Visible label", &theme),
+        ui::skeleton::skeleton(&theme).width(100).height(12),
+        ui::typography::typography("Heading", ui::typography::TextRole::H2, &theme),
+        ui::typography::inline_code("cargo check", &theme),
     ]
     .into()
 }

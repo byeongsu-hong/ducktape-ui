@@ -512,9 +512,16 @@ fn simple_diff(path: &Path, local: &str, incoming: &str) -> String {
 fn template(path: &str) -> Option<&'static str> {
     match path {
         "alert.rs" => Some(include_str!("ui/alert.rs")),
+        "aspect_ratio.rs" => Some(include_str!("ui/aspect_ratio.rs")),
+        "avatar.rs" => Some(include_str!("ui/avatar.rs")),
+        "breadcrumb.rs" => Some(include_str!("ui/breadcrumb.rs")),
         "theme.rs" => Some(include_str!("ui/theme.rs")),
         "button.rs" => Some(include_str!("ui/button.rs")),
         "input.rs" => Some(include_str!("ui/input.rs")),
+        "item.rs" => Some(include_str!("ui/item.rs")),
+        "kbd.rs" => Some(include_str!("ui/kbd.rs")),
+        "label.rs" => Some(include_str!("ui/label.rs")),
+        "pagination.rs" => Some(include_str!("ui/pagination.rs")),
         "card.rs" => Some(include_str!("ui/card.rs")),
         "checkbox.rs" => Some(include_str!("ui/checkbox.rs")),
         "empty_state.rs" => Some(include_str!("ui/empty_state.rs")),
@@ -523,8 +530,10 @@ fn template(path: &str) -> Option<&'static str> {
         "progress.rs" => Some(include_str!("ui/progress.rs")),
         "separator.rs" => Some(include_str!("ui/separator.rs")),
         "segmented_control.rs" => Some(include_str!("ui/segmented_control.rs")),
+        "skeleton.rs" => Some(include_str!("ui/skeleton.rs")),
         "surface.rs" => Some(include_str!("ui/surface.rs")),
         "textarea.rs" => Some(include_str!("ui/textarea.rs")),
+        "typography.rs" => Some(include_str!("ui/typography.rs")),
         _ => None,
     }
 }
