@@ -4,15 +4,17 @@ ducktape-ui targets the complete [official shadcn/ui component catalog](https://
 
 Status on 2026-07-16:
 
+**64 / 64 official components are Shipped.**
+
 - **Shipped**: installable source exists, is compiled by this repository, and satisfies the current behavior contract.
 - **Planned**: implementation is still required.
 - **Foundation**: installable, compiled iced source is useful, but it does not yet satisfy the named shadcn behavior contract.
 
 | shadcn/ui component | Status | iced implementation |
 | --- | --- | --- |
-| Accordion | Foundation | Controlled single/multiple disclosure and header-navigation reducer; activation can use `focus-control`, but the app still routes roving focus. |
+| Accordion | Shipped | Controlled single/multiple disclosure with stable header IDs, aligned copy/indicator/content, pointer/touch/Enter/Space activation, disabled-aware ArrowUp/Down/Home/End navigation, and direct focus tasks. |
 | Alert | Shipped | Composable semantic container; visible text carries intent. |
-| Alert Dialog | Planned | Controlled modal pattern with focus restoration and Escape handling. |
+| Alert Dialog | Shipped | Controlled high-friction modal with safe initial focus, wrapping Tab order, explicit cancel/action outcomes, Escape cancellation, and no backdrop dismissal. |
 | Aspect Ratio | Shipped | Native responsive layout constrained to a caller-selected ratio. |
 | Attachment | Shipped | Visible file name/metadata row with caller-owned controls. |
 | Avatar | Shipped | Circular caller-owned content frame and text fallback without forcing image support. |
@@ -21,24 +23,24 @@ Status on 2026-07-16:
 | Bubble | Shipped | Incoming/outgoing message bubble composition. |
 | Button | Shipped | Six variants, four sizes, and disabled state. |
 | Button Group | Shipped | Horizontal/vertical caller-owned control grouping and shared frame. |
-| Calendar | Foundation | Validated date/month model and controlled six-week grid; day-grid roving focus and arrow handling remain app-scoped. |
+| Calendar | Shipped | Validated Gregorian model with controlled single/range/multiple selection, stable day IDs, pointer/touch/Enter/Space selection, disabled-aware arrows/Home/End/Page navigation and focus tasks, min/max/custom constraints, outside days, today, week numbers, month/year controls, and RTL. |
 | Card | Shipped | Composable card surface and header. |
-| Carousel | Foundation | Controlled bounded/wrapping paging, orientations, active-slide clipping, and keyboard reducer; the app still scopes key events to carousel focus. |
-| Chart | Planned | Canvas-based chart primitives and accessible textual companion data. |
+| Carousel | Shipped | Controlled bounded/wrapping horizontal or vertical viewport with stable focus, scoped Arrow/Home/End navigation, axis-locked pointer/touch swipe, configurable threshold, RTL-correct direction/control order, disabled boundary controls, and focusable numbered indicators. |
+| Chart | Shipped | Keyed Canvas line/area/grouped-or-stacked bar/pie/donut charts with safe domains, axes/grids, controlled hit testing, semantic light/dark series colors, aligned legends, shadcn-style tooltip indicators, and explicit visible companion-table data. |
 | Checkbox | Shipped | Styled native checkbox; iced 0.14 currently limits it to pointer/touch. |
 | Collapsible | Shipped | Controlled open/close reducer and caller-owned trigger/content composition. |
 | Combobox | Shipped | Searchable selection built on iced's keyboard-capable native combo box. |
-| Command | Planned | Searchable keyboard command model and result list. |
-| Context Menu | Planned | Positioned overlay with focus and keyboard ownership. |
+| Command | Shipped | Controlled grouped command palette with native editing/paste/IME, label/keyword filtering, disabled-aware Arrow/Home/End navigation, Enter/pointer selection, shortcuts, empty state, scrolling, and stable focus tasks. |
+| Context Menu | Shipped | Exact right-click/touch point anchoring with collision handling, dismissal/focus restoration, and the complete shared grouped/check/radio/submenu/shortcut keyboard menu contract. |
 | Data Table | Shipped | Headless sorting, filtering-copy, and pagination state composed with table, input, checkbox, and pagination primitives. |
-| Date Picker | Planned | Calendar and popover composition. |
-| Dialog | Planned | Controlled modal with focus trap/restoration and dismissal rules. |
+| Date Picker | Shipped | Controlled single/range trigger and collision-aware popover composed with Calendar, including placeholder/custom formats, constraints, completed-range close behavior, initial day focus, dismissal restoration, invalid/disabled states, and RTL. |
+| Dialog | Shipped | Root-level controlled modal with inert underlay, wrapping Tab order, initial/restore focus tasks, Escape/backdrop dismissal, and explicit LTR/RTL copy/action alignment. |
 | Direction | Shipped | Explicit LTR/RTL alignment and reading-order helpers. |
-| Drawer | Planned | Edge drawer with controlled state and focus handling. |
-| Dropdown Menu | Planned | Menu overlay with roving focus and nested item state. |
+| Drawer | Shipped | Controlled draggable drawer on all four edges with mouse/touch distance and velocity thresholds, focus/dismissal rules, viewport caps, handle, reduced-motion snap behavior, and caller-owned state. |
+| Dropdown Menu | Shipped | Controlled anchored trigger/content with focus restoration, collision placement, LTR/RTL, and shared groups, labels, separators, inset/disabled/check/radio/shortcut/submenu items plus complete keyboard navigation. |
 | Empty | Shipped | Optional leading visual, title, and description. |
 | Field | Shipped | Visible label with description or error copy around a native control. |
-| Hover Card | Planned | Delayed hover/focus disclosure. |
+| Hover Card | Shipped | Delayed hover/focus disclosure with collision placement, bounded panel metrics, and gap-safe pointer transfer into interactive caller content. |
 | Input | Shipped | Default and invalid native text inputs. |
 | Input Group | Shipped | Shared-border leading/input/trailing composition and borderless native input. |
 | Input OTP | Shipped | Controlled grouped slots over one native focusable input with numeric/alphanumeric filtering, paste, disabled, and invalid states. |
@@ -46,33 +48,33 @@ Status on 2026-07-16:
 | Kbd | Shipped | Semantic keyboard-key visual. |
 | Label | Shipped | Consistent visible control labels. |
 | Marker | Shipped | Default, bordered, and separated labeled markers. |
-| Menubar | Planned | Keyboard-operated top-level menu model. |
+| Menubar | Shipped | Controlled top-level menu bar with 36px trigger metrics, disabled-aware Left/Right switching, child Arrow/Home/End/Enter/Escape navigation, rich nested menu content, collision placement, and RTL. |
 | Message | Shipped | Incoming/outgoing avatar, header, body, and actions composition. |
 | Message Scroller | Shipped | Bottom-anchored transcript viewport; follow/unread state remains controlled. |
-| Native Select | Foundation | Styled controlled native pick list; iced 0.14 limits opening and selection to pointer/touch. |
-| Navigation Menu | Planned | Roving-focus navigation and disclosure panels. |
+| Native Select | Shipped | Styled controlled iced PickList preserving its native pointer/touch menu while adding a stable focus ID, ArrowUp/Down/Home/End selection, Enter/Space opening through PickList's own path, disabled/invalid states, exact 36px and 12/20 text metrics, and explicit LTR/RTL label/chevron alignment. |
+| Navigation Menu | Shipped | Controlled links and disclosure content with stable active/open/focus state, pointer/touch/Enter/Space, disabled-aware arrows/Home/End/Escape, content focus handoff, hover intent, one collision-aware viewport or per-trigger panels, responsive vertical mode, exact indicators, and RTL. |
 | Pagination | Shipped | Controlled previous/page/ellipsis/next composition. |
-| Popover | Planned | Anchored overlay with dismissal and focus ownership. |
+| Popover | Shipped | Controlled anchored overlay with stable trigger/content IDs, focus handoff/restore tasks, outside/Escape dismissal, four sides, alignment/offsets, collision flip/clamp, viewport padding, and unclipped shadow geometry. |
 | Progress | Shipped | Four semantic visual progress variants; callers pair visible status text. |
 | Radio Group | Shipped | Controlled exclusive selection with disabled-aware arrows/Home/End and stable focus helpers. |
 | Resizable | Shipped | Controlled arbitrary panel groups with constrained shares, pointer/touch drag, full keyboard resizing, horizontal/vertical layouts, and optional grips. |
 | Scroll Area | Shipped | Styled native scrollable retaining sizing, direction, and callbacks. |
-| Select | Planned | Keyboard-capable select overlay and controlled value. |
+| Select | Shipped | Controlled 36px grouped selection trigger with placeholder, labels, disabled options, active checkmarks, invalid state, collision overlay, full shared keyboard navigation, focus restoration, and RTL. |
 | Separator | Shipped | Horizontal and vertical semantic separators. |
-| Sheet | Planned | Side sheet with modal/non-modal focus behavior. |
-| Sidebar | Planned | Controlled collapsible navigation system and shortcut. |
+| Sheet | Shipped | Controlled modal/non-modal panel on all four edges with inert-underlay option, stable initial/restore focus, configurable dismissal, viewport-capped geometry, header/body/footer/close slots, and explicit LTR/RTL text/action alignment. |
+| Sidebar | Shipped | Controlled expanded/collapsed plus mobile state, Ctrl/Cmd+B reducer, left/right icon/inset/floating variants, off-canvas/icon/none collapse modes, rail, responsive backdrop layout, sticky header/footer with scrolling content, groups, actions, badges, skeletons, submenus, collapsed tooltips, and explicit LTR/RTL metrics. |
 | Skeleton | Shipped | Static, reduced-motion-safe loading placeholders with native sizing. |
 | Slider | Shipped | Controlled single/range/multi-thumb values with pointer/touch drag, full keyboard steps, vertical, reversed/RTL, disabled, and invalid modes. |
-| Sonner | Planned | Timed toast stack with pause, dismissal, and announcement model. |
+| Sonner | Shipped | Controlled timed queue with six placements, visible/queued limits, hover/focus pause, actions, dismissal, reduced motion, and horizontal mouse swipe; iced exposes no live-region API. |
 | Spinner | Shipped | Controlled indeterminate frames with reduced-motion freeze. |
 | Switch | Shipped | Controlled binary control with stable focus, pointer/touch, Enter/Space, two sizes, and disabled styling. |
 | Table | Shipped | Native generic table plus header, cell, caption, and frame helpers. |
 | Tabs | Shipped | Controlled panels with stable trigger focus, disabled-aware arrows/Home/End, automatic/manual activation, and horizontal/vertical default/line variants. |
 | Textarea | Shipped | Styled, focusable native text editor with default/invalid states. |
-| Toast | Planned | Controlled legacy toast stack. |
+| Toast | Shipped | Composable semantic legacy toast surface with aligned title/description, action, dismissal, six variants, and caller-owned lifetime. |
 | Toggle | Shipped | Controlled two-state control with centered size geometry, default/outline styles, and complete activation behavior. |
 | Toggle Group | Shipped | Single/multiple controlled toggles with configurable spacing/orientation and disabled-aware roving focus helpers. |
-| Tooltip | Planned | Hover and focus trigger with nonessential content constraints. |
+| Tooltip | Shipped | Noninteractive passive-content tooltip with keyboard focus plus hover, exact open/close delays, fixed text metrics/max width, collision placement, and unclipped shadow bounds. |
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
 ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, and `focus-control` primitives. `focus-control` provides a stable focus ID, visible ring, and pointer, touch, Enter, and Space activation through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.

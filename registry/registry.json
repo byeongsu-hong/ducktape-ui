@@ -246,7 +246,7 @@
     {
       "name": "accordion",
       "type": "component",
-      "description": "Controlled single/multiple disclosure state, items, and navigation helpers.",
+      "description": "Controlled single/multiple disclosure with stable focus, complete header activation, and disabled-aware keyboard navigation.",
       "dependencies": ["focus-control"],
       "files": [{ "source": "accordion.rs", "target": "accordion.rs" }]
     },
@@ -267,8 +267,8 @@
     {
       "name": "native-select",
       "type": "component",
-      "description": "Styled controlled native pick list with documented iced interaction limits.",
-      "dependencies": ["theme"],
+      "description": "Styled controlled iced pick list with stable focus, keyboard selection/opening, disabled/invalid states, exact metrics, and RTL.",
+      "dependencies": ["direction", "focus-control", "theme"],
       "files": [{ "source": "native_select.rs", "target": "native_select.rs" }]
     },
     {
@@ -288,15 +288,22 @@
     {
       "name": "calendar",
       "type": "component",
-      "description": "Controlled six-week month grid with validated Gregorian date state.",
-      "dependencies": ["button", "focus-control"],
+      "description": "Keyboard-complete controlled Gregorian calendar with single, range, and multiple selection plus constraints and stable day focus.",
+      "dependencies": ["button", "direction", "focus-control", "native-select", "theme"],
       "files": [{ "source": "calendar.rs", "target": "calendar.rs" }]
+    },
+    {
+      "name": "date-picker",
+      "type": "component",
+      "description": "Single or range date picker composed from the keyboard-complete calendar and collision-aware popover.",
+      "dependencies": ["calendar", "direction", "popover", "theme"],
+      "files": [{ "source": "date_picker.rs", "target": "date_picker.rs" }]
     },
     {
       "name": "carousel",
       "type": "component",
-      "description": "Controlled bounded or wrapping slide state, viewport, and keyboard command reducer.",
-      "dependencies": ["focus-control"],
+      "description": "Controlled bounded or wrapping carousel with focus-scoped keys, pointer/touch swipe, RTL, controls, and indicators.",
+      "dependencies": ["direction", "focus-control", "theme"],
       "files": [{ "source": "carousel.rs", "target": "carousel.rs" }]
     },
     {
@@ -354,6 +361,142 @@
       "description": "Controlled multi-panel groups with pointer/touch drag, keyboard resizing, and visible grips.",
       "dependencies": ["focus-control"],
       "files": [{ "source": "resizable.rs", "target": "resizable.rs" }]
+    },
+    {
+      "name": "modal",
+      "type": "component",
+      "description": "Root modal foundation with an inert underlay, dismissal rules, and wrapping focus containment.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "modal.rs", "target": "modal.rs" }]
+    },
+    {
+      "name": "dialog",
+      "type": "component",
+      "description": "Controlled modal dialog with focus restoration, dismissal, and explicit LTR/RTL alignment.",
+      "dependencies": ["modal", "direction", "theme"],
+      "files": [{ "source": "dialog.rs", "target": "dialog.rs" }]
+    },
+    {
+      "name": "alert-dialog",
+      "type": "component",
+      "description": "High-friction confirmation dialog with safe initial focus and distinct cancel/action outcomes.",
+      "dependencies": ["modal", "dialog", "direction", "focus-control", "button", "theme"],
+      "files": [{ "source": "alert_dialog.rs", "target": "alert_dialog.rs" }]
+    },
+    {
+      "name": "toast",
+      "type": "component",
+      "description": "Composable semantic toast surface with aligned copy, action, and dismissal slots.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "toast.rs", "target": "toast.rs" }]
+    },
+    {
+      "name": "sonner",
+      "type": "component",
+      "description": "Controlled timed toast queue with placement, pause, actions, dismissal, and mouse swipe.",
+      "dependencies": ["theme", "toast", "focus-control"],
+      "files": [{ "source": "sonner.rs", "target": "sonner.rs" }]
+    },
+    {
+      "name": "command",
+      "type": "component",
+      "description": "Searchable grouped command list with native text editing, disabled-aware keyboard navigation, and stable focus.",
+      "dependencies": ["theme", "focus-control", "input", "scroll-area"],
+      "files": [{ "source": "command.rs", "target": "command.rs" }]
+    },
+    {
+      "name": "chart",
+      "type": "component",
+      "description": "Canvas line, area, bar, pie, and donut charts with keyed config, controlled hits, legends, tooltips, and visible companion data.",
+      "dependencies": ["theme"],
+      "cargoDependencies": {
+        "iced": { "version": "=0.14.0", "features": ["advanced", "canvas"] }
+      },
+      "files": [{ "source": "chart.rs", "target": "chart.rs" }]
+    },
+    {
+      "name": "popover",
+      "type": "component",
+      "description": "Controlled anchored overlay with collision-aware placement, dismissal, and focus handoff/restore.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "popover.rs", "target": "popover.rs" }]
+    },
+    {
+      "name": "navigation-menu",
+      "type": "component",
+      "description": "Controlled route links and disclosure viewport with responsive orientation, hover intent, roving focus, collision handling, and RTL.",
+      "dependencies": ["direction", "focus-control", "menu", "popover", "tooltip", "theme"],
+      "files": [{ "source": "navigation_menu.rs", "target": "navigation_menu.rs" }]
+    },
+    {
+      "name": "tooltip",
+      "type": "component",
+      "description": "Noninteractive hover/focus tooltip with exact delays, constrained copy, and collision-aware placement.",
+      "dependencies": ["popover", "theme"],
+      "files": [{ "source": "tooltip.rs", "target": "tooltip.rs" }]
+    },
+    {
+      "name": "hover-card",
+      "type": "component",
+      "description": "Delayed hover/focus card with collision placement and gap-safe pointer transfer into interactive content.",
+      "dependencies": ["popover", "tooltip", "theme"],
+      "files": [{ "source": "hover_card.rs", "target": "hover_card.rs" }]
+    },
+    {
+      "name": "sidebar",
+      "type": "component",
+      "description": "Controlled responsive sidebar with collapse modes, shortcut, rail, groups, menus, submenus, badges, skeletons, and RTL layout.",
+      "dependencies": ["direction", "focus-control", "scroll-area", "skeleton", "tooltip", "popover", "theme"],
+      "files": [{ "source": "sidebar.rs", "target": "sidebar.rs" }]
+    },
+    {
+      "name": "menu",
+      "type": "component",
+      "description": "Shared controlled menu reducer and renderer with groups, checks, radios, shortcuts, submenus, RTL, and complete keyboard navigation.",
+      "dependencies": ["direction", "focus-control", "theme"],
+      "files": [{ "source": "menu.rs", "target": "menu.rs" }]
+    },
+    {
+      "name": "dropdown-menu",
+      "type": "component",
+      "description": "Controlled anchored menu trigger with dismissal, focus restoration, and shared rich menu items.",
+      "dependencies": ["menu", "popover"],
+      "files": [{ "source": "dropdown_menu.rs", "target": "dropdown_menu.rs" }]
+    },
+    {
+      "name": "context-menu",
+      "type": "component",
+      "description": "Right-click/touch-positioned menu with exact point anchoring, collision handling, and shared rich menu navigation.",
+      "dependencies": ["menu", "popover"],
+      "files": [{ "source": "context_menu.rs", "target": "context_menu.rs" }]
+    },
+    {
+      "name": "menubar",
+      "type": "component",
+      "description": "Keyboard-operated top-level menus with Left/Right switching and shared nested menu behavior.",
+      "dependencies": ["menu", "popover", "focus-control"],
+      "files": [{ "source": "menubar.rs", "target": "menubar.rs" }]
+    },
+    {
+      "name": "select",
+      "type": "component",
+      "description": "Controlled grouped select overlay with placeholder, checks, disabled options, keyboard navigation, and RTL.",
+      "dependencies": ["menu", "popover"],
+      "files": [{ "source": "select.rs", "target": "select.rs" }]
+    },
+    {
+      "name": "sheet",
+      "type": "component",
+      "description": "Controlled modal or non-modal sheet on any edge with focus/dismissal rules and explicit copy/action alignment.",
+      "dependencies": ["modal", "direction", "theme"],
+      "files": [{ "source": "sheet.rs", "target": "sheet.rs" }]
+    },
+    {
+      "name": "drawer",
+      "type": "component",
+      "description": "Controlled draggable edge drawer with pointer/touch thresholds, focus restoration, and reduced-motion snap behavior.",
+      "dependencies": ["sheet", "modal", "theme"],
+      "files": [{ "source": "drawer.rs", "target": "drawer.rs" }]
     }
   ]
 }

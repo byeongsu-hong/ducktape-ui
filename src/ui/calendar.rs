@@ -1,11 +1,29 @@
-use super::button::{Button, ButtonSize, ButtonVariant, button};
-use super::theme::Theme;
-use iced::widget::{Column, Grid, Row, Space, container, text};
-use iced::{Alignment, Element, Length};
+//! Controlled calendar selection and keyboard-complete day-grid navigation.
+//!
+//! Day cells expose stable iced focus IDs and support arrows, Home/End, and
+//! PageUp/PageDown. Iced does not expose ARIA grid/date semantics; this module
+//! implements the interaction contract without claiming roles it cannot emit.
+//! Optional month/year pick lists inherit iced 0.14's pointer/touch limitation.
+
 use std::fmt;
+use std::rc::Rc;
+
+use super::button::{Button, ButtonSize, ButtonVariant, button};
+use super::direction::Direction;
+use super::focus_control::{FocusControl, Status, Style as FocusStyle};
+use super::native_select::native_select;
+use super::theme::{Theme, alpha, mix};
+use iced::alignment::{Horizontal, Vertical};
+use iced::keyboard::{self, key::Named};
+use iced::widget::text::LineHeight;
+use iced::widget::{Column, Container, Row, Space, container, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Pixels, Shadow, Task, widget};
 
 pub const MIN_YEAR: i32 = 1;
 pub const MAX_YEAR: i32 = 9999;
+pub const DAY_CELL_SIZE: f32 = 36.0;
+pub const WEEKDAY_COUNT: usize = 7;
+pub const CALENDAR_WIDTH: f32 = DAY_CELL_SIZE * WEEKDAY_COUNT as f32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateError {
@@ -59,12 +77,7 @@ impl Month {
     }
 
     pub const fn days(self) -> u8 {
-        match self.number {
-            2 if self.is_leap_year() => 29,
-            2 => 28,
-            4 | 6 | 9 | 11 => 30,
-            _ => 31,
-        }
+        days_in_month(self.year, self.number)
     }
 
     pub const fn is_leap_year(self) -> bool {
@@ -104,20 +117,29 @@ impl Month {
     }
 
     pub const fn contains(self, date: Date) -> bool {
-        let month = date.month();
-        self.year == month.year && self.number == month.number
+        self.year == date.year && self.number == date.month
     }
 
-    /// Dates displayed by a fixed six-week calendar. At the supported year
-    /// boundaries, cells that would cross the boundary are `None`.
-    pub fn visible_dates(self) -> [Option<Date>; 42] {
-        let mut dates = [None; 42];
-        let first = Date {
+    pub const fn first(self) -> Date {
+        Date {
             year: self.year,
             month: self.number,
             day: 1,
-        };
-        let leading = usize::from(first.weekday().index_from_sunday());
+        }
+    }
+
+    pub const fn last(self) -> Date {
+        Date {
+            year: self.year,
+            month: self.number,
+            day: self.days(),
+        }
+    }
+
+    /// Dates displayed by a fixed six-week, Sunday-first calendar.
+    pub fn visible_dates(self) -> [Option<Date>; 42] {
+        let mut dates = [None; 42];
+        let leading = usize::from(self.first().weekday().index_from_sunday());
         let current_days = usize::from(self.days());
         let previous = self.previous();
         let next = self.next();
@@ -203,17 +225,55 @@ impl Date {
     }
 
     pub const fn weekday(self) -> Weekday {
-        let previous_year = self.year() - 1;
+        Weekday::from_sunday_index((self.ordinal() % 7 + 1) as u8 % 7)
+    }
+
+    /// Zero-based day number since 0001-01-01.
+    pub const fn ordinal(self) -> i32 {
+        let previous_year = self.year - 1;
         let mut days =
             previous_year * 365 + previous_year / 4 - previous_year / 100 + previous_year / 400;
         let mut month = 1;
-        while month < self.month_number() {
-            days += days_in_month(self.year(), month) as i32;
+        while month < self.month {
+            days += days_in_month(self.year, month) as i32;
             month += 1;
         }
-        days += self.day() as i32 - 1;
+        days + self.day as i32 - 1
+    }
 
-        Weekday::from_sunday_index(((days + 1) % 7) as u8)
+    pub fn checked_add_days(self, days: i32) -> Option<Self> {
+        date_from_ordinal(self.ordinal().checked_add(days)?)
+    }
+
+    pub fn checked_add_months(self, months: i32) -> Option<Self> {
+        let absolute = (self.year - 1)
+            .checked_mul(12)?
+            .checked_add(i32::from(self.month) - 1)?
+            .checked_add(months)?;
+        if !(0..MAX_YEAR * 12).contains(&absolute) {
+            return None;
+        }
+        let year = absolute / 12 + 1;
+        let month = (absolute % 12 + 1) as u8;
+        Self::new(year, month, self.day.min(days_in_month(year, month))).ok()
+    }
+
+    pub fn checked_add_years(self, years: i32) -> Option<Self> {
+        let year = self.year.checked_add(years)?;
+        Self::new(
+            year,
+            self.month,
+            self.day.min(days_in_month(year, self.month)),
+        )
+        .ok()
+    }
+
+    pub fn iso_week(self) -> u8 {
+        let monday_index = (self.weekday().index_from_sunday() + 6) % 7;
+        let thursday = self
+            .checked_add_days(3 - i32::from(monday_index))
+            .unwrap_or(self);
+        ((thursday.ordinal() - Date::new(thursday.year(), 1, 1).unwrap().ordinal()) / 7 + 1) as u8
     }
 }
 
@@ -282,7 +342,7 @@ pub const WEEKDAYS: [Weekday; 7] = [
     Weekday::Saturday,
 ];
 
-const MONTH_NAMES: [&str; 12] = [
+pub const MONTH_NAMES: [&str; 12] = [
     "January",
     "February",
     "March",
@@ -310,16 +370,889 @@ const fn days_in_month(year: i32, month: u8) -> u8 {
     }
 }
 
-/// A controlled Sunday-first month calendar.
-///
-/// The caller owns the displayed month and selection. Previous, next, and date
-/// buttons emit only the messages supplied here, including for visible dates in
-/// adjacent months.
-///
-/// Controls are native iced buttons. Iced 0.14 does not expose stable focus IDs
-/// for its button widget, so arrow-key roving focus must be composed with the
-/// forthcoming `focus_control` primitive; this function does not claim keyboard
-/// grid semantics in the meantime.
+fn date_from_ordinal(ordinal: i32) -> Option<Date> {
+    if !(0..=Date::new(MAX_YEAR, 12, 31).ok()?.ordinal()).contains(&ordinal) {
+        return None;
+    }
+
+    let mut low = MIN_YEAR;
+    let mut high = MAX_YEAR;
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        let start = Date::new(middle, 1, 1).ok()?.ordinal();
+        if start <= ordinal {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+
+    let year = low;
+    let mut remaining = ordinal - Date::new(year, 1, 1).ok()?.ordinal();
+    let mut month = 1;
+    while remaining >= i32::from(days_in_month(year, month)) {
+        remaining -= i32::from(days_in_month(year, month));
+        month += 1;
+    }
+    Date::new(year, month, (remaining + 1) as u8).ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateRange {
+    pub start: Date,
+    pub end: Option<Date>,
+}
+
+impl DateRange {
+    pub const fn open(start: Date) -> Self {
+        Self { start, end: None }
+    }
+
+    pub fn inclusive(first: Date, second: Date) -> Self {
+        let (start, end) = if first <= second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        Self {
+            start,
+            end: Some(end),
+        }
+    }
+
+    pub fn contains(self, date: Date) -> bool {
+        self.end
+            .is_some_and(|end| (self.start..=end).contains(&date))
+    }
+
+    pub const fn is_complete(self) -> bool {
+        self.end.is_some()
+    }
+}
+
+/// The three controlled selection models supported by shadcn's calendar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalendarSelection {
+    Single(Option<Date>),
+    Multiple(Vec<Date>),
+    Range(Option<DateRange>),
+}
+
+impl CalendarSelection {
+    pub fn is_selected(&self, date: Date) -> bool {
+        match self {
+            Self::Single(selected) => *selected == Some(date),
+            Self::Multiple(selected) => selected.contains(&date),
+            Self::Range(Some(range)) => range.contains(date) || range.start == date,
+            Self::Range(None) => false,
+        }
+    }
+
+    pub fn selected(self, date: Date) -> Self {
+        match self {
+            Self::Single(_) => Self::Single(Some(date)),
+            Self::Multiple(mut selected) => {
+                if selected.contains(&date) {
+                    selected.retain(|selected| *selected != date);
+                } else {
+                    selected.push(date);
+                    selected.sort_unstable();
+                }
+                Self::Multiple(selected)
+            }
+            Self::Range(None) | Self::Range(Some(DateRange { end: Some(_), .. })) => {
+                Self::Range(Some(DateRange::open(date)))
+            }
+            Self::Range(Some(DateRange { start, end: None })) => {
+                Self::Range(Some(DateRange::inclusive(start, date)))
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        match self {
+            Self::Single(selected) => *selected = None,
+            Self::Multiple(selected) => selected.clear(),
+            Self::Range(selected) => *selected = None,
+        }
+    }
+
+    pub fn range(&self) -> Option<DateRange> {
+        match self {
+            Self::Range(range) => *range,
+            Self::Single(_) | Self::Multiple(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CalendarConstraints<'a> {
+    min: Option<Date>,
+    max: Option<Date>,
+    disabled: Option<Rc<dyn Fn(Date) -> bool + 'a>>,
+}
+
+impl<'a> CalendarConstraints<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn min(mut self, min: Option<Date>) -> Self {
+        self.min = min;
+        self
+    }
+
+    #[must_use]
+    pub fn max(mut self, max: Option<Date>) -> Self {
+        self.max = max;
+        self
+    }
+
+    #[must_use]
+    pub fn disabled_dates(mut self, disabled: impl Fn(Date) -> bool + 'a) -> Self {
+        self.disabled = Some(Rc::new(disabled));
+        self
+    }
+
+    pub fn minimum(&self) -> Option<Date> {
+        self.min
+    }
+
+    pub fn maximum(&self) -> Option<Date> {
+        self.max
+    }
+
+    pub fn is_disabled(&self, date: Date) -> bool {
+        self.min.is_some_and(|min| date < min)
+            || self.max.is_some_and(|max| date > max)
+            || self.disabled.as_ref().is_some_and(|test| test(date))
+    }
+
+    pub fn month_has_enabled_day(&self, month: Month) -> bool {
+        (1..=month.days())
+            .any(|day| !self.is_disabled(Date::new(month.year(), month.number(), day).unwrap()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarCommand {
+    PreviousDay,
+    NextDay,
+    PreviousWeek,
+    NextWeek,
+    WeekStart,
+    WeekEnd,
+    PreviousMonth,
+    NextMonth,
+    PreviousYear,
+    NextYear,
+}
+
+pub fn keyboard_command(
+    key: &keyboard::Key,
+    modifiers: keyboard::Modifiers,
+    direction: Direction,
+) -> Option<CalendarCommand> {
+    match key {
+        keyboard::Key::Named(Named::ArrowLeft) => Some(match direction {
+            Direction::LeftToRight => CalendarCommand::PreviousDay,
+            Direction::RightToLeft => CalendarCommand::NextDay,
+        }),
+        keyboard::Key::Named(Named::ArrowRight) => Some(match direction {
+            Direction::LeftToRight => CalendarCommand::NextDay,
+            Direction::RightToLeft => CalendarCommand::PreviousDay,
+        }),
+        keyboard::Key::Named(Named::ArrowUp) => Some(CalendarCommand::PreviousWeek),
+        keyboard::Key::Named(Named::ArrowDown) => Some(CalendarCommand::NextWeek),
+        keyboard::Key::Named(Named::Home) => Some(CalendarCommand::WeekStart),
+        keyboard::Key::Named(Named::End) => Some(CalendarCommand::WeekEnd),
+        keyboard::Key::Named(Named::PageUp) if modifiers.shift() => {
+            Some(CalendarCommand::PreviousYear)
+        }
+        keyboard::Key::Named(Named::PageDown) if modifiers.shift() => {
+            Some(CalendarCommand::NextYear)
+        }
+        keyboard::Key::Named(Named::PageUp) => Some(CalendarCommand::PreviousMonth),
+        keyboard::Key::Named(Named::PageDown) => Some(CalendarCommand::NextMonth),
+        _ => None,
+    }
+}
+
+/// Finds the next enabled date for one keyboard command.
+pub fn navigation_target(
+    current: Date,
+    command: CalendarCommand,
+    constraints: &CalendarConstraints<'_>,
+) -> Option<Date> {
+    let (candidate, direction, week_bounds) = match command {
+        CalendarCommand::PreviousDay => (current.checked_add_days(-1)?, -1, None),
+        CalendarCommand::NextDay => (current.checked_add_days(1)?, 1, None),
+        CalendarCommand::PreviousWeek => (current.checked_add_days(-7)?, -1, None),
+        CalendarCommand::NextWeek => (current.checked_add_days(7)?, 1, None),
+        CalendarCommand::WeekStart => {
+            let start =
+                current.checked_add_days(-i32::from(current.weekday().index_from_sunday()))?;
+            (start, 1, Some((start, start.checked_add_days(6)?)))
+        }
+        CalendarCommand::WeekEnd => {
+            let end =
+                current.checked_add_days(i32::from(6 - current.weekday().index_from_sunday()))?;
+            (end, -1, Some((end.checked_add_days(-6)?, end)))
+        }
+        CalendarCommand::PreviousMonth => (current.checked_add_months(-1)?, -1, None),
+        CalendarCommand::NextMonth => (current.checked_add_months(1)?, 1, None),
+        CalendarCommand::PreviousYear => (current.checked_add_years(-1)?, -1, None),
+        CalendarCommand::NextYear => (current.checked_add_years(1)?, 1, None),
+    };
+
+    enabled_from(candidate, direction, week_bounds, constraints)
+}
+
+fn enabled_from(
+    mut candidate: Date,
+    direction: i32,
+    bounds: Option<(Date, Date)>,
+    constraints: &CalendarConstraints<'_>,
+) -> Option<Date> {
+    loop {
+        if bounds.is_some_and(|(start, end)| !(start..=end).contains(&candidate)) {
+            return None;
+        }
+        if !constraints.is_disabled(candidate) {
+            return Some(candidate);
+        }
+        candidate = candidate.checked_add_days(direction)?;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalendarEvent {
+    SelectionChanged(CalendarSelection),
+    FocusMoved { date: Date, month: Month },
+    MonthChanged(Month),
+}
+
+impl CalendarEvent {
+    pub fn selection(&self) -> Option<&CalendarSelection> {
+        match self {
+            Self::SelectionChanged(selection) => Some(selection),
+            Self::FocusMoved { .. } | Self::MonthChanged(_) => None,
+        }
+    }
+
+    pub const fn month(&self) -> Option<Month> {
+        match self {
+            Self::FocusMoved { month, .. } | Self::MonthChanged(month) => Some(*month),
+            Self::SelectionChanged(_) => None,
+        }
+    }
+
+    pub const fn focused(&self) -> Option<Date> {
+        match self {
+            Self::FocusMoved { date, .. } => Some(*date),
+            Self::SelectionChanged(_) | Self::MonthChanged(_) => None,
+        }
+    }
+
+    pub fn focus_task<Message>(&self, calendar_id: &str) -> Task<Message> {
+        self.focused()
+            .map_or_else(Task::none, |date| focus_calendar_day(calendar_id, date))
+    }
+}
+
+pub fn day_focus_id(calendar_id: &str, date: Date) -> widget::Id {
+    widget::Id::from(format!("ducktape-calendar:{calendar_id}:day:{date}"))
+}
+
+pub fn focus_calendar_day<Message>(calendar_id: &str, date: Date) -> Task<Message> {
+    iced::widget::operation::focus(day_focus_id(calendar_id, date))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonthOption(u8);
+
+impl MonthOption {
+    pub const fn new(number: u8) -> Option<Self> {
+        if number >= 1 && number <= 12 {
+            Some(Self(number))
+        } else {
+            None
+        }
+    }
+
+    pub const fn number(self) -> u8 {
+        self.0
+    }
+}
+
+impl fmt::Display for MonthOption {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(MONTH_NAMES[usize::from(self.0 - 1)])
+    }
+}
+
+pub fn month_options() -> Vec<MonthOption> {
+    (1..=12).map(MonthOption).collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YearOption(i32);
+
+impl YearOption {
+    pub const fn year(self) -> i32 {
+        self.0
+    }
+}
+
+impl fmt::Display for YearOption {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+pub fn year_options(start: i32, end: i32) -> Vec<YearOption> {
+    let start = start.clamp(MIN_YEAR, MAX_YEAR);
+    let end = end.clamp(MIN_YEAR, MAX_YEAR);
+    if start > end {
+        Vec::new()
+    } else {
+        (start..=end).map(YearOption).collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DayVisualState {
+    pub today: bool,
+    pub selected: bool,
+    pub range_start: bool,
+    pub range_middle: bool,
+    pub range_end: bool,
+    pub outside: bool,
+    pub disabled: bool,
+    pub focused: bool,
+}
+
+pub fn day_visual_state(
+    date: Date,
+    month: Month,
+    selection: &CalendarSelection,
+    today: Option<Date>,
+    focused: Option<Date>,
+    disabled: bool,
+) -> DayVisualState {
+    let range = selection.range();
+    let range_end = range.and_then(|range| range.end);
+    DayVisualState {
+        today: today == Some(date),
+        selected: selection.is_selected(date),
+        range_start: range.is_some_and(|range| range.start == date),
+        range_middle: range.is_some_and(|range| {
+            range
+                .end
+                .is_some_and(|end| date > range.start && date < end)
+        }),
+        range_end: range_end == Some(date),
+        outside: !month.contains(date),
+        disabled,
+        focused: focused == Some(date),
+    }
+}
+
+pub fn day_style(theme: &Theme, state: DayVisualState, status: Status) -> FocusStyle {
+    let disabled = state.disabled || status == Status::Disabled;
+    let endpoint = state.selected && (state.range_start || state.range_end);
+    let selected = state.selected && (!state.range_middle || endpoint);
+    let mut style = FocusStyle {
+        background: if selected {
+            Some(Background::Color(theme.palette.primary))
+        } else if state.range_middle {
+            Some(Background::Color(theme.palette.accent))
+        } else {
+            None
+        },
+        text_color: Some(if selected {
+            theme.palette.primary_foreground
+        } else if disabled || state.outside {
+            alpha(theme.palette.muted_foreground, 0.5)
+        } else {
+            theme.palette.foreground
+        }),
+        border: Border {
+            color: if state.today && !selected {
+                theme.palette.ring
+            } else {
+                Color::TRANSPARENT
+            },
+            width: if state.today && !selected { 1.0 } else { 0.0 },
+            radius: if state.range_middle && !endpoint {
+                0.0.into()
+            } else {
+                theme.radius.md.into()
+            },
+        },
+        shadow: Shadow::default(),
+        focus_ring: Border {
+            color: theme.palette.ring,
+            width: 2.0,
+            radius: (theme.radius.md + 2.0).into(),
+        },
+        focus_offset: 1.0,
+    };
+
+    if !disabled && !selected && !state.range_middle {
+        style.background = match status {
+            Status::Hovered => Some(Background::Color(theme.palette.accent)),
+            Status::Pressed => Some(Background::Color(mix(
+                theme.palette.accent,
+                theme.palette.foreground,
+                0.08,
+            ))),
+            Status::Active | Status::Focused | Status::Disabled => style.background,
+        };
+    }
+    style
+}
+
+/// Builder for a controlled calendar. The caller applies emitted selection,
+/// month, and focus values and returns [`CalendarEvent::focus_task`] from update.
+pub struct Calendar<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    id: String,
+    month: Month,
+    selection: CalendarSelection,
+    focused: Option<Date>,
+    today: Option<Date>,
+    on_event: Rc<dyn Fn(CalendarEvent) -> Message + 'a>,
+    constraints: CalendarConstraints<'a>,
+    show_outside_days: bool,
+    week_numbers: bool,
+    month_dropdown: bool,
+    year_dropdown: bool,
+    year_range: (i32, i32),
+    direction: Direction,
+    theme: Theme,
+}
+
+pub fn controlled_calendar<'a, Message>(
+    id: impl Into<String>,
+    month: Month,
+    selection: &CalendarSelection,
+    focused: Option<Date>,
+    on_event: impl Fn(CalendarEvent) -> Message + 'a,
+    theme: &Theme,
+) -> Calendar<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    Calendar {
+        id: id.into(),
+        month,
+        selection: selection.clone(),
+        focused,
+        today: None,
+        on_event: Rc::new(on_event),
+        constraints: CalendarConstraints::default(),
+        show_outside_days: true,
+        week_numbers: false,
+        month_dropdown: false,
+        year_dropdown: false,
+        year_range: (
+            (month.year() - 50).max(MIN_YEAR),
+            (month.year() + 50).min(MAX_YEAR),
+        ),
+        direction: Direction::LeftToRight,
+        theme: *theme,
+    }
+}
+
+impl<'a, Message> Calendar<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    #[must_use]
+    pub fn today(mut self, today: Option<Date>) -> Self {
+        self.today = today;
+        self
+    }
+
+    #[must_use]
+    pub fn min(mut self, min: Option<Date>) -> Self {
+        self.constraints.min = min;
+        self
+    }
+
+    #[must_use]
+    pub fn max(mut self, max: Option<Date>) -> Self {
+        self.constraints.max = max;
+        self
+    }
+
+    #[must_use]
+    pub fn disabled_dates(mut self, disabled: impl Fn(Date) -> bool + 'a) -> Self {
+        self.constraints.disabled = Some(Rc::new(disabled));
+        self
+    }
+
+    #[must_use]
+    pub fn show_outside_days(mut self, show: bool) -> Self {
+        self.show_outside_days = show;
+        self
+    }
+
+    #[must_use]
+    pub fn week_numbers(mut self, show: bool) -> Self {
+        self.week_numbers = show;
+        self
+    }
+
+    #[must_use]
+    pub fn month_dropdown(mut self, show: bool) -> Self {
+        self.month_dropdown = show;
+        self
+    }
+
+    #[must_use]
+    pub fn year_dropdown(mut self, show: bool) -> Self {
+        self.year_dropdown = show;
+        self
+    }
+
+    #[must_use]
+    pub fn year_range(mut self, start: i32, end: i32) -> Self {
+        if start <= end {
+            self.year_range = (
+                start.clamp(MIN_YEAR, MAX_YEAR),
+                end.clamp(MIN_YEAR, MAX_YEAR),
+            );
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn direction(mut self, direction: Direction) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    pub fn width(&self) -> f32 {
+        CALENDAR_WIDTH
+            + if self.week_numbers {
+                DAY_CELL_SIZE
+            } else {
+                0.0
+            }
+    }
+
+    pub fn into_element(self) -> Element<'a, Message> {
+        let width = self.width();
+        let header = self.header(width);
+        let weekdays = self.weekday_header(width);
+        let days = self.day_grid(width);
+
+        Column::new()
+            .push(header)
+            .push(weekdays)
+            .push(days)
+            .spacing(0)
+            .width(width)
+            .into()
+    }
+
+    fn header(&self, width: f32) -> Element<'a, Message> {
+        let previous_month = self
+            .month
+            .previous()
+            .filter(|month| self.constraints.month_has_enabled_day(*month));
+        let next_month = self
+            .month
+            .next()
+            .filter(|month| self.constraints.month_has_enabled_day(*month));
+        let previous = button("‹", &self.theme)
+            .variant(ButtonVariant::Ghost)
+            .size(ButtonSize::Small)
+            .width(32)
+            .disabled(previous_month.is_none())
+            .on_press((self.on_event)(CalendarEvent::MonthChanged(
+                previous_month.unwrap_or(self.month),
+            )));
+        let next = button("›", &self.theme)
+            .variant(ButtonVariant::Ghost)
+            .size(ButtonSize::Small)
+            .width(32)
+            .disabled(next_month.is_none())
+            .on_press((self.on_event)(CalendarEvent::MonthChanged(
+                next_month.unwrap_or(self.month),
+            )));
+        let caption = self.caption();
+        let items: Vec<Element<'a, Message>> = match self.direction {
+            Direction::LeftToRight => vec![
+                previous.into(),
+                container(caption)
+                    .width(Length::Fill)
+                    .height(DAY_CELL_SIZE)
+                    .center_y(Length::Fill)
+                    .into(),
+                next.into(),
+            ],
+            Direction::RightToLeft => vec![
+                next.into(),
+                container(caption)
+                    .width(Length::Fill)
+                    .height(DAY_CELL_SIZE)
+                    .center_y(Length::Fill)
+                    .into(),
+                previous.into(),
+            ],
+        };
+
+        items
+            .into_iter()
+            .fold(Row::new(), Row::push)
+            .align_y(Alignment::Center)
+            .width(width)
+            .into()
+    }
+
+    fn caption(&self) -> Element<'a, Message> {
+        if !self.month_dropdown && !self.year_dropdown {
+            return container(
+                text(self.month.to_string())
+                    .size(self.theme.typography.sm)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                    .color(self.theme.palette.foreground),
+            )
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center)
+            .into();
+        }
+
+        let mut parts: Vec<Element<'a, Message>> = Vec::with_capacity(2);
+        if self.month_dropdown {
+            let event = Rc::clone(&self.on_event);
+            let year = self.month.year();
+            let selected = MonthOption(self.month.number());
+            parts.push(
+                native_select(
+                    month_options(),
+                    Some(selected),
+                    move |month: MonthOption| {
+                        event(CalendarEvent::MonthChanged(
+                            Month::new(year, month.number()).unwrap(),
+                        ))
+                    },
+                    &self.theme,
+                )
+                .width(104)
+                .into(),
+            );
+        } else {
+            parts.push(
+                container(
+                    text(MONTH_NAMES[usize::from(self.month.number() - 1)])
+                        .size(self.theme.typography.sm),
+                )
+                .width(104)
+                .center_x(Length::Fill)
+                .center_y(DAY_CELL_SIZE)
+                .into(),
+            );
+        }
+        if self.year_dropdown {
+            let event = Rc::clone(&self.on_event);
+            let month = self.month.number();
+            let years = year_options(self.year_range.0, self.year_range.1);
+            parts.push(
+                native_select(
+                    years,
+                    Some(YearOption(self.month.year())),
+                    move |year: YearOption| {
+                        event(CalendarEvent::MonthChanged(
+                            Month::new(year.year(), month).unwrap(),
+                        ))
+                    },
+                    &self.theme,
+                )
+                .width(80)
+                .into(),
+            );
+        } else {
+            parts.push(
+                container(text(self.month.year()).size(self.theme.typography.sm))
+                    .width(80)
+                    .center_x(Length::Fill)
+                    .center_y(DAY_CELL_SIZE)
+                    .into(),
+            );
+        }
+
+        let parts = if self.direction == Direction::RightToLeft {
+            parts.into_iter().rev().collect()
+        } else {
+            parts
+        };
+        container(
+            parts
+                .into_iter()
+                .fold(Row::new().spacing(4), Row::push)
+                .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .into()
+    }
+
+    fn weekday_header(&self, width: f32) -> Element<'a, Message> {
+        let mut cells: Vec<Element<'a, Message>> = WEEKDAYS
+            .into_iter()
+            .map(|weekday| weekday_cell(weekday.short_name(), &self.theme).into())
+            .collect();
+        if self.week_numbers {
+            cells.insert(0, weekday_cell("Wk", &self.theme).into());
+        }
+        if self.direction == Direction::RightToLeft {
+            cells.reverse();
+        }
+        cells
+            .into_iter()
+            .fold(Row::new(), Row::push)
+            .width(width)
+            .height(DAY_CELL_SIZE)
+            .into()
+    }
+
+    fn day_grid(&self, width: f32) -> Element<'a, Message> {
+        self.month
+            .visible_dates()
+            .chunks_exact(WEEKDAY_COUNT)
+            .fold(Column::new().width(width), |column, week| {
+                let mut cells = week
+                    .iter()
+                    .map(|date| self.day_cell(*date))
+                    .collect::<Vec<_>>();
+                if self.week_numbers {
+                    let week_number = week
+                        .iter()
+                        .flatten()
+                        .next()
+                        .map_or(String::new(), |date| date.iso_week().to_string());
+                    cells.insert(0, week_number_cell(week_number, &self.theme).into());
+                }
+                if self.direction == Direction::RightToLeft {
+                    cells.reverse();
+                }
+                column.push(
+                    cells
+                        .into_iter()
+                        .fold(Row::new(), Row::push)
+                        .width(width)
+                        .height(DAY_CELL_SIZE),
+                )
+            })
+            .into()
+    }
+
+    fn day_cell(&self, date: Option<Date>) -> Element<'a, Message> {
+        let Some(date) = date else {
+            return Space::new()
+                .width(DAY_CELL_SIZE)
+                .height(DAY_CELL_SIZE)
+                .into();
+        };
+        if !self.show_outside_days && !self.month.contains(date) {
+            return Space::new()
+                .width(DAY_CELL_SIZE)
+                .height(DAY_CELL_SIZE)
+                .into();
+        }
+
+        let outside = !self.month.contains(date);
+        let disabled = outside || self.constraints.is_disabled(date);
+        let visual = day_visual_state(
+            date,
+            self.month,
+            &self.selection,
+            self.today,
+            self.focused,
+            disabled,
+        );
+        let content = container(
+            text(date.day().to_string())
+                .size(self.theme.typography.sm)
+                .line_height(LineHeight::Absolute(Pixels(16.0))),
+        )
+        .width(DAY_CELL_SIZE)
+        .height(DAY_CELL_SIZE)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center);
+        let selection = self.selection.clone();
+        let activate = (self.on_event)(CalendarEvent::SelectionChanged(selection.selected(date)));
+        let constraints = self.constraints.clone();
+        let direction = self.direction;
+        let key_event = Rc::clone(&self.on_event);
+        let theme = self.theme;
+
+        FocusControl::new(day_focus_id(&self.id, date), content, activate, &self.theme)
+            .disabled(disabled)
+            .on_key_press(move |key, modifiers| {
+                let command = keyboard_command(&key, modifiers, direction)?;
+                let target = navigation_target(date, command, &constraints)?;
+                Some(key_event(CalendarEvent::FocusMoved {
+                    date: target,
+                    month: target.month(),
+                }))
+            })
+            .style(move |_iced_theme, status| day_style(&theme, visual, status))
+            .into()
+    }
+}
+
+impl<'a, Message> From<Calendar<'a, Message>> for Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    fn from(calendar: Calendar<'a, Message>) -> Self {
+        calendar.into_element()
+    }
+}
+
+fn weekday_cell<'a, Message>(label: &'static str, theme: &Theme) -> Container<'a, Message>
+where
+    Message: 'a,
+{
+    container(
+        text(label)
+            .size(theme.typography.xs)
+            .line_height(LineHeight::Absolute(Pixels(14.0)))
+            .color(theme.palette.muted_foreground),
+    )
+    .width(DAY_CELL_SIZE)
+    .height(DAY_CELL_SIZE)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+}
+
+fn week_number_cell<'a, Message>(label: String, theme: &Theme) -> Container<'a, Message>
+where
+    Message: 'a,
+{
+    container(
+        text(label)
+            .size(theme.typography.xs)
+            .line_height(LineHeight::Absolute(Pixels(14.0)))
+            .color(alpha(theme.palette.muted_foreground, 0.8)),
+    )
+    .width(DAY_CELL_SIZE)
+    .height(DAY_CELL_SIZE)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+}
+
+/// Compatibility calendar using native iced buttons and caller-supplied
+/// previous/next messages. New code should use [`controlled_calendar`].
 pub fn calendar<'a, Message>(
     month: Month,
     selected: Option<Date>,
@@ -331,8 +1264,6 @@ pub fn calendar<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    const WIDTH: f32 = 280.0;
-
     let header = Row::new()
         .push(
             button("‹", theme)
@@ -345,10 +1276,13 @@ where
             container(
                 text(month.to_string())
                     .size(theme.typography.sm)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(theme.palette.foreground),
             )
+            .width(Length::Fill)
+            .height(DAY_CELL_SIZE)
             .center_x(Length::Fill)
-            .center_y(36),
+            .center_y(Length::Fill),
         )
         .push(
             button("›", theme)
@@ -358,46 +1292,40 @@ where
                 .on_press(next),
         )
         .align_y(Alignment::Center)
-        .width(WIDTH);
-
+        .width(CALENDAR_WIDTH);
     let weekdays = WEEKDAYS.into_iter().fold(
-        Grid::new().columns(7).width(WIDTH).height(28.0),
-        |grid, weekday| {
-            grid.push(
-                container(
-                    text(weekday.short_name())
-                        .size(theme.typography.xs)
-                        .color(theme.palette.muted_foreground),
-                )
-                .center_x(Length::Fill)
-                .center_y(Length::Fill),
-            )
+        Row::new().width(CALENDAR_WIDTH).height(DAY_CELL_SIZE),
+        |row, weekday| row.push(weekday_cell(weekday.short_name(), theme)),
+    );
+    let days = month.visible_dates().chunks_exact(7).fold(
+        Column::new().width(CALENDAR_WIDTH),
+        |column, week| {
+            column.push(week.iter().fold(Row::new(), |row, date| {
+                row.push(match date {
+                    Some(date) => legacy_day_button(
+                        *date,
+                        month.contains(*date),
+                        selected == Some(*date),
+                        &on_select,
+                        theme,
+                    ),
+                    None => Space::new()
+                        .width(DAY_CELL_SIZE)
+                        .height(DAY_CELL_SIZE)
+                        .into(),
+                })
+            }))
         },
     );
 
-    let days = month.visible_dates().into_iter().fold(
-        Grid::new().columns(7).width(WIDTH).height(240.0),
-        |grid, date| {
-            grid.push(match date {
-                Some(date) => container(day_button(
-                    date,
-                    month.contains(date),
-                    selected == Some(date),
-                    &on_select,
-                    theme,
-                ))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .into(),
-                None => Element::from(Space::new().width(Length::Fill).height(Length::Fill)),
-            })
-        },
-    );
-
-    Column::new().push(header).push(weekdays).push(days)
+    Column::new()
+        .push(header)
+        .push(weekdays)
+        .push(days)
+        .width(CALENDAR_WIDTH)
 }
 
-fn day_button<'a, Message>(
+fn legacy_day_button<'a, Message>(
     date: Date,
     in_month: bool,
     selected: bool,
@@ -423,6 +1351,7 @@ where
     Button::new(
         text(date.day().to_string())
             .size(theme.typography.sm)
+            .line_height(LineHeight::Absolute(Pixels(16.0)))
             .color(color),
         theme,
     )
@@ -435,6 +1364,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::{DARK, LIGHT};
 
     fn month(year: i32, number: u8) -> Month {
         Month::new(year, number).unwrap()
@@ -445,62 +1375,184 @@ mod tests {
     }
 
     #[test]
-    fn validation_covers_leap_years_and_centuries() {
+    fn leap_years_centuries_and_supported_boundaries_are_exact() {
         assert!(Date::new(2024, 2, 29).is_ok());
         assert!(Date::new(2023, 2, 29).is_err());
         assert!(Date::new(1900, 2, 29).is_err());
         assert!(Date::new(2000, 2, 29).is_ok());
-        assert!(!month(1900, 2).is_leap_year());
-        assert_eq!(month(1900, 2).days(), 28);
-        assert!(month(2000, 2).is_leap_year());
-        assert_eq!(month(2000, 2).days(), 29);
-        assert!(Date::new(0, 1, 1).is_err());
-        assert!(Month::new(2024, 13).is_err());
+        assert_eq!(
+            date(2024, 2, 29).checked_add_days(1),
+            Some(date(2024, 3, 1))
+        );
+        assert_eq!(
+            date(2024, 2, 29).checked_add_years(1),
+            Some(date(2025, 2, 28))
+        );
+        assert_eq!(date(MIN_YEAR, 1, 1).checked_add_days(-1), None);
+        assert_eq!(date(MAX_YEAR, 12, 31).checked_add_days(1), None);
     }
 
     #[test]
-    fn month_navigation_crosses_years_without_crossing_supported_bounds() {
+    fn month_navigation_and_six_week_grid_cover_edges() {
         assert_eq!(month(2024, 1).previous(), Some(month(2023, 12)));
         assert_eq!(month(2024, 12).next(), Some(month(2025, 1)));
         assert_eq!(month(MIN_YEAR, 1).previous(), None);
         assert_eq!(month(MAX_YEAR, 12).next(), None);
+
+        let dates = month(2024, 9).visible_dates();
+        assert_eq!(dates[0], Some(date(2024, 9, 1)));
+        assert_eq!(dates[30], Some(date(2024, 10, 1)));
+        assert_eq!(dates[41], Some(date(2024, 10, 12)));
+        let minimum = month(MIN_YEAR, 1).visible_dates();
+        assert_eq!(minimum[0], None);
+        let maximum = month(MAX_YEAR, 12).visible_dates();
+        assert!(maximum[34..].iter().all(Option::is_none));
     }
 
     #[test]
-    fn weekdays_match_known_dates() {
+    fn weekdays_and_iso_weeks_match_known_dates() {
         assert_eq!(date(1, 1, 1).weekday(), Weekday::Monday);
         assert_eq!(date(2000, 1, 1).weekday(), Weekday::Saturday);
         assert_eq!(date(2024, 2, 29).weekday(), Weekday::Thursday);
+        assert_eq!(date(2021, 1, 1).iso_week(), 53);
+        assert_eq!(date(2024, 1, 1).iso_week(), 1);
     }
 
     #[test]
-    fn six_week_grid_includes_adjacent_months() {
-        let dates = month(2024, 9).visible_dates();
-        assert_eq!(dates.len(), 42);
-        assert_eq!(dates[0], Some(date(2024, 9, 1)));
-        assert_eq!(dates[29], Some(date(2024, 9, 30)));
-        assert_eq!(dates[30], Some(date(2024, 10, 1)));
-        assert_eq!(dates[41], Some(date(2024, 10, 12)));
-
-        let leap = month(2024, 3).visible_dates();
-        assert_eq!(leap[4], Some(date(2024, 2, 29)));
-        assert_eq!(leap[5], Some(date(2024, 3, 1)));
-    }
-
-    #[test]
-    fn supported_boundary_uses_empty_cells_instead_of_invalid_dates() {
-        let dates = month(MIN_YEAR, 1).visible_dates();
-        assert_eq!(dates[0], None);
-        assert_eq!(dates[1], Some(date(1, 1, 1)));
-        assert!(
-            dates
-                .into_iter()
-                .flatten()
-                .all(|date| date.year() >= MIN_YEAR)
+    fn selection_models_toggle_and_normalize_inclusive_ranges() {
+        let first = date(2024, 5, 10);
+        let second = date(2024, 5, 5);
+        assert_eq!(
+            CalendarSelection::Single(None).selected(first),
+            CalendarSelection::Single(Some(first))
+        );
+        let multiple = CalendarSelection::Multiple(vec![first]).selected(second);
+        assert_eq!(multiple, CalendarSelection::Multiple(vec![second, first]));
+        assert_eq!(
+            multiple.selected(first),
+            CalendarSelection::Multiple(vec![second])
         );
 
-        let dates = month(MAX_YEAR, 12).visible_dates();
-        assert_eq!(dates[33], Some(date(MAX_YEAR, 12, 31)));
-        assert!(dates[34..].iter().all(Option::is_none));
+        let open = CalendarSelection::Range(None).selected(first);
+        assert_eq!(open, CalendarSelection::Range(Some(DateRange::open(first))));
+        let completed = open.selected(second);
+        assert_eq!(
+            completed,
+            CalendarSelection::Range(Some(DateRange::inclusive(second, first)))
+        );
+        assert!(completed.is_selected(date(2024, 5, 7)));
+        assert_eq!(
+            completed.selected(date(2024, 6, 1)),
+            CalendarSelection::Range(Some(DateRange::open(date(2024, 6, 1))))
+        );
+    }
+
+    #[test]
+    fn keyboard_navigation_changes_units_and_skips_disabled_dates() {
+        let friday = date(2024, 3, 1);
+        let constraints = CalendarConstraints::new()
+            .min(Some(date(2024, 2, 1)))
+            .disabled_dates(|date| date == Date::new(2024, 2, 29).unwrap());
+        assert_eq!(
+            navigation_target(friday, CalendarCommand::PreviousDay, &constraints),
+            Some(date(2024, 2, 28))
+        );
+        assert_eq!(
+            navigation_target(friday, CalendarCommand::NextWeek, &constraints),
+            Some(date(2024, 3, 8))
+        );
+        assert_eq!(
+            navigation_target(friday, CalendarCommand::WeekStart, &constraints),
+            Some(date(2024, 2, 25))
+        );
+        assert_eq!(
+            navigation_target(friday, CalendarCommand::NextMonth, &constraints),
+            Some(date(2024, 4, 1))
+        );
+    }
+
+    #[test]
+    fn key_mapping_respects_shift_and_layout_direction() {
+        let none = keyboard::Modifiers::empty();
+        assert_eq!(
+            keyboard_command(
+                &keyboard::Key::Named(Named::ArrowLeft),
+                none,
+                Direction::RightToLeft
+            ),
+            Some(CalendarCommand::NextDay)
+        );
+        assert_eq!(
+            keyboard_command(
+                &keyboard::Key::Named(Named::PageUp),
+                keyboard::Modifiers::SHIFT,
+                Direction::LeftToRight
+            ),
+            Some(CalendarCommand::PreviousYear)
+        );
+    }
+
+    #[test]
+    fn day_ids_geometry_and_visual_states_are_stable() {
+        let selected = CalendarSelection::Range(Some(DateRange::inclusive(
+            date(2024, 5, 5),
+            date(2024, 5, 7),
+        )));
+        let state = day_visual_state(
+            date(2024, 5, 6),
+            month(2024, 5),
+            &selected,
+            Some(date(2024, 5, 6)),
+            Some(date(2024, 5, 6)),
+            false,
+        );
+        assert!(state.today && state.selected && state.range_middle && state.focused);
+        assert_eq!(CALENDAR_WIDTH, DAY_CELL_SIZE * 7.0);
+        assert_eq!(
+            day_focus_id("booking", date(2024, 5, 6)),
+            day_focus_id("booking", date(2024, 5, 6))
+        );
+        assert_ne!(
+            day_focus_id("booking", date(2024, 5, 6)),
+            day_focus_id("booking", date(2024, 5, 7))
+        );
+    }
+
+    #[test]
+    fn day_styles_keep_center_state_contrast_in_light_and_dark() {
+        for theme in [LIGHT, DARK] {
+            let selected = day_style(
+                &theme,
+                DayVisualState {
+                    selected: true,
+                    range_start: true,
+                    ..DayVisualState::default()
+                },
+                Status::Focused,
+            );
+            let disabled = day_style(
+                &theme,
+                DayVisualState {
+                    disabled: true,
+                    ..DayVisualState::default()
+                },
+                Status::Disabled,
+            );
+            assert_eq!(
+                selected.background,
+                Some(Background::Color(theme.palette.primary))
+            );
+            assert_eq!(selected.focus_ring.color, theme.palette.ring);
+            assert!(disabled.text_color.unwrap().a < 1.0);
+        }
+    }
+
+    #[test]
+    fn dropdown_helpers_bound_options_without_invalid_dates() {
+        assert_eq!(month_options().len(), 12);
+        assert_eq!(year_options(2020, 2024).len(), 5);
+        assert!(year_options(2024, 2020).is_empty());
+        assert_eq!(MonthOption::new(12).unwrap().to_string(), "December");
+        assert_eq!(MonthOption::new(13), None);
     }
 }

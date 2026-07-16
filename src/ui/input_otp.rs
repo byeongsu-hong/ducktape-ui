@@ -283,7 +283,7 @@ mod tests {
     fn group_boundaries_never_add_a_trailing_separator() {
         assert_eq!(separator_indices(6, &[3, 3]), [3]);
         assert_eq!(separator_indices(6, &[2, 2, 2]), [2, 4]);
-        assert_eq!(separator_indices(4, &[8]), []);
+        assert_eq!(separator_indices(4, &[8]), Vec::<usize>::new());
     }
 
     #[test]

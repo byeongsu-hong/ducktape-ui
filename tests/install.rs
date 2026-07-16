@@ -54,6 +54,7 @@ fn init_add_composed_components_and_compile_owned_source() {
             "input",
             "badge",
             "segmented-control",
+            "separator",
             "alert",
             "checkbox",
             "empty",
@@ -81,6 +82,7 @@ fn init_add_composed_components_and_compile_owned_source() {
             "table",
             "accordion",
             "calendar",
+            "date-picker",
             "carousel",
             "collapsible",
             "combobox",
@@ -95,6 +97,23 @@ fn init_add_composed_components_and_compile_owned_source() {
             "toggle",
             "toggle-group",
             "resizable",
+            "dialog",
+            "alert-dialog",
+            "toast",
+            "sonner",
+            "command",
+            "chart",
+            "popover",
+            "tooltip",
+            "hover-card",
+            "sidebar",
+            "dropdown-menu",
+            "context-menu",
+            "menubar",
+            "select",
+            "sheet",
+            "drawer",
+            "navigation-menu",
         ],
         project.path(),
     )
@@ -104,11 +123,17 @@ fn init_add_composed_components_and_compile_owned_source() {
             .unwrap()
             .contains("\"advanced\"")
     );
+    assert!(
+        fs::read_to_string(project.path().join("Cargo.toml"))
+            .unwrap()
+            .contains("\"canvas\"")
+    );
     assert!(output.contains("theme.rs"));
     assert!(output.contains("button.rs"));
     assert!(output.contains("surface.rs"));
     assert!(output.contains("field.rs"));
     assert!(output.contains("segmented_control.rs"));
+    assert!(output.contains("separator.rs"));
     assert!(output.contains("alert.rs"));
     assert!(output.contains("checkbox.rs"));
     assert!(output.contains("empty_state.rs"));
@@ -125,6 +150,7 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("table.rs"));
     assert!(output.contains("accordion.rs"));
     assert!(output.contains("calendar.rs"));
+    assert!(output.contains("date_picker.rs"));
     assert!(output.contains("carousel.rs"));
     assert!(output.contains("collapsible.rs"));
     assert!(output.contains("combobox.rs"));
@@ -139,6 +165,25 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("toggle.rs"));
     assert!(output.contains("toggle_group.rs"));
     assert!(output.contains("resizable.rs"));
+    assert!(output.contains("modal.rs"));
+    assert!(output.contains("dialog.rs"));
+    assert!(output.contains("alert_dialog.rs"));
+    assert!(output.contains("toast.rs"));
+    assert!(output.contains("sonner.rs"));
+    assert!(output.contains("command.rs"));
+    assert!(output.contains("chart.rs"));
+    assert!(output.contains("popover.rs"));
+    assert!(output.contains("tooltip.rs"));
+    assert!(output.contains("hover_card.rs"));
+    assert!(output.contains("sidebar.rs"));
+    assert!(output.contains("menu.rs"));
+    assert!(output.contains("dropdown_menu.rs"));
+    assert!(output.contains("context_menu.rs"));
+    assert!(output.contains("menubar.rs"));
+    assert!(output.contains("select.rs"));
+    assert!(output.contains("sheet.rs"));
+    assert!(output.contains("drawer.rs"));
+    assert!(output.contains("navigation_menu.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),

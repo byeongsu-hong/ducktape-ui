@@ -2,7 +2,7 @@ use super::theme::Theme;
 use iced::widget::table::{self as iced_table, Column, Table};
 use iced::widget::text::IntoFragment;
 use iced::widget::{Container, Text, container, text};
-use iced::{Background, Border, Element, Length};
+use iced::{Background, Border, Element, Length, Padding};
 
 /// Builds a native iced table with compact, row-oriented defaults.
 ///
@@ -71,6 +71,7 @@ where
     let theme = *theme;
     container(content)
         .width(Length::Fill)
+        .padding(Padding::default().right(1.0))
         .clip(true)
         .style(move |_| frame_style(&theme))
 }
