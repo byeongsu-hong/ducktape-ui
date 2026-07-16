@@ -11,6 +11,13 @@
       "files": [{ "source": "theme.rs", "target": "theme.rs" }]
     },
     {
+      "name": "surface",
+      "type": "component",
+      "description": "Semantic default, card, muted, and popover surfaces.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "surface.rs", "target": "surface.rs" }]
+    },
+    {
       "name": "button",
       "type": "component",
       "description": "Button with six variants, four sizes, and disabled states.",
@@ -25,16 +32,23 @@
       "files": [{ "source": "input.rs", "target": "input.rs" }]
     },
     {
+      "name": "field",
+      "type": "component",
+      "description": "Visible labels with optional help or error text around native controls.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "field.rs", "target": "field.rs" }]
+    },
+    {
       "name": "card",
       "type": "component",
       "description": "Composable card container and header.",
-      "dependencies": ["theme"],
+      "dependencies": ["surface"],
       "files": [{ "source": "card.rs", "target": "card.rs" }]
     },
     {
       "name": "badge",
       "type": "component",
-      "description": "Compact status label with four variants.",
+      "description": "Compact labels and status pills with six variants and two sizes.",
       "dependencies": ["theme"],
       "files": [{ "source": "badge.rs", "target": "badge.rs" }]
     },
@@ -44,6 +58,13 @@
       "description": "Horizontal and vertical semantic separators.",
       "dependencies": ["theme"],
       "files": [{ "source": "separator.rs", "target": "separator.rs" }]
+    },
+    {
+      "name": "segmented-control",
+      "type": "component",
+      "description": "Controlled pointer and touch selector built from native buttons.",
+      "dependencies": ["button"],
+      "files": [{ "source": "segmented_control.rs", "target": "segmented_control.rs" }]
     }
   ]
 }

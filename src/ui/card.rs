@@ -1,7 +1,8 @@
+use super::surface::{SurfaceVariant, surface};
 use super::theme::Theme;
+use iced::Element;
 use iced::widget::text::IntoFragment;
-use iced::widget::{Column, Container, column, container, text};
-use iced::{Background, Border, Element};
+use iced::widget::{Column, Container, column, text};
 
 pub fn card<'a, Message>(
     content: impl Into<Element<'a, Message>>,
@@ -10,19 +11,7 @@ pub fn card<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
-    container(content)
-        .padding(theme.spacing.xl)
-        .style(move |_iced_theme| iced::widget::container::Style {
-            background: Some(Background::Color(theme.palette.card)),
-            text_color: Some(theme.palette.card_foreground),
-            border: Border {
-                color: theme.palette.border,
-                width: 1.0,
-                radius: theme.radius.xl.into(),
-            },
-            ..Default::default()
-        })
+    surface(content, SurfaceVariant::Card, theme).padding(theme.spacing.xl)
 }
 
 pub fn card_header<'a, Message>(

@@ -515,8 +515,11 @@ fn template(path: &str) -> Option<&'static str> {
         "button.rs" => Some(include_str!("ui/button.rs")),
         "input.rs" => Some(include_str!("ui/input.rs")),
         "card.rs" => Some(include_str!("ui/card.rs")),
+        "field.rs" => Some(include_str!("ui/field.rs")),
         "badge.rs" => Some(include_str!("ui/badge.rs")),
         "separator.rs" => Some(include_str!("ui/separator.rs")),
+        "segmented_control.rs" => Some(include_str!("ui/segmented_control.rs")),
+        "surface.rs" => Some(include_str!("ui/surface.rs")),
         _ => None,
     }
 }
@@ -533,7 +536,7 @@ mod tests {
     fn resolves_dependencies_once_and_in_order() {
         let registry = registry().unwrap();
         let order = resolve(&registry, &["button".into(), "card".into()]).unwrap();
-        assert_eq!(order, ["theme", "button", "card"]);
+        assert_eq!(order, ["theme", "button", "surface", "card"]);
     }
 
     #[test]

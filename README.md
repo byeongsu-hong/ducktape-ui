@@ -7,12 +7,12 @@ Like shadcn/ui, ducktape-ui copies readable component source into your project. 
 ## Quick start
 
 ```bash
-cargo install --path . --bin ducktape-ui
+cargo install --git https://github.com/byeongsu-hong/ducktape-ui --bin ducktape-ui
 cargo new my-iced-app
 cd my-iced-app
 
 ducktape-ui init
-ducktape-ui add button input card badge separator
+ducktape-ui add button input field card badge separator segmented-control
 ```
 
 Then expose the generated module from your app:
@@ -52,14 +52,18 @@ fn view() -> iced::Element<'static, Message> {
 
 ## Components
 
-The first vertical slice includes:
+The current foundation includes:
 
 - semantic light/dark theme tokens
 - button variants, sizes, pressed/hovered/disabled states
 - default and invalid text inputs
-- composable cards
-- badge variants
+- visible field labels with help and error text
+- semantic surfaces and composable cards
+- badge variants, sizes, and labeled status markers
 - horizontal and vertical separators
+- a controlled segmented selector built from native buttons
+
+`segmented-control` is deliberately not named `tabs`: iced's native buttons do not expose the focus and keyboard hooks required for honest tab semantics yet.
 
 Every component is an ordinary `.rs` file under `src/ui`. Edit `theme.rs` once to change semantic colors, radii, spacing, and typography across the installed set. The defaults mirror Ducktape's warm light/dark palettes and support its three runtime accents with `Theme::with_accent`.
 
@@ -79,4 +83,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 ```
 
-The end-to-end test creates a blank iced project, runs `init` and `add button`, and compiles the installed source.
+The end-to-end test creates a blank iced project, installs a composed component set, and compiles the copied source.
