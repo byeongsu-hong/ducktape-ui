@@ -8,8 +8,8 @@
 use std::rc::Rc;
 
 use super::calendar::{
-    CALENDAR_WIDTH, CalendarEvent, CalendarSelection, Date, DateRange, Month, controlled_calendar,
-    focus_calendar_day,
+    CALENDAR_WIDTH, CalendarEvent, CalendarSelection, CalendarState, Date, DateRange, Month,
+    controlled_calendar, focus_calendar_day,
 };
 use super::direction::Direction;
 use super::popover::{
@@ -118,7 +118,7 @@ impl DatePickerEvent {
     pub const fn next_open(&self, current: bool) -> bool {
         match self {
             Self::OpenChanged { open, .. } => *open,
-            Self::Calendar(CalendarEvent::SelectionChanged(selection)) => {
+            Self::Calendar(CalendarEvent::SelectionChanged { selection, .. }) => {
                 match selection_complete(selection) {
                     Some(true) => false,
                     Some(false) | None => current,
@@ -132,7 +132,7 @@ impl DatePickerEvent {
 
     pub fn value(&self) -> Option<DatePickerValue> {
         match self {
-            Self::Calendar(CalendarEvent::SelectionChanged(selection)) => {
+            Self::Calendar(CalendarEvent::SelectionChanged { selection, .. }) => {
                 DatePickerValue::from_calendar(selection)
             }
             Self::OpenChanged { .. }
@@ -181,14 +181,14 @@ impl DatePickerEvent {
             Self::Calendar(event @ CalendarEvent::FocusMoved { .. }) => {
                 event.focus_task(ids.calendar())
             }
-            Self::Calendar(CalendarEvent::SelectionChanged(selection))
+            Self::Calendar(CalendarEvent::SelectionChanged { selection, .. })
                 if selection_complete(selection) == Some(true) =>
             {
                 PopoverEvent::Close(DismissReason::Trigger).focus_task(ids.popover())
             }
-            Self::Calendar(CalendarEvent::SelectionChanged(_) | CalendarEvent::MonthChanged(_)) => {
-                Task::none()
-            }
+            Self::Calendar(
+                CalendarEvent::SelectionChanged { .. } | CalendarEvent::MonthChanged(_),
+            ) => Task::none(),
         }
     }
 }
@@ -482,14 +482,13 @@ where
             .align_y(Vertical::Center)
             .style(move |_iced_theme| trigger_style(&theme, invalid, disabled));
 
-        let calendar_selection = self.value.as_calendar_selection();
+        let calendar_state = CalendarState::new(self.month, self.value.as_calendar_selection())
+            .focused(self.focused);
         let calendar_event = Rc::clone(&self.on_event);
         let disabled_dates = self.disabled_dates.clone();
         let mut calendar = controlled_calendar(
             self.ids.calendar.clone(),
-            self.month,
-            &calendar_selection,
-            self.focused,
+            &calendar_state,
             move |event| calendar_event(DatePickerEvent::Calendar(event)),
             &self.theme,
         )
@@ -619,23 +618,21 @@ mod tests {
         Date::new(year, month, day).unwrap()
     }
 
+    fn selection_event(selection: CalendarSelection, focused: Date) -> DatePickerEvent {
+        DatePickerEvent::Calendar(CalendarEvent::SelectionChanged { selection, focused })
+    }
+
     #[test]
     fn value_reducers_close_single_and_only_completed_ranges() {
         let single = DatePickerValue::Single(None).selected(date(2024, 7, 4));
-        let single_event = DatePickerEvent::Calendar(CalendarEvent::SelectionChanged(
-            single.as_calendar_selection(),
-        ));
+        let single_event = selection_event(single.as_calendar_selection(), date(2024, 7, 4));
         assert!(!single_event.next_open(true));
 
         let open_range = DatePickerValue::Range(None).selected(date(2024, 7, 4));
-        let range_event = DatePickerEvent::Calendar(CalendarEvent::SelectionChanged(
-            open_range.as_calendar_selection(),
-        ));
+        let range_event = selection_event(open_range.as_calendar_selection(), date(2024, 7, 4));
         assert!(range_event.next_open(true));
         let completed = open_range.selected(date(2024, 7, 1));
-        let complete_event = DatePickerEvent::Calendar(CalendarEvent::SelectionChanged(
-            completed.as_calendar_selection(),
-        ));
+        let complete_event = selection_event(completed.as_calendar_selection(), date(2024, 7, 1));
         assert!(!complete_event.next_open(true));
         assert_eq!(complete_event.value(), Some(completed));
     }

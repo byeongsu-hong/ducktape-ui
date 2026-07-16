@@ -1,7 +1,7 @@
 use super::theme::{Theme, alpha};
 use iced::widget::scrollable::{self as iced_scrollable, Rail, Scroller, Status};
 use iced::widget::{Scrollable, scrollable};
-use iced::{Background, Border, Element};
+use iced::{Background, Border, Element, Length};
 
 /// Creates a styled native vertical scrollable.
 ///
@@ -16,7 +16,9 @@ where
     Message: 'a,
 {
     let theme = *theme;
-    scrollable(content).style(move |_iced_theme, status| style(&theme, status))
+    scrollable(content)
+        .width(Length::Fill)
+        .style(move |_iced_theme, status| style(&theme, status))
 }
 
 pub fn style(theme: &Theme, status: Status) -> iced_scrollable::Style {

@@ -1,5 +1,5 @@
 use super::input::{InputVariant, style as input_style};
-use super::theme::{Theme, alpha};
+use super::theme::Theme;
 use iced::widget::{Container, Row, TextInput, container, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 
@@ -39,8 +39,7 @@ where
 
 /// A native Iced text input styled for [`input_group`].
 ///
-/// The parent owns the border. Focus uses a subtle background tint because
-/// native Iced does not expose a child's focus status to its parent container.
+/// The parent owns the border and background.
 pub fn group_input<'a, Message>(
     placeholder: &str,
     value: &str,
@@ -74,13 +73,9 @@ pub fn style(theme: &Theme, variant: InputVariant) -> iced::widget::container::S
 pub fn group_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = input_style(theme, InputVariant::Default, status);
     style.border = Border::default();
-    style.background = match status {
-        text_input::Status::Focused { .. } => Background::Color(alpha(theme.palette.ring, 0.08)),
-        text_input::Status::Disabled => style.background,
-        text_input::Status::Active | text_input::Status::Hovered => {
-            Background::Color(Color::TRANSPARENT)
-        }
-    };
+    if !matches!(status, text_input::Status::Disabled) {
+        style.background = Background::Color(Color::TRANSPARENT);
+    }
     style
 }
 
@@ -110,11 +105,11 @@ mod tests {
     }
 
     #[test]
-    fn focus_has_a_visible_cue_without_an_inner_outline() {
+    fn child_never_paints_only_part_of_the_group_background() {
         let active = group_input_style(&LIGHT, text_input::Status::Active);
         let focused = group_input_style(&LIGHT, text_input::Status::Focused { is_hovered: true });
 
-        assert_ne!(focused.background, active.background);
+        assert_eq!(focused.background, active.background);
         assert_eq!(focused.border.width, 0.0);
     }
 }

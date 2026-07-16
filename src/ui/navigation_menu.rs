@@ -750,10 +750,10 @@ where
             .push(main)
             .push(
                 container(marker)
-                    .width(Length::Fill)
                     .height(NAVIGATION_MENU_INDICATOR_HEIGHT)
                     .align_x(Horizontal::Center),
             )
+            .align_x(IcedAlignment::Center)
             .height(NAVIGATION_MENU_TRIGGER_HEIGHT)
             .into(),
         (NavigationMenuOrientation::Vertical, Direction::LeftToRight) => Row::new()

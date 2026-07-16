@@ -646,7 +646,7 @@ where
     let content = container(text(label).size(theme.typography.xs).line_height(1.0))
         .height(28)
         .padding([6, 10])
-        .center_y(Length::Fill);
+        .align_y(Vertical::Center);
     let style_theme = *theme;
 
     focus_control(

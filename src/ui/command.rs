@@ -691,7 +691,10 @@ pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
 
 pub fn command_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = base_input_style(theme, InputVariant::Default, status);
-    style.border = Border::default();
+    style.border = Border {
+        radius: theme.radius.lg.into(),
+        ..Border::default()
+    };
     style.background = match status {
         text_input::Status::Focused { .. } => Background::Color(alpha(theme.palette.ring, 0.07)),
         text_input::Status::Disabled => style.background,

@@ -215,7 +215,7 @@ where
                     .padding(
                         Padding::default()
                             .horizontal(theme.spacing.sm)
-                            .bottom(theme.spacing.lg),
+                            .bottom(theme.spacing.xl),
                     )
                     .width(Length::Fill),
             );

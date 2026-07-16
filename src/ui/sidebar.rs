@@ -369,7 +369,11 @@ where
                 .into(),
         };
 
-        let mut layers = Stack::new().width(width).height(Length::Fill).push(panel);
+        let mut layers = Stack::new()
+            .width(width)
+            .height(Length::Fill)
+            .clip(true)
+            .push(panel);
         if self.variant == SidebarVariant::Sidebar {
             layers = layers.push(sidebar_seam(
                 self.side,
@@ -839,7 +843,7 @@ where
     container(content)
         .padding([0, 6])
         .height(SIDEBAR_METRICS.compact_control_size)
-        .center_y(Length::Fill)
+        .align_y(Vertical::Center)
         .style(move |_iced_theme| badge_style(&style_theme, active))
 }
 
@@ -934,7 +938,8 @@ where
     let content = container(content)
         .width(SIDEBAR_METRICS.compact_control_size)
         .height(SIDEBAR_METRICS.compact_control_size)
-        .center(Length::Fill);
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center);
     let style_theme = *theme;
     focus_control(id, content, on_press, theme)
         .disabled(disabled)
@@ -964,7 +969,7 @@ where
     let content = container(seam)
         .width(metrics.rail_hit_size)
         .height(Length::Fill)
-        .center_x(Length::Fill);
+        .align_x(Horizontal::Center);
     let style_theme = *theme;
     focus_control(id, content, on_toggle, theme)
         .style(move |_iced_theme, status| rail_style(&style_theme, side, status))

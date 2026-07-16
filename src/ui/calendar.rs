@@ -627,16 +627,82 @@ fn enabled_from(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarState {
+    month: Month,
+    selection: CalendarSelection,
+    focused: Option<Date>,
+}
+
+impl CalendarState {
+    pub const fn new(month: Month, selection: CalendarSelection) -> Self {
+        Self {
+            month,
+            selection,
+            focused: None,
+        }
+    }
+
+    #[must_use]
+    pub fn focused(mut self, focused: Option<Date>) -> Self {
+        self.focused = focused;
+        if let Some(date) = focused {
+            self.month = date.month();
+        }
+        self
+    }
+
+    pub const fn month(&self) -> Month {
+        self.month
+    }
+
+    pub const fn selection(&self) -> &CalendarSelection {
+        &self.selection
+    }
+
+    pub const fn focused_date(&self) -> Option<Date> {
+        self.focused
+    }
+
+    pub fn apply(&mut self, event: &CalendarEvent) -> bool {
+        let previous = self.clone();
+        match event {
+            CalendarEvent::SelectionChanged { selection, focused } => {
+                self.month = focused.month();
+                self.selection = selection.clone();
+                self.focused = Some(*focused);
+            }
+            CalendarEvent::FocusMoved { date, month } => {
+                self.month = *month;
+                self.focused = Some(*date);
+            }
+            CalendarEvent::MonthChanged(month) => {
+                self.month = *month;
+                self.focused = self.focused.map(|date| {
+                    Date::new(month.year(), month.number(), date.day().min(month.days())).unwrap()
+                });
+            }
+        }
+        *self != previous
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CalendarEvent {
-    SelectionChanged(CalendarSelection),
-    FocusMoved { date: Date, month: Month },
+    SelectionChanged {
+        selection: CalendarSelection,
+        focused: Date,
+    },
+    FocusMoved {
+        date: Date,
+        month: Month,
+    },
     MonthChanged(Month),
 }
 
 impl CalendarEvent {
     pub fn selection(&self) -> Option<&CalendarSelection> {
         match self {
-            Self::SelectionChanged(selection) => Some(selection),
+            Self::SelectionChanged { selection, .. } => Some(selection),
             Self::FocusMoved { .. } | Self::MonthChanged(_) => None,
         }
     }
@@ -644,14 +710,16 @@ impl CalendarEvent {
     pub const fn month(&self) -> Option<Month> {
         match self {
             Self::FocusMoved { month, .. } | Self::MonthChanged(month) => Some(*month),
-            Self::SelectionChanged(_) => None,
+            Self::SelectionChanged { focused, .. } => Some(focused.month()),
         }
     }
 
     pub const fn focused(&self) -> Option<Date> {
         match self {
-            Self::FocusMoved { date, .. } => Some(*date),
-            Self::SelectionChanged(_) | Self::MonthChanged(_) => None,
+            Self::FocusMoved { date, .. } | Self::SelectionChanged { focused: date, .. } => {
+                Some(*date)
+            }
+            Self::MonthChanged(_) => None,
         }
     }
 
@@ -814,16 +882,14 @@ pub fn day_style(theme: &Theme, state: DayVisualState, status: Status) -> FocusS
     style
 }
 
-/// Builder for a controlled calendar. The caller applies emitted selection,
-/// month, and focus values and returns [`CalendarEvent::focus_task`] from update.
+/// Builder for a controlled calendar. The caller applies events to one
+/// [`CalendarState`] and returns [`CalendarEvent::focus_task`] from update.
 pub struct Calendar<'a, Message>
 where
     Message: Clone + 'a,
 {
     id: String,
-    month: Month,
-    selection: CalendarSelection,
-    focused: Option<Date>,
+    state: CalendarState,
     today: Option<Date>,
     on_event: Rc<dyn Fn(CalendarEvent) -> Message + 'a>,
     constraints: CalendarConstraints<'a>,
@@ -838,9 +904,7 @@ where
 
 pub fn controlled_calendar<'a, Message>(
     id: impl Into<String>,
-    month: Month,
-    selection: &CalendarSelection,
-    focused: Option<Date>,
+    state: &CalendarState,
     on_event: impl Fn(CalendarEvent) -> Message + 'a,
     theme: &Theme,
 ) -> Calendar<'a, Message>
@@ -849,9 +913,7 @@ where
 {
     Calendar {
         id: id.into(),
-        month,
-        selection: selection.clone(),
-        focused,
+        state: state.clone(),
         today: None,
         on_event: Rc::new(on_event),
         constraints: CalendarConstraints::default(),
@@ -860,8 +922,8 @@ where
         month_dropdown: false,
         year_dropdown: false,
         year_range: (
-            (month.year() - 50).max(MIN_YEAR),
-            (month.year() + 50).min(MAX_YEAR),
+            (state.month.year() - 50).max(MIN_YEAR),
+            (state.month.year() + 50).min(MAX_YEAR),
         ),
         direction: Direction::LeftToRight,
         theme: *theme,
@@ -963,10 +1025,12 @@ where
 
     fn header(&self, width: f32) -> Element<'a, Message> {
         let previous_month = self
+            .state
             .month
             .previous()
             .filter(|month| self.constraints.month_has_enabled_day(*month));
         let next_month = self
+            .state
             .month
             .next()
             .filter(|month| self.constraints.month_has_enabled_day(*month));
@@ -976,7 +1040,7 @@ where
             .width(32)
             .disabled(previous_month.is_none())
             .on_press((self.on_event)(CalendarEvent::MonthChanged(
-                previous_month.unwrap_or(self.month),
+                previous_month.unwrap_or(self.state.month),
             )));
         let next = button("›", &self.theme)
             .variant(ButtonVariant::Ghost)
@@ -984,7 +1048,7 @@ where
             .width(32)
             .disabled(next_month.is_none())
             .on_press((self.on_event)(CalendarEvent::MonthChanged(
-                next_month.unwrap_or(self.month),
+                next_month.unwrap_or(self.state.month),
             )));
         let caption = self.caption();
         let items: Vec<Element<'a, Message>> = match self.direction {
@@ -993,7 +1057,7 @@ where
                 container(caption)
                     .width(Length::Fill)
                     .height(DAY_CELL_SIZE)
-                    .center_y(Length::Fill)
+                    .align_y(Vertical::Center)
                     .into(),
                 next.into(),
             ],
@@ -1002,7 +1066,7 @@ where
                 container(caption)
                     .width(Length::Fill)
                     .height(DAY_CELL_SIZE)
-                    .center_y(Length::Fill)
+                    .align_y(Vertical::Center)
                     .into(),
                 previous.into(),
             ],
@@ -1019,7 +1083,7 @@ where
     fn caption(&self) -> Element<'a, Message> {
         if !self.month_dropdown && !self.year_dropdown {
             return container(
-                text(self.month.to_string())
+                text(self.state.month.to_string())
                     .size(self.theme.typography.sm)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(self.theme.palette.foreground),
@@ -1033,8 +1097,8 @@ where
         let mut parts: Vec<Element<'a, Message>> = Vec::with_capacity(2);
         if self.month_dropdown {
             let event = Rc::clone(&self.on_event);
-            let year = self.month.year();
-            let selected = MonthOption(self.month.number());
+            let year = self.state.month.year();
+            let selected = MonthOption(self.state.month.number());
             parts.push(
                 native_select(
                     month_options(),
@@ -1052,23 +1116,24 @@ where
         } else {
             parts.push(
                 container(
-                    text(MONTH_NAMES[usize::from(self.month.number() - 1)])
+                    text(MONTH_NAMES[usize::from(self.state.month.number() - 1)])
                         .size(self.theme.typography.sm),
                 )
                 .width(104)
-                .center_x(Length::Fill)
-                .center_y(DAY_CELL_SIZE)
+                .height(DAY_CELL_SIZE)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center)
                 .into(),
             );
         }
         if self.year_dropdown {
             let event = Rc::clone(&self.on_event);
-            let month = self.month.number();
+            let month = self.state.month.number();
             let years = year_options(self.year_range.0, self.year_range.1);
             parts.push(
                 native_select(
                     years,
-                    Some(YearOption(self.month.year())),
+                    Some(YearOption(self.state.month.year())),
                     move |year: YearOption| {
                         event(CalendarEvent::MonthChanged(
                             Month::new(year.year(), month).unwrap(),
@@ -1081,10 +1146,11 @@ where
             );
         } else {
             parts.push(
-                container(text(self.month.year()).size(self.theme.typography.sm))
+                container(text(self.state.month.year()).size(self.theme.typography.sm))
                     .width(80)
-                    .center_x(Length::Fill)
-                    .center_y(DAY_CELL_SIZE)
+                    .height(DAY_CELL_SIZE)
+                    .align_x(Horizontal::Center)
+                    .align_y(Vertical::Center)
                     .into(),
             );
         }
@@ -1101,7 +1167,7 @@ where
                 .align_y(Alignment::Center),
         )
         .width(Length::Fill)
-        .center_x(Length::Fill)
+        .align_x(Horizontal::Center)
         .into()
     }
 
@@ -1125,7 +1191,8 @@ where
     }
 
     fn day_grid(&self, width: f32) -> Element<'a, Message> {
-        self.month
+        self.state
+            .month
             .visible_dates()
             .chunks_exact(WEEKDAY_COUNT)
             .fold(Column::new().width(width), |column, week| {
@@ -1162,21 +1229,21 @@ where
                 .height(DAY_CELL_SIZE)
                 .into();
         };
-        if !self.show_outside_days && !self.month.contains(date) {
+        if !self.show_outside_days && !self.state.month.contains(date) {
             return Space::new()
                 .width(DAY_CELL_SIZE)
                 .height(DAY_CELL_SIZE)
                 .into();
         }
 
-        let outside = !self.month.contains(date);
+        let outside = !self.state.month.contains(date);
         let disabled = outside || self.constraints.is_disabled(date);
         let visual = day_visual_state(
             date,
-            self.month,
-            &self.selection,
+            self.state.month,
+            &self.state.selection,
             self.today,
-            self.focused,
+            self.state.focused,
             disabled,
         );
         let content = container(
@@ -1188,8 +1255,11 @@ where
         .height(DAY_CELL_SIZE)
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center);
-        let selection = self.selection.clone();
-        let activate = (self.on_event)(CalendarEvent::SelectionChanged(selection.selected(date)));
+        let selection = self.state.selection.clone();
+        let activate = (self.on_event)(CalendarEvent::SelectionChanged {
+            selection: selection.selected(date),
+            focused: date,
+        });
         let constraints = self.constraints.clone();
         let direction = self.direction;
         let key_event = Rc::clone(&self.on_event);
@@ -1281,8 +1351,8 @@ where
             )
             .width(Length::Fill)
             .height(DAY_CELL_SIZE)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center),
         )
         .push(
             button("›", theme)
@@ -1445,6 +1515,29 @@ mod tests {
             completed.selected(date(2024, 6, 1)),
             CalendarSelection::Range(Some(DateRange::open(date(2024, 6, 1))))
         );
+    }
+
+    #[test]
+    fn one_state_reducer_keeps_month_selection_and_focus_together() {
+        let focused = date(2024, 1, 31);
+        let mut state =
+            CalendarState::new(month(2024, 1), CalendarSelection::Single(Some(focused)))
+                .focused(Some(focused));
+
+        assert!(state.apply(&CalendarEvent::MonthChanged(month(2024, 2))));
+        assert_eq!(state.month(), month(2024, 2));
+        assert_eq!(state.focused_date(), Some(date(2024, 2, 29)));
+
+        let selected = date(2024, 2, 20);
+        assert!(state.apply(&CalendarEvent::SelectionChanged {
+            selection: CalendarSelection::Single(Some(selected)),
+            focused: selected,
+        }));
+        assert_eq!(
+            state.selection(),
+            &CalendarSelection::Single(Some(selected))
+        );
+        assert_eq!(state.focused_date(), Some(selected));
     }
 
     #[test]

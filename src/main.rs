@@ -20,7 +20,9 @@ use ui::breadcrumb::{BreadcrumbItem, breadcrumb, breadcrumb_separator};
 use ui::bubble::{BubbleVariant, bubble};
 use ui::button::{ButtonSize, ButtonVariant, button};
 use ui::button_group::{ButtonGroupOrientation, button_group};
-use ui::calendar::{CalendarEvent, CalendarSelection, Date, Month, controlled_calendar};
+use ui::calendar::{
+    CalendarEvent, CalendarSelection, CalendarState, Date, Month, controlled_calendar,
+};
 use ui::card::{card, card_header};
 use ui::carousel::{
     CarouselBoundary, CarouselCommand, CarouselEvent, CarouselOrientation, CarouselState,
@@ -128,9 +130,7 @@ struct Showcase {
     native_selected: Option<String>,
     accordion_state: AccordionState<&'static str>,
     collapsible_open: bool,
-    calendar_month: Month,
-    calendar_selection: CalendarSelection,
-    calendar_focused: Option<Date>,
+    calendar_state: CalendarState,
     date_picker_month: Month,
     date_picker_value: DatePickerValue,
     date_picker_focused: Option<Date>,
@@ -237,12 +237,16 @@ impl Default for Showcase {
             native_selected: None,
             accordion_state: AccordionState::Single(Some("install")),
             collapsible_open: false,
-            calendar_month: Month::new(2026, 7).expect("showcase month is valid"),
-            calendar_selection: CalendarSelection::Multiple(vec![
-                Date::new(2026, 7, 16).expect("showcase selection is valid"),
-                Date::new(2026, 7, 18).expect("showcase selection is valid"),
-            ]),
-            calendar_focused: Some(Date::new(2026, 7, 16).expect("showcase focus is valid")),
+            calendar_state: CalendarState::new(
+                Month::new(2026, 7).expect("showcase month is valid"),
+                CalendarSelection::Multiple(vec![
+                    Date::new(2026, 7, 16).expect("showcase selection is valid"),
+                    Date::new(2026, 7, 18).expect("showcase selection is valid"),
+                ]),
+            )
+            .focused(Some(
+                Date::new(2026, 7, 16).expect("showcase focus is valid"),
+            )),
             date_picker_month: Month::new(2026, 7).expect("showcase month is valid"),
             date_picker_value: DatePickerValue::Range(None),
             date_picker_focused: Some(Date::new(2026, 7, 16).expect("showcase focus is valid")),
@@ -480,16 +484,9 @@ impl Showcase {
                 self.collapsible_open = next_open(self.collapsible_open, change);
             }
             Message::Calendar(event) => {
-                if let Some(selection) = event.selection() {
-                    self.calendar_selection = selection.clone();
-                }
-                if let Some(month) = event.month() {
-                    self.calendar_month = month;
-                }
-                if let Some(focused) = event.focused() {
-                    self.calendar_focused = Some(focused);
-                }
-                return event.focus_task("showcase-calendar");
+                let task = event.focus_task("showcase-calendar");
+                self.calendar_state.apply(&event);
+                return task;
             }
             Message::DatePicker(event) => {
                 self.date_picker_open = event.next_open(self.date_picker_open);
@@ -1412,9 +1409,7 @@ impl Showcase {
 
         let calendar_example = controlled_calendar(
             "showcase-calendar",
-            self.calendar_month,
-            &self.calendar_selection,
-            self.calendar_focused,
+            &self.calendar_state,
             Message::Calendar,
             &theme,
         )
@@ -1436,11 +1431,11 @@ impl Showcase {
         });
         let calendar_meta = format!(
             "month={:04}-{:02} days={} selection={:?} focused={:?} width={:.0}",
-            self.calendar_month.year(),
-            self.calendar_month.number(),
-            self.calendar_month.days(),
-            self.calendar_selection,
-            self.calendar_focused,
+            self.calendar_state.month().year(),
+            self.calendar_state.month().number(),
+            self.calendar_state.month().days(),
+            self.calendar_state.selection(),
+            self.calendar_state.focused_date(),
             calendar_example.width(),
         );
         let date_picker_example = date_picker(
