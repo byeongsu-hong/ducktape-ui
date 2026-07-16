@@ -84,8 +84,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn only_border_variant_frames_the_row() {

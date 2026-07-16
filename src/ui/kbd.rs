@@ -40,8 +40,8 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn key_cap_uses_semantic_surface_tokens() {

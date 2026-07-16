@@ -167,11 +167,10 @@ fn add(root: &Path, args: &[String]) -> Result<String, String> {
 
     let registry = registry()?;
     let order = resolve(&registry, &requested)?;
-    ensure_cargo_dependencies(root, &registry, &order, dry_run)?;
+    let mut output = ensure_cargo_dependencies(root, &registry, &order, dry_run)?;
 
     let ui_dir = root.join(&config.ui);
     let mod_path = ui_dir.join("mod.rs");
-    let mut output = String::new();
     let mut modules = BTreeSet::new();
 
     for name in &order {
@@ -335,10 +334,11 @@ fn ensure_cargo_dependencies(
     registry: &Registry,
     order: &[String],
     dry_run: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let manifest_path = root.join("Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path).map_err(io_error)?;
     let mut dependencies = BTreeMap::new();
+    let mut output = String::new();
     for name in order {
         dependencies.extend(item(registry, name)?.cargo_dependencies.clone());
     }
@@ -346,9 +346,22 @@ fn ensure_cargo_dependencies(
     for (name, dependency) in dependencies {
         let version = dependency.version();
         let features = dependency.features();
-        if (has_dependency(&manifest, &name) && dependency_has_features(&manifest, &name, features))
-            || dry_run
+        if has_dependency(&manifest, &name)
+            && dependency_has_version(&manifest, &name, version)
+            && dependency_has_features(&manifest, &name, features)
         {
+            continue;
+        }
+        let feature_args = if features.is_empty() {
+            String::new()
+        } else {
+            format!(" --features {}", features.join(","))
+        };
+        if dry_run {
+            output.push_str(&format!(
+                "would update {}: cargo add {name}@{version}{feature_args}\n",
+                manifest_path.display(),
+            ));
             continue;
         }
         let mut command = Command::new("cargo");
@@ -361,24 +374,13 @@ fn ensure_cargo_dependencies(
             .status()
             .map_err(|error| format!("failed to run cargo add: {error}"))?;
         if !status.success() {
-            return Err(format!(
-                "cargo add {name}@{version}{} failed",
-                if features.is_empty() {
-                    String::new()
-                } else {
-                    format!(" --features {}", features.join(","))
-                }
-            ));
+            return Err(format!("cargo add {name}@{version}{feature_args} failed",));
         }
     }
-    Ok(())
+    Ok(output)
 }
 
-fn dependency_has_features(manifest: &str, name: &str, required: &[String]) -> bool {
-    if required.is_empty() {
-        return true;
-    }
-
+fn dependency_declaration(manifest: &str, name: &str) -> String {
     let direct = format!("dependencies.{name}");
     let mut section = String::new();
     let mut declaration = String::new();
@@ -393,18 +395,31 @@ fn dependency_has_features(manifest: &str, name: &str, required: &[String]) -> b
             continue;
         }
 
-        let inline = is_dependency_section(&section)
+        let inline = section == "dependencies"
             && line
                 .strip_prefix(name)
                 .is_some_and(|rest| rest.trim_start().starts_with('='));
-        let dedicated = section == direct
-            || (section.starts_with("target.") && section.ends_with(&format!(".{direct}")));
-        if inline || dedicated {
+        if !line.starts_with('#') && (inline || section == direct) {
             declaration.push_str(line);
             declaration.push('\n');
         }
     }
 
+    declaration
+}
+
+fn dependency_has_version(manifest: &str, name: &str, required: &str) -> bool {
+    let declaration = dependency_declaration(manifest, name);
+    declaration.contains(&format!("\"{required}\""))
+        || declaration.contains(&format!("'{required}'"))
+}
+
+fn dependency_has_features(manifest: &str, name: &str, required: &[String]) -> bool {
+    if required.is_empty() {
+        return true;
+    }
+
+    let declaration = dependency_declaration(manifest, name);
     required.iter().all(|feature| {
         declaration.contains(&format!("\"{feature}\""))
             || declaration.contains(&format!("'{feature}'"))
@@ -412,31 +427,7 @@ fn dependency_has_features(manifest: &str, name: &str, required: &[String]) -> b
 }
 
 fn has_dependency(manifest: &str, name: &str) -> bool {
-    let mut dependencies = false;
-    manifest.lines().any(|line| {
-        let line = line.trim_start();
-        if line.starts_with('[') {
-            let dedicated = format!("dependencies.{name}]");
-            if line == format!("[{dedicated}")
-                || (line.starts_with("[target.") && line.ends_with(&format!(".{dedicated}")))
-            {
-                return true;
-            }
-            dependencies = line == "[dependencies]"
-                || (line.starts_with("[target.") && line.ends_with(".dependencies]"));
-            return false;
-        }
-        if !dependencies || line.starts_with('#') {
-            return false;
-        }
-        line.strip_prefix(name)
-            .is_some_and(|rest| rest.trim_start().starts_with('='))
-    })
-}
-
-fn is_dependency_section(section: &str) -> bool {
-    section == "dependencies"
-        || (section.starts_with("target.") && section.ends_with(".dependencies"))
+    !dependency_declaration(manifest, name).is_empty()
 }
 
 fn item<'a>(registry: &'a Registry, name: &str) -> Result<&'a Item, String> {
@@ -683,7 +674,10 @@ mod tests {
     fn resolves_dependencies_once_and_in_order() {
         let registry = registry().unwrap();
         let order = resolve(&registry, &["button".into(), "card".into()]).unwrap();
-        assert_eq!(order, ["theme", "button", "surface", "card"]);
+        assert_eq!(
+            order,
+            ["theme", "focus-control", "button", "surface", "card"]
+        );
     }
 
     #[test]
@@ -731,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn dependency_detection_ignores_dev_and_workspace_sections() {
+    fn dependency_detection_ignores_dev_workspace_and_target_sections() {
         assert!(!has_dependency(
             "[dev-dependencies]\niced = \"=0.14.0\"\n",
             "iced"
@@ -752,9 +746,33 @@ mod tests {
             "[dependencies.iced]\nversion = \"=0.14.0\"\n",
             "iced"
         ));
-        assert!(has_dependency(
+        assert!(!has_dependency(
             "[target.'cfg(unix)'.dependencies]\niced = \"=0.14.0\"\n",
             "iced"
+        ));
+    }
+
+    #[test]
+    fn dependency_version_detection_requires_the_generic_registry_version() {
+        assert!(dependency_has_version(
+            "[dependencies]\niced = { version = \"=0.14.0\" }\n",
+            "iced",
+            "=0.14.0",
+        ));
+        assert!(dependency_has_version(
+            "[dependencies.iced]\nversion = '=0.14.0'\n",
+            "iced",
+            "=0.14.0",
+        ));
+        assert!(!dependency_has_version(
+            "[dependencies]\niced = { version = \"=0.10.0\" }\n",
+            "iced",
+            "=0.14.0",
+        ));
+        assert!(!dependency_has_version(
+            "[target.'cfg(windows)'.dependencies]\niced = \"=0.14.0\"\n",
+            "iced",
+            "=0.14.0",
         ));
     }
 
@@ -778,6 +796,11 @@ mod tests {
         ));
         assert!(!dependency_has_features(
             "[workspace.dependencies.iced]\nfeatures = [\"advanced\"]\n",
+            "iced",
+            &required,
+        ));
+        assert!(!dependency_has_features(
+            "[target.'cfg(windows)'.dependencies]\niced = { features = [\"advanced\"] }\n",
             "iced",
             &required,
         ));

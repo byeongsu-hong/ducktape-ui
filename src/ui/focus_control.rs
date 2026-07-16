@@ -1,15 +1,15 @@
-//! Keyboard-focusable activation for passive content.
+//! Keyboard-focusable activation for content.
 //!
-//! This wrapper owns pointer, touch, Enter, and Space activation. Its child is
-//! expected to be passive content (text, icons, or layout), not another button;
-//! interactive children capture their own events and are deliberately not
-//! activated a second time.
+//! This wrapper owns pointer, touch, Enter, and Space activation. Interactive
+//! children may keep their native pointer behavior; captured events focus the
+//! wrapper without activating it a second time.
 
 use super::theme::Theme as UiTheme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
 use iced::keyboard::{self, key};
 use iced::{
     Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size, Vector, touch,
+    window,
 };
 
 /// The interaction state supplied to [`FocusControl::style`].
@@ -94,7 +94,8 @@ impl widget::operation::Focusable for State {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Press {
-    Pointer,
+    Mouse,
+    Touch(touch::Finger),
     Enter,
     Space,
 }
@@ -110,6 +111,8 @@ where
     Renderer: renderer::Renderer,
 {
     id: widget::Id,
+    targetable: bool,
+    tab_stop: bool,
     content: Element<'a, Message, Theme, Renderer>,
     on_activate: Message,
     on_key_press: Option<Box<KeyPressFn<'a, Message>>>,
@@ -117,7 +120,7 @@ where
     style: Box<StyleFn<'a, Theme>>,
 }
 
-/// Wraps passive content in a keyboard- and pointer-activatable control.
+/// Wraps content in a keyboard- and pointer-activatable control.
 pub fn focus_control<'a, Message>(
     id: widget::Id,
     content: impl Into<Element<'a, Message>>,
@@ -144,6 +147,8 @@ where
 
         Self {
             id,
+            targetable: true,
+            tab_stop: true,
             content: content.into(),
             on_activate,
             on_key_press: None,
@@ -152,8 +157,27 @@ where
         }
     }
 
+    pub(crate) fn anonymous(
+        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        on_activate: Message,
+        theme: &UiTheme,
+    ) -> Self {
+        let mut control = Self::new(widget::Id::unique(), content, on_activate, theme);
+        control.targetable = false;
+        control
+    }
+
     pub fn id(&self) -> &widget::Id {
         &self.id
+    }
+
+    /// Includes this control in sequential Tab focus traversal.
+    ///
+    /// Compound widgets should enable this for only their current entry item.
+    #[must_use]
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        self
     }
 
     #[must_use]
@@ -204,7 +228,7 @@ where
     fn diff(&self, tree: &mut widget::Tree) {
         tree.diff_children(std::slice::from_ref(&self.content));
 
-        if self.disabled {
+        if self.disabled || !self.tab_stop {
             tree.state.downcast_mut::<State>().unfocus();
         }
     }
@@ -238,10 +262,12 @@ where
         {
             let state = tree.state.downcast_mut::<State>();
 
-            if self.disabled {
+            if self.disabled || !self.tab_stop {
                 state.unfocus();
-            } else {
-                operation.focusable(Some(&self.id), layout.bounds(), state);
+            }
+
+            if !self.disabled && self.tab_stop {
+                operation.focusable(self.targetable.then_some(&self.id), layout.bounds(), state);
             }
         }
 
@@ -281,8 +307,13 @@ where
         let state = tree.state.downcast_mut::<State>();
 
         if shell.is_event_captured() {
-            if is_pointer_press(event) && !is_over {
-                state.unfocus();
+            if is_pointer_press(event) {
+                if is_over && !self.disabled {
+                    state.focus();
+                    shell.request_redraw();
+                } else {
+                    state.unfocus();
+                }
             }
 
             return;
@@ -428,7 +459,7 @@ fn status(state: &State, disabled: bool, hovered: bool) -> Status {
     } else if state.is_pressed()
         && state
             .press
-            .is_some_and(|press| press != Press::Pointer || hovered)
+            .is_some_and(|press| !matches!(press, Press::Mouse | Press::Touch(_)) || hovered)
     {
         Status::Pressed
     } else if hovered {
@@ -470,20 +501,28 @@ fn handle_event<Message: Clone>(
     }
 
     match event {
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-        | Event::Touch(touch::Event::FingerPressed { .. }) => {
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
             if is_over {
                 state.focus();
-                state.press = Some(Press::Pointer);
+                state.press = Some(Press::Mouse);
                 shell.capture_event();
                 shell.request_redraw();
             } else {
                 state.unfocus();
             }
         }
-        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-        | Event::Touch(touch::Event::FingerLifted { .. }) => {
-            if state.press == Some(Press::Pointer) {
+        Event::Touch(touch::Event::FingerPressed { id, .. }) => {
+            if is_over {
+                state.focus();
+                state.press = Some(Press::Touch(*id));
+                shell.capture_event();
+                shell.request_redraw();
+            } else {
+                state.unfocus();
+            }
+        }
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            if state.press == Some(Press::Mouse) {
                 state.press = None;
 
                 if is_over {
@@ -494,9 +533,27 @@ fn handle_event<Message: Clone>(
                 shell.request_redraw();
             }
         }
-        Event::Touch(touch::Event::FingerLost { .. }) => {
-            if state.press == Some(Press::Pointer) {
-                state.press = None;
+        Event::Touch(touch::Event::FingerLifted { id, .. })
+            if state.press == Some(Press::Touch(*id)) =>
+        {
+            state.press = None;
+
+            if is_over {
+                shell.publish(on_activate.clone());
+            }
+
+            shell.capture_event();
+            shell.request_redraw();
+        }
+        Event::Touch(touch::Event::FingerLost { id, .. })
+            if state.press == Some(Press::Touch(*id)) =>
+        {
+            state.press = None;
+            shell.request_redraw();
+        }
+        Event::Window(window::Event::Unfocused) => {
+            if state.is_focused() || state.is_pressed() {
+                state.unfocus();
                 shell.request_redraw();
             }
         }
@@ -552,6 +609,47 @@ fn handle_key_press<Message>(
     shell.publish(message);
     shell.capture_event();
     true
+}
+
+#[cfg(test)]
+pub(crate) fn focusable_count<Message>(mut element: Element<'_, Message>) -> usize {
+    use iced::advanced::renderer::Headless as _;
+
+    struct Count(usize);
+
+    impl widget::Operation for Count {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+            operate(self);
+        }
+
+        fn focusable(
+            &mut self,
+            _id: Option<&widget::Id>,
+            _bounds: Rectangle,
+            _state: &mut dyn widget::operation::Focusable,
+        ) {
+            self.0 += 1;
+        }
+    }
+
+    let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+        iced::Font::default(),
+        iced::Pixels(16.0),
+        Some("tiny-skia"),
+    ))
+    .expect("headless renderer");
+    let viewport = Size::new(1024.0, 1024.0);
+    let mut tree = widget::Tree::new(element.as_widget());
+    let node = element.as_widget_mut().layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, viewport),
+    );
+    let mut operation = Count(0);
+    element
+        .as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut operation);
+    operation.0
 }
 
 #[cfg(test)]
@@ -667,6 +765,43 @@ mod tests {
             handle_event(&mut state, &press, false, true, &9, &mut shell);
         }
         assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn pointer_sources_must_match_and_window_blur_cancels_activation() {
+        let finger = touch::Finger(1);
+        let other = touch::Finger(2);
+        let touch_press = Event::Touch(touch::Event::FingerPressed {
+            id: finger,
+            position: iced::Point::ORIGIN,
+        });
+        let other_lift = Event::Touch(touch::Event::FingerLifted {
+            id: other,
+            position: iced::Point::ORIGIN,
+        });
+        let mouse_release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        for event in [touch_press, other_lift, mouse_release] {
+            let mut shell = Shell::new(&mut messages);
+            handle_event(&mut state, &event, true, true, &9, &mut shell);
+        }
+        assert!(state.is_pressed());
+        assert!(messages.is_empty());
+
+        let mut shell = Shell::new(&mut messages);
+        handle_event(
+            &mut state,
+            &Event::Window(window::Event::Unfocused),
+            true,
+            true,
+            &9,
+            &mut shell,
+        );
+        assert!(!state.is_focused());
+        assert!(!state.is_pressed());
+        assert!(messages.is_empty());
     }
 
     #[test]

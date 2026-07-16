@@ -68,8 +68,8 @@ fn metrics(theme: &Theme) -> Metrics {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn item_layout_follows_theme_spacing() {

@@ -67,8 +67,8 @@ pub fn style(theme: &Theme, variant: SurfaceVariant) -> iced::widget::container:
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn variants_only_use_semantic_theme_roles() {

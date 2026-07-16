@@ -86,8 +86,8 @@ fn color(kind: BreadcrumbKind, theme: &Theme) -> iced::Color {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn current_page_is_distinct_from_ancestor_links() {

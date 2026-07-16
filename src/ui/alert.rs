@@ -52,8 +52,8 @@ fn tone(theme: &Theme, variant: AlertVariant) -> iced::Color {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn variants_use_opaque_semantic_tints_and_normal_foreground() {

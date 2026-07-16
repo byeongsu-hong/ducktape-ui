@@ -246,7 +246,7 @@ pub struct HandleStyle {
 
 pub fn handle_style(theme: &UiTheme, status: HandleStatus) -> HandleStyle {
     let emphasis = match status {
-        HandleStatus::Active => theme.palette.border,
+        HandleStatus::Active => theme.palette.input,
         HandleStatus::Hovered => theme.palette.muted_foreground,
         HandleStatus::Focused | HandleStatus::Dragging => theme.palette.ring,
         HandleStatus::Disabled => alpha(theme.palette.border, 0.45),
@@ -627,6 +627,19 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if reset_on_window_unfocus(
+            tree.state.downcast_mut::<State>(),
+            &mut tree.children,
+            event,
+            self.handles.len(),
+        ) {
+            self.update_children(
+                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+            );
+            shell.request_redraw();
+            return;
+        }
+
         if matches!(event, Event::Keyboard(_)) {
             self.update_children(
                 tree, event, layout, cursor, renderer, clipboard, shell, viewport,
@@ -670,26 +683,7 @@ where
             return;
         }
 
-        let released = matches!(
-            (event, dragging.as_ref()),
-            (
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-                Some(Drag {
-                    source: DragSource::Mouse,
-                    ..
-                })
-            )
-        ) || matches!(
-            (event, dragging.as_ref()),
-            (
-                Event::Touch(touch::Event::FingerLifted { id, .. })
-                    | Event::Touch(touch::Event::FingerLost { id, .. }),
-                Some(Drag { source: DragSource::Touch(active), .. })
-            ) if id == active
-        );
-
-        if released {
-            tree.state.downcast_mut::<State>().drag = None;
+        if finish_drag(tree.state.downcast_mut::<State>(), event) {
             shell.capture_event();
             shell.request_redraw();
             return;
@@ -931,6 +925,46 @@ fn handle_focused(children: &[widget::Tree], handle: usize) -> bool {
             .downcast_ref::<focus_control::State>()
             .is_focused()
     })
+}
+
+fn reset_on_window_unfocus(
+    state: &mut State,
+    children: &mut [widget::Tree],
+    event: &Event,
+    handle_count: usize,
+) -> bool {
+    if !matches!(event, Event::Window(iced::window::Event::Unfocused)) {
+        return false;
+    }
+
+    state.drag = None;
+    focus_handle(children, None, handle_count);
+    true
+}
+
+fn finish_drag(state: &mut State, event: &Event) -> bool {
+    let Some(source) = state.drag.as_ref().map(|drag| drag.source) else {
+        return false;
+    };
+    let released = matches!(
+        (event, source),
+        (
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            DragSource::Mouse
+        )
+    ) || matches!(
+        (event, source),
+        (
+            Event::Touch(touch::Event::FingerLifted { id, .. })
+                | Event::Touch(touch::Event::FingerLost { id, .. }),
+            DragSource::Touch(active)
+        ) if *id == active
+    );
+
+    if released {
+        state.drag = None;
+    }
+    released
 }
 
 fn focus_handle(children: &mut [widget::Tree], target: Option<usize>, handle_count: usize) {
@@ -1230,8 +1264,8 @@ fn grip_dots(grip: Rectangle, orientation: ResizableOrientation) -> [Rectangle; 
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn close(left: f32, right: f32) {
         assert!((left - right).abs() < 0.000_01, "{left} != {right}");
@@ -1419,14 +1453,68 @@ mod tests {
     }
 
     #[test]
-    fn focused_dividers_clear_three_to_one_contrast_in_both_themes() {
+    fn idle_and_focused_dividers_clear_three_to_one_contrast_in_both_themes() {
         for theme in [LIGHT, DARK] {
+            let active = handle_style(&theme, HandleStatus::Active);
             let focused = handle_style(&theme, HandleStatus::Focused);
             let disabled = handle_style(&theme, HandleStatus::Disabled);
 
+            assert!(contrast(active.divider, theme.palette.background) >= 3.0);
+            assert!(contrast(active.grip_border, active.grip_background) >= 3.0);
             assert!(contrast(focused.divider, theme.palette.background) >= 3.0);
-            assert!(disabled.divider.a < handle_style(&theme, HandleStatus::Active).divider.a);
+            assert!(disabled.divider.a < active.divider.a);
         }
+    }
+
+    #[test]
+    fn drags_require_a_matching_release_and_window_blur_clears_focus() {
+        use iced::widget::{container, text};
+
+        let finger = touch::Finger(7);
+        let drag = Drag {
+            handle: 0,
+            source: DragSource::Touch(finger),
+            origin: 50.0,
+            layout: ResizableLayout::new(2, &[0.5, 0.5], &[0.1, 0.1]),
+            orientation: ResizableOrientation::Horizontal,
+        };
+        let mut state = State { drag: Some(drag) };
+
+        assert!(!finish_drag(
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ));
+        assert!(!finish_drag(
+            &mut state,
+            &Event::Touch(touch::Event::FingerLifted {
+                id: touch::Finger(8),
+                position: Point::ORIGIN,
+            }),
+        ));
+        assert!(state.drag.is_some());
+
+        let panels = ["One", "Two"].map(|label| container(text(label)).into());
+        let widget = resizable(
+            "blur",
+            panels,
+            vec![0.5, 0.5],
+            vec![0.1, 0.1],
+            |sizes| sizes,
+            &LIGHT,
+        )
+        .into_widget();
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        *tree.state.downcast_mut::<State>() = state;
+        focus_handle(&mut tree.children, Some(0), 1);
+
+        assert!(reset_on_window_unfocus(
+            tree.state.downcast_mut::<State>(),
+            &mut tree.children,
+            &Event::Window(iced::window::Event::Unfocused),
+            1,
+        ));
+        assert!(tree.state.downcast_ref::<State>().drag.is_none());
+        assert!(!handle_focused(&tree.children, 0));
     }
 
     #[test]

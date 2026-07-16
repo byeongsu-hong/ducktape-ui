@@ -133,14 +133,17 @@ where
             }
         }
 
+        let stack = Stack::new().width(width).height(SLOT_SIZE).push(slots);
+
+        if self.disabled {
+            return stack.into();
+        }
+
         let pattern = self.pattern;
         let length = self.length;
         let on_change = self.on_change;
-        let mut input = text_input("", self.value)
-            .on_input_maybe(
-                (!self.disabled)
-                    .then_some(move |raw: String| on_change(normalize(&raw, length, pattern))),
-            )
+        let mut input = text_input("", &value)
+            .on_input(move |raw: String| on_change(normalize(&raw, length, pattern)))
             .width(width)
             .padding([10, 0])
             .style({
@@ -152,12 +155,7 @@ where
             input = input.id(id);
         }
 
-        Stack::new()
-            .width(width)
-            .height(SLOT_SIZE)
-            .push(slots)
-            .push(input)
-            .into()
+        stack.push(input).into()
     }
 }
 
@@ -214,6 +212,7 @@ pub fn slot_style(
     invalid: bool,
     disabled: bool,
 ) -> iced::widget::container::Style {
+    let active = active && !disabled;
     let border = if invalid {
         theme.palette.destructive
     } else if active {
@@ -254,8 +253,9 @@ pub fn overlay_style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn normalization_supports_digits_alphanumeric_and_custom_patterns() {
@@ -279,6 +279,7 @@ mod tests {
     #[test]
     fn invalid_slots_keep_feedback_without_a_second_group_outline() {
         let invalid = slot_style(&LIGHT, false, true, false);
+        let disabled = slot_style(&LIGHT, true, false, true);
         let focused = overlay_style(
             &LIGHT,
             false,
@@ -287,7 +288,21 @@ mod tests {
 
         assert_eq!(invalid.border.color, LIGHT.palette.destructive);
         assert_eq!(invalid.border.width, 2.0);
+        assert_eq!(disabled.border.color, LIGHT.palette.input);
+        assert_eq!(disabled.border.width, 1.0);
         assert_eq!(focused.border.width, 0.0);
         assert_eq!(focused.value, Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn disabled_input_has_no_hidden_focus_target() {
+        let enabled: Element<'_, ()> =
+            input_otp("12a", 4, OtpPattern::Digits, |_| (), &LIGHT).into();
+        let disabled: Element<'_, ()> = input_otp("12a", 4, OtpPattern::Digits, |_| (), &LIGHT)
+            .disabled(true)
+            .into();
+
+        assert_eq!(focusable_count(enabled), 1);
+        assert_eq!(focusable_count(disabled), 0);
     }
 }

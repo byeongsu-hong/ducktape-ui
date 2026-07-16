@@ -55,13 +55,13 @@ fn view() -> iced::Element<'static, Message> {
 The current toolkit includes:
 
 - semantic light/dark theme tokens
-- button variants, sizes, pressed/hovered/disabled states
+- keyboard-focusable button variants, sizes, pressed/hovered/disabled states
 - default and invalid text inputs
 - visible field labels with help and error text
 - semantic surfaces and composable cards
 - badge variants, sizes, and labeled status markers
 - alerts, bounded progress bars, and reusable empty states
-- styled native checkboxes and multiline text editors
+- keyboard-focusable styled checkboxes and multiline text editors
 - responsive aspect ratios, avatars, breadcrumbs, items, pagination, and skeletons
 - labels, key caps, and theme-backed typography roles
 - grouped controls, tables, scroll areas, and reduced-motion-aware spinners
@@ -76,7 +76,7 @@ The current toolkit includes:
 - composable legacy Toast surfaces and a controlled timed Sonner queue
 - a searchable grouped Command palette with native editing and complete result navigation
 - Canvas line, area, bar, pie, and donut charts with controlled tooltips and visible companion data
-- collision-aware Popover, Tooltip, and Hover Card overlays with focus and pointer timing
+- collision-aware Popover and Tooltip overlays plus pointer- and focus-safe interactive Hover Cards
 - a responsive controlled Sidebar system with collapse modes, shortcut, rail, full menu composition, and RTL
 - Dropdown, Context, and Menubar overlays plus grouped Select on one shared keyboard-complete menu model
 - modal/non-modal Sheet and draggable Drawer panels on all four edges with focus restoration
@@ -84,7 +84,7 @@ The current toolkit includes:
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 
-`segmented-control` remains a lightweight pointer/touch selector; the separate `tabs` component owns stable focus and arrow-key behavior.
+`segmented-control` remains a lightweight Tab-focusable selector; the separate `tabs` component owns roving focus and arrow-key behavior.
 
 Full shadcn/ui coverage is tracked component-by-component in [the parity matrix](docs/parity.md). Components stay at **Foundation** until their focus, keyboard, overlay, and state contracts are complete; visual similarity alone is not parity.
 
@@ -106,4 +106,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 ```
 
-The end-to-end test creates a blank iced project, installs a composed component set, and compiles the copied source.
+The end-to-end test creates a blank iced project, installs the complete component set, and compiles its copied source and tests.

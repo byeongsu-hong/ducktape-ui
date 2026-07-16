@@ -66,8 +66,8 @@ fn alignment(variant: BubbleVariant) -> Horizontal {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn direction_controls_surface_and_alignment() {

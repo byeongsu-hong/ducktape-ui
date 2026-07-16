@@ -2015,8 +2015,8 @@ fn luminance(color: Color) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::Size;
 
     fn config() -> ChartConfig {

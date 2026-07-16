@@ -41,18 +41,26 @@ pub enum TabsVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabsState<Id> {
     selected: Option<Id>,
+    focused: Option<Id>,
 }
 
 impl<Id> Default for TabsState<Id> {
     fn default() -> Self {
-        Self { selected: None }
+        Self {
+            selected: None,
+            focused: None,
+        }
     }
 }
 
 impl<Id> TabsState<Id> {
-    pub fn new(selected: Id) -> Self {
+    pub fn new(selected: Id) -> Self
+    where
+        Id: Clone,
+    {
         Self {
-            selected: Some(selected),
+            selected: Some(selected.clone()),
+            focused: Some(selected),
         }
     }
 
@@ -60,28 +68,33 @@ impl<Id> TabsState<Id> {
         self.selected.as_ref()
     }
 
-    pub fn select(&mut self, selected: Id) {
-        self.selected = Some(selected);
-    }
-
     pub fn clear(&mut self) {
         self.selected = None;
+        self.focused = None;
     }
 }
 
 impl<Id: Clone + Eq> TabsState<Id> {
-    /// Applies the selection carried by an event and reports whether it changed.
-    pub fn apply(&mut self, event: &TabsEvent<Id>) -> bool {
-        let Some(selected) = event.selection() else {
-            return false;
-        };
+    pub fn select(&mut self, selected: Id) {
+        self.selected = Some(selected.clone());
+        self.focused = Some(selected);
+    }
 
-        if self.selected.as_ref() == Some(selected) {
-            false
-        } else {
-            self.selected = Some(selected.clone());
-            true
+    /// Applies the selection and roving-focus state carried by an event.
+    pub fn apply(&mut self, event: &TabsEvent<Id>) -> bool {
+        let previous = self.clone();
+
+        match event {
+            TabsEvent::Select(id) => self.select(id.clone()),
+            TabsEvent::Navigate { target, select, .. } => {
+                self.focused = Some(target.clone());
+                if *select {
+                    self.selected = Some(target.clone());
+                }
+            }
         }
+
+        *self != previous
     }
 }
 
@@ -212,6 +225,11 @@ where
         .collect();
     let on_event = Rc::new(on_event);
     let selected_id = state.selected();
+    let focused_id = state.focused.as_ref().or(selected_id);
+    let tab_stop = items
+        .iter()
+        .position(|item| !item.disabled && focused_id == Some(&item.id))
+        .or_else(|| enabled.iter().position(|enabled| *enabled));
     let mut selected_panel = None;
     let mut trigger_elements = Vec::with_capacity(items.len());
 
@@ -251,6 +269,7 @@ where
             theme,
         )
         .disabled(item.disabled)
+        .tab_stop(tab_stop == Some(index))
         .on_key_press(move |key, _modifiers| {
             let target = navigation_target(index, &enabled, &key, orientation)?;
             let target = &targets[target];
@@ -439,8 +458,9 @@ fn trigger_style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::focusable_count;
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::widget::{Column, text};
 
     fn key(named: Named) -> keyboard::Key {
@@ -460,8 +480,9 @@ mod tests {
             select: false,
         };
 
-        assert!(!state.apply(&manual));
+        assert!(state.apply(&manual));
         assert_eq!(state.selected(), Some(&"account"));
+        assert_eq!(state.focused, Some("password"));
         assert_eq!(manual.focus_id(), Some(&focus_id));
 
         let automatic = TabsEvent::Navigate {
@@ -475,6 +496,7 @@ mod tests {
 
         state.clear();
         assert_eq!(state.selected(), None);
+        assert_eq!(state.focused, None);
         assert!(state.apply(&TabsEvent::Select("account")));
     }
 
@@ -606,6 +628,44 @@ mod tests {
         assert_eq!(root.len(), 2);
         assert_eq!(root[0].children.len(), 2);
         assert_eq!(root[1].children.len(), 2);
+    }
+
+    #[test]
+    fn tabs_expose_one_sequential_focus_stop_in_both_activation_modes() {
+        for activation in [TabsActivation::Automatic, TabsActivation::Manual] {
+            let state = TabsState::new("password");
+            let element = tabs(
+                &state,
+                [
+                    tab(
+                        "account",
+                        iced::widget::Id::new("focus-account"),
+                        text("Account"),
+                        text("Account panel"),
+                    ),
+                    tab(
+                        "password",
+                        iced::widget::Id::new("focus-password"),
+                        text("Password"),
+                        text("Password panel"),
+                    ),
+                    tab(
+                        "disabled",
+                        iced::widget::Id::new("focus-disabled"),
+                        text("Disabled"),
+                        text("Disabled panel"),
+                    )
+                    .disabled(true),
+                ],
+                TabsOrientation::Horizontal,
+                activation,
+                TabsVariant::Default,
+                |event| event,
+                &LIGHT,
+            );
+
+            assert_eq!(focusable_count(element), 1);
+        }
     }
 
     #[test]

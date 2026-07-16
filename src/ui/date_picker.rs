@@ -482,8 +482,7 @@ where
             .align_y(Vertical::Center)
             .style(move |_iced_theme| trigger_style(&theme, invalid, disabled));
 
-        let calendar_state = CalendarState::new(self.month, self.value.as_calendar_selection())
-            .focused(self.focused);
+        let calendar_state = calendar_state(self.month, &self.value, self.focused);
         let calendar_event = Rc::clone(&self.on_event);
         let disabled_dates = self.disabled_dates.clone();
         let mut calendar = controlled_calendar(
@@ -554,6 +553,11 @@ where
     }
 }
 
+fn calendar_state(month: Month, value: &DatePickerValue, focused: Option<Date>) -> CalendarState {
+    CalendarState::new(month, value.as_calendar_selection())
+        .focused(focused.filter(|date| month.contains(*date)))
+}
+
 fn preferred_focus(
     month: Month,
     value: &DatePickerValue,
@@ -611,8 +615,8 @@ pub fn trigger_style(
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     fn date(year: i32, month: u8, day: u8) -> Date {
         Date::new(year, month, day).unwrap()
@@ -688,6 +692,18 @@ mod tests {
             ),
             Some(date(2024, 7, 2))
         );
+    }
+
+    #[test]
+    fn stale_focus_does_not_restore_the_previous_month() {
+        let august = Month::new(2024, 8).unwrap();
+        let state = calendar_state(
+            august,
+            &DatePickerValue::Single(None),
+            Some(date(2024, 7, 16)),
+        );
+        assert_eq!(state.month(), august);
+        assert_eq!(state.focused_date(), None);
     }
 
     #[test]

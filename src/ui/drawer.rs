@@ -2,7 +2,7 @@
 
 use super::modal::{DismissReason, DismissRules, FocusScope, ModalEvent};
 use super::sheet::{SheetSide, sheet};
-use super::theme::{Theme, alpha};
+use super::theme::Theme;
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
 };
@@ -293,7 +293,7 @@ pub fn drawer_handle_style(theme: &Theme, dragging: bool) -> DrawerHandleStyle {
         color: if dragging {
             theme.palette.ring
         } else {
-            alpha(theme.palette.muted_foreground, 0.55)
+            theme.palette.input
         },
     }
 }
@@ -776,13 +776,14 @@ fn is_release(event: &Event, source: DragSource) -> bool {
 }
 
 fn is_cancel(event: &Event, source: DragSource) -> bool {
-    matches!(
-        (event, source),
-        (
-            Event::Touch(touch::Event::FingerLost { id, .. }),
-            DragSource::Touch(active)
-        ) if *id == active
-    )
+    matches!(event, Event::Window(iced::window::Event::Unfocused))
+        || matches!(
+            (event, source),
+            (
+                Event::Touch(touch::Event::FingerLost { id, .. }),
+                DragSource::Touch(active)
+            ) if *id == active
+        )
 }
 
 fn positive_or(value: f32, fallback: f32) -> f32 {
@@ -811,8 +812,8 @@ fn sanitize_fraction(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
 
     #[test]
     fn outward_drag_direction_matches_every_edge() {
@@ -906,13 +907,21 @@ mod tests {
     }
 
     #[test]
+    fn window_unfocus_cancels_every_drag_source() {
+        let event = Event::Window(iced::window::Event::Unfocused);
+        assert!(is_cancel(&event, DragSource::Mouse));
+        assert!(is_cancel(&event, DragSource::Touch(touch::Finger(1))));
+    }
+
+    #[test]
     fn handle_uses_semantic_contrast_in_light_and_dark_themes() {
         for theme in [LIGHT, DARK] {
             let idle = drawer_handle_style(&theme, false);
             let dragging = drawer_handle_style(&theme, true);
             assert_eq!(dragging.color, theme.palette.ring);
             assert_ne!(idle, dragging);
-            assert!(idle.color.a < 1.0);
+            assert!(idle.color.relative_contrast(theme.palette.popover) >= 3.0);
+            assert!(dragging.color.relative_contrast(theme.palette.popover) >= 3.0);
         }
     }
 }

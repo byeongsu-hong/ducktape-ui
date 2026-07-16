@@ -86,8 +86,8 @@ fn metrics(size: AvatarSize, theme: &Theme) -> Metrics {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn avatar_sizes_scale_frame_and_fallback_together() {

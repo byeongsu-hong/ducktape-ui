@@ -239,9 +239,9 @@ fn control_style(theme: &Theme, variant: ButtonVariant, status: FocusStatus) -> 
 
 #[cfg(test)]
 mod tests {
+    use super::super::focus_control::Status;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::focus_control::Status;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn safe_and_confirming_outcomes_are_distinct_and_close() {

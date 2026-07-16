@@ -415,10 +415,10 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut widget::Tree,
-        _layout: Layout<'b>,
+        layout: Layout<'b>,
         _renderer: &iced::Renderer,
         viewport: &Rectangle,
-        _translation: Vector,
+        translation: Vector,
     ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
         let anchor = self.anchor.filter(|_| self.open)?;
         let state = tree.state.downcast_mut::<State>();
@@ -427,10 +427,12 @@ where
             floating: FloatingContent {
                 content: &mut self.content,
                 tree: content_tree,
-                anchor: point_anchor(anchor),
+                anchor: translated_bounds(point_anchor(anchor), translation),
                 viewport: *viewport,
                 config: self.config,
             },
+            region: translated_bounds(layout.bounds(), translation),
+            translation,
             content_focus: &mut state.content_focus,
             content_id: &self.ids.content,
             on_event: self.on_event.as_ref(),
@@ -438,8 +440,14 @@ where
     }
 }
 
+fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
+    Rectangle::new(bounds.position() + translation, bounds.size())
+}
+
 struct ContextOverlay<'a, 'b, Message> {
     floating: FloatingContent<'a, 'b, Message>,
+    region: Rectangle,
+    translation: Vector,
     content_focus: &'b mut FocusFlag,
     content_id: &'b widget::Id,
     on_event: &'b dyn Fn(ContextMenuEvent) -> Message,
@@ -486,27 +494,16 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
-        let dismiss = if matches!(
+        let action = context_overlay_action(
             event,
-            Event::Keyboard(keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(Named::Escape),
-                ..
-            })
-        ) {
-            Some(DismissReason::Escape)
-        } else {
-            let point = match event {
-                Event::Mouse(mouse::Event::ButtonPressed(_)) => cursor.position(),
-                Event::Touch(touch::Event::FingerPressed { position, .. }) => Some(*position),
-                _ => None,
-            };
-            point
-                .filter(|point| !self.floating.bounds(layout).contains(*point))
-                .map(|_| DismissReason::Outside)
-        };
-        if let Some(reason) = dismiss {
+            cursor,
+            self.region,
+            self.floating.bounds(layout),
+            self.translation,
+        );
+        if let Some(action) = action {
             self.content_focus.unfocus();
-            shell.publish((self.on_event)(ContextMenuEvent::Close(reason)));
+            shell.publish((self.on_event)(action));
             shell.capture_event();
             shell.request_redraw();
             return;
@@ -537,12 +534,48 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     }
 }
 
+fn context_overlay_action(
+    event: &Event,
+    cursor: mouse::Cursor,
+    region: Rectangle,
+    content: Rectangle,
+    translation: Vector,
+) -> Option<ContextMenuEvent> {
+    if matches!(
+        event,
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(Named::Escape),
+            ..
+        })
+    ) {
+        return Some(ContextMenuEvent::Close(DismissReason::Escape));
+    }
+
+    let point = match event {
+        Event::Mouse(mouse::Event::ButtonPressed(_)) => cursor.position(),
+        Event::Touch(touch::Event::FingerPressed { position, .. }) => Some(*position),
+        _ => None,
+    }?;
+    if content.contains(point) {
+        return None;
+    }
+    if matches!(
+        event,
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+    ) && region.contains(point)
+    {
+        Some(ContextMenuEvent::OpenAt(point - translation))
+    } else {
+        Some(ContextMenuEvent::Close(DismissReason::Outside))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::menu::MenuItem;
+    use super::super::popover::resolve_position;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::menu::MenuItem;
-    use crate::ui::popover::resolve_position;
-    use crate::ui::theme::LIGHT;
     use iced::widget::text;
 
     #[test]
@@ -587,5 +620,61 @@ mod tests {
         )
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
+    }
+
+    #[test]
+    fn right_click_reanchors_an_open_menu_inside_its_region() {
+        let region = Rectangle::new(Point::ORIGIN, Size::new(300.0, 200.0));
+        let content = Rectangle::new(Point::new(100.0, 50.0), Size::new(120.0, 100.0));
+        let point = Point::new(40.0, 80.0);
+        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+
+        assert_eq!(
+            context_overlay_action(
+                &event,
+                mouse::Cursor::Available(point),
+                region,
+                content,
+                Vector::ZERO,
+            ),
+            Some(ContextMenuEvent::OpenAt(point))
+        );
+        assert_eq!(
+            context_overlay_action(
+                &event,
+                mouse::Cursor::Available(Point::new(280.0, 220.0)),
+                region,
+                content,
+                Vector::ZERO,
+            ),
+            Some(ContextMenuEvent::Close(DismissReason::Outside))
+        );
+    }
+
+    #[test]
+    fn translated_coordinates_reanchor_instead_of_dismiss() {
+        let translation = Vector::new(300.0, 200.0);
+        let region = Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0));
+        let anchor = Point::new(20.0, 30.0);
+        let rendered_anchor = translated_bounds(point_anchor(anchor), translation);
+        let point = rendered_anchor.position();
+        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+
+        let action = context_overlay_action(
+            &event,
+            mouse::Cursor::Available(point),
+            translated_bounds(region, translation),
+            Rectangle::with_size(Size::ZERO),
+            translation,
+        );
+        let Some(ContextMenuEvent::OpenAt(reanchored)) = action else {
+            panic!("translated right click should re-anchor");
+        };
+
+        assert_eq!(reanchored, anchor);
+        assert_eq!(
+            translated_bounds(point_anchor(reanchored), translation),
+            rendered_anchor
+        );
     }
 }

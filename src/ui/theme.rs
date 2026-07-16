@@ -86,12 +86,12 @@ pub const LIGHT: Theme = Theme {
         destructive: hex(0xc0483c),
         destructive_foreground: Color::WHITE,
         border: hex(0xe5e5e5),
-        input: hex(0xd6d6d6),
+        input: hex(0x949494),
         ring: hex(0xa05a3c),
-        success: hex(0x5cb45f),
-        success_foreground: Color::WHITE,
-        warning: hex(0xc08a3e),
-        warning_foreground: Color::WHITE,
+        success: hex(0x4f9050),
+        success_foreground: hex(0x151410),
+        warning: hex(0xa67938),
+        warning_foreground: hex(0x151410),
     },
     radius: RADIUS,
     spacing: SPACING,
@@ -118,7 +118,7 @@ pub const DARK: Theme = Theme {
         destructive: hex(0xd4655a),
         destructive_foreground: hex(0x1b1a17),
         border: hex(0x2e2d27),
-        input: hex(0x3b3a33),
+        input: hex(0x6b6a63),
         ring: hex(0xa05a3c),
         success: hex(0x6cc06f),
         success_foreground: hex(0x1b1a17),
@@ -218,5 +218,87 @@ mod tests {
         assert_eq!(DARK.palette.background, hex(0x1b1a17));
         assert_eq!(ACCENTS[0], hex(0xa05a3c));
         assert_eq!(LIGHT.radius.md, 9.0);
+    }
+
+    #[test]
+    fn semantic_colors_clear_accessibility_contrast() {
+        for theme in [LIGHT, DARK] {
+            assert!(
+                theme
+                    .palette
+                    .input
+                    .relative_contrast(theme.palette.background)
+                    >= 3.0,
+                "{} input boundary",
+                theme.name
+            );
+
+            for (name, foreground, background) in [
+                (
+                    "default text",
+                    theme.palette.foreground,
+                    theme.palette.background,
+                ),
+                (
+                    "card text",
+                    theme.palette.card_foreground,
+                    theme.palette.card,
+                ),
+                (
+                    "popover text",
+                    theme.palette.popover_foreground,
+                    theme.palette.popover,
+                ),
+                (
+                    "primary text",
+                    theme.palette.primary_foreground,
+                    theme.palette.primary,
+                ),
+                (
+                    "secondary text",
+                    theme.palette.secondary_foreground,
+                    theme.palette.secondary,
+                ),
+                (
+                    "muted text",
+                    theme.palette.muted_foreground,
+                    theme.palette.muted,
+                ),
+                (
+                    "accent text",
+                    theme.palette.accent_foreground,
+                    theme.palette.accent,
+                ),
+                (
+                    "destructive text",
+                    theme.palette.destructive_foreground,
+                    theme.palette.destructive,
+                ),
+                (
+                    "success text",
+                    theme.palette.success_foreground,
+                    theme.palette.success,
+                ),
+                (
+                    "warning text",
+                    theme.palette.warning_foreground,
+                    theme.palette.warning,
+                ),
+            ] {
+                assert!(
+                    foreground.relative_contrast(background) >= 4.5,
+                    "{} {name}",
+                    theme.name
+                );
+            }
+
+            for (index, accent) in ACCENTS.into_iter().enumerate() {
+                assert!(
+                    accent.relative_contrast(theme.palette.background) >= 3.0,
+                    "{} accent {index} focus indicator",
+                    theme.name
+                );
+            }
+        }
     }
 }

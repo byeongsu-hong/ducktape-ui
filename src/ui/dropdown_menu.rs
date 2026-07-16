@@ -209,9 +209,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::menu::MenuItem;
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::menu::MenuItem;
-    use crate::ui::theme::LIGHT;
     use iced::widget::text;
 
     #[test]

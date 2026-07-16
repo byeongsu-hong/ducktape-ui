@@ -50,8 +50,8 @@ pub fn menu_style(theme: &Theme) -> menu::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn menu_uses_popover_and_accent_roles() {

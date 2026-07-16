@@ -13,7 +13,7 @@ use iced::keyboard::{self, key};
 use iced::widget::container;
 use iced::{
     Background, Border, Color, Element, Event, Length, Padding, Point, Rectangle, Shadow, Size,
-    Task, Vector, touch,
+    Task, Vector, touch, window,
 };
 
 const DEFAULT_WIDTH: f32 = 288.0;
@@ -447,7 +447,8 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
         state.press = None;
         if self.open {
             state.trigger_focus.unfocus();
-        } else {
+        }
+        if !self.open || self.disabled {
             state.content_focus.unfocus();
         }
         if self.disabled {
@@ -513,6 +514,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if reset_on_window_unfocus(tree.state.downcast_mut::<State>(), event) {
+            shell.request_redraw();
+        }
         self.trigger.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -622,7 +626,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
             viewport,
             translation,
         );
-        let popover_overlay = self.open.then(|| {
+        let popover_overlay = (self.open && !self.disabled).then(|| {
             let anchor = translated_bounds(layout.bounds(), translation);
             overlay::Element::new(Box::new(PopoverOverlay {
                 floating: FloatingContent {
@@ -648,6 +652,20 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
 }
 
 fn begin_press(state: &mut State, event: &Event, cursor: mouse::Cursor, bounds: Rectangle) -> bool {
+    if state.press.is_some() {
+        return false;
+    }
+
+    let pressed_outside = match event {
+        Event::Mouse(mouse::Event::ButtonPressed(_)) => !cursor.is_over(bounds),
+        Event::Touch(touch::Event::FingerPressed { position, .. }) => !bounds.contains(*position),
+        _ => false,
+    };
+    if pressed_outside {
+        state.trigger_focus.unfocus();
+        return false;
+    }
+
     let press = match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             if cursor.is_over(bounds) =>
@@ -670,12 +688,22 @@ fn begin_press(state: &mut State, event: &Event, cursor: mouse::Cursor, bounds: 
         state.press = Some(press);
         true
     } else {
-        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) && !cursor.is_over(bounds)
-        {
-            state.trigger_focus.unfocus();
-        }
         false
     }
+}
+
+fn reset_on_window_unfocus(state: &mut State, event: &Event) -> bool {
+    if !matches!(event, Event::Window(window::Event::Unfocused)) {
+        return false;
+    }
+
+    let changed = state.trigger_focus.is_focused()
+        || state.content_focus.is_focused()
+        || state.press.is_some();
+    state.trigger_focus.unfocus();
+    state.content_focus.unfocus();
+    state.press = None;
+    changed
 }
 
 fn finish_press(
@@ -773,6 +801,12 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
+        if matches!(event, Event::Window(window::Event::Unfocused))
+            && self.content_focus.is_focused()
+        {
+            self.content_focus.unfocus();
+            shell.request_redraw();
+        }
         if let Some(reason) = dismissal(event, cursor, self.floating.bounds(layout), self.anchor) {
             self.content_focus.unfocus();
             shell.publish((self.on_event)(PopoverEvent::Close(reason)));
@@ -1113,9 +1147,10 @@ fn content_layout(layout: Layout<'_>) -> Layout<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use crate::ui::theme::{DARK, LIGHT};
     use iced::advanced::Widget;
+    use iced::advanced::renderer::Headless as _;
     use iced::widget::text;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1285,6 +1320,8 @@ mod tests {
             id: finger,
             position: Point::new(30.0, 30.0),
         });
+        let mouse_press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let mouse_release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         let mut state = State::default();
 
         assert!(begin_press(
@@ -1305,12 +1342,41 @@ mod tests {
             mouse::Cursor::Unavailable,
             bounds,
         ));
+        assert!(!begin_press(
+            &mut state,
+            &mouse_press,
+            mouse::Cursor::Available(Point::new(10.0, 10.0)),
+            bounds,
+        ));
+        assert!(!finish_press(
+            &mut state,
+            &mouse_release,
+            mouse::Cursor::Available(Point::new(30.0, 30.0)),
+            bounds,
+        ));
         assert!(finish_press(
             &mut state,
             &inside_release,
             mouse::Cursor::Unavailable,
             bounds,
         ));
+    }
+
+    #[test]
+    fn window_unfocus_cancels_focus_and_pending_activation() {
+        let mut state = State {
+            trigger_focus: FocusFlag { focused: true },
+            content_focus: FocusFlag { focused: true },
+            press: Some(Press::Space),
+        };
+
+        assert!(reset_on_window_unfocus(
+            &mut state,
+            &Event::Window(window::Event::Unfocused),
+        ));
+        assert!(!state.trigger_focus.is_focused());
+        assert!(!state.content_focus.is_focused());
+        assert_eq!(state.press, None);
     }
 
     #[test]
@@ -1336,6 +1402,45 @@ mod tests {
         assert_eq!(Widget::children(&widget).len(), 2);
         let tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
         assert_eq!(tree.children.len(), 2);
+    }
+
+    #[test]
+    fn disabled_controlled_open_state_has_no_overlay() {
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = rect(0.0, 0.0, 320.0, 240.0);
+        let mut widget = popover(
+            PopoverIds::new("disabled-open"),
+            text("trigger"),
+            text("content"),
+            true,
+            Message::Popover,
+            &LIGHT,
+        )
+        .disabled(true)
+        .into_widget();
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+
+        assert!(
+            widget
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &viewport,
+                    Vector::ZERO,
+                )
+                .is_none()
+        );
     }
 
     #[test]

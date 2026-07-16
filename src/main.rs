@@ -3,7 +3,7 @@ pub mod ui;
 use std::time::{Duration, Instant};
 
 use iced::widget::{column, container, row, scrollable, stack, text};
-use iced::{Element, Length, Theme as IcedTheme};
+use iced::{Background, Element, Length, Theme as IcedTheme};
 use ui::accordion::{
     AccordionEvent, AccordionKey, AccordionState, accordion, accordion_item, header_target,
 };
@@ -458,6 +458,10 @@ enum Message {
 fn main() -> iced::Result {
     iced::application(Showcase::default, Showcase::update, Showcase::view)
         .title("ducktape-ui component showcase")
+        .window(iced::window::Settings {
+            min_size: Some(iced::Size::new(480.0, 480.0)),
+            ..Default::default()
+        })
         .subscription(Showcase::subscription)
         .theme(Showcase::iced_theme)
         .run()
@@ -505,11 +509,12 @@ impl Showcase {
                 self.carousel_state.apply(event);
             }
             Message::FocusTraversal { backwards } => {
-                return if backwards {
+                let focus = if backwards {
                     iced::widget::operation::focus_previous()
                 } else {
                     iced::widget::operation::focus_next()
                 };
+                return focus.chain(self.sonner.focus_task().map(Message::Sonner));
             }
             Message::TabsAutomatic(event) => {
                 self.tabs_automatic.apply(&event);
@@ -668,6 +673,7 @@ impl Showcase {
                 );
             }
             Message::Sonner(event) => {
+                let action = matches!(event, SonnerEvent::Action(_));
                 let now = self.now();
                 if let SonnerOutcome::Action(id) = self.sonner.update(event, now) {
                     self.sonner.replace(
@@ -675,6 +681,9 @@ impl Showcase {
                         ToastData::new("Action completed").variant(ToastVariant::Success),
                         now,
                     );
+                }
+                if action {
+                    return self.sonner.focus_task().map(Message::Sonner);
                 }
             }
             Message::Tick(now) => {
@@ -1235,7 +1244,7 @@ impl Showcase {
             [
                 ("Button", "Shipped"),
                 ("Table", "Shipped"),
-                ("Dialog", "Planned"),
+                ("Dialog", "Shipped"),
             ],
             &theme,
         );
@@ -1939,7 +1948,8 @@ impl Showcase {
             )
             .variant(ToggleVariant::Outline),
         ]
-        .spacing(theme.spacing.sm);
+        .spacing(theme.spacing.sm)
+        .wrap();
         let preview_actions: [Element<'_, Message>; 2] = [
             button("Cancel", &theme)
                 .variant(ButtonVariant::Outline)
@@ -2779,7 +2789,8 @@ impl Showcase {
             text("Input OTP").size(theme.typography.xl),
             row![otp_example, disabled_otp]
                 .spacing(theme.spacing.md)
-                .align_y(iced::Alignment::Center),
+                .align_y(iced::Alignment::Center)
+                .wrap(),
             text(format!(
                 "controlled={:?}, complete={otp_complete}, custom-filter={custom_otp:?}",
                 self.otp,
@@ -2851,7 +2862,8 @@ impl Showcase {
             menubar_example,
             row![dropdown_example, context_example, select_example]
                 .spacing(theme.spacing.md)
-                .align_y(iced::Alignment::Start),
+                .align_y(iced::Alignment::Start)
+                .wrap(),
             text(menu_meta)
                 .width(Length::Fill)
                 .size(theme.typography.sm)
@@ -2914,10 +2926,15 @@ impl Showcase {
         .spacing(theme.spacing.lg)
         .padding(theme.spacing.xxl);
 
+        let page_background = theme.palette.background;
         let page: Element<'_, Message> = container(scrollable(content))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
+            .style(move |_| iced::widget::container::Style {
+                background: Some(Background::Color(page_background)),
+                ..Default::default()
+            })
             .into();
         let page: Element<'_, Message> =
             stack![page, sonner(&self.sonner, Message::Sonner, &theme)]

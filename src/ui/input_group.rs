@@ -81,8 +81,8 @@ pub fn group_input_style(theme: &Theme, status: text_input::Status) -> text_inpu
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
-    use crate::ui::theme::LIGHT;
 
     #[test]
     fn invalid_group_uses_destructive_shared_border() {
