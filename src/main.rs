@@ -2,6 +2,7 @@ mod ui;
 
 use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Theme as IcedTheme};
+use ui::accordion::{AccordionKey, AccordionState, accordion, accordion_item, header_target};
 use ui::alert::{AlertVariant, alert};
 use ui::aspect_ratio::aspect_ratio;
 use ui::attachment::attachment;
@@ -11,8 +12,16 @@ use ui::breadcrumb::{BreadcrumbItem, breadcrumb, breadcrumb_separator};
 use ui::bubble::{BubbleVariant, bubble};
 use ui::button::{ButtonSize, ButtonVariant, button};
 use ui::button_group::{ButtonGroupOrientation, button_group};
+use ui::calendar::{Date, Month, calendar};
 use ui::card::{card, card_header};
+use ui::carousel::{
+    CarouselBoundary, CarouselCommand, CarouselOrientation, CarouselState, carousel,
+    keyboard_command,
+};
 use ui::checkbox::checkbox;
+use ui::collapsible::{CollapsibleChange, collapsible, next_open};
+use ui::combobox::combobox;
+use ui::data_table::DataTableState;
 use ui::direction::{Direction, directed_row};
 use ui::empty_state::empty_state;
 use ui::field::{FieldHint, field};
@@ -24,6 +33,7 @@ use ui::label::label;
 use ui::marker::{MarkerVariant, marker};
 use ui::message::{MessageSide, message};
 use ui::message_scroller::message_scroller;
+use ui::native_select::native_select;
 use ui::pagination::{PaginationItem, pagination};
 use ui::progress::{ProgressVariant, progress};
 use ui::scroll_area::scroll_area;
@@ -33,7 +43,6 @@ use ui::textarea::{TextareaVariant, textarea};
 use ui::theme::{ACCENTS, DARK, LIGHT, Theme};
 use ui::typography::{TextRole, inline_code, typography};
 
-#[derive(Default)]
 struct Showcase {
     dark: bool,
     email: String,
@@ -43,6 +52,43 @@ struct Showcase {
     accepted: bool,
     notes: iced::widget::text_editor::Content,
     page: usize,
+    combo: iced::widget::combo_box::State<String>,
+    combo_selected: Option<String>,
+    select_options: Vec<String>,
+    native_selected: Option<String>,
+    accordion_state: AccordionState<&'static str>,
+    collapsible_open: bool,
+    calendar_month: Month,
+    calendar_selected: Option<Date>,
+    carousel_state: CarouselState,
+}
+
+impl Default for Showcase {
+    fn default() -> Self {
+        Self {
+            dark: false,
+            email: String::new(),
+            clicks: 0,
+            accent: 0,
+            section: Section::default(),
+            accepted: false,
+            notes: iced::widget::text_editor::Content::default(),
+            page: 0,
+            combo: iced::widget::combo_box::State::new(vec![
+                "Button".into(),
+                "Dialog".into(),
+                "Table".into(),
+            ]),
+            combo_selected: None,
+            select_options: vec!["Light".into(), "Dark".into(), "System".into()],
+            native_selected: None,
+            accordion_state: AccordionState::Single(Some("install")),
+            collapsible_open: false,
+            calendar_month: Month::new(2026, 7).expect("showcase month is valid"),
+            calendar_selected: Some(Date::new(2026, 7, 16).expect("showcase selection is valid")),
+            carousel_state: CarouselState::new(0, 3, CarouselBoundary::Wrap),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -62,17 +108,27 @@ enum Message {
     AcceptedChanged(bool),
     NotesChanged(iced::widget::text_editor::Action),
     PageSelected(usize),
+    ComboSelected(String),
+    NativeSelected(String),
+    AccordionToggle(&'static str),
+    Collapsible(CollapsibleChange),
+    CalendarPrevious,
+    CalendarNext,
+    CalendarSelected(Date),
+    Carousel(CarouselCommand),
+    FocusTraversal { backwards: bool },
 }
 
 fn main() -> iced::Result {
     iced::application(Showcase::default, Showcase::update, Showcase::view)
         .title("ducktape-ui component showcase")
+        .subscription(Showcase::subscription)
         .theme(Showcase::iced_theme)
         .run()
 }
 
 impl Showcase {
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
             Message::ToggleTheme => self.dark = !self.dark,
             Message::EmailChanged(value) => self.email = value,
@@ -82,7 +138,60 @@ impl Showcase {
             Message::AcceptedChanged(accepted) => self.accepted = accepted,
             Message::NotesChanged(action) => self.notes.perform(action),
             Message::PageSelected(page) => self.page = page,
+            Message::ComboSelected(value) => self.combo_selected = Some(value),
+            Message::NativeSelected(value) => self.native_selected = Some(value),
+            Message::AccordionToggle(id) => {
+                self.accordion_state = self.accordion_state.toggled(id);
+            }
+            Message::Collapsible(change) => {
+                self.collapsible_open = next_open(self.collapsible_open, change);
+            }
+            Message::CalendarPrevious => {
+                if let Some(month) = self.calendar_month.previous() {
+                    self.calendar_month = month;
+                }
+            }
+            Message::CalendarNext => {
+                if let Some(month) = self.calendar_month.next() {
+                    self.calendar_month = month;
+                }
+            }
+            Message::CalendarSelected(date) => {
+                self.calendar_selected = Some(date);
+                self.calendar_month = date.month();
+            }
+            Message::Carousel(command) => {
+                self.carousel_state = self.carousel_state.reduce(command);
+            }
+            Message::FocusTraversal { backwards } => {
+                return if backwards {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                };
+            }
         }
+
+        iced::Task::none()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::event::listen_with(|event, status, _window| {
+            if status != iced::event::Status::Ignored {
+                return None;
+            }
+
+            match event {
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                    modifiers,
+                    ..
+                }) => Some(Message::FocusTraversal {
+                    backwards: modifiers.shift(),
+                }),
+                _ => None,
+            }
+        })
     }
 
     fn ui_theme(&self) -> Theme {
@@ -484,6 +593,168 @@ impl Showcase {
         ]
         .spacing(theme.spacing.sm);
 
+        let combobox_example = combobox(
+            &self.combo,
+            "Search components…",
+            self.combo_selected.as_ref(),
+            Message::ComboSelected,
+            &theme,
+        );
+        let native_select_example = native_select(
+            self.select_options.as_slice(),
+            self.native_selected.as_ref(),
+            Message::NativeSelected,
+            &theme,
+        )
+        .placeholder("Choose a theme…");
+
+        let accordion_example = accordion(
+            [
+                accordion_item(
+                    "install",
+                    button("How is it installed?", &theme)
+                        .variant(ButtonVariant::Ghost)
+                        .width(Length::Fill)
+                        .on_press(Message::AccordionToggle("install")),
+                    text("The CLI copies editable Rust source into src/ui."),
+                ),
+                accordion_item(
+                    "state",
+                    button("Who owns state?", &theme)
+                        .variant(ButtonVariant::Ghost)
+                        .width(Length::Fill)
+                        .on_press(Message::AccordionToggle("state")),
+                    text("The application owns controlled state and messages."),
+                ),
+            ],
+            &self.accordion_state,
+            &theme,
+        );
+        let accordion_targets = [
+            header_target(0, 2, AccordionKey::ArrowUp),
+            header_target(0, 2, AccordionKey::ArrowDown),
+            header_target(1, 2, AccordionKey::Home),
+            header_target(0, 2, AccordionKey::End),
+        ];
+        let multiple_accordion = AccordionState::Multiple(vec!["install"]);
+        let collapsible_example = collapsible(
+            self.collapsible_open,
+            button(
+                if self.collapsible_open {
+                    "Hide details"
+                } else {
+                    "Show details"
+                },
+                &theme,
+            )
+            .variant(ButtonVariant::Outline)
+            .on_press(Message::Collapsible(CollapsibleChange::Toggle)),
+            surface(
+                text("Controlled content is absent from the tree while closed."),
+                SurfaceVariant::Muted,
+                &theme,
+            )
+            .padding(theme.spacing.md),
+            &theme,
+        );
+        let forced_collapsible_states = (
+            next_open(false, CollapsibleChange::Open),
+            next_open(true, CollapsibleChange::Close),
+        );
+
+        let mut data_table_state = DataTableState::new(2);
+        data_table_state.set_query("ship");
+        data_table_state.toggle_sort("component");
+        data_table_state.toggle_sort("component");
+        data_table_state.set_page(9, 5);
+        let data_page_count = data_table_state.page_count(5);
+        let data_range = data_table_state.visible_range(5);
+
+        let calendar_example = calendar(
+            self.calendar_month,
+            self.calendar_selected,
+            Message::CalendarPrevious,
+            Message::CalendarNext,
+            Message::CalendarSelected,
+            &theme,
+        );
+        let selected_date = self
+            .calendar_selected
+            .expect("the showcase always owns a selected date");
+        let calendar_meta = format!(
+            "month={:04}-{:02} ({} days), selected={:04}-{:02}-{:02} {} in-month={} selected-month={}",
+            self.calendar_month.year(),
+            self.calendar_month.number(),
+            self.calendar_month.days(),
+            selected_date.year(),
+            selected_date.month_number(),
+            selected_date.day(),
+            selected_date.weekday().short_name(),
+            self.calendar_month.contains(selected_date),
+            selected_date.month(),
+        );
+
+        let slides: Vec<Element<'_, Message>> =
+            ["Source-owned", "Keyboard reducer", "No forced motion"]
+                .into_iter()
+                .map(|copy| {
+                    surface(text(copy), SurfaceVariant::Muted, &theme)
+                        .padding(theme.spacing.xl)
+                        .width(Length::Fill)
+                        .into()
+                })
+                .collect();
+        let previous_slide = button("Previous", &theme)
+            .variant(ButtonVariant::Outline)
+            .disabled(!self.carousel_state.can_previous())
+            .on_press(Message::Carousel(CarouselCommand::Previous));
+        let next_slide = button("Next", &theme)
+            .variant(ButtonVariant::Outline)
+            .disabled(!self.carousel_state.can_next())
+            .on_press(Message::Carousel(CarouselCommand::Next));
+        let carousel_example = carousel(
+            self.carousel_state,
+            slides,
+            previous_slide,
+            next_slide,
+            CarouselOrientation::Horizontal,
+        );
+        let bounded_edge = CarouselState::new(99, 3, CarouselBoundary::Bounded)
+            .reduce(CarouselCommand::First)
+            .reduce(CarouselCommand::Last);
+        let carousel_key_examples = (
+            keyboard_command(
+                &iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight),
+                CarouselOrientation::Horizontal,
+            ),
+            keyboard_command(
+                &iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp),
+                CarouselOrientation::Vertical,
+            ),
+            keyboard_command(
+                &iced::keyboard::Key::Named(iced::keyboard::key::Named::Home),
+                CarouselOrientation::Horizontal,
+            ),
+            keyboard_command(
+                &iced::keyboard::Key::Named(iced::keyboard::key::Named::End),
+                CarouselOrientation::Horizontal,
+            ),
+        );
+
+        let focus_theme = theme;
+        let focusable = ui::focus_control::focus_control(
+            iced::widget::Id::new("showcase-focus-control"),
+            container(text("Tab here, then press Enter or Space"))
+                .padding(theme.spacing.md)
+                .width(Length::Fill),
+            Message::Clicked,
+            &theme,
+        );
+        let _focus_id = focusable.id().clone();
+        let focusable = focusable
+            .disabled(false)
+            .style(move |_iced_theme, status| ui::focus_control::style(&focus_theme, status));
+
         let invalid = self.email.is_empty();
         let form = column![
             card_header(
@@ -620,6 +891,47 @@ impl Showcase {
             spinner_examples,
             text("Direction").size(theme.typography.xl),
             direction_examples,
+            text("Selection").size(theme.typography.xl),
+            row![
+                combobox_example.width(Length::FillPortion(1)),
+                native_select_example.width(Length::FillPortion(1)),
+            ]
+            .spacing(theme.spacing.sm),
+            text("Disclosure").size(theme.typography.xl),
+            accordion_example,
+            text(format!(
+                "Header targets: {accordion_targets:?}; multiple open: {}; forced states: {forced_collapsible_states:?}",
+                multiple_accordion.is_open(&"install")
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
+            collapsible_example,
+            text("Data table state recipe").size(theme.typography.xl),
+            text(format!(
+                "query={:?}, sort={:?}, page={}, pages={data_page_count}, range={data_range:?}",
+                data_table_state.query, data_table_state.sort, data_table_state.page,
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
+            text("Focus control").size(theme.typography.xl),
+            focusable,
+            text("Calendar").size(theme.typography.xl),
+            calendar_example,
+            text(calendar_meta)
+                .size(theme.typography.sm)
+                .color(theme.palette.muted_foreground),
+            text("Carousel").size(theme.typography.xl),
+            carousel_example,
+            text(format!(
+                "slide={}/{}, boundary={:?}, empty={}, bounded-last={}, keys={carousel_key_examples:?}",
+                self.carousel_state.index() + 1,
+                self.carousel_state.slide_count(),
+                self.carousel_state.boundary(),
+                self.carousel_state.is_empty(),
+                bounded_edge.index(),
+            ))
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
             text("Card + field").size(theme.typography.xl),
             card(form, &theme).width(Length::Fill),
         ]

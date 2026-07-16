@@ -4,13 +4,13 @@ ducktape-ui targets the complete [official shadcn/ui component catalog](https://
 
 Status on 2026-07-16:
 
-- **Shipped**: installable source exists in the registry and is compiled by this repository.
+- **Shipped**: installable source exists, is compiled by this repository, and satisfies the current behavior contract.
 - **Planned**: implementation is still required.
-- **Foundation**: a useful iced primitive exists, but it does not yet satisfy the named shadcn behavior contract.
+- **Foundation**: installable, compiled iced source is useful, but it does not yet satisfy the named shadcn behavior contract.
 
 | shadcn/ui component | Status | iced implementation |
 | --- | --- | --- |
-| Accordion | Planned | Controlled disclosure group with keyboard navigation. |
+| Accordion | Foundation | Controlled single/multiple disclosure and header-navigation reducer; activation can use `focus-control`, but the app still routes roving focus. |
 | Alert | Shipped | Composable semantic container; visible text carries intent. |
 | Alert Dialog | Planned | Controlled modal pattern with focus restoration and Escape handling. |
 | Aspect Ratio | Shipped | Native responsive layout constrained to a caller-selected ratio. |
@@ -21,16 +21,16 @@ Status on 2026-07-16:
 | Bubble | Shipped | Incoming/outgoing message bubble composition. |
 | Button | Shipped | Six variants, four sizes, and disabled state. |
 | Button Group | Shipped | Horizontal/vertical caller-owned control grouping and shared frame. |
-| Calendar | Planned | Keyboard-navigable month grid and selection model. |
+| Calendar | Foundation | Validated date/month model and controlled six-week grid; day-grid roving focus and arrow handling remain app-scoped. |
 | Card | Shipped | Composable card surface and header. |
-| Carousel | Planned | Controlled paging, keyboard commands, and viewport clipping. |
+| Carousel | Foundation | Controlled bounded/wrapping paging, orientations, active-slide clipping, and keyboard reducer; the app still scopes key events to carousel focus. |
 | Chart | Planned | Canvas-based chart primitives and accessible textual companion data. |
 | Checkbox | Shipped | Styled native checkbox; iced 0.14 currently limits it to pointer/touch. |
-| Collapsible | Planned | Controlled disclosure primitive. |
-| Combobox | Planned | Filtered selection built on iced's keyboard-capable combo box. |
+| Collapsible | Shipped | Controlled open/close reducer and caller-owned trigger/content composition. |
+| Combobox | Shipped | Searchable selection built on iced's keyboard-capable native combo box. |
 | Command | Planned | Searchable keyboard command model and result list. |
 | Context Menu | Planned | Positioned overlay with focus and keyboard ownership. |
-| Data Table | Planned | A table composition guide plus sorting/filtering/pagination state helpers. |
+| Data Table | Shipped | Headless sorting, filtering-copy, and pagination state composed with table, input, checkbox, and pagination primitives. |
 | Date Picker | Planned | Calendar and popover composition. |
 | Dialog | Planned | Controlled modal with focus trap/restoration and dismissal rules. |
 | Direction | Shipped | Explicit LTR/RTL alignment and reading-order helpers. |
@@ -49,7 +49,7 @@ Status on 2026-07-16:
 | Menubar | Planned | Keyboard-operated top-level menu model. |
 | Message | Shipped | Incoming/outgoing avatar, header, body, and actions composition. |
 | Message Scroller | Shipped | Bottom-anchored transcript viewport; follow/unread state remains controlled. |
-| Native Select | Planned | Styled native pick list with documented iced interaction limits. |
+| Native Select | Foundation | Styled controlled native pick list; iced 0.14 limits opening and selection to pointer/touch. |
 | Navigation Menu | Planned | Roving-focus navigation and disclosure panels. |
 | Pagination | Shipped | Controlled previous/page/ellipsis/next composition. |
 | Popover | Planned | Anchored overlay with dismissal and focus ownership. |
@@ -75,4 +75,4 @@ Status on 2026-07-16:
 | Tooltip | Planned | Hover and focus trigger with nonessential content constraints. |
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
-ducktape-ui also ships iced-specific `theme`, `surface`, and `segmented-control` primitives. Interactive components that iced 0.14 cannot operate correctly from the keyboard will use source-owned custom widgets instead of receiving a misleading visual-only port.
+ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, and `focus-control` primitives. `focus-control` provides a stable focus ID, visible ring, and pointer, touch, Enter, and Space activation through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.

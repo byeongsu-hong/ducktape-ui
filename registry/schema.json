@@ -20,7 +20,24 @@
           "dependencies": { "type": "array", "items": { "type": "string" } },
           "cargoDependencies": {
             "type": "object",
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "oneOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "required": ["version"],
+                  "properties": {
+                    "version": { "type": "string" },
+                    "features": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "uniqueItems": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
           },
           "files": {
             "type": "array",

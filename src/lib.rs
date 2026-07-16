@@ -42,8 +42,34 @@ struct Item {
     #[serde(default)]
     dependencies: Vec<String>,
     #[serde(default, rename = "cargoDependencies")]
-    cargo_dependencies: BTreeMap<String, String>,
+    cargo_dependencies: BTreeMap<String, CargoDependency>,
     files: Vec<RegistryFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum CargoDependency {
+    Version(String),
+    Detailed {
+        version: String,
+        #[serde(default)]
+        features: Vec<String>,
+    },
+}
+
+impl CargoDependency {
+    fn version(&self) -> &str {
+        match self {
+            Self::Version(version) | Self::Detailed { version, .. } => version,
+        }
+    }
+
+    fn features(&self) -> &[String] {
+        match self {
+            Self::Version(_) => &[],
+            Self::Detailed { features, .. } => features,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,7 +245,7 @@ fn list() -> Result<String, String> {
     let registry = registry()?;
     let mut output = format!("{} registry v{}\n", registry.name, registry.version);
     for item in registry.items {
-        if item.kind == "component" {
+        if item.kind != "theme" {
             output.push_str(&format!("{:<12} {}\n", item.name, item.description));
         }
     }
@@ -317,20 +343,72 @@ fn ensure_cargo_dependencies(
         dependencies.extend(item(registry, name)?.cargo_dependencies.clone());
     }
 
-    for (name, version) in dependencies {
-        if has_dependency(&manifest, &name) || dry_run {
+    for (name, dependency) in dependencies {
+        let version = dependency.version();
+        let features = dependency.features();
+        if (has_dependency(&manifest, &name) && dependency_has_features(&manifest, &name, features))
+            || dry_run
+        {
             continue;
         }
-        let status = Command::new("cargo")
-            .args(["add", &format!("{name}@{version}")])
+        let mut command = Command::new("cargo");
+        command.arg("add").arg(format!("{name}@{version}"));
+        if !features.is_empty() {
+            command.arg("--features").arg(features.join(","));
+        }
+        let status = command
             .current_dir(root)
             .status()
             .map_err(|error| format!("failed to run cargo add: {error}"))?;
         if !status.success() {
-            return Err(format!("cargo add {name}@{version} failed"));
+            return Err(format!(
+                "cargo add {name}@{version}{} failed",
+                if features.is_empty() {
+                    String::new()
+                } else {
+                    format!(" --features {}", features.join(","))
+                }
+            ));
         }
     }
     Ok(())
+}
+
+fn dependency_has_features(manifest: &str, name: &str, required: &[String]) -> bool {
+    if required.is_empty() {
+        return true;
+    }
+
+    let direct = format!("dependencies.{name}");
+    let mut section = String::new();
+    let mut declaration = String::new();
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(header) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            section.clear();
+            section.push_str(header);
+            continue;
+        }
+
+        let inline = is_dependency_section(&section)
+            && line
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.trim_start().starts_with('='));
+        let dedicated = section == direct
+            || (section.starts_with("target.") && section.ends_with(&format!(".{direct}")));
+        if inline || dedicated {
+            declaration.push_str(line);
+            declaration.push('\n');
+        }
+    }
+
+    required.iter().all(|feature| {
+        declaration.contains(&format!("\"{feature}\""))
+            || declaration.contains(&format!("'{feature}'"))
+    })
 }
 
 fn has_dependency(manifest: &str, name: &str) -> bool {
@@ -338,11 +416,14 @@ fn has_dependency(manifest: &str, name: &str) -> bool {
     manifest.lines().any(|line| {
         let line = line.trim_start();
         if line.starts_with('[') {
+            let dedicated = format!("dependencies.{name}]");
+            if line == format!("[{dedicated}")
+                || (line.starts_with("[target.") && line.ends_with(&format!(".{dedicated}")))
+            {
+                return true;
+            }
             dependencies = line == "[dependencies]"
-                || (line.ends_with(".dependencies]")
-                    && !line.contains("dev-dependencies")
-                    && !line.contains("build-dependencies")
-                    && !line.contains("workspace.dependencies"));
+                || (line.starts_with("[target.") && line.ends_with(".dependencies]"));
             return false;
         }
         if !dependencies || line.starts_with('#') {
@@ -351,6 +432,11 @@ fn has_dependency(manifest: &str, name: &str) -> bool {
         line.strip_prefix(name)
             .is_some_and(|rest| rest.trim_start().starts_with('='))
     })
+}
+
+fn is_dependency_section(section: &str) -> bool {
+    section == "dependencies"
+        || (section.starts_with("target.") && section.ends_with(".dependencies"))
 }
 
 fn item<'a>(registry: &'a Registry, name: &str) -> Result<&'a Item, String> {
@@ -511,6 +597,7 @@ fn simple_diff(path: &Path, local: &str, incoming: &str) -> String {
 
 fn template(path: &str) -> Option<&'static str> {
     match path {
+        "accordion.rs" => Some(include_str!("ui/accordion.rs")),
         "alert.rs" => Some(include_str!("ui/alert.rs")),
         "aspect_ratio.rs" => Some(include_str!("ui/aspect_ratio.rs")),
         "attachment.rs" => Some(include_str!("ui/attachment.rs")),
@@ -518,7 +605,13 @@ fn template(path: &str) -> Option<&'static str> {
         "breadcrumb.rs" => Some(include_str!("ui/breadcrumb.rs")),
         "bubble.rs" => Some(include_str!("ui/bubble.rs")),
         "button_group.rs" => Some(include_str!("ui/button_group.rs")),
+        "calendar.rs" => Some(include_str!("ui/calendar.rs")),
+        "carousel.rs" => Some(include_str!("ui/carousel.rs")),
+        "collapsible.rs" => Some(include_str!("ui/collapsible.rs")),
+        "combobox.rs" => Some(include_str!("ui/combobox.rs")),
+        "data_table.rs" => Some(include_str!("ui/data_table.rs")),
         "direction.rs" => Some(include_str!("ui/direction.rs")),
+        "focus_control.rs" => Some(include_str!("ui/focus_control.rs")),
         "theme.rs" => Some(include_str!("ui/theme.rs")),
         "button.rs" => Some(include_str!("ui/button.rs")),
         "input.rs" => Some(include_str!("ui/input.rs")),
@@ -529,6 +622,7 @@ fn template(path: &str) -> Option<&'static str> {
         "marker.rs" => Some(include_str!("ui/marker.rs")),
         "message.rs" => Some(include_str!("ui/message.rs")),
         "message_scroller.rs" => Some(include_str!("ui/message_scroller.rs")),
+        "native_select.rs" => Some(include_str!("ui/native_select.rs")),
         "pagination.rs" => Some(include_str!("ui/pagination.rs")),
         "card.rs" => Some(include_str!("ui/card.rs")),
         "checkbox.rs" => Some(include_str!("ui/checkbox.rs")),
@@ -565,6 +659,31 @@ mod tests {
     }
 
     #[test]
+    fn every_registry_item_has_unique_resolvable_sources_and_dependencies() {
+        let registry = registry().unwrap();
+        let mut names = BTreeSet::new();
+
+        for item in &registry.items {
+            assert!(names.insert(item.name.as_str()), "duplicate {}", item.name);
+            for dependency in &item.dependencies {
+                assert!(
+                    registry.items.iter().any(|item| item.name == *dependency),
+                    "{} depends on missing {dependency}",
+                    item.name,
+                );
+            }
+            for file in &item.files {
+                assert!(
+                    template(&file.source).is_some(),
+                    "{} references missing {}",
+                    item.name,
+                    file.source,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn patch_preserves_user_modules_and_is_idempotent() {
         let existing = "pub mod custom;\n\n// ducktape-ui:managed:start\npub mod theme;\n// ducktape-ui:managed:end\n";
         let added = BTreeSet::from(["button".into(), "custom".into()]);
@@ -593,9 +712,46 @@ mod tests {
             "[workspace.dependencies]\niced = \"=0.14.0\"\n",
             "iced"
         ));
+        assert!(!has_dependency(
+            "[workspace.dependencies.iced]\nversion = \"=0.14.0\"\n",
+            "iced"
+        ));
         assert!(has_dependency(
             "[dependencies]\niced = { version = \"=0.14.0\" }\n",
             "iced"
+        ));
+        assert!(has_dependency(
+            "[dependencies.iced]\nversion = \"=0.14.0\"\n",
+            "iced"
+        ));
+        assert!(has_dependency(
+            "[target.'cfg(unix)'.dependencies]\niced = \"=0.14.0\"\n",
+            "iced"
+        ));
+    }
+
+    #[test]
+    fn dependency_feature_detection_handles_inline_and_dedicated_tables() {
+        let required = ["advanced".to_string()];
+        assert!(dependency_has_features(
+            "[dependencies]\niced = { version = \"=0.14.0\", features = [\"advanced\"] }\n",
+            "iced",
+            &required,
+        ));
+        assert!(dependency_has_features(
+            "[dependencies.iced]\nversion = \"=0.14.0\"\nfeatures = [\"advanced\"]\n",
+            "iced",
+            &required,
+        ));
+        assert!(!dependency_has_features(
+            "[dependencies]\niced = \"=0.14.0\"\n",
+            "iced",
+            &required,
+        ));
+        assert!(!dependency_has_features(
+            "[workspace.dependencies.iced]\nfeatures = [\"advanced\"]\n",
+            "iced",
+            &required,
         ));
     }
 

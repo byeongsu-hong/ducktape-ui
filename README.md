@@ -36,7 +36,7 @@ fn view() -> iced::Element<'static, Message> {
 }
 ```
 
-`add` installs transitive component dependencies and adds missing Cargo dependencies. Existing component files are preserved; use `diff` before opting into `--overwrite`.
+`add` installs transitive component dependencies, missing Cargo dependencies, and required Cargo features. The registry enables iced's `advanced` feature automatically, so `focus-control` needs no manual `Cargo.toml` edit. Existing component files are preserved; use `diff` before opting into `--overwrite`.
 
 ## Commands
 
@@ -66,12 +66,15 @@ The current foundation includes:
 - labels, key caps, and theme-backed typography roles
 - grouped controls, tables, scroll areas, and reduced-motion-aware spinners
 - attachments, message bubbles, markers, transcript composition, and message scrolling
+- controlled accordion and collapsible state, a searchable combobox, and a styled native pick list
+- validated month grids, bounded or wrapping carousel state, and a headless data-table recipe
+- an iced-specific focus-control shell with stable IDs, visible focus, and pointer, touch, Enter, and Space activation
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 
-`segmented-control` is deliberately not named `tabs`: iced's native buttons do not expose the focus and keyboard hooks required for honest tab semantics yet.
+`segmented-control` is deliberately not named `tabs`: it does not yet provide tab-style roving focus and arrow-key behavior. Accordion, Calendar, and Carousel are likewise tracked as foundations until their navigation helpers own focus routing instead of requiring application wiring. `native-select` documents iced 0.14's pointer/touch-only pick-list limitation.
 
-Full shadcn/ui coverage is tracked component-by-component in [the parity matrix](docs/parity.md). Components that need stronger focus, keyboard, or overlay behavior are implemented as source-owned iced widgets instead of being marked complete with visual styling alone.
+Full shadcn/ui coverage is tracked component-by-component in [the parity matrix](docs/parity.md). Components stay at **Foundation** until their focus, keyboard, overlay, and state contracts are complete; visual similarity alone is not parity.
 
 Every component is an ordinary `.rs` file under `src/ui`. Edit `theme.rs` once to change semantic colors, radii, spacing, and typography across the installed set. The defaults mirror Ducktape's warm light/dark palettes and support its three runtime accents with `Theme::with_accent`.
 

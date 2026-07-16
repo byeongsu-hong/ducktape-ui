@@ -79,10 +79,23 @@ fn init_add_composed_components_and_compile_owned_source() {
             "scroll-area",
             "spinner",
             "table",
+            "accordion",
+            "calendar",
+            "carousel",
+            "collapsible",
+            "combobox",
+            "data-table",
+            "focus-control",
+            "native-select",
         ],
         project.path(),
     )
     .unwrap();
+    assert!(
+        fs::read_to_string(project.path().join("Cargo.toml"))
+            .unwrap()
+            .contains("\"advanced\"")
+    );
     assert!(output.contains("theme.rs"));
     assert!(output.contains("button.rs"));
     assert!(output.contains("surface.rs"));
@@ -102,6 +115,14 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("button_group.rs"));
     assert!(output.contains("message_scroller.rs"));
     assert!(output.contains("table.rs"));
+    assert!(output.contains("accordion.rs"));
+    assert!(output.contains("calendar.rs"));
+    assert!(output.contains("carousel.rs"));
+    assert!(output.contains("collapsible.rs"));
+    assert!(output.contains("combobox.rs"));
+    assert!(output.contains("data_table.rs"));
+    assert!(output.contains("focus_control.rs"));
+    assert!(output.contains("native_select.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),

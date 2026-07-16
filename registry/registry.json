@@ -7,7 +7,9 @@
       "name": "theme",
       "type": "theme",
       "description": "Editable semantic light and dark design tokens.",
-      "cargoDependencies": { "iced": "=0.14.0" },
+      "cargoDependencies": {
+        "iced": { "version": "=0.14.0", "features": ["advanced"] }
+      },
       "files": [{ "source": "theme.rs", "target": "theme.rs" }]
     },
     {
@@ -240,6 +242,62 @@
       "description": "Styled native table, columns, cells, caption, and frame helpers.",
       "dependencies": ["theme"],
       "files": [{ "source": "table.rs", "target": "table.rs" }]
+    },
+    {
+      "name": "accordion",
+      "type": "component",
+      "description": "Controlled single/multiple disclosure state, items, and navigation helpers.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "accordion.rs", "target": "accordion.rs" }]
+    },
+    {
+      "name": "collapsible",
+      "type": "component",
+      "description": "Controlled trigger/content disclosure with explicit state transitions.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "collapsible.rs", "target": "collapsible.rs" }]
+    },
+    {
+      "name": "combobox",
+      "type": "component",
+      "description": "Searchable keyboard-capable native combo box with semantic menu styling.",
+      "dependencies": ["input"],
+      "files": [{ "source": "combobox.rs", "target": "combobox.rs" }]
+    },
+    {
+      "name": "native-select",
+      "type": "component",
+      "description": "Styled controlled native pick list with documented iced interaction limits.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "native_select.rs", "target": "native_select.rs" }]
+    },
+    {
+      "name": "data-table",
+      "type": "block",
+      "description": "Headless sort/filter/pagination state composed with table controls.",
+      "dependencies": ["table", "input", "checkbox", "pagination"],
+      "files": [{ "source": "data_table.rs", "target": "data_table.rs" }]
+    },
+    {
+      "name": "focus-control",
+      "type": "component",
+      "description": "Focusable pointer, touch, Enter, and Space activation shell for passive content.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "focus_control.rs", "target": "focus_control.rs" }]
+    },
+    {
+      "name": "calendar",
+      "type": "component",
+      "description": "Controlled six-week month grid with validated Gregorian date state.",
+      "dependencies": ["button", "focus-control"],
+      "files": [{ "source": "calendar.rs", "target": "calendar.rs" }]
+    },
+    {
+      "name": "carousel",
+      "type": "component",
+      "description": "Controlled bounded or wrapping slide state, viewport, and keyboard command reducer.",
+      "dependencies": ["focus-control"],
+      "files": [{ "source": "carousel.rs", "target": "carousel.rs" }]
     }
   ]
 }
