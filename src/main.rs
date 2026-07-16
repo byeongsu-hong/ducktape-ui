@@ -4,20 +4,29 @@ use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Theme as IcedTheme};
 use ui::alert::{AlertVariant, alert};
 use ui::aspect_ratio::aspect_ratio;
+use ui::attachment::attachment;
 use ui::avatar::{AvatarSize, avatar_fallback};
 use ui::badge::{BadgeSize, BadgeVariant, badge};
 use ui::breadcrumb::{BreadcrumbItem, breadcrumb, breadcrumb_separator};
+use ui::bubble::{BubbleVariant, bubble};
 use ui::button::{ButtonSize, ButtonVariant, button};
+use ui::button_group::{ButtonGroupOrientation, button_group};
 use ui::card::{card, card_header};
 use ui::checkbox::checkbox;
+use ui::direction::{Direction, directed_row};
 use ui::empty_state::empty_state;
 use ui::field::{FieldHint, field};
 use ui::input::{InputVariant, input, input_with_variant};
+use ui::input_group::{group_input, input_group};
 use ui::item::item;
 use ui::kbd::kbd;
 use ui::label::label;
+use ui::marker::{MarkerVariant, marker};
+use ui::message::{MessageSide, message};
+use ui::message_scroller::message_scroller;
 use ui::pagination::{PaginationItem, pagination};
 use ui::progress::{ProgressVariant, progress};
+use ui::scroll_area::scroll_area;
 use ui::segmented_control::segmented_control;
 use ui::surface::{SurfaceVariant, surface};
 use ui::textarea::{TextareaVariant, textarea};
@@ -285,6 +294,196 @@ impl Showcase {
         ]
         .spacing(theme.spacing.sm);
 
+        let horizontal_group = button_group(
+            [
+                button("One", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(Message::Clicked)
+                    .into(),
+                button("Two", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(Message::Clicked)
+                    .into(),
+                button("Three", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(Message::Clicked)
+                    .into(),
+            ],
+            ButtonGroupOrientation::Horizontal,
+            &theme,
+        );
+        let vertical_group = button_group(
+            [
+                button("Top", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(Message::Clicked)
+                    .into(),
+                button("Bottom", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(Message::Clicked)
+                    .into(),
+            ],
+            ButtonGroupOrientation::Vertical,
+            &theme,
+        );
+        let grouped_input = input_group(
+            Some(text("@").color(theme.palette.muted_foreground).into()),
+            group_input("username", &self.email, &theme).on_input(Message::EmailChanged),
+            Some(
+                button("Find", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Small)
+                    .on_press(Message::Clicked)
+                    .into(),
+            ),
+            InputVariant::Default,
+            &theme,
+        );
+        let invalid_grouped_input = input_group(
+            None,
+            group_input("required", &self.email, &theme).on_input(Message::EmailChanged),
+            None,
+            InputVariant::Invalid,
+            &theme,
+        );
+
+        let attachment_example = attachment(
+            Some(kbd("PDF", &theme).into()),
+            "design-system.pdf",
+            Some("2.4 MB"),
+            Some(
+                button("Remove", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Small)
+                    .on_press(Message::Clicked)
+                    .into(),
+            ),
+            &theme,
+        );
+        let incoming = message(
+            MessageSide::Incoming,
+            Some(avatar_fallback("D", AvatarSize::Small, &theme).into()),
+            Some(text("Ducktape").size(theme.typography.sm).into()),
+            bubble(
+                text("The source-owned components are ready."),
+                BubbleVariant::Incoming,
+                &theme,
+            ),
+            None,
+            &theme,
+        );
+        let outgoing = message(
+            MessageSide::Outgoing,
+            None,
+            Some(text("You").size(theme.typography.sm).into()),
+            bubble(
+                text("Ship the next batch."),
+                BubbleVariant::Outgoing,
+                &theme,
+            ),
+            Some(
+                button("Copy", &theme)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Small)
+                    .on_press(Message::Clicked)
+                    .into(),
+            ),
+            &theme,
+        );
+        let transcript = column![
+            marker(None, "Today", MarkerVariant::Separator, &theme),
+            incoming,
+            marker(
+                Some(badge("New", BadgeVariant::Secondary, &theme).into()),
+                "Unread",
+                MarkerVariant::Border,
+                &theme,
+            ),
+            outgoing,
+            marker(None, "End of transcript", MarkerVariant::Default, &theme),
+        ]
+        .spacing(theme.spacing.md);
+        let transcript = message_scroller(
+            transcript,
+            iced::widget::Id::new("showcase-message-scroller"),
+            &theme,
+        )
+        .height(260);
+
+        let table_theme_a = theme;
+        let table_theme_b = theme;
+        let component_table = ui::table::table(
+            [
+                ui::table::column(
+                    ui::table::header("Component", &theme),
+                    move |row: (&'static str, &'static str)| {
+                        ui::table::cell(text(row.0), &table_theme_a)
+                    },
+                )
+                .width(Length::Fill),
+                ui::table::column(
+                    ui::table::header("Status", &theme),
+                    move |row: (&'static str, &'static str)| {
+                        ui::table::cell(text(row.1), &table_theme_b)
+                    },
+                ),
+            ],
+            [
+                ("Button", "Shipped"),
+                ("Table", "Shipped"),
+                ("Dialog", "Planned"),
+            ],
+            &theme,
+        );
+        let table_example = column![
+            ui::table::caption("Registry status", &theme),
+            ui::table::frame(component_table, &theme),
+        ]
+        .spacing(theme.spacing.sm);
+
+        let scrolling_example = scroll_area(
+            column![
+                text("Native scroll area").size(theme.typography.base),
+                text("Line one"),
+                text("Line two"),
+                text("Line three"),
+                text("Line four"),
+                text("Line five"),
+                text("Line six"),
+            ]
+            .spacing(theme.spacing.sm),
+            &theme,
+        )
+        .height(100);
+        let next_spinner_frame =
+            ui::spinner::next_frame(self.clicks as u8 % ui::spinner::FRAME_COUNT, false);
+        let spinner_examples = row![
+            ui::spinner::spinner(next_spinner_frame, false, &theme),
+            ui::spinner::spinner(0, true, &theme),
+            text(format!(
+                "Loading… ({} ms frame interval)",
+                ui::spinner::TICK_INTERVAL.as_millis()
+            )),
+        ]
+        .spacing(theme.spacing.sm)
+        .align_y(iced::Alignment::Center);
+
+        let rtl_items: [Element<'_, Message>; 3] = [
+            text("first").into(),
+            text("second").into(),
+            text("third").into(),
+        ];
+        let direction_examples = column![
+            text("LTR end")
+                .width(Length::Fill)
+                .align_x(Direction::LeftToRight.end()),
+            text("RTL start")
+                .width(Length::Fill)
+                .align_x(Direction::RightToLeft.start()),
+            directed_row(rtl_items, Direction::RightToLeft).spacing(theme.spacing.sm),
+        ]
+        .spacing(theme.spacing.sm);
+
         let invalid = self.email.is_empty();
         let form = column![
             card_header(
@@ -406,6 +605,21 @@ impl Showcase {
             .spacing(theme.spacing.sm),
             text("Typography").size(theme.typography.xl),
             type_examples,
+            text("Grouped controls").size(theme.typography.xl),
+            row![horizontal_group, vertical_group]
+                .spacing(theme.spacing.md)
+                .align_y(iced::Alignment::Start),
+            grouped_input,
+            invalid_grouped_input,
+            text("Messaging").size(theme.typography.xl),
+            attachment_example,
+            transcript,
+            text("Table + scrolling + spinner").size(theme.typography.xl),
+            table_example,
+            scrolling_example,
+            spinner_examples,
+            text("Direction").size(theme.typography.xl),
+            direction_examples,
             text("Card + field").size(theme.typography.xl),
             card(form, &theme).width(Length::Fill),
         ]

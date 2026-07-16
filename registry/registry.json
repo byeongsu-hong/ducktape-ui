@@ -163,6 +163,83 @@
       "description": "Theme-backed heading, paragraph, lead, small, muted, and code roles.",
       "dependencies": ["theme"],
       "files": [{ "source": "typography.rs", "target": "typography.rs" }]
+    },
+    {
+      "name": "attachment",
+      "type": "component",
+      "description": "Composable file row with visible name, metadata, and caller-owned controls.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "attachment.rs", "target": "attachment.rs" }]
+    },
+    {
+      "name": "bubble",
+      "type": "component",
+      "description": "Incoming and outgoing conversational surfaces with side alignment.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "bubble.rs", "target": "bubble.rs" }]
+    },
+    {
+      "name": "button-group",
+      "type": "component",
+      "description": "Horizontal and vertical groups preserving caller-owned control actions.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "button_group.rs", "target": "button_group.rs" }]
+    },
+    {
+      "name": "direction",
+      "type": "component",
+      "description": "Explicit LTR/RTL alignment and reading-order helpers for iced layouts.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "direction.rs", "target": "direction.rs" }]
+    },
+    {
+      "name": "input-group",
+      "type": "component",
+      "description": "Shared-border leading, input, and trailing control composition.",
+      "dependencies": ["input"],
+      "files": [{ "source": "input_group.rs", "target": "input_group.rs" }]
+    },
+    {
+      "name": "marker",
+      "type": "component",
+      "description": "Default, bordered, and separated conversation markers with visible labels.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "marker.rs", "target": "marker.rs" }]
+    },
+    {
+      "name": "message",
+      "type": "component",
+      "description": "Incoming/outgoing message composition for caller-owned avatar, body, and actions.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "message.rs", "target": "message.rs" }]
+    },
+    {
+      "name": "message-scroller",
+      "type": "component",
+      "description": "Bottom-anchored native transcript viewport with caller-owned follow state.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "message_scroller.rs", "target": "message_scroller.rs" }]
+    },
+    {
+      "name": "scroll-area",
+      "type": "component",
+      "description": "Styled native scrollable retaining direction, size, and scroll callbacks.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "scroll_area.rs", "target": "scroll_area.rs" }]
+    },
+    {
+      "name": "spinner",
+      "type": "component",
+      "description": "Controlled indeterminate indicator with reduced-motion support.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "spinner.rs", "target": "spinner.rs" }]
+    },
+    {
+      "name": "table",
+      "type": "component",
+      "description": "Styled native table, columns, cells, caption, and frame helpers.",
+      "dependencies": ["theme"],
+      "files": [{ "source": "table.rs", "target": "table.rs" }]
     }
   ]
 }

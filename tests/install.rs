@@ -68,6 +68,17 @@ fn init_add_composed_components_and_compile_owned_source() {
             "pagination",
             "skeleton",
             "typography",
+            "attachment",
+            "bubble",
+            "button-group",
+            "direction",
+            "input-group",
+            "marker",
+            "message",
+            "message-scroller",
+            "scroll-area",
+            "spinner",
+            "table",
         ],
         project.path(),
     )
@@ -87,6 +98,10 @@ fn init_add_composed_components_and_compile_owned_source() {
     assert!(output.contains("breadcrumb.rs"));
     assert!(output.contains("pagination.rs"));
     assert!(output.contains("typography.rs"));
+    assert!(output.contains("attachment.rs"));
+    assert!(output.contains("button_group.rs"));
+    assert!(output.contains("message_scroller.rs"));
+    assert!(output.contains("table.rs"));
 
     fs::write(
         project.path().join("src/main.rs"),
@@ -161,6 +176,61 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
     let ratio = ui::aspect_ratio::aspect_ratio(1.0, || iced::widget::text("Square").into())
         .width(100)
         .height(100);
+    let grouped_buttons = ui::button_group::button_group(
+        [
+            ui::button::button("One", &theme).on_press(Message::PageSelected(1)).into(),
+            ui::button::button("Two", &theme).on_press(Message::PageSelected(2)).into(),
+        ],
+        ui::button_group::ButtonGroupOrientation::Horizontal,
+        &theme,
+    );
+    let grouped_input = ui::input_group::input_group(
+        Some(iced::widget::text("@").into()),
+        ui::input_group::group_input("username", "", &theme).on_input(Message::EmailChanged),
+        None,
+        ui::input::InputVariant::Default,
+        &theme,
+    );
+    let chat_message = ui::message::message(
+        ui::message::MessageSide::Incoming,
+        Some(ui::avatar::avatar_fallback("D", ui::avatar::AvatarSize::Small, &theme).into()),
+        None,
+        ui::bubble::bubble(
+            iced::widget::text("Hello"),
+            ui::bubble::BubbleVariant::Incoming,
+            &theme,
+        ),
+        None,
+        &theme,
+    );
+    let transcript = ui::message_scroller::message_scroller(
+        iced::widget::column![
+            ui::marker::marker(None, "Today", ui::marker::MarkerVariant::Separator, &theme),
+            chat_message,
+        ],
+        iced::widget::Id::new("messages"),
+        &theme,
+    )
+    .height(160);
+    let rows = [("Button", "Shipped"), ("Dialog", "Planned")];
+    let table_theme_a = theme;
+    let table_theme_b = theme;
+    let table = ui::table::table(
+        [
+            ui::table::column(ui::table::header("Name", &theme), move |row: (&'static str, &'static str)| {
+                ui::table::cell(iced::widget::text(row.0), &table_theme_a)
+            }),
+            ui::table::column(ui::table::header("Status", &theme), move |row: (&'static str, &'static str)| {
+                ui::table::cell(iced::widget::text(row.1), &table_theme_b)
+            }),
+        ],
+        rows,
+        &theme,
+    );
+    let rtl = ui::direction::directed_row(
+        [iced::widget::text("one").into(), iced::widget::text("two").into()],
+        ui::direction::Direction::RightToLeft,
+    );
 
     iced::widget::column![
         ui::card::card(field, &theme).max_width(480),
@@ -190,6 +260,15 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
         ui::skeleton::skeleton(&theme).width(100).height(12),
         ui::typography::typography("Heading", ui::typography::TextRole::H2, &theme),
         ui::typography::inline_code("cargo check", &theme),
+        grouped_buttons,
+        grouped_input,
+        ui::attachment::attachment(None, "notes.txt", Some("1 KB"), None, &theme),
+        transcript,
+        ui::table::caption("Components", &theme),
+        ui::table::frame(table, &theme),
+        ui::scroll_area::scroll_area(iced::widget::text("Scrollable"), &theme).height(40),
+        ui::spinner::spinner(ui::spinner::next_frame(0, false), false, &theme),
+        rtl,
     ]
     .into()
 }

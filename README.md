@@ -64,6 +64,8 @@ The current foundation includes:
 - styled native checkboxes and multiline text editors
 - responsive aspect ratios, avatars, breadcrumbs, items, pagination, and skeletons
 - labels, key caps, and theme-backed typography roles
+- grouped controls, tables, scroll areas, and reduced-motion-aware spinners
+- attachments, message bubbles, markers, transcript composition, and message scrolling
 - horizontal and vertical separators
 - a controlled segmented selector built from native buttons
 
