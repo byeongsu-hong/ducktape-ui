@@ -8,7 +8,8 @@ pub const TICK_INTERVAL: Duration = Duration::from_millis(90);
 
 /// Returns the next controlled animation frame.
 ///
-/// Call this from the message produced by `iced::time::every(TICK_INTERVAL)`.
+/// Call this from the caller-owned timer. On native targets,
+/// `iced::time::every(TICK_INTERVAL)` requires iced's `smol` or `tokio` feature.
 /// When reduced motion is requested, the current frame is intentionally frozen.
 pub const fn next_frame(frame: u8, reduced_motion: bool) -> u8 {
     if reduced_motion {
