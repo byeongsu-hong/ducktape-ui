@@ -4,7 +4,7 @@ ducktape-ui targets the complete [official shadcn/ui component catalog](https://
 
 Status on 2026-07-17:
 
-**63 / 64 official components are Shipped; 1 is Foundation.**
+**64 / 64 official components are Shipped.**
 
 - **Shipped**: installable source exists, is compiled by this repository, and satisfies the current behavior contract.
 - **Planned**: implementation is still required.
@@ -50,7 +50,7 @@ Status on 2026-07-17:
 | Marker | Shipped | Default, bordered, and separated labeled markers. |
 | Menubar | Shipped | Controlled top-level menu bar with one roving trigger focus stop, 36px trigger metrics, disabled-aware Left/Right switching, child Arrow/Home/End/Enter/Escape navigation, rich nested menu content, collision placement, and RTL. |
 | Message | Shipped | Incoming/outgoing avatar, header, body, and actions composition. |
-| Message Scroller | Foundation | Bottom-anchored transcript viewport; stream following, prepend restoration, jump controls, visibility, and unread state remain caller-owned. |
+| Message Scroller | Shipped | Controlled stable-row transcript with initial start/end/last-anchor positioning, intent-aware live following, new-turn peek anchoring, prepend/resize restoration, start/end/message alignment commands, derived visibility/current-anchor/edge/unread state, keyboard scrolling, and a jump-to-latest control. |
 | Native Select | Shipped | Styled controlled iced PickList preserving its native pointer/touch menu while adding a stable focus ID, ArrowUp/Down/Home/End selection, Enter/Space opening, Escape/Tab closing, disabled/invalid states, exact 36px and 12/20 text metrics, and explicit LTR/RTL label/chevron alignment. |
 | Navigation Menu | Shipped | Controlled links and disclosure content with one roving trigger focus stop, stable active/open state, pointer/touch/Enter/Space, disabled-aware arrows/Home/End/Escape, content focus handoff, hover intent, collision-aware panels, responsive vertical mode, exact indicators, and RTL. |
 | Pagination | Shipped | Controlled previous/page/ellipsis/next composition. |
@@ -77,4 +77,4 @@ Status on 2026-07-17:
 | Tooltip | Shipped | Noninteractive passive-content tooltip with keyboard focus plus hover, Escape dismissal, exact open/close delays, fixed text metrics/max width, collision placement, and unclipped shadow bounds. |
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
-ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, `focus-control`, `modal`, and `menu` primitives. `focus-control` provides a stable focus ID, visible ring, and pointer, touch, Enter, and Space activation through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.
+ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, `focus-control`, `modal`, and `menu` primitives. `focus-control` provides a stable focus ID and visible ring for either pointer/touch/Enter/Space activation or passive keyboard regions through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.

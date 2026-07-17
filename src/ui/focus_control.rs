@@ -1,8 +1,9 @@
-//! Keyboard-focusable activation for content.
+//! Keyboard focus and activation for content.
 //!
 //! This wrapper owns pointer, touch, Enter, and Space activation. Interactive
 //! children may keep their native pointer behavior; captured events focus the
-//! wrapper without activating it a second time.
+//! wrapper without activating it a second time. Passive regions keep the same
+//! focus ring and key routing without adding activation behavior.
 
 use super::theme::Theme as UiTheme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -100,7 +101,7 @@ enum Press {
     Space,
 }
 
-/// A focusable control shell for tabs, toggles, switches, and disclosures.
+/// A focusable shell for controls and passive keyboard regions.
 ///
 /// The caller must route Tab and Shift+Tab to iced's
 /// `advanced::widget::operate::focus_next` and `focus_previous` tasks. A stable
@@ -114,8 +115,10 @@ where
     targetable: bool,
     tab_stop: bool,
     content: Element<'a, Message, Theme, Renderer>,
-    on_activate: Message,
+    on_activate: Option<Message>,
     on_key_press: Option<Box<KeyPressFn<'a, Message>>>,
+    on_scroll_intent: Option<Message>,
+    repeat_key_presses: bool,
     disabled: bool,
     style: Box<StyleFn<'a, Theme>>,
 }
@@ -150,8 +153,32 @@ where
             targetable: true,
             tab_stop: true,
             content: content.into(),
-            on_activate,
+            on_activate: Some(on_activate),
             on_key_press: None,
+            on_scroll_intent: None,
+            repeat_key_presses: false,
+            disabled: false,
+            style: Box::new(move |_iced_theme, status| style(&theme, status)),
+        }
+    }
+
+    /// Creates a focusable region without pointer or Enter/Space activation.
+    pub fn passive(
+        id: widget::Id,
+        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        theme: &UiTheme,
+    ) -> Self {
+        let theme = *theme;
+
+        Self {
+            id,
+            targetable: true,
+            tab_stop: true,
+            content: content.into(),
+            on_activate: None,
+            on_key_press: None,
+            on_scroll_intent: None,
+            repeat_key_presses: false,
             disabled: false,
             style: Box::new(move |_iced_theme, status| style(&theme, status)),
         }
@@ -197,6 +224,20 @@ where
         handler: impl Fn(keyboard::Key, keyboard::Modifiers) -> Option<Message> + 'a,
     ) -> Self {
         self.on_key_press = Some(Box::new(handler));
+        self
+    }
+
+    /// Allows held keys to repeat through [`Self::on_key_press`].
+    #[must_use]
+    pub fn repeat_key_presses(mut self, repeat: bool) -> Self {
+        self.repeat_key_presses = repeat;
+        self
+    }
+
+    /// Publishes a message when a passive region receives native scroll input.
+    #[must_use]
+    pub fn on_scroll_intent(mut self, message: Message) -> Self {
+        self.on_scroll_intent = Some(message);
         self
     }
 
@@ -303,12 +344,45 @@ where
             viewport,
         );
 
+        let cursor = pointer_cursor(event, cursor);
         let is_over = cursor.is_over(layout.bounds());
+        // Native scrolling captures presses without a cursor interaction;
+        // interactive descendants advertise one and should own focus.
+        let child_captured = shell.is_event_captured();
+        let child_captured_interactive_press = child_captured
+            && self.on_activate.is_none()
+            && is_pointer_press(event)
+            && is_over
+            && self.content.as_widget().mouse_interaction(
+                &tree.children[0],
+                layout,
+                cursor,
+                viewport,
+                renderer,
+            ) != mouse::Interaction::None;
+        let native_scroll_press = child_captured
+            && self.on_activate.is_none()
+            && matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
+            && is_over
+            && !child_captured_interactive_press;
+        if !self.disabled
+            && (native_scroll_press || is_over && is_scroll_gesture(event))
+            && let Some(message) = self.on_scroll_intent.as_ref()
+        {
+            shell.publish(message.clone());
+        }
         let state = tree.state.downcast_mut::<State>();
 
-        if shell.is_event_captured() {
+        if child_captured {
             if is_pointer_press(event) {
-                if is_over && !self.disabled {
+                if self.on_activate.is_none() {
+                    if is_over && !self.disabled && !child_captured_interactive_press {
+                        state.focus();
+                    } else {
+                        state.unfocus();
+                    }
+                    shell.request_redraw();
+                } else if is_over && !self.disabled {
                     state.focus();
                     shell.request_redraw();
                 } else {
@@ -323,20 +397,18 @@ where
             state,
             event,
             !self.disabled,
+            self.repeat_key_presses,
             self.on_key_press.as_deref(),
             shell,
         ) {
             return;
         }
 
-        handle_event(
-            state,
-            event,
-            is_over,
-            !self.disabled,
-            &self.on_activate,
-            shell,
-        );
+        if let Some(on_activate) = self.on_activate.as_ref() {
+            handle_event(state, event, is_over, !self.disabled, on_activate, shell);
+        } else {
+            handle_passive_event(state, event, is_over, !self.disabled, shell);
+        }
     }
 
     fn mouse_interaction(
@@ -356,6 +428,7 @@ where
         );
 
         if interaction == mouse::Interaction::None
+            && self.on_activate.is_some()
             && !self.disabled
             && cursor.is_over(layout.bounds())
         {
@@ -479,6 +552,24 @@ fn is_pointer_press(event: &Event) -> bool {
     )
 }
 
+fn is_scroll_gesture(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Mouse(mouse::Event::WheelScrolled { .. })
+            | Event::Touch(touch::Event::FingerMoved { .. })
+    )
+}
+
+fn pointer_cursor(event: &Event, cursor: mouse::Cursor) -> mouse::Cursor {
+    match event {
+        Event::Touch(
+            touch::Event::FingerPressed { position, .. }
+            | touch::Event::FingerMoved { position, .. },
+        ) => mouse::Cursor::Available(*position),
+        _ => cursor,
+    }
+}
+
 fn activation_key(key: &keyboard::Key) -> Option<Press> {
     match key {
         keyboard::Key::Named(key::Named::Enter) => Some(Press::Enter),
@@ -581,10 +672,36 @@ fn handle_event<Message: Clone>(
     }
 }
 
+fn handle_passive_event<Message>(
+    state: &mut State,
+    event: &Event,
+    is_over: bool,
+    enabled: bool,
+    shell: &mut Shell<'_, Message>,
+) {
+    if !enabled {
+        state.unfocus();
+        return;
+    }
+
+    if is_pointer_press(event) {
+        if is_over {
+            state.focus();
+            shell.request_redraw();
+        } else {
+            state.unfocus();
+        }
+    } else if matches!(event, Event::Window(window::Event::Unfocused)) {
+        state.unfocus();
+        shell.request_redraw();
+    }
+}
+
 fn handle_key_press<Message>(
     state: &State,
     event: &Event,
     enabled: bool,
+    allow_repeat: bool,
     handler: Option<&KeyPressFn<'_, Message>>,
     shell: &mut Shell<'_, Message>,
 ) -> bool {
@@ -598,7 +715,7 @@ fn handle_key_press<Message>(
         return false;
     };
 
-    if !enabled || !state.is_focused() || *repeat {
+    if !enabled || !state.is_focused() || *repeat && !allow_repeat {
         return false;
     }
 
@@ -654,9 +771,67 @@ pub(crate) fn focusable_count<Message>(mut element: Element<'_, Message>) -> usi
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::LIGHT;
     use super::*;
+    use iced::advanced::clipboard;
     use iced::event;
     use iced::keyboard::{Location, Modifiers};
+    use iced::widget::{Space, button, column, scrollable};
+    use iced::{Pixels, Point};
+
+    fn passive_scroll_press(
+        content: Element<'static, u8>,
+        event: Event,
+        cursor: mouse::Cursor,
+        initially_focused: bool,
+    ) -> (event::Status, bool, Vec<u8>) {
+        use iced::advanced::renderer::Headless as _;
+
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(120.0, 100.0));
+        let scrollable = scrollable(content).width(Length::Fill).height(Length::Fill);
+        let mut control: Element<'_, u8> =
+            FocusControl::passive(widget::Id::new("passive-scroll-test"), scrollable, &LIGHT)
+                .on_scroll_intent(9)
+                .into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(control.as_widget());
+        let node = control.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+
+        if initially_focused {
+            tree.state.downcast_mut::<State>().focus();
+        }
+
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        control.as_widget_mut().update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            cursor,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        let status = shell.event_status();
+        drop(shell);
+        (
+            status,
+            tree.state.downcast_ref::<State>().is_focused(),
+            messages,
+        )
+    }
 
     fn key_event(named: key::Named, pressed: bool) -> Event {
         let key = keyboard::Key::Named(named);
@@ -768,6 +943,99 @@ mod tests {
     }
 
     #[test]
+    fn passive_region_focuses_without_activating_or_capturing() {
+        let mut state = State::default();
+        let mut messages: Vec<()> = Vec::new();
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            handle_passive_event(&mut state, &press, true, true, &mut shell);
+            assert_eq!(shell.event_status(), event::Status::Ignored);
+        }
+        assert!(state.is_focused());
+        assert!(messages.is_empty());
+
+        let mut shell = Shell::new(&mut messages);
+        handle_passive_event(
+            &mut state,
+            &Event::Window(window::Event::Unfocused),
+            true,
+            true,
+            &mut shell,
+        );
+        assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn captured_native_scroll_presses_focus_passive_region() {
+        let content = || {
+            Space::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(400.0))
+                .into()
+        };
+
+        let (status, focused, messages) = passive_scroll_press(
+            content(),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            mouse::Cursor::Available(Point::new(119.0, 10.0)),
+            false,
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(focused);
+        assert_eq!(messages, [9]);
+
+        let touch_position = Point::new(20.0, 60.0);
+        let (status, focused, messages) = passive_scroll_press(
+            content(),
+            Event::Touch(touch::Event::FingerPressed {
+                id: touch::Finger(1),
+                position: touch_position,
+            }),
+            mouse::Cursor::Available(touch_position),
+            false,
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(focused);
+        assert!(messages.is_empty());
+
+        let (_, _, messages) = passive_scroll_press(
+            content(),
+            Event::Touch(touch::Event::FingerMoved {
+                id: touch::Finger(1),
+                position: touch_position,
+            }),
+            mouse::Cursor::Available(touch_position),
+            true,
+        );
+        assert_eq!(messages, [9]);
+    }
+
+    #[test]
+    fn captured_interactive_child_press_releases_passive_focus() {
+        let content = column![
+            button("row action")
+                .on_press(1)
+                .width(Length::Fill)
+                .height(Length::Fixed(40.0)),
+            Space::new().height(Length::Fixed(400.0)),
+        ]
+        .width(Length::Fill)
+        .into();
+        let (status, focused, messages) = passive_scroll_press(
+            content,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            mouse::Cursor::Available(Point::new(20.0, 20.0)),
+            true,
+        );
+
+        assert_eq!(status, event::Status::Captured);
+        assert!(!focused);
+        assert!(messages.is_empty());
+    }
+
+    #[test]
     fn pointer_sources_must_match_and_window_blur_cancels_activation() {
         let finger = touch::Finger(1);
         let other = touch::Finger(2);
@@ -851,6 +1119,7 @@ mod tests {
                 &state,
                 &key_event(key::Named::ArrowRight, true),
                 true,
+                false,
                 Some(&handler),
                 &mut shell,
             ));
@@ -863,11 +1132,37 @@ mod tests {
                 &state,
                 &key_event(key::Named::ArrowRight, true),
                 true,
+                false,
                 Some(&handler),
                 &mut shell,
             ));
             assert_eq!(shell.event_status(), event::Status::Captured);
         }
         assert_eq!(messages, [11]);
+    }
+
+    #[test]
+    fn additional_key_binding_can_opt_into_repeats() {
+        let handler = |_key: keyboard::Key, _modifiers| Some(7);
+        let state = State {
+            focused: true,
+            ..State::default()
+        };
+        let mut event = key_event(key::Named::ArrowRight, true);
+        if let Event::Keyboard(keyboard::Event::KeyPressed { repeat, .. }) = &mut event {
+            *repeat = true;
+        }
+        let mut messages = Vec::new();
+
+        let mut shell = Shell::new(&mut messages);
+        assert!(handle_key_press(
+            &state,
+            &event,
+            true,
+            true,
+            Some(&handler),
+            &mut shell,
+        ));
+        assert_eq!(messages, [7]);
     }
 }

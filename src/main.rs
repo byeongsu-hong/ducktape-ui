@@ -68,7 +68,10 @@ use ui::menu::{
 };
 use ui::menubar::{MenubarEvent, MenubarMenu, MenubarState, menubar};
 use ui::message::{MessageSide, message};
-use ui::message_scroller::message_scroller;
+use ui::message_scroller::{
+    MessageScrollerEvent, MessageScrollerItemMeta, MessageScrollerState,
+    controlled_message_scroller, message_scroller_item,
+};
 use ui::modal::{DismissRules, FocusScope, ModalEvent};
 use ui::native_select::native_select_with_id;
 use ui::navigation_menu::{
@@ -114,6 +117,12 @@ use ui::toggle::{ToggleSize, ToggleVariant, toggle};
 use ui::toggle_group::{ToggleGroupOrientation, ToggleGroupState, toggle_group, toggle_group_item};
 use ui::tooltip::{TooltipId, tooltip, tooltip_text};
 use ui::typography::{TextRole, inline_code, typography};
+
+struct TranscriptRow {
+    id: String,
+    copy: String,
+    side: Option<MessageSide>,
+}
 
 struct Showcase {
     dark: bool,
@@ -179,6 +188,10 @@ struct Showcase {
     sheet_focus: FocusScope,
     drawer_state: DrawerState,
     drawer_focus: FocusScope,
+    message_scroller: MessageScrollerState,
+    transcript: Vec<TranscriptRow>,
+    next_transcript_id: usize,
+    next_history_id: usize,
 }
 
 impl Default for Showcase {
@@ -299,6 +312,51 @@ impl Default for Showcase {
             sheet_focus,
             drawer_state: DrawerState::new(false),
             drawer_focus,
+            message_scroller: MessageScrollerState::new("showcase").auto_scroll(true),
+            transcript: vec![
+                TranscriptRow {
+                    id: "previous".into(),
+                    copy: "Previous".into(),
+                    side: None,
+                },
+                TranscriptRow {
+                    id: "message-1".into(),
+                    copy: "I kept the reader's place while history loaded.".into(),
+                    side: Some(MessageSide::Incoming),
+                },
+                TranscriptRow {
+                    id: "message-2".into(),
+                    copy: "Stable row IDs make that possible.".into(),
+                    side: Some(MessageSide::Outgoing),
+                },
+                TranscriptRow {
+                    id: "message-3".into(),
+                    copy: "Scroll away from the live edge, then stream a message.".into(),
+                    side: Some(MessageSide::Incoming),
+                },
+                TranscriptRow {
+                    id: "today".into(),
+                    copy: "Today".into(),
+                    side: None,
+                },
+                TranscriptRow {
+                    id: "message-4".into(),
+                    copy: "The transcript stops following user scroll.".into(),
+                    side: Some(MessageSide::Outgoing),
+                },
+                TranscriptRow {
+                    id: "message-5".into(),
+                    copy: "New rows become unread until you jump back.".into(),
+                    side: Some(MessageSide::Incoming),
+                },
+                TranscriptRow {
+                    id: "message-6".into(),
+                    copy: "Keyboard navigation works after focusing the viewport.".into(),
+                    side: Some(MessageSide::Outgoing),
+                },
+            ],
+            next_transcript_id: 7,
+            next_history_id: 1,
         }
     }
 }
@@ -408,6 +466,9 @@ enum Message {
     Calendar(CalendarEvent),
     DatePicker(DatePickerEvent),
     Carousel(CarouselEvent),
+    PrependTranscriptHistory,
+    StreamTranscript,
+    TranscriptScroll(MessageScrollerEvent),
     FocusTraversal { backwards: bool },
     TabsAutomatic(TabsEvent<&'static str>),
     TabsManual(TabsEvent<&'static str>),
@@ -456,7 +517,7 @@ enum Message {
 }
 
 fn main() -> iced::Result {
-    iced::application(Showcase::default, Showcase::update, Showcase::view)
+    iced::application(Showcase::boot, Showcase::update, Showcase::view)
         .title("ducktape-ui component showcase")
         .window(iced::window::Settings {
             min_size: Some(iced::Size::new(480.0, 480.0)),
@@ -468,6 +529,12 @@ fn main() -> iced::Result {
 }
 
 impl Showcase {
+    fn boot() -> (Self, iced::Task<Message>) {
+        let mut showcase = Self::default();
+        let seed = showcase.sync_message_scroller();
+        (showcase, seed)
+    }
+
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
             Message::ToggleTheme => self.dark = !self.dark,
@@ -507,6 +574,55 @@ impl Showcase {
             }
             Message::Carousel(event) => {
                 self.carousel_state.apply(event);
+            }
+            Message::PrependTranscriptHistory => {
+                let id = self.next_history_id;
+                self.next_history_id += 1;
+                self.transcript.insert(
+                    0,
+                    TranscriptRow {
+                        id: format!("history-{id}"),
+                        copy: format!("Loaded earlier message {id}."),
+                        side: Some(MessageSide::Incoming),
+                    },
+                );
+                return self.sync_message_scroller();
+            }
+            Message::StreamTranscript => {
+                if let Some(row) = self
+                    .transcript
+                    .last_mut()
+                    .filter(|row| row.id.starts_with("stream-"))
+                {
+                    row.copy
+                        .push_str(" More content arrived in this same stable row.");
+                } else {
+                    let id = self.next_transcript_id;
+                    self.next_transcript_id += 1;
+                    self.transcript.extend([
+                        TranscriptRow {
+                            id: format!("turn-{id}"),
+                            copy: format!("New turn {id}"),
+                            side: None,
+                        },
+                        TranscriptRow {
+                            id: format!("stream-{id}"),
+                            copy: "Streaming into this stable row…".into(),
+                            side: Some(if id.is_multiple_of(2) {
+                                MessageSide::Outgoing
+                            } else {
+                                MessageSide::Incoming
+                            }),
+                        },
+                    ]);
+                }
+                return self.sync_message_scroller();
+            }
+            Message::TranscriptScroll(event) => {
+                return self
+                    .message_scroller
+                    .update(event)
+                    .map(Message::TranscriptScroll);
             }
             Message::FocusTraversal { backwards } => {
                 let focus = if backwards {
@@ -778,6 +894,17 @@ impl Showcase {
         }
 
         iced::Task::none()
+    }
+
+    fn sync_message_scroller(&mut self) -> iced::Task<Message> {
+        let items = self
+            .transcript
+            .iter()
+            .map(|row| MessageScrollerItemMeta::new(&row.id).scroll_anchor(row.side.is_none()))
+            .collect();
+        self.message_scroller
+            .update(MessageScrollerEvent::ItemsChanged(items))
+            .map(Message::TranscriptScroll)
     }
 
     fn apply_menu_event(&mut self, event: &MenuEvent) {
@@ -1173,55 +1300,81 @@ impl Showcase {
             ),
             &theme,
         );
-        let incoming = message(
-            MessageSide::Incoming,
-            Some(avatar_fallback("D", AvatarSize::Small, &theme).into()),
-            Some(text("Ducktape").size(theme.typography.sm).into()),
-            bubble(
-                text("The source-owned components are ready."),
-                BubbleVariant::Incoming,
-                &theme,
-            ),
-            None,
-            &theme,
-        );
-        let outgoing = message(
-            MessageSide::Outgoing,
-            None,
-            Some(text("You").size(theme.typography.sm).into()),
-            bubble(
-                text("Ship the next batch."),
-                BubbleVariant::Outgoing,
-                &theme,
-            ),
-            Some(
-                button("Copy", &theme)
-                    .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Small)
-                    .on_press(Message::Clicked)
-                    .into(),
-            ),
-            &theme,
-        );
+        let transcript_items = self.transcript.iter().map(|row| {
+            let content: Element<'_, Message> = match row.side {
+                Some(side) => message(
+                    side,
+                    (side == MessageSide::Incoming)
+                        .then(|| avatar_fallback("D", AvatarSize::Small, &theme).into()),
+                    Some(
+                        text(if side == MessageSide::Incoming {
+                            "Ducktape"
+                        } else {
+                            "You"
+                        })
+                        .size(theme.typography.sm)
+                        .into(),
+                    ),
+                    bubble(
+                        text(&row.copy),
+                        if side == MessageSide::Incoming {
+                            BubbleVariant::Incoming
+                        } else {
+                            BubbleVariant::Outgoing
+                        },
+                        &theme,
+                    ),
+                    None,
+                    &theme,
+                )
+                .into(),
+                None => marker(None, &row.copy, MarkerVariant::Separator, &theme).into(),
+            };
+            message_scroller_item(row.id.clone(), content).scroll_anchor(row.side.is_none())
+        });
         let transcript = column![
-            marker(None, "Today", MarkerVariant::Separator, &theme),
-            incoming,
-            marker(
-                Some(badge("New", BadgeVariant::Secondary, &theme).into()),
-                "Unread",
-                MarkerVariant::Border,
+            row![
+                button("Prepend history", &theme)
+                    .variant(ButtonVariant::Outline)
+                    .size(ButtonSize::Small)
+                    .on_press(Message::PrependTranscriptHistory),
+                button(
+                    if self
+                        .transcript
+                        .last()
+                        .is_some_and(|row| row.id.starts_with("stream-"))
+                    {
+                        "Grow streamed row"
+                    } else {
+                        "Start anchored stream"
+                    },
+                    &theme,
+                )
+                .size(ButtonSize::Small)
+                .on_press(Message::StreamTranscript),
+            ]
+            .spacing(theme.spacing.sm),
+            controlled_message_scroller(
+                &self.message_scroller,
+                transcript_items,
+                Message::TranscriptScroll,
                 &theme,
-            ),
-            outgoing,
-            marker(None, "End of transcript", MarkerVariant::Default, &theme),
+            )
+            .height(260),
+            text(format!(
+                "following={} start={} end={} unread={} visible={:?} anchor={:?}",
+                self.message_scroller.is_following(),
+                self.message_scroller.can_scroll_start(),
+                self.message_scroller.can_scroll_end(),
+                self.message_scroller.unread_count(),
+                self.message_scroller.visible_message_ids(),
+                self.message_scroller.current_anchor_id(),
+            ))
+            .width(Length::Fill)
+            .size(theme.typography.sm)
+            .color(theme.palette.muted_foreground),
         ]
-        .spacing(theme.spacing.md);
-        let transcript = message_scroller(
-            transcript,
-            iced::widget::Id::new("showcase-message-scroller"),
-            &theme,
-        )
-        .height(260);
+        .spacing(theme.spacing.sm);
 
         let table_theme_a = theme;
         let table_theme_b = theme;
@@ -3127,5 +3280,30 @@ impl Showcase {
         .velocity_threshold(700.0)
         .reduced_motion(self.sonner.reduced_motion())
         .into_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn showcase_seeds_and_resizes_one_stable_stream_row() {
+        let (mut showcase, _) = Showcase::boot();
+        assert_eq!(
+            showcase.message_scroller.items().len(),
+            showcase.transcript.len()
+        );
+
+        let original_len = showcase.transcript.len();
+        let _ = showcase.update(Message::StreamTranscript);
+        let stream_id = showcase.transcript.last().unwrap().id.clone();
+        let original_copy_len = showcase.transcript.last().unwrap().copy.len();
+        assert!(showcase.message_scroller.items()[original_len].is_scroll_anchor());
+
+        let _ = showcase.update(Message::StreamTranscript);
+        assert_eq!(showcase.transcript.len(), original_len + 2);
+        assert_eq!(showcase.transcript.last().unwrap().id, stream_id);
+        assert!(showcase.transcript.last().unwrap().copy.len() > original_copy_len);
     }
 }

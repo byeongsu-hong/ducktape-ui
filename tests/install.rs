@@ -250,6 +250,7 @@ enum Message {
     Accepted(bool),
     Notes(iced::widget::text_editor::Action),
     PageSelected(usize),
+    TranscriptScroll(ui::message_scroller::MessageScrollerEvent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +259,33 @@ enum Section {
     Advanced,
 }
 
-fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Message> {
+fn update_message_scroller(
+    state: &mut ui::message_scroller::MessageScrollerState,
+    event: ui::message_scroller::MessageScrollerEvent,
+) -> iced::Task<Message> {
+    state.update(event).map(Message::TranscriptScroll)
+}
+
+fn seed_message_scroller() -> (
+    ui::message_scroller::MessageScrollerState,
+    iced::Task<Message>,
+) {
+    let mut state =
+        ui::message_scroller::MessageScrollerState::new("transcript").auto_scroll(true);
+    let task = update_message_scroller(
+        &mut state,
+        ui::message_scroller::MessageScrollerEvent::ItemsChanged(vec![
+            ui::message_scroller::MessageScrollerItemMeta::new("today").scroll_anchor(true),
+            ui::message_scroller::MessageScrollerItemMeta::new("message-1"),
+        ]),
+    );
+    (state, task)
+}
+
+fn view<'a>(
+    content: &'a iced::widget::text_editor::Content,
+    message_scroller: &'a ui::message_scroller::MessageScrollerState,
+) -> iced::Element<'a, Message> {
     let theme = ui::theme::LIGHT;
     let field = ui::field::field(
         "Email",
@@ -339,12 +366,22 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
         None,
         &theme,
     );
-    let transcript = ui::message_scroller::message_scroller(
-        iced::widget::column![
-            ui::marker::marker(None, "Today", ui::marker::MarkerVariant::Separator, &theme),
-            chat_message,
+    let transcript = ui::message_scroller::controlled_message_scroller(
+        message_scroller,
+        [
+            ui::message_scroller::message_scroller_item(
+                "today",
+                ui::marker::marker(
+                    None,
+                    "Today",
+                    ui::marker::MarkerVariant::Separator,
+                    &theme,
+                ),
+            )
+            .scroll_anchor(true),
+            ui::message_scroller::message_scroller_item("message-1", chat_message),
         ],
-        iced::widget::Id::new("messages"),
+        Message::TranscriptScroll,
         &theme,
     )
     .height(160);
@@ -409,7 +446,9 @@ fn view(content: &iced::widget::text_editor::Content) -> iced::Element<'_, Messa
     .into()
 }
 
-fn main() {}
+fn main() {
+    let _ = seed_message_scroller();
+}
 "#,
     )
     .unwrap();
