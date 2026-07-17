@@ -47,6 +47,12 @@ impl DialogActionAlignment {
 }
 
 /// Renders a shadcn-sized dialog with start-aligned copy and trailing actions.
+///
+/// Keep `focus` in application state with every focusable dialog control listed
+/// in Tab order. Return [`ModalEvent::focus_task`] from `update` for focus
+/// events, and [`FocusScope::transition_task`] after changing controlled
+/// visibility so the first control receives focus on open and the opening
+/// trigger is restored on close.
 #[allow(clippy::too_many_arguments)]
 pub fn dialog<'a, Message>(
     underlay: impl Into<Element<'a, Message>>,
@@ -79,6 +85,8 @@ where
 }
 
 /// Renders a dialog with explicit copy and action alignment.
+///
+/// Focus and dismissal behavior matches [`dialog`].
 #[allow(clippy::too_many_arguments)]
 pub fn dialog_with_alignment<'a, Message>(
     underlay: impl Into<Element<'a, Message>>,

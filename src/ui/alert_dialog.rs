@@ -80,6 +80,7 @@ pub enum AlertDialogActionVariant {
 
 /// Renders an alert dialog that cannot be dismissed by clicking its backdrop.
 ///
+/// Return [`AlertDialogEvent::focus_task`] from `update` for emitted events.
 /// After changing controlled visibility, return
 /// `focus.scope().transition_task(was_open, open)` from `update` so Cancel
 /// receives initial focus on open and the opening trigger is restored on close.
