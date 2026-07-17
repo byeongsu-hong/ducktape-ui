@@ -92,6 +92,8 @@ where
     theme: Theme,
 }
 
+/// Apply emitted events to visibility, anchor, and [`MenuState`], then return
+/// [`ContextMenuEvent::focus_task`] from `update`.
 #[allow(clippy::too_many_arguments)]
 pub fn context_menu<'a, Message>(
     ids: ContextMenuIds,

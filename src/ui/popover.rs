@@ -282,6 +282,8 @@ pub struct Popover<'a, Message> {
     theme: UiTheme,
 }
 
+/// Apply emitted visibility changes, then return [`PopoverEvent::focus_task`]
+/// from `update`.
 pub fn popover<'a, Message>(
     ids: PopoverIds,
     trigger: impl Into<Element<'a, Message>>,

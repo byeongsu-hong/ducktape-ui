@@ -372,6 +372,8 @@ where
     theme: Theme,
 }
 
+/// Feed each emitted event to [`CommandState::apply`], then return
+/// [`CommandEvent::focus_task`] from `update`.
 pub fn command<'a, Message, Value>(
     id: impl Into<String>,
     state: &CommandState,
