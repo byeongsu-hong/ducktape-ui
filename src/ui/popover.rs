@@ -817,6 +817,12 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 
         self.floating
             .update(event, layout, cursor, renderer, clipboard, shell);
+        if self.content_focus.is_focused()
+            && focus_within(|operation| self.floating.operate(layout, renderer, operation))
+        {
+            self.content_focus.unfocus();
+            shell.request_redraw();
+        }
     }
 
     fn mouse_interaction(
@@ -875,6 +881,30 @@ fn dismissal(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FocusFlag {
     focused: bool,
+}
+
+pub(crate) fn focus_within(operate: impl FnOnce(&mut dyn widget::Operation)) -> bool {
+    #[derive(Default)]
+    struct FindFocused(bool);
+
+    impl widget::Operation for FindFocused {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+            operate(self);
+        }
+
+        fn focusable(
+            &mut self,
+            _id: Option<&widget::Id>,
+            _bounds: Rectangle,
+            state: &mut dyn widget::operation::Focusable,
+        ) {
+            self.0 |= state.is_focused();
+        }
+    }
+
+    let mut query = FindFocused::default();
+    operate(&mut query);
+    query.0
 }
 
 impl FocusFlag {
@@ -1151,11 +1181,12 @@ mod tests {
     use super::*;
     use iced::advanced::Widget;
     use iced::advanced::renderer::Headless as _;
-    use iced::widget::text;
+    use iced::widget::{text, text_input};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Message {
         Popover(PopoverEvent),
+        InputChanged(String),
     }
 
     fn rect(x: f32, y: f32, width: f32, height: f32) -> Rectangle {
@@ -1441,6 +1472,106 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    #[test]
+    fn pointer_focused_child_releases_the_content_proxy() {
+        struct FindBounds {
+            id: widget::Id,
+            bounds: Option<Rectangle>,
+        }
+
+        impl widget::Operation for FindBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _state: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&self.id) {
+                    self.bounds = Some(bounds);
+                }
+            }
+        }
+
+        let ids = PopoverIds::new("focus-transfer");
+        let child_id = widget::Id::new("popover-child");
+        let content = text_input("Action", "")
+            .id(child_id.clone())
+            .on_input(Message::InputChanged)
+            .width(120.0);
+        let mut widget = popover(
+            ids,
+            text("trigger"),
+            content,
+            true,
+            Message::Popover,
+            &LIGHT,
+        )
+        .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = rect(0.0, 0.0, 640.0, 480.0);
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        tree.state.downcast_mut::<State>().content_focus.focus();
+        let mut overlay = widget
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open popover overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let mut find = FindBounds {
+            id: child_id,
+            bounds: None,
+        };
+        overlay
+            .as_overlay_mut()
+            .operate(Layout::new(&overlay_node), &renderer, &mut find);
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        overlay.as_overlay_mut().update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&overlay_node),
+            mouse::Cursor::Available(find.bounds.expect("child bounds").center()),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        drop(overlay);
+
+        assert!(
+            !tree
+                .state
+                .downcast_ref::<State>()
+                .content_focus
+                .is_focused()
+        );
+        assert!(focus_within(|operation| {
+            widget.content.as_widget_mut().operate(
+                &mut tree.children[1],
+                content_layout(Layout::new(&overlay_node)),
+                &renderer,
+                operation,
+            );
+        }));
     }
 
     #[test]

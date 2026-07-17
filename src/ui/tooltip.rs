@@ -7,7 +7,7 @@
 
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, draw_focus_ring,
-    panel,
+    focus_within, panel,
 };
 use super::theme::Theme as UiTheme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -531,30 +531,6 @@ pub(crate) fn is_escape(event: &Event) -> bool {
             ..
         })
     )
-}
-
-pub(crate) fn focus_within(operate: impl FnOnce(&mut dyn widget::Operation)) -> bool {
-    #[derive(Default)]
-    struct FindFocused(bool);
-
-    impl widget::Operation for FindFocused {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
-            operate(self);
-        }
-
-        fn focusable(
-            &mut self,
-            _id: Option<&widget::Id>,
-            _bounds: Rectangle,
-            state: &mut dyn widget::operation::Focusable,
-        ) {
-            self.0 |= state.is_focused();
-        }
-    }
-
-    let mut query = FindFocused::default();
-    operate(&mut query);
-    query.0
 }
 
 fn sync_presence(
