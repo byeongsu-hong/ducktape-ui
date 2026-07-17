@@ -250,6 +250,11 @@ pub fn reduce_menu(
 ) -> MenuTransition {
     let mut next = state.clone();
     let items = visible_items(entries, state);
+    next.open_submenus.retain(|open| {
+        items.iter().any(|(path, item)| {
+            path == open && !item.disabled && matches!(&item.kind, MenuItemKind::Submenu(_))
+        })
+    });
     let enabled = items
         .iter()
         .filter(|(_, item)| !item.disabled)
@@ -984,6 +989,21 @@ mod tests {
         let closed = reduce_menu(&opened.state, &entries, MenuCommand::Back);
         assert_eq!(closed.state.open_submenus, Vec::<MenuPath>::new());
         assert_eq!(closed.state.focused, Some(vec![2]));
+    }
+
+    #[test]
+    fn stale_open_path_does_not_swallow_escape() {
+        let entries = vec![MenuEntry::item("same", "Same")];
+        let state = MenuState {
+            focused: Some(vec![0]),
+            open_submenus: vec![vec![0]],
+            ..MenuState::default()
+        };
+
+        let dismissed = reduce_menu(&state, &entries, MenuCommand::Escape);
+
+        assert_eq!(dismissed.event, Some(MenuEvent::Dismiss));
+        assert!(dismissed.state.open_submenus.is_empty());
     }
 
     #[test]
