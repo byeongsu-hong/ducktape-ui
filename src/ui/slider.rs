@@ -474,7 +474,9 @@ where
         tree.diff_children(&self.thumbs);
         let state = tree.state.downcast_mut::<State>();
         state.active_thumb = state.active_thumb.min(self.values.len() - 1);
-        if let Some(drag) = state.dragging.as_mut() {
+        if self.disabled {
+            state.dragging = None;
+        } else if let Some(drag) = state.dragging.as_mut() {
             if let Some(value) = self.values.get(drag.thumb) {
                 drag.last_value = *value;
             } else {
@@ -1327,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn drags_require_a_matching_release_and_window_blur_clears_focus() {
+    fn drag_lifecycle_requires_matching_release_and_clears_on_blur_or_disable() {
         let finger = touch::Finger(7);
         let mut state = State {
             dragging: Some(Drag {
@@ -1351,15 +1353,19 @@ mod tests {
         ));
         assert!(state.dragging.is_some());
 
-        let widget = slider(
-            "blur",
-            vec![50.0],
-            0.0..=100.0,
-            1.0,
-            |values| values,
-            &LIGHT,
-        )
-        .into_widget();
+        let slider = |disabled| {
+            slider(
+                "blur",
+                vec![50.0],
+                0.0..=100.0,
+                1.0,
+                |values| values,
+                &LIGHT,
+            )
+            .disabled(disabled)
+            .into_widget()
+        };
+        let widget = slider(false);
         let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
         *tree.state.downcast_mut::<State>() = state;
         widget.diff(&mut tree);
@@ -1379,6 +1385,12 @@ mod tests {
         ));
         assert!(tree.state.downcast_ref::<State>().dragging.is_none());
         assert_eq!(focused_thumb(&tree.children), None);
+
+        *tree.state.downcast_mut::<State>() = state;
+        let disabled = slider(true);
+        disabled.diff(&mut tree);
+        widget.diff(&mut tree);
+        assert!(tree.state.downcast_ref::<State>().dragging.is_none());
     }
 
     #[test]
