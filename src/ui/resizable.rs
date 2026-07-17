@@ -431,14 +431,12 @@ where
             let handle = self.handles[index];
             let disabled = self.disabled || handle.disabled;
             let current = layout.clone();
-            let current_sizes = current.sizes().to_vec();
             let on_resize = Rc::clone(&self.on_resize);
             let orientation = self.orientation;
             let step = self.keyboard_step;
-            let control: Element<'a, Message> = FocusControl::new(
+            let control: Element<'a, Message> = FocusControl::passive(
                 resizable_handle_id(&self.id, index),
                 iced::widget::Space::new(),
-                (self.on_resize)(current_sizes),
                 &self.theme,
             )
             .disabled(disabled)
@@ -1464,6 +1462,106 @@ mod tests {
             assert!(contrast(focused.divider, theme.palette.background) >= 3.0);
             assert!(disabled.divider.a < active.divider.a);
         }
+    }
+
+    #[test]
+    fn separators_ignore_activation_keys_but_resize_with_arrow_keys() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::widget::{container, text};
+
+        fn key_event(named: Named, pressed: bool) -> Event {
+            let key = keyboard::Key::Named(named);
+            let physical_key =
+                keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified);
+
+            Event::Keyboard(if pressed {
+                keyboard::Event::KeyPressed {
+                    key: key.clone(),
+                    modified_key: key,
+                    physical_key,
+                    location: keyboard::Location::Standard,
+                    modifiers: keyboard::Modifiers::default(),
+                    text: None,
+                    repeat: false,
+                }
+            } else {
+                keyboard::Event::KeyReleased {
+                    key: key.clone(),
+                    modified_key: key,
+                    physical_key,
+                    location: keyboard::Location::Standard,
+                    modifiers: keyboard::Modifiers::default(),
+                }
+            })
+        }
+
+        let panels = ["One", "Two"].map(|label| container(text(label)).into());
+        let mut widget = resizable(
+            "keyboard",
+            panels,
+            vec![0.5, 0.5],
+            vec![0.1, 0.1],
+            |sizes| sizes,
+            &LIGHT,
+        )
+        .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(200.0, 100.0));
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut focus =
+            widget::operation::focusable::focus::<()>(resizable_handle_id("keyboard", 0));
+        widget.operate(&mut tree, Layout::new(&node), &renderer, &mut focus);
+
+        let mut clipboard = iced::advanced::clipboard::Null;
+        for named in [Named::Enter, Named::Space] {
+            let mut messages = Vec::new();
+            let mut statuses = [iced::event::Status::Ignored; 2];
+            for (index, pressed) in [true, false].into_iter().enumerate() {
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &key_event(named, pressed),
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                statuses[index] = shell.event_status();
+            }
+            assert!(messages.is_empty());
+            assert_eq!(statuses, [iced::event::Status::Ignored; 2]);
+        }
+
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        widget.update(
+            &mut tree,
+            &key_event(Named::ArrowRight, true),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        assert_eq!(shell.event_status(), iced::event::Status::Captured);
+        drop(shell);
+        assert_eq!(messages.len(), 1);
+        close(messages[0][0], 0.55);
+        close(messages[0][1], 0.45);
+        assert!(handle_focused(&tree.children, 0));
     }
 
     #[test]
