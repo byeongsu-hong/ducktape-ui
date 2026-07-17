@@ -369,8 +369,13 @@ where
     results_height: f32,
     width: Length,
     group_separators: bool,
+    empty_content: Option<Element<'a, Message>>,
+    item_content: Option<CommandItemContent<'a, Message, Value>>,
     theme: Theme,
 }
+
+type CommandItemContent<'a, Message, Value> =
+    Rc<dyn Fn(&CommandItem<Value>, bool, bool, &Theme) -> Element<'a, Message> + 'a>;
 
 /// Feed each emitted event to [`CommandState::apply`], then return
 /// [`CommandEvent::focus_task`] from `update`.
@@ -396,6 +401,8 @@ where
         results_height: COMMAND_DEFAULT_RESULTS_HEIGHT,
         width: Length::Fill,
         group_separators: true,
+        empty_content: None,
+        item_content: None,
         theme: *theme,
     }
 }
@@ -432,6 +439,22 @@ where
     #[must_use]
     pub fn group_separators(mut self, group_separators: bool) -> Self {
         self.group_separators = group_separators;
+        self
+    }
+
+    #[must_use]
+    pub fn empty_content(mut self, content: impl Into<Element<'a, Message>>) -> Self {
+        self.empty_content = Some(content.into());
+        self
+    }
+
+    /// Replaces each result row's visible content while retaining command behavior.
+    #[must_use]
+    pub fn item_content(
+        mut self,
+        content: impl Fn(&CommandItem<Value>, bool, bool, &Theme) -> Element<'a, Message> + 'a,
+    ) -> Self {
+        self.item_content = Some(Rc::new(content));
         self
     }
 
@@ -528,36 +551,41 @@ where
                 } else {
                     self.theme.palette.muted_foreground
                 };
-                let label = container(
-                    text(item.label)
-                        .size(self.theme.typography.sm)
-                        .line_height(LineHeight::Absolute(Pixels(16.0))),
-                )
-                .width(Length::Fill)
-                .align_x(Horizontal::Left)
-                .align_y(Vertical::Center);
-                let mut row = Row::new()
-                    .push(label)
-                    .spacing(self.theme.spacing.sm)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill);
-                if let Some(shortcut) = item.shortcut {
-                    row = row.push(
-                        container(
-                            text(shortcut)
-                                .size(self.theme.typography.xs)
-                                .line_height(LineHeight::Absolute(Pixels(16.0)))
-                                .color(shortcut_color),
-                        )
-                        .align_x(Horizontal::Right)
-                        .align_y(Vertical::Center),
-                    );
-                }
-                let content = container(row)
-                    .padding([0.0, self.theme.spacing.sm])
+                let content: Element<'a, Message> = if let Some(render) = &self.item_content {
+                    render(&item, selected, disabled, &self.theme)
+                } else {
+                    let label = container(
+                        text(item.label)
+                            .size(self.theme.typography.sm)
+                            .line_height(LineHeight::Absolute(Pixels(16.0))),
+                    )
                     .width(Length::Fill)
-                    .height(COMMAND_ITEM_HEIGHT)
+                    .align_x(Horizontal::Left)
                     .align_y(Vertical::Center);
+                    let mut row = Row::new()
+                        .push(label)
+                        .spacing(self.theme.spacing.sm)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill);
+                    if let Some(shortcut) = item.shortcut {
+                        row = row.push(
+                            container(
+                                text(shortcut)
+                                    .size(self.theme.typography.xs)
+                                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                                    .color(shortcut_color),
+                            )
+                            .align_x(Horizontal::Right)
+                            .align_y(Vertical::Center),
+                        );
+                    }
+                    container(row)
+                        .padding([0.0, self.theme.spacing.sm])
+                        .width(Length::Fill)
+                        .height(COMMAND_ITEM_HEIGHT)
+                        .align_y(Vertical::Center)
+                        .into()
+                };
                 let activate_target = &targets[index];
                 let activate = (self.on_event)(CommandEvent::Selected {
                     item_id: activate_target.id.clone(),
@@ -593,14 +621,16 @@ where
         }
 
         let results: Element<'a, Message> = if targets.is_empty() {
-            container(
-                text(self.empty)
-                    .size(self.theme.typography.sm)
-                    .color(self.theme.palette.muted_foreground),
-            )
-            .center_x(Length::Fill)
-            .center_y(72)
-            .into()
+            self.empty_content.unwrap_or_else(|| {
+                container(
+                    text(self.empty)
+                        .size(self.theme.typography.sm)
+                        .color(self.theme.palette.muted_foreground),
+                )
+                .center_x(Length::Fill)
+                .center_y(72)
+                .into()
+            })
         } else {
             results.into()
         };
@@ -1036,6 +1066,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::super::focus_control::focusable_count;
     use super::super::theme::{DARK, LIGHT};
     use super::*;
@@ -1152,6 +1184,27 @@ mod tests {
             command("palette", &state, groups(), |event| event, &LIGHT).into();
 
         assert_eq!(focusable_count(element), 2); // native input + active result
+    }
+
+    #[test]
+    fn caller_can_render_result_rows_and_empty_state() {
+        let calls = Rc::new(Cell::new(0));
+        let render_calls = Rc::clone(&calls);
+        let _: Element<'_, CommandEvent<u8>> = command(
+            "custom",
+            &CommandState::default(),
+            groups(),
+            |event| event,
+            &LIGHT,
+        )
+        .item_content(move |item, selected, disabled, _theme| {
+            render_calls.set(render_calls.get() + 1);
+            text(format!("{}:{selected}:{disabled}", item.label())).into()
+        })
+        .empty_content(text("Nothing here"))
+        .into();
+
+        assert_eq!(calls.get(), 3);
     }
 
     #[test]

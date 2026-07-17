@@ -150,6 +150,7 @@ where
     content_width: f32,
     disabled: bool,
     invalid: bool,
+    trigger: Option<Element<'a, Message>>,
     theme: Theme,
 }
 
@@ -183,6 +184,7 @@ where
         content_width: 224.0,
         disabled: false,
         invalid: false,
+        trigger: None,
         theme: *theme,
     }
 }
@@ -232,6 +234,13 @@ where
     Message: Clone + 'a,
     Value: Clone + Eq + 'a,
 {
+    /// Replaces the default selected-label and chevron trigger content.
+    #[must_use]
+    pub fn trigger(mut self, trigger: impl Into<Element<'a, Message>>) -> Self {
+        self.trigger = Some(trigger.into());
+        self
+    }
+
     pub fn into_element(self) -> Element<'a, Message> {
         let selected_label = self.groups.iter().find_map(|group| {
             group
@@ -247,47 +256,52 @@ where
             .flat_map(|group| group.options.iter())
             .map(|option| (option.id.clone(), option.value.clone()))
             .collect::<Vec<_>>();
-        let foreground = if self.disabled {
-            alpha(self.theme.palette.foreground, 0.5)
-        } else if selected_label.is_some() {
-            self.theme.palette.foreground
+        let trigger: Element<'a, Message> = if let Some(trigger) = self.trigger {
+            container(trigger).width(self.width).into()
         } else {
-            self.theme.palette.muted_foreground
+            let foreground = if self.disabled {
+                alpha(self.theme.palette.foreground, 0.5)
+            } else if selected_label.is_some() {
+                self.theme.palette.foreground
+            } else {
+                self.theme.palette.muted_foreground
+            };
+            let label = container(
+                text(selected_label.unwrap_or(self.placeholder))
+                    .size(self.theme.typography.sm)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                    .color(foreground),
+            )
+            .width(Length::Fill)
+            .align_x(self.direction.start())
+            .align_y(Vertical::Center);
+            let chevron = container(
+                text("⌄")
+                    .size(self.theme.typography.base)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                    .color(alpha(foreground, 0.8)),
+            )
+            .width(16)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center);
+            let trigger_row = match self.direction {
+                Direction::LeftToRight => Row::new().push(label).push(chevron),
+                Direction::RightToLeft => Row::new().push(chevron).push(label),
+            }
+            .align_y(IcedAlignment::Center)
+            .spacing(self.theme.spacing.sm)
+            .width(Length::Fill);
+            let trigger_theme = self.theme;
+            let invalid = self.invalid;
+            let disabled = self.disabled;
+            container(trigger_row)
+                .width(self.width)
+                .height(SELECT_HEIGHT)
+                .padding([0.0, 12.0])
+                .align_y(Vertical::Center)
+                .style(move |_iced_theme| select_trigger_style(&trigger_theme, invalid, disabled))
+                .into()
         };
-        let label = container(
-            text(selected_label.unwrap_or(self.placeholder))
-                .size(self.theme.typography.sm)
-                .line_height(LineHeight::Absolute(Pixels(16.0)))
-                .color(foreground),
-        )
-        .width(Length::Fill)
-        .align_x(self.direction.start())
-        .align_y(Vertical::Center);
-        let chevron = container(
-            text("⌄")
-                .size(self.theme.typography.base)
-                .line_height(LineHeight::Absolute(Pixels(16.0)))
-                .color(alpha(foreground, 0.8)),
-        )
-        .width(16)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center);
-        let trigger_row = match self.direction {
-            Direction::LeftToRight => Row::new().push(label).push(chevron),
-            Direction::RightToLeft => Row::new().push(chevron).push(label),
-        }
-        .align_y(IcedAlignment::Center)
-        .spacing(self.theme.spacing.sm)
-        .width(Length::Fill);
-        let trigger_theme = self.theme;
-        let invalid = self.invalid;
-        let disabled = self.disabled;
-        let trigger = container(trigger_row)
-            .width(self.width)
-            .height(SELECT_HEIGHT)
-            .padding([0.0, 12.0])
-            .align_y(Vertical::Center)
-            .style(move |_iced_theme| select_trigger_style(&trigger_theme, invalid, disabled));
 
         let menu_event = Rc::clone(&self.on_event);
         let menu_values = Rc::new(values);
@@ -483,6 +497,7 @@ mod tests {
         )
         .direction(Direction::RightToLeft)
         .invalid(true)
+        .trigger(text("Custom trigger"))
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
     }

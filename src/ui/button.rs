@@ -3,7 +3,9 @@ use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::IntoFragment;
 use iced::widget::{button as iced_button, container, text};
-use iced::{Background, Border, Color, Element, Length};
+use iced::{Background, Border, Color, Element, Length, Padding};
+
+type StyleFn<'a> = Box<dyn Fn(&iced::Theme, iced_button::Status) -> iced_button::Style + 'a>;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ButtonVariant {
@@ -36,7 +38,10 @@ where
     size: ButtonSize,
     disabled: bool,
     width: Length,
+    height: Option<Length>,
+    padding: Option<Padding>,
     alignment: Horizontal,
+    style: Option<StyleFn<'a>>,
     theme: Theme,
 }
 
@@ -59,7 +64,10 @@ where
             size: ButtonSize::Default,
             disabled: false,
             width: Length::Shrink,
+            height: None,
+            padding: None,
             alignment: Horizontal::Center,
+            style: None,
             theme: *theme,
         }
     }
@@ -94,10 +102,31 @@ where
         self
     }
 
+    #[must_use]
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.height = Some(height.into());
+        self
+    }
+
+    #[must_use]
+    pub fn padding(mut self, padding: impl Into<Padding>) -> Self {
+        self.padding = Some(padding.into());
+        self
+    }
+
     /// Sets horizontal content alignment when the button is wider than its label.
     #[must_use]
     pub fn align_x(mut self, alignment: Horizontal) -> Self {
         self.alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub fn style(
+        mut self,
+        style: impl Fn(&iced::Theme, iced_button::Status) -> iced_button::Style + 'a,
+    ) -> Self {
+        self.style = Some(Box::new(style));
         self
     }
 
@@ -127,11 +156,17 @@ where
         let variant = self.variant;
         let on_press = (!self.disabled).then_some(self.on_press).flatten();
         let widget = iced_button(content)
-            .padding([vertical, horizontal])
+            .padding(
+                self.padding
+                    .unwrap_or_else(|| [vertical, horizontal].into()),
+            )
             .width(width)
-            .height(height)
-            .on_press_maybe(on_press.clone())
-            .style(move |_iced_theme, status| style(&theme, variant, status));
+            .height(self.height.unwrap_or_else(|| height.into()))
+            .on_press_maybe(on_press.clone());
+        let widget = match self.style {
+            Some(custom) => widget.style(custom),
+            None => widget.style(move |_iced_theme, status| style(&theme, variant, status)),
+        };
 
         match on_press {
             Some(message) => FocusControl::anonymous(widget, message, &theme).into(),
@@ -250,6 +285,18 @@ mod tests {
 
         let leading: Button<'_, ()> = button("Leading", &LIGHT).align_x(Horizontal::Left);
         assert_eq!(leading.alignment, Horizontal::Left);
+    }
+
+    #[test]
+    fn geometry_and_style_can_be_overridden_without_copying_source() {
+        let custom: Button<'_, ()> = Button::new(text("Custom"), &LIGHT)
+            .height(48)
+            .padding(20)
+            .style(|_theme, _status| iced_button::Style::default());
+
+        assert_eq!(custom.height, Some(Length::Fixed(48.0)));
+        assert_eq!(custom.padding, Some(Padding::new(20.0)));
+        assert!(custom.style.is_some());
     }
 
     #[test]

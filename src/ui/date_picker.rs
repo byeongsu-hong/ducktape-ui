@@ -8,8 +8,8 @@
 use std::rc::Rc;
 
 use super::calendar::{
-    CALENDAR_WIDTH, CalendarEvent, CalendarSelection, CalendarState, Date, DateRange, Month,
-    controlled_calendar, focus_calendar_day,
+    CALENDAR_WIDTH, CalendarEvent, CalendarLabels, CalendarSelection, CalendarState, Date,
+    DateRange, Month, controlled_calendar, focus_calendar_day,
 };
 use super::direction::Direction;
 use super::popover::{
@@ -277,6 +277,8 @@ where
     width: f32,
     disabled: bool,
     invalid: bool,
+    trigger: Option<Element<'a, Message>>,
+    calendar_labels: CalendarLabels,
     theme: Theme,
 }
 
@@ -318,6 +320,8 @@ where
         width: DATE_PICKER_WIDTH,
         disabled: false,
         invalid: false,
+        trigger: None,
+        calendar_labels: CalendarLabels::default(),
         theme: *theme,
     }
 }
@@ -427,6 +431,19 @@ where
         self
     }
 
+    /// Replaces the default formatted-label and calendar-icon trigger content.
+    #[must_use]
+    pub fn trigger(mut self, trigger: impl Into<Element<'a, Message>>) -> Self {
+        self.trigger = Some(trigger.into());
+        self
+    }
+
+    #[must_use]
+    pub fn calendar_labels(mut self, labels: CalendarLabels) -> Self {
+        self.calendar_labels = labels;
+        self
+    }
+
     pub fn into_element(self) -> Element<'a, Message> {
         let preferred_focus = preferred_focus(
             self.month,
@@ -449,40 +466,45 @@ where
         } else {
             self.theme.palette.muted_foreground
         };
-        let label = container(
-            text(value_label.unwrap_or(self.placeholder))
-                .size(self.theme.typography.sm)
-                .line_height(LineHeight::Absolute(Pixels(16.0)))
-                .color(foreground),
-        )
-        .width(Length::Fill)
-        .align_x(self.direction.start())
-        .align_y(Vertical::Center);
-        let icon = container(
-            text("▦")
-                .size(self.theme.typography.base)
-                .line_height(LineHeight::Absolute(Pixels(16.0)))
-                .color(alpha(foreground, 0.82)),
-        )
-        .width(16)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center);
-        let trigger_content = match self.direction {
-            Direction::LeftToRight => Row::new().push(icon).push(label),
-            Direction::RightToLeft => Row::new().push(label).push(icon),
-        }
-        .align_y(Alignment::Center)
-        .spacing(self.theme.spacing.sm)
-        .width(Length::Fill);
-        let theme = self.theme;
-        let invalid = self.invalid;
-        let disabled = self.disabled;
-        let trigger = container(trigger_content)
-            .width(self.width)
-            .height(DATE_PICKER_HEIGHT)
-            .padding([0.0, 12.0])
-            .align_y(Vertical::Center)
-            .style(move |_iced_theme| trigger_style(&theme, invalid, disabled));
+        let trigger: Element<'a, Message> = if let Some(trigger) = self.trigger {
+            container(trigger).width(self.width).into()
+        } else {
+            let label = container(
+                text(value_label.unwrap_or(self.placeholder))
+                    .size(self.theme.typography.sm)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                    .color(foreground),
+            )
+            .width(Length::Fill)
+            .align_x(self.direction.start())
+            .align_y(Vertical::Center);
+            let icon = container(
+                text("▦")
+                    .size(self.theme.typography.base)
+                    .line_height(LineHeight::Absolute(Pixels(16.0)))
+                    .color(alpha(foreground, 0.82)),
+            )
+            .width(16)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center);
+            let trigger_content = match self.direction {
+                Direction::LeftToRight => Row::new().push(icon).push(label),
+                Direction::RightToLeft => Row::new().push(label).push(icon),
+            }
+            .align_y(Alignment::Center)
+            .spacing(self.theme.spacing.sm)
+            .width(Length::Fill);
+            let theme = self.theme;
+            let invalid = self.invalid;
+            let disabled = self.disabled;
+            container(trigger_content)
+                .width(self.width)
+                .height(DATE_PICKER_HEIGHT)
+                .padding([0.0, 12.0])
+                .align_y(Vertical::Center)
+                .style(move |_iced_theme| trigger_style(&theme, invalid, disabled))
+                .into()
+        };
 
         let calendar_state = calendar_state(self.month, &self.value, self.focused);
         let calendar_event = Rc::clone(&self.on_event);
@@ -501,6 +523,7 @@ where
         .week_numbers(self.week_numbers)
         .month_dropdown(self.month_dropdown)
         .year_dropdown(self.year_dropdown)
+        .labels(self.calendar_labels)
         .direction(self.direction);
         if let Some((start, end)) = self.year_range {
             calendar = calendar.year_range(start, end);
@@ -728,5 +751,25 @@ mod tests {
             assert_eq!(invalid.border.color, theme.palette.destructive);
             assert!(disabled.text_color.unwrap().a < 1.0);
         }
+    }
+
+    #[test]
+    fn caller_can_replace_trigger_and_calendar_copy() {
+        let mut labels = CalendarLabels::default();
+        labels.months[6] = "칠월".into();
+        let picker = date_picker(
+            DatePickerIds::new("custom"),
+            Month::new(2024, 7).unwrap(),
+            None,
+            &DatePickerValue::Single(None),
+            false,
+            |_| (),
+            &LIGHT,
+        )
+        .trigger(text("Open dates"))
+        .calendar_labels(labels);
+
+        assert!(picker.trigger.is_some());
+        assert_eq!(picker.calendar_labels.months[6], "칠월");
     }
 }

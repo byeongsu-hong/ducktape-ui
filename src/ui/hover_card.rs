@@ -150,7 +150,7 @@ where
             trigger: self.trigger,
             content: panel(
                 self.content,
-                PanelKind::HoverCard,
+                PanelKind::Popover,
                 Some(self.width.min(config.max_width)),
                 config.max_width,
                 self.padding,

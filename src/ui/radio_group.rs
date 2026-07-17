@@ -22,7 +22,7 @@ pub enum RadioCommand {
     Last,
 }
 
-/// A source-owned radio option. Its value and selected state stay in the app.
+/// A radio option whose value and selected state stay in the application.
 pub struct RadioOption<'a, Message, Value> {
     value: Value,
     content: Element<'a, Message>,

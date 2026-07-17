@@ -1,7 +1,7 @@
 use super::button::{Button, ButtonSize, ButtonVariant, button};
 use super::theme::Theme;
 use iced::widget::{Container, Row, container, text};
-use iced::{Alignment, Length};
+use iced::{Alignment, Element, Length};
 
 /// A fully controlled pagination item. `None` disables a direction button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,23 @@ where
                 row.push(direction_button("Next ›", target, &on_select, theme))
             }
         },
+    )
+}
+
+/// Lays out caller-rendered pagination items.
+pub fn pagination_with_content<'a, Message>(
+    items: impl IntoIterator<Item = PaginationItem>,
+    mut content: impl FnMut(PaginationItem) -> Element<'a, Message>,
+    theme: &Theme,
+) -> Row<'a, Message>
+where
+    Message: 'a,
+{
+    items.into_iter().fold(
+        Row::new()
+            .spacing(theme.spacing.xs)
+            .align_y(Alignment::Center),
+        |row, item| row.push(content(item)),
     )
 }
 
@@ -86,10 +103,23 @@ fn page_variant(current: bool) -> ButtonVariant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::widget::text;
 
     #[test]
     fn current_page_has_a_distinct_visible_variant() {
         assert_eq!(page_variant(true), ButtonVariant::Outline);
         assert_eq!(page_variant(false), ButtonVariant::Ghost);
+    }
+
+    #[test]
+    fn caller_can_render_every_pagination_item() {
+        let row = pagination_with_content(
+            [PaginationItem::Previous(None), PaginationItem::Ellipsis],
+            |item| text(format!("{item:?}")).into(),
+            &super::super::theme::LIGHT,
+        );
+
+        let element: Element<'_, ()> = row.into();
+        assert_eq!(element.as_widget().children().len(), 2);
     }
 }
