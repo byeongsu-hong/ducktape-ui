@@ -3,7 +3,7 @@
 //! Day cells expose stable iced focus IDs and support arrows, Home/End, and
 //! PageUp/PageDown. Iced does not expose ARIA grid/date semantics; this module
 //! implements the interaction contract without claiming roles it cannot emit.
-//! Optional month/year pick lists inherit iced 0.14's pointer/touch limitation.
+//! Optional month/year pick lists are also focusable and keyboard-capable.
 
 use std::fmt;
 use std::rc::Rc;
