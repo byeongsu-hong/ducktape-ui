@@ -12,7 +12,8 @@ use super::direction::Direction;
 use super::focus_control::{self, FocusControl, Status};
 use super::menu::MENU_PANEL_PADDING;
 use super::popover::{
-    Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, panel, panel_style,
+    Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, focus_within,
+    panel, panel_style,
 };
 use super::theme::{Theme, alpha, mix};
 use super::tooltip::event_time;
@@ -1367,6 +1368,12 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
         }
         self.floating
             .update(event, layout, cursor, renderer, clipboard, shell);
+        if self.content_focus.is_focused()
+            && focus_within(|operation| self.floating.operate(layout, renderer, operation))
+        {
+            self.content_focus.unfocus();
+            shell.request_redraw();
+        }
     }
 
     fn mouse_interaction(
@@ -1397,6 +1404,8 @@ mod tests {
     use super::super::popover::resolve_position;
     use super::super::theme::{DARK, LIGHT};
     use super::*;
+    use iced::advanced::renderer::Headless as _;
+    use iced::widget::text_input;
     use iced::{Point, Size};
 
     fn items() -> Vec<NavigationMenuItemInfo> {
@@ -1607,5 +1616,112 @@ mod tests {
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn pointer_focused_content_releases_the_viewport_proxy() {
+        struct FindBounds {
+            id: widget::Id,
+            bounds: Option<Rectangle>,
+        }
+
+        impl widget::Operation for FindBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _state: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&self.id) {
+                    self.bounds = Some(bounds);
+                }
+            }
+        }
+
+        let menu_id = "focus-transfer";
+        let child_id = widget::Id::new("navigation-content-child");
+        let state = NavigationMenuState {
+            focused: Some(0),
+            open: Some(0),
+            active: None,
+        };
+        let content = text_input("Action", "")
+            .id(child_id.clone())
+            .on_input(|_| ())
+            .width(120.0);
+        let mut widget = navigation_menu(
+            menu_id,
+            [NavigationMenuItem::disclosure("docs", "Docs", content)],
+            &state,
+            |_| (),
+            &LIGHT,
+        )
+        .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut overlay = widget
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open navigation overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let mut focus_proxy =
+            widget::operation::focusable::focus::<()>(navigation_menu_content_id(menu_id, 0));
+        overlay
+            .as_overlay_mut()
+            .operate(Layout::new(&overlay_node), &renderer, &mut focus_proxy);
+        let mut find = FindBounds {
+            id: child_id.clone(),
+            bounds: None,
+        };
+        overlay
+            .as_overlay_mut()
+            .operate(Layout::new(&overlay_node), &renderer, &mut find);
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        overlay.as_overlay_mut().update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&overlay_node),
+            mouse::Cursor::Available(find.bounds.expect("child bounds").center()),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+
+        let descendant_focused = focus_within(|operation| {
+            overlay
+                .as_overlay_mut()
+                .operate(Layout::new(&overlay_node), &renderer, operation);
+        });
+        drop(overlay);
+
+        assert!(
+            !tree
+                .state
+                .downcast_ref::<State>()
+                .content_focus
+                .is_focused()
+        );
+        assert!(descendant_focused);
     }
 }
