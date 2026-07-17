@@ -504,15 +504,27 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             self.floating.bounds(layout),
             self.translation,
         );
-        if let Some(action) = action {
-            self.content_focus.unfocus();
-            shell.publish((self.on_event)(action));
-            shell.capture_event();
-            shell.request_redraw();
-            return;
+        let handled_escape = if matches!(
+            &action,
+            Some(ContextMenuEvent::Close(DismissReason::Escape))
+        ) {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+            shell.is_event_captured()
+        } else {
+            false
+        };
+        if !handled_escape {
+            if let Some(action) = action {
+                self.content_focus.unfocus();
+                shell.publish((self.on_event)(action));
+                shell.capture_event();
+                shell.request_redraw();
+                return;
+            }
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
         }
-        self.floating
-            .update(event, layout, cursor, renderer, clipboard, shell);
     }
 
     fn mouse_interaction(
@@ -575,10 +587,14 @@ fn context_overlay_action(
 
 #[cfg(test)]
 mod tests {
-    use super::super::menu::MenuItem;
+    use super::super::menu::{MenuItem, menu_item_id};
     use super::super::popover::resolve_position;
     use super::super::theme::LIGHT;
     use super::*;
+    use iced::advanced::{
+        Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget,
+    };
+    use iced::keyboard::{Location, Modifiers, key};
     use iced::widget::text;
 
     #[test]
@@ -623,6 +639,95 @@ mod tests {
         )
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
+    }
+
+    #[test]
+    fn escape_closes_nested_submenu_before_context_menu() {
+        let ids = ContextMenuIds::new("document");
+        let entries = vec![
+            MenuItem::new("more", "More")
+                .submenu(vec![MenuEntry::item("nested", "Nested")])
+                .into(),
+        ];
+        let state = MenuState {
+            focused: Some(vec![0, 0]),
+            open_submenus: vec![vec![0]],
+            ..MenuState::default()
+        };
+        let mut element: Element<'_, ContextMenuEvent> = context_menu(
+            ids.clone(),
+            text("Right click"),
+            &entries,
+            &state,
+            true,
+            Some(Point::new(100.0, 100.0)),
+            |event| event,
+            &LIGHT,
+        )
+        .into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open context menu overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let overlay_layout = Layout::new(&overlay_node);
+        let mut focus_child =
+            widget::operation::focusable::focus::<()>(menu_item_id(&ids.menu, "nested", &[0, 0]));
+        overlay
+            .as_overlay_mut()
+            .operate(overlay_layout, &renderer, &mut focus_child);
+        let key = iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape);
+        let escape = Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(key::Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        overlay.as_overlay_mut().update(
+            &escape,
+            overlay_layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        assert!(shell.is_event_captured());
+        drop(shell);
+
+        let expected = MenuState {
+            focused: Some(vec![0]),
+            ..MenuState::default()
+        };
+        assert_eq!(
+            messages,
+            [ContextMenuEvent::Menu(MenuEvent::StateChanged(expected))]
+        );
     }
 
     #[test]
