@@ -77,6 +77,12 @@ where
     theme: Theme,
 }
 
+/// Builds a controlled radio group.
+///
+/// The application handler for `on_select` must store the value and return
+/// [`focus_radio`] with its index in this same option order. Arrow/Home/End
+/// selection moves the group's one tab stop during the rebuild; the task moves
+/// keyboard focus with it and is safe to return for pointer selection too.
 pub fn radio_group<'a, Message, Value>(
     id: impl Into<String>,
     options: impl IntoIterator<Item = RadioOption<'a, Message, Value>>,
