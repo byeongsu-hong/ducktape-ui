@@ -1330,21 +1330,26 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             self.on_event,
             shell,
         );
-        if matches!(
+        let close_key = matches!(
             event,
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(Named::Escape | Named::ArrowUp),
                 ..
             })
-        ) {
-            self.content_focus.unfocus();
-            shell.publish((self.on_event)(reduce_navigation_menu(
-                self.state,
-                self.items,
-                NavigationMenuCommand::CloseContent,
-            )));
-            shell.capture_event();
-            return;
+        );
+        if close_key {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+            if !shell.is_event_captured() {
+                self.content_focus.unfocus();
+                shell.publish((self.on_event)(reduce_navigation_menu(
+                    self.state,
+                    self.items,
+                    NavigationMenuCommand::CloseContent,
+                )));
+                shell.capture_event();
+                return;
+            }
         }
         let press = match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => cursor.position(),
@@ -1368,8 +1373,10 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             shell.capture_event();
             return;
         }
-        self.floating
-            .update(event, layout, cursor, renderer, clipboard, shell);
+        if !close_key {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+        }
         if self.content_focus.is_focused()
             && focus_within(|operation| self.floating.operate(layout, renderer, operation))
         {
@@ -1402,11 +1409,12 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 
 #[cfg(test)]
 mod tests {
-    use super::super::focus_control::focusable_count;
+    use super::super::focus_control::{FocusControl, focusable_count};
     use super::super::popover::resolve_position;
     use super::super::theme::{DARK, LIGHT};
     use super::*;
     use iced::advanced::renderer::Headless as _;
+    use iced::keyboard::{Location, Modifiers, key};
     use iced::widget::text_input;
     use iced::{Point, Size};
 
@@ -1634,6 +1642,85 @@ mod tests {
         .into();
         assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn focused_content_handles_escape_before_navigation_closes() {
+        let child_id = widget::Id::new("navigation-content-action");
+        let content: Element<'_, u8> =
+            FocusControl::passive(child_id.clone(), text("Action"), &LIGHT)
+                .on_key_press(|key, _modifiers| {
+                    (key == keyboard::Key::Named(Named::Escape)).then_some(1)
+                })
+                .into();
+        let state = NavigationMenuState {
+            focused: Some(0),
+            open: Some(0),
+            active: None,
+        };
+        let mut element: Element<'_, u8> = navigation_menu(
+            "main",
+            [NavigationMenuItem::disclosure("docs", "Docs", content)],
+            &state,
+            |_| 2,
+            &LIGHT,
+        )
+        .into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open navigation overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let overlay_layout = Layout::new(&overlay_node);
+        let mut focus_child = widget::operation::focusable::focus::<()>(child_id);
+        overlay
+            .as_overlay_mut()
+            .operate(overlay_layout, &renderer, &mut focus_child);
+        let key = keyboard::Key::Named(Named::Escape);
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(key::Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        overlay.as_overlay_mut().update(
+            &event,
+            overlay_layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        assert!(shell.is_event_captured());
+        drop(shell);
+
+        assert_eq!(messages, [1]);
     }
 
     #[test]
