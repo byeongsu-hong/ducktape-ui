@@ -809,16 +809,25 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             self.content_focus.unfocus();
             shell.request_redraw();
         }
-        if let Some(reason) = dismissal(event, cursor, self.floating.bounds(layout), self.anchor) {
-            self.content_focus.unfocus();
-            shell.publish((self.on_event)(PopoverEvent::Close(reason)));
-            shell.capture_event();
-            shell.request_redraw();
-            return;
+        let reason = dismissal(event, cursor, self.floating.bounds(layout), self.anchor);
+        let handled_escape = if reason == Some(DismissReason::Escape) {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+            shell.is_event_captured()
+        } else {
+            false
+        };
+        if !handled_escape {
+            if let Some(reason) = reason {
+                self.content_focus.unfocus();
+                shell.publish((self.on_event)(PopoverEvent::Close(reason)));
+                shell.capture_event();
+                shell.request_redraw();
+                return;
+            }
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
         }
-
-        self.floating
-            .update(event, layout, cursor, renderer, clipboard, shell);
         if self.content_focus.is_focused()
             && focus_within(|operation| self.floating.operate(layout, renderer, operation))
         {
