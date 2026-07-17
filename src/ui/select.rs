@@ -153,6 +153,8 @@ where
     theme: Theme,
 }
 
+/// Apply emitted events to selection, visibility, and [`MenuState`], then
+/// return [`SelectEvent::focus_task`] from `update`.
 #[allow(clippy::too_many_arguments)]
 pub fn select<'a, Message, Value>(
     ids: SelectIds,

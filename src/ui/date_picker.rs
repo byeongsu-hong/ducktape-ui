@@ -280,6 +280,8 @@ where
     theme: Theme,
 }
 
+/// Apply emitted events to controlled state, then return
+/// [`DatePickerEvent::focus_task`] from `update`.
 #[allow(clippy::too_many_arguments)]
 pub fn date_picker<'a, Message>(
     ids: DatePickerIds,

@@ -212,6 +212,8 @@ where
     theme: Theme,
 }
 
+/// Apply emitted events to [`MenubarState`] and [`MenuState`], then return
+/// [`MenubarEvent::focus_task`] from `update`.
 pub fn menubar<'a, Message>(
     id: impl Into<String>,
     menus: impl IntoIterator<Item = MenubarMenu>,

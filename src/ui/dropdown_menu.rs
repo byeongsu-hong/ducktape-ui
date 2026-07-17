@@ -87,6 +87,8 @@ where
     theme: Theme,
 }
 
+/// Apply emitted events to visibility and [`MenuState`], then return
+/// [`DropdownMenuEvent::focus_task`] from `update`.
 pub fn dropdown_menu<'a, Message>(
     ids: DropdownMenuIds,
     trigger: impl Into<Element<'a, Message>>,
