@@ -80,8 +80,11 @@ pub enum AlertDialogActionVariant {
 
 /// Renders an alert dialog that cannot be dismissed by clicking its backdrop.
 ///
-/// Cancel receives initial focus. Both controls support pointer, touch, Enter,
-/// and Space through `FocusControl`; Escape is reported as a safe cancel.
+/// After changing controlled visibility, return
+/// `focus.scope().transition_task(was_open, open)` from `update` so Cancel
+/// receives initial focus on open and the opening trigger is restored on close.
+/// Both controls support pointer, touch, Enter, and Space through `FocusControl`;
+/// Escape is reported as a safe cancel.
 #[allow(clippy::too_many_arguments)]
 pub fn alert_dialog<'a, Message>(
     underlay: impl Into<Element<'a, Message>>,
@@ -116,6 +119,8 @@ where
 }
 
 /// Renders an alert dialog with explicit copy and control alignment.
+///
+/// Focus and dismissal behavior matches [`alert_dialog`].
 #[allow(clippy::too_many_arguments)]
 pub fn alert_dialog_with_alignment<'a, Message>(
     underlay: impl Into<Element<'a, Message>>,
