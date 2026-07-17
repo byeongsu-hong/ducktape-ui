@@ -165,22 +165,35 @@ impl MenubarEvent {
         menus: &[MenubarMenu],
         menu_state: &MenuState,
     ) -> Task<Message> {
-        let state = match self {
-            Self::StateChanged(state) => state,
-            Self::Menu { .. } => return Task::none(),
-        };
-        if let Some(index) = state.open
-            && let Some(menu) = menus.get(index)
-        {
-            return focus_menu_state(
-                &format!("menubar:{id}:{}", menu.id),
-                &menu.entries,
-                menu_state,
-            );
+        match self {
+            Self::StateChanged(state) => {
+                if let Some(index) = state.open
+                    && let Some(menu) = menus.get(index)
+                {
+                    return focus_menu_state(
+                        &format!("menubar:{id}:{}", menu.id),
+                        &menu.entries,
+                        menu_state,
+                    );
+                }
+                state.focused.map_or_else(Task::none, |index| {
+                    iced::widget::operation::focus(menubar_trigger_id(id, index))
+                })
+            }
+            Self::Menu { menu_id, event } => menus
+                .iter()
+                .enumerate()
+                .find(|(_, menu)| &menu.id == menu_id)
+                .map_or_else(Task::none, |(index, menu)| match event {
+                    MenuEvent::StateChanged(state) => {
+                        focus_menu_state(&format!("menubar:{id}:{}", menu.id), &menu.entries, state)
+                    }
+                    MenuEvent::Activated(_) | MenuEvent::Dismiss => {
+                        iced::widget::operation::focus(menubar_trigger_id(id, index))
+                    }
+                    MenuEvent::MoveTopLevel(_) => Task::none(),
+                }),
         }
-        state.focused.map_or_else(Task::none, |index| {
-            iced::widget::operation::focus(menubar_trigger_id(id, index))
-        })
     }
 }
 
@@ -767,7 +780,7 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 #[cfg(test)]
 mod tests {
     use super::super::focus_control::focusable_count;
-    use super::super::menu::MenuItem;
+    use super::super::menu::{MenuActivation, MenuActivationKind, MenuItem};
     use super::super::theme::{DARK, LIGHT};
     use super::*;
 
@@ -851,5 +864,43 @@ mod tests {
             menubar("app", menus, &state, &menu_state, |_| (), &LIGHT).into();
         assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn child_events_focus_items_and_restore_their_trigger() {
+        let menus = [MenubarMenu::new(
+            "view",
+            "View",
+            vec![MenuEntry::item("zoom", "Zoom")],
+        )];
+        let state = MenuState {
+            focused: Some(vec![0]),
+            ..MenuState::default()
+        };
+        let changed = MenubarEvent::Menu {
+            menu_id: "view".into(),
+            event: MenuEvent::StateChanged(state),
+        };
+        let activated = MenubarEvent::Menu {
+            menu_id: "view".into(),
+            event: MenuEvent::Activated(MenuActivation {
+                id: "zoom".into(),
+                path: vec![0],
+                kind: MenuActivationKind::Action,
+            }),
+        };
+
+        assert_eq!(
+            changed
+                .focus_task::<()>("app", &menus, &MenuState::default())
+                .units(),
+            1
+        );
+        assert_eq!(
+            activated
+                .focus_task::<()>("app", &menus, &MenuState::default())
+                .units(),
+            1
+        );
     }
 }
