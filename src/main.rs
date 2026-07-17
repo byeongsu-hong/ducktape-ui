@@ -63,9 +63,7 @@ use ui::item::item;
 use ui::kbd::kbd;
 use ui::label::label;
 use ui::marker::{MarkerVariant, marker};
-use ui::menu::{
-    MenuActivation, MenuActivationKind, MenuEntry, MenuEvent, MenuItem, MenuState, focus_menu_state,
-};
+use ui::menu::{MenuActivation, MenuActivationKind, MenuEntry, MenuEvent, MenuItem, MenuState};
 use ui::menubar::{MenubarEvent, MenubarMenu, MenubarState, menubar};
 use ui::message::{MessageSide, message};
 use ui::message_scroller::{
@@ -961,33 +959,7 @@ impl Showcase {
             self.menubar_menu_state = MenuState::initial(&menus[index].entries);
         }
 
-        match &event {
-            MenubarEvent::Menu {
-                menu_id,
-                event: MenuEvent::StateChanged(_),
-            } => menus.iter().find(|menu| &menu.id == menu_id).map_or_else(
-                iced::Task::none,
-                |menu| {
-                    focus_menu_state(
-                        &format!("menubar:showcase:{}", menu.id),
-                        &menu.entries,
-                        &self.menubar_menu_state,
-                    )
-                },
-            ),
-            MenubarEvent::Menu {
-                event: MenuEvent::Activated(_) | MenuEvent::Dismiss,
-                ..
-            } => self
-                .menubar_state
-                .focused
-                .map_or_else(iced::Task::none, |index| {
-                    iced::widget::operation::focus(ui::menubar::menubar_trigger_id(
-                        "showcase", index,
-                    ))
-                }),
-            _ => event.focus_task("showcase", &menus, &self.menubar_menu_state),
-        }
+        event.focus_task("showcase", &menus, &self.menubar_menu_state)
     }
 
     fn now(&self) -> Duration {
