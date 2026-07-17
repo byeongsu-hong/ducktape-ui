@@ -6,10 +6,10 @@
 
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, draw_focus_ring,
-    panel,
+    focus_within, panel,
 };
 use super::theme::Theme as UiTheme;
-use super::tooltip::{DelayedPresence, event_time, focus_within, is_escape, request_transition};
+use super::tooltip::{DelayedPresence, event_time, is_escape, request_transition};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
 use iced::time::{Duration, Instant};
 use iced::{Element, Event, Length, Padding, Rectangle, Size, Vector};
