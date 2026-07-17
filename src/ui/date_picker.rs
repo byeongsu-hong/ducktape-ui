@@ -2,8 +2,8 @@
 //!
 //! State stays controlled. Opening focuses a stable day ID; Escape, outside
 //! press, and completed selection restore the stable trigger ID. The day grid
-//! has full keyboard navigation, while iced 0.14's optional native month/year
-//! pick lists remain pointer/touch-only.
+//! has full keyboard navigation, while optional month/year pick lists are also
+//! focusable and keyboard-capable.
 
 use std::rc::Rc;
 
