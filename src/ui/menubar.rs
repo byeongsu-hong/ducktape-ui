@@ -87,7 +87,9 @@ pub fn reduce_menubar(
     }
     let current = state
         .focused
-        .filter(|index| *index < enabled.len() && enabled[*index]);
+        .filter(|index| *index < enabled.len() && enabled[*index])
+        .or_else(|| enabled.iter().position(|enabled| *enabled));
+    next.focused = current;
     let physical_next = match (command, direction) {
         (MenubarCommand::Right, Direction::LeftToRight)
         | (MenubarCommand::Left, Direction::RightToLeft) => Some(true),
@@ -837,6 +839,29 @@ mod tests {
             )
             .focused,
             Some(1)
+        );
+    }
+
+    #[test]
+    fn closing_normalizes_a_removed_focused_trigger() {
+        let state = MenubarState {
+            focused: Some(2),
+            open: Some(2),
+        };
+
+        let closed = reduce_menubar(
+            &state,
+            &[false, true],
+            MenubarCommand::Close,
+            Direction::LeftToRight,
+        );
+
+        assert_eq!(
+            closed,
+            MenubarState {
+                focused: Some(1),
+                open: None,
+            }
         );
     }
 
