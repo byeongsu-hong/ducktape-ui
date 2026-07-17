@@ -529,6 +529,11 @@ impl<'a> CalendarConstraints<'a> {
             || self.disabled.as_ref().is_some_and(|test| test(date))
     }
 
+    fn month_in_bounds(&self, month: Month) -> bool {
+        self.min.is_none_or(|min| month >= min.month())
+            && self.max.is_none_or(|max| month <= max.month())
+    }
+
     pub fn month_has_enabled_day(&self, month: Month) -> bool {
         (1..=month.days())
             .any(|day| !self.is_disabled(Date::new(month.year(), month.number(), day).unwrap()))
@@ -1101,7 +1106,7 @@ where
             let selected = MonthOption(self.state.month.number());
             parts.push(
                 native_select(
-                    month_options(),
+                    self.caption_month_options(),
                     Some(selected),
                     move |month: MonthOption| {
                         event(CalendarEvent::MonthChanged(
@@ -1129,10 +1134,9 @@ where
         if self.year_dropdown {
             let event = Rc::clone(&self.on_event);
             let month = self.state.month.number();
-            let years = year_options(self.year_range.0, self.year_range.1);
             parts.push(
                 native_select(
-                    years,
+                    self.caption_year_options(),
                     Some(YearOption(self.state.month.year())),
                     move |year: YearOption| {
                         event(CalendarEvent::MonthChanged(
@@ -1188,6 +1192,28 @@ where
             .width(width)
             .height(DAY_CELL_SIZE)
             .into()
+    }
+
+    fn caption_month_options(&self) -> Vec<MonthOption> {
+        let year = self.state.month.year();
+        month_options()
+            .into_iter()
+            .filter(|option| {
+                self.constraints
+                    .month_in_bounds(Month::new(year, option.number()).unwrap())
+            })
+            .collect()
+    }
+
+    fn caption_year_options(&self) -> Vec<YearOption> {
+        let month = self.state.month.number();
+        year_options(self.year_range.0, self.year_range.1)
+            .into_iter()
+            .filter(|option| {
+                self.constraints
+                    .month_in_bounds(Month::new(option.year(), month).unwrap())
+            })
+            .collect()
     }
 
     fn day_grid(&self, width: f32) -> Element<'a, Message> {
@@ -1656,6 +1682,21 @@ mod tests {
             .max(Some(date(2024, 8, 20)));
 
         assert_eq!(focusable_count(calendar.header(CALENDAR_WIDTH)), 0);
+    }
+
+    #[test]
+    fn dropdown_options_stop_at_hard_date_bounds() {
+        let state = CalendarState::new(month(2026, 7), CalendarSelection::Single(None));
+        let calendar = controlled_calendar("bounded-dropdown", &state, |_| (), &LIGHT)
+            .min(Some(date(2026, 6, 15)))
+            .max(Some(date(2026, 8, 20)))
+            .year_range(2024, 2028);
+
+        assert_eq!(
+            calendar.caption_month_options(),
+            [MonthOption(6), MonthOption(7), MonthOption(8)]
+        );
+        assert_eq!(calendar.caption_year_options(), [YearOption(2026)]);
     }
 
     #[test]
