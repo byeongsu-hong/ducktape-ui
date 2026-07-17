@@ -441,10 +441,11 @@ struct State {
     dragging: Option<Drag>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Drag {
     thumb: usize,
     source: DragSource,
+    last_value: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,11 +474,12 @@ where
         tree.diff_children(&self.thumbs);
         let state = tree.state.downcast_mut::<State>();
         state.active_thumb = state.active_thumb.min(self.values.len() - 1);
-        if state
-            .dragging
-            .is_some_and(|drag| drag.thumb >= self.values.len())
-        {
-            state.dragging = None;
+        if let Some(drag) = state.dragging.as_mut() {
+            if let Some(value) = self.values.get(drag.thumb) {
+                drag.last_value = *value;
+            } else {
+                state.dragging = None;
+            }
         }
     }
 
@@ -613,7 +615,11 @@ where
                 {
                     let state = tree.state.downcast_mut::<State>();
                     state.active_thumb = thumb;
-                    state.dragging = Some(Drag { thumb, source });
+                    state.dragging = Some(Drag {
+                        thumb,
+                        source,
+                        last_value: next[thumb],
+                    });
                 }
                 focus_thumb(&mut tree.children, Some(thumb));
 
@@ -639,7 +645,10 @@ where
                 }),
             ) => Some(*position),
             (
-                Event::Touch(touch::Event::FingerMoved { id, position }),
+                Event::Touch(
+                    touch::Event::FingerMoved { id, position }
+                    | touch::Event::FingerLifted { id, position },
+                ),
                 Some(Drag {
                     source: DragSource::Touch(active),
                     ..
@@ -647,12 +656,25 @@ where
             ) if *id == active => Some(*position),
             _ => None,
         };
+        let finished = finish_drag(tree.state.downcast_mut::<State>(), event);
 
         if let (Some(point), Some(drag)) = (movement, dragging) {
             let value = value_from_point(point, bounds, self.spec, self.orientation, self.reversed);
             let next = set_thumb(&self.values, drag.thumb, value, self.spec);
+            let next_value = next[drag.thumb];
+            let should_publish = if finished {
+                next_value != drag.last_value
+            } else {
+                next != self.values
+            };
 
-            if next != self.values {
+            if !finished
+                && should_publish
+                && let Some(active) = tree.state.downcast_mut::<State>().dragging.as_mut()
+            {
+                active.last_value = next_value;
+            }
+            if should_publish {
                 shell.publish((self.on_change)(next));
             }
             shell.capture_event();
@@ -660,7 +682,7 @@ where
             return;
         }
 
-        if finish_drag(tree.state.downcast_mut::<State>(), event) {
+        if finished {
             shell.capture_event();
             shell.request_redraw();
         }
@@ -1204,12 +1226,114 @@ mod tests {
     }
 
     #[test]
+    fn touch_release_applies_final_position_and_preserves_move_messages() {
+        use iced::advanced::renderer::Headless as _;
+
+        fn run(
+            renderer: &iced::Renderer,
+            events: impl IntoIterator<Item = Event>,
+        ) -> Vec<Vec<f32>> {
+            let mut widget = slider(
+                "touch-release",
+                vec![50.0],
+                0.0..=100.0,
+                25.0,
+                |values| values,
+                &LIGHT,
+            )
+            .into_widget();
+            let viewport = Rectangle::with_size(Size::new(200.0, 32.0));
+            let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+            let node = widget.layout(
+                &mut tree,
+                renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let mut messages = Vec::new();
+
+            for event in events {
+                let mut clipboard = iced::advanced::clipboard::Null;
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                assert_eq!(shell.event_status(), iced::event::Status::Captured);
+            }
+
+            assert!(tree.state.downcast_ref::<State>().dragging.is_none());
+            messages
+        }
+
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let finger = touch::Finger(7);
+        let point = |x| Point::new(x, 16.0);
+        let press = |x| {
+            Event::Touch(touch::Event::FingerPressed {
+                id: finger,
+                position: point(x),
+            })
+        };
+        let movement = |x| {
+            Event::Touch(touch::Event::FingerMoved {
+                id: finger,
+                position: point(x),
+            })
+        };
+        let lift = |id, x| {
+            Event::Touch(touch::Event::FingerLifted {
+                id,
+                position: point(x),
+            })
+        };
+        assert_eq!(
+            run(&renderer, [press(146.0), lift(finger, 146.0)]),
+            vec![vec![75.0]]
+        );
+        assert_eq!(
+            run(&renderer, [press(100.0), lift(finger, 192.0)]),
+            vec![vec![100.0]]
+        );
+        assert_eq!(
+            run(
+                &renderer,
+                [
+                    press(100.0),
+                    movement(146.0),
+                    movement(146.0),
+                    lift(finger, 146.0),
+                ],
+            ),
+            vec![vec![75.0], vec![75.0]]
+        );
+        assert_eq!(
+            run(
+                &renderer,
+                [press(100.0), movement(146.0), lift(finger, 100.0)],
+            ),
+            vec![vec![75.0], vec![50.0]]
+        );
+    }
+
+    #[test]
     fn drags_require_a_matching_release_and_window_blur_clears_focus() {
         let finger = touch::Finger(7);
         let mut state = State {
             dragging: Some(Drag {
                 thumb: 0,
                 source: DragSource::Touch(finger),
+                last_value: 75.0,
             }),
             ..State::default()
         };
@@ -1238,6 +1362,14 @@ mod tests {
         .into_widget();
         let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
         *tree.state.downcast_mut::<State>() = state;
+        widget.diff(&mut tree);
+        assert_eq!(
+            tree.state
+                .downcast_ref::<State>()
+                .dragging
+                .map(|drag| drag.last_value),
+            Some(50.0)
+        );
         focus_thumb(&mut tree.children, Some(0));
 
         assert!(reset_on_window_unfocus(
