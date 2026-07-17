@@ -515,6 +515,7 @@ struct Drag {
     source: DragSource,
     origin: f32,
     layout: ResizableLayout,
+    last: Vec<f32>,
     orientation: ResizableOrientation,
 }
 
@@ -664,7 +665,10 @@ where
                 }),
             ) => Some(*position),
             (
-                Event::Touch(touch::Event::FingerMoved { id, position }),
+                Event::Touch(
+                    touch::Event::FingerMoved { id, position }
+                    | touch::Event::FingerLifted { id, position },
+                ),
                 Some(Drag {
                     source: DragSource::Touch(active),
                     ..
@@ -672,16 +676,27 @@ where
             ) if id == active => Some(*position),
             _ => None,
         };
+        let finished = finish_drag(tree.state.downcast_mut::<State>(), event);
 
         if let (Some(point), Some(drag)) = (movement, dragging.as_ref()) {
             let delta = drag_delta(drag.origin, point, bounds, self.orientation);
-            shell.publish((self.on_resize)(drag.layout.resize(drag.handle, delta)));
+            let sizes = drag.layout.resize(drag.handle, delta);
+            let changed = sizes != drag.last;
+            if !finished
+                && changed
+                && let Some(active) = tree.state.downcast_mut::<State>().drag.as_mut()
+            {
+                active.last = sizes.clone();
+            }
+            if !finished || changed {
+                shell.publish((self.on_resize)(sizes));
+            }
             shell.capture_event();
             shell.request_redraw();
             return;
         }
 
-        if finish_drag(tree.state.downcast_mut::<State>(), event) {
+        if finished {
             shell.capture_event();
             shell.request_redraw();
             return;
@@ -714,6 +729,7 @@ where
                     source,
                     origin: main_position(point, self.orientation),
                     layout: self.layout.clone(),
+                    last: self.layout.sizes().to_vec(),
                     orientation: self.orientation,
                 });
                 shell.capture_event();
@@ -1565,6 +1581,127 @@ mod tests {
     }
 
     #[test]
+    fn touch_release_applies_its_final_position_before_ending_drag() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::widget::{container, text};
+
+        fn update(
+            widget: &mut ResizableWidget<'_, Vec<f32>>,
+            tree: &mut widget::Tree,
+            node: &layout::Node,
+            renderer: &iced::Renderer,
+            viewport: &Rectangle,
+            event: Event,
+            messages: &mut Vec<Vec<f32>>,
+        ) -> iced::event::Status {
+            let mut clipboard = iced::advanced::clipboard::Null;
+            let mut shell = Shell::new(messages);
+            widget.update(
+                tree,
+                &event,
+                Layout::new(node),
+                mouse::Cursor::Unavailable,
+                renderer,
+                &mut clipboard,
+                &mut shell,
+                viewport,
+            );
+            shell.event_status()
+        }
+
+        let panels = ["One", "Two"].map(|label| container(text(label)).into());
+        let mut widget = resizable(
+            "touch-release",
+            panels,
+            vec![0.5, 0.5],
+            vec![0.1, 0.1],
+            |sizes| sizes,
+            &LIGHT,
+        )
+        .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(200.0, 100.0));
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let finger = touch::Finger(7);
+        let mut messages = Vec::new();
+        let press = |id, x| {
+            Event::Touch(touch::Event::FingerPressed {
+                id,
+                position: Point::new(x, 50.0),
+            })
+        };
+        let movement = |id, x| {
+            Event::Touch(touch::Event::FingerMoved {
+                id,
+                position: Point::new(x, 50.0),
+            })
+        };
+        let lift = |id, x| {
+            Event::Touch(touch::Event::FingerLifted {
+                id,
+                position: Point::new(x, 50.0),
+            })
+        };
+        macro_rules! send {
+            ($event:expr) => {
+                update(
+                    &mut widget,
+                    &mut tree,
+                    &node,
+                    &renderer,
+                    &viewport,
+                    $event,
+                    &mut messages,
+                )
+            };
+        }
+
+        assert_eq!(send!(press(finger, 100.0)), iced::event::Status::Captured);
+
+        assert_eq!(
+            send!(lift(touch::Finger(8), 180.0)),
+            iced::event::Status::Ignored
+        );
+        assert!(messages.is_empty());
+        assert!(tree.state.downcast_ref::<State>().drag.is_some());
+
+        assert_eq!(send!(lift(finger, 140.0)), iced::event::Status::Captured);
+        assert_eq!(messages.len(), 1);
+        close(messages[0][0], 0.7);
+        close(messages[0][1], 0.3);
+        assert!(tree.state.downcast_ref::<State>().drag.is_none());
+
+        messages.clear();
+        assert_eq!(send!(press(finger, 100.0)), iced::event::Status::Captured);
+        assert_eq!(send!(lift(finger, 100.0)), iced::event::Status::Captured);
+        assert!(messages.is_empty());
+        assert!(tree.state.downcast_ref::<State>().drag.is_none());
+
+        assert_eq!(send!(press(finger, 100.0)), iced::event::Status::Captured);
+        assert_eq!(
+            send!(movement(finger, 140.0)),
+            iced::event::Status::Captured
+        );
+        assert_eq!(send!(lift(finger, 100.0)), iced::event::Status::Captured);
+        assert_eq!(messages.len(), 2);
+        close(messages[0][0], 0.7);
+        close(messages[0][1], 0.3);
+        close(messages[1][0], 0.5);
+        close(messages[1][1], 0.5);
+        assert!(tree.state.downcast_ref::<State>().drag.is_none());
+    }
+
+    #[test]
     fn drags_require_a_matching_release_and_window_blur_clears_focus() {
         use iced::widget::{container, text};
 
@@ -1574,6 +1711,7 @@ mod tests {
             source: DragSource::Touch(finger),
             origin: 50.0,
             layout: ResizableLayout::new(2, &[0.5, 0.5], &[0.1, 0.1]),
+            last: vec![0.5, 0.5],
             orientation: ResizableOrientation::Horizontal,
         };
         let mut state = State { drag: Some(drag) };
