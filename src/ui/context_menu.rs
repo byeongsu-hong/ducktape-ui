@@ -62,7 +62,8 @@ impl ContextMenuEvent {
         state: &MenuState,
     ) -> Task<Message> {
         match self {
-            Self::OpenAt(_) | Self::Menu(MenuEvent::StateChanged(_)) => {
+            Self::OpenAt(_) => focus_menu_state(&ids.menu, entries, state),
+            Self::Menu(MenuEvent::StateChanged(state)) => {
                 focus_menu_state(&ids.menu, entries, state)
             }
             Self::Close(_) | Self::Menu(MenuEvent::Activated(_) | MenuEvent::Dismiss) => {
