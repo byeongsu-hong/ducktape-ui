@@ -549,6 +549,7 @@ where
             drag.handle >= self.handles.len()
                 || self.handle_disabled(drag.handle)
                 || drag.layout.sizes().len() != self.layout.sizes().len()
+                || drag.layout.minimums() != self.layout.minimums()
                 || drag.orientation != self.orientation
         }) {
             state.drag = None;
@@ -1702,7 +1703,7 @@ mod tests {
     }
 
     #[test]
-    fn drags_require_a_matching_release_and_window_blur_clears_focus() {
+    fn drag_lifecycle_clears_on_blur_or_minimum_change() {
         use iced::widget::{container, text};
 
         let finger = touch::Finger(7);
@@ -1729,18 +1730,21 @@ mod tests {
         ));
         assert!(state.drag.is_some());
 
-        let panels = ["One", "Two"].map(|label| container(text(label)).into());
-        let widget = resizable(
-            "blur",
-            panels,
-            vec![0.5, 0.5],
-            vec![0.1, 0.1],
-            |sizes| sizes,
-            &LIGHT,
-        )
-        .into_widget();
+        let make_widget = |minimums| {
+            let panels = ["One", "Two"].map(|label| container(text(label)).into());
+            resizable(
+                "blur",
+                panels,
+                vec![0.5, 0.5],
+                minimums,
+                |sizes| sizes,
+                &LIGHT,
+            )
+            .into_widget()
+        };
+        let widget = make_widget(vec![0.1, 0.1]);
         let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
-        *tree.state.downcast_mut::<State>() = state;
+        *tree.state.downcast_mut::<State>() = state.clone();
         focus_handle(&mut tree.children, Some(0), 1);
 
         assert!(reset_on_window_unfocus(
@@ -1751,6 +1755,10 @@ mod tests {
         ));
         assert!(tree.state.downcast_ref::<State>().drag.is_none());
         assert!(!handle_focused(&tree.children, 0));
+
+        *tree.state.downcast_mut::<State>() = state;
+        make_widget(vec![0.4, 0.4]).diff(&mut tree);
+        assert!(tree.state.downcast_ref::<State>().drag.is_none());
     }
 
     #[test]
