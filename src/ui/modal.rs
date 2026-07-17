@@ -201,6 +201,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
 
     fn diff(&self, tree: &mut widget::Tree) {
         tree.diff_children(&[&self.underlay, &self.content]);
+        if !self.open {
+            tree.state.downcast_mut::<State>().backdrop_press = None;
+        }
     }
 
     fn size(&self) -> Size<Length> {
@@ -672,6 +675,12 @@ mod tests {
         assert_eq!(closed.as_widget().children().len(), 2);
         assert_eq!(open.as_widget().children().len(), 2);
         assert_eq!(closed.as_widget().tag(), open.as_widget().tag());
+
+        let mut tree = widget::Tree::new(open.as_widget());
+        tree.state.downcast_mut::<State>().backdrop_press = Some(BackdropPress::Mouse);
+        closed.as_widget().diff(&mut tree);
+        open.as_widget().diff(&mut tree);
+        assert_eq!(tree.state.downcast_ref::<State>().backdrop_press, None);
     }
 
     #[test]
