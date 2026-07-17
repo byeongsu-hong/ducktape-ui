@@ -642,7 +642,6 @@ fn render_entries<'a, Message>(
                     on_event,
                 ));
                 if let MenuItemKind::Submenu(children) = &item.kind
-                    && !menu_disabled
                     && !item.disabled
                     && state.open_submenus.contains(&path)
                 {
