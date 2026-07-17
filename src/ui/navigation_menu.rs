@@ -207,6 +207,14 @@ impl NavigationMenuEvent {
     }
 }
 
+fn valid_open_index(open: Option<usize>, items: &[NavigationMenuItemInfo]) -> Option<usize> {
+    open.filter(|index| {
+        items
+            .get(*index)
+            .is_some_and(|item| item.enabled() && item.disclosure)
+    })
+}
+
 /// Applies one semantic command, skipping disabled entries and preserving an
 /// active disclosure while roving onto another disclosure.
 pub fn reduce_navigation_menu(
@@ -215,6 +223,7 @@ pub fn reduce_navigation_menu(
     command: NavigationMenuCommand,
 ) -> NavigationMenuEvent {
     let mut next = state.clone();
+    next.open = valid_open_index(next.open, items);
     let enabled = items
         .iter()
         .enumerate()
@@ -252,12 +261,12 @@ pub fn reduce_navigation_menu(
                 _ => unreachable!("navigation branch only receives movement commands"),
             };
             next.focused = Some(target);
-            if state.open.is_some() {
+            if next.open.is_some() {
                 next.open = items[target].disclosure.then_some(target);
             }
             changed(next, Some(NavigationMenuFocus::Trigger(target)))
         }
-        NavigationMenuCommand::Activate => activate_item(state, items, current),
+        NavigationMenuCommand::Activate => activate_item(&next, items, current),
         NavigationMenuCommand::OpenContent => {
             next.focused = Some(current);
             let focus = if items[current].disclosure {
@@ -269,10 +278,7 @@ pub fn reduce_navigation_menu(
             changed(next, focus)
         }
         NavigationMenuCommand::CloseContent => {
-            let restore = state
-                .open
-                .filter(|index| enabled.contains(index) && items[*index].disclosure)
-                .unwrap_or(current);
+            let restore = next.open.unwrap_or(current);
             next.focused = Some(restore);
             next.open = None;
             changed(next, Some(NavigationMenuFocus::Trigger(restore)))
@@ -538,11 +544,7 @@ where
                     .is_some_and(NavigationMenuItemInfo::enabled)
             })
             .or_else(|| infos.iter().position(NavigationMenuItemInfo::enabled));
-        let open_index = self.state.open.filter(|index| {
-            infos
-                .get(*index)
-                .is_some_and(|item| item.enabled() && item.disclosure)
-        });
+        let open_index = valid_open_index(self.state.open, &infos);
         let mut open_content = None;
         let mut triggers = Vec::with_capacity(self.items.len());
 
@@ -586,7 +588,7 @@ where
                         &key,
                         orientation,
                         direction,
-                        key_state.open.is_some(),
+                        open_index.is_some(),
                     )?;
                     Some(key_event(reduce_navigation_menu(
                         &key_state, &key_infos, command,
@@ -1430,7 +1432,7 @@ mod tests {
     fn reducer_skips_disabled_wraps_and_preserves_open_switching() {
         let state = NavigationMenuState {
             focused: Some(0),
-            open: Some(0),
+            open: Some(2),
             active: None,
         };
         let next = reduce_navigation_menu(&state, &items(), NavigationMenuCommand::Next);
@@ -1441,6 +1443,29 @@ mod tests {
         let wrapped = reduce_navigation_menu(next.state(), &items(), NavigationMenuCommand::Next);
         assert_eq!(wrapped.state().focused, Some(0));
         assert_eq!(wrapped.state().open, None);
+    }
+
+    #[test]
+    fn stale_link_open_state_is_treated_as_closed() {
+        let state = NavigationMenuState {
+            focused: Some(0),
+            open: Some(0),
+            active: None,
+        };
+
+        let next = reduce_navigation_menu(&state, &items(), NavigationMenuCommand::Next);
+        assert_eq!(next.state().focused, Some(2));
+        assert_eq!(next.state().open, None);
+        assert_eq!(next.focus(), Some(NavigationMenuFocus::Trigger(2)));
+        assert_eq!(
+            navigation_menu_command(
+                &keyboard::Key::Named(Named::Escape),
+                NavigationMenuOrientation::Horizontal,
+                Direction::LeftToRight,
+                valid_open_index(state.open, &items()).is_some(),
+            ),
+            None
+        );
     }
 
     #[test]
