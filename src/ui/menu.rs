@@ -404,6 +404,21 @@ fn visible_items<'a>(entries: &'a [MenuEntry], state: &MenuState) -> Vec<(MenuPa
     items
 }
 
+fn resolved_focus<'a>(
+    entries: &'a [MenuEntry],
+    state: &MenuState,
+) -> Option<(MenuPath, &'a MenuItem)> {
+    let visible = visible_items(entries, state);
+    if let Some(focused) = &state.focused
+        && let Some((path, item)) = visible
+            .iter()
+            .find(|(path, item)| path == focused && !item.disabled)
+    {
+        return Some((path.clone(), *item));
+    }
+    visible.into_iter().find(|(_, item)| !item.disabled)
+}
+
 fn collect_visible<'a>(
     entries: &'a [MenuEntry],
     prefix: &[usize],
@@ -417,6 +432,7 @@ fn collect_visible<'a>(
             MenuEntry::Item(item) => {
                 output.push((path.clone(), item));
                 if let MenuItemKind::Submenu(children) = &item.kind
+                    && !item.disabled
                     && state.open_submenus.contains(&path)
                 {
                     collect_visible(children, &path, state, output);
@@ -557,20 +573,12 @@ where
     Message: Clone + 'a,
 {
     pub fn into_element(self) -> Element<'a, Message> {
-        let visible = visible_items(&self.entries, &self.state);
-        let focused_is_enabled = self.state.focused.as_ref().is_some_and(|focused| {
-            visible
-                .iter()
-                .any(|(path, item)| path == focused && !item.disabled)
-        });
-        let state = if focused_is_enabled {
+        let focused = resolved_focus(&self.entries, &self.state).map(|(path, _)| path);
+        let state = if self.state.focused.as_ref() == focused.as_ref() {
             Rc::clone(&self.state)
         } else {
             let mut state = (*self.state).clone();
-            state.focused = visible
-                .into_iter()
-                .find(|(_, item)| !item.disabled)
-                .map(|(path, _)| path);
+            state.focused = focused;
             Rc::new(state)
         };
         let mut children = Vec::new();
@@ -634,6 +642,8 @@ fn render_entries<'a, Message>(
                     on_event,
                 ));
                 if let MenuItemKind::Submenu(children) = &item.kind
+                    && !menu_disabled
+                    && !item.disabled
                     && state.open_submenus.contains(&path)
                 {
                     render_entries(
@@ -885,13 +895,9 @@ pub fn focus_menu_state<Message>(
     entries: &[MenuEntry],
     state: &MenuState,
 ) -> Task<Message> {
-    state
-        .focused
-        .as_deref()
-        .and_then(|path| item_at(entries, path).map(|item| (item.id.as_str(), path)))
-        .map_or_else(Task::none, |(item, path)| {
-            focus_menu_item(menu_id, item, path)
-        })
+    resolved_focus(entries, state).map_or_else(Task::none, |(path, item)| {
+        focus_menu_item(menu_id, &item.id, &path)
+    })
 }
 
 pub fn menu_item_style(theme: &Theme, selected: bool, status: Status) -> focus_control::Style {
@@ -1089,11 +1095,35 @@ mod tests {
     }
 
     #[test]
-    fn menu_exposes_one_sequential_focus_stop() {
-        let entries = entries();
-        let state = MenuState::initial(&entries);
-        let element: Element<'_, ()> = menu("file", &entries, &state, |_| (), &LIGHT).into();
+    fn resolved_menu_focus_matches_its_rendered_tab_stop() {
+        let entries = vec![
+            MenuItem::new("disabled", "Disabled")
+                .disabled(true)
+                .submenu(vec![MenuEntry::item("hidden", "Hidden")])
+                .into(),
+            MenuEntry::item("enabled", "Enabled"),
+        ];
+        let default = MenuState::default();
+        let stale = MenuState {
+            focused: Some(vec![0, 0]),
+            open_submenus: vec![vec![0]],
+            ..MenuState::default()
+        };
+        let element: Element<'_, ()> = menu("file", &entries, &stale, |_| (), &LIGHT).into();
 
+        assert_eq!(
+            resolved_focus(&entries, &default).map(|(path, _)| path),
+            Some(vec![1])
+        );
+        assert_eq!(
+            focus_menu_state::<()>("file", &entries, &default).units(),
+            1
+        );
+        assert_eq!(
+            resolved_focus(&entries, &stale).map(|(path, _)| path),
+            Some(vec![1])
+        );
+        assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
     }
 }
