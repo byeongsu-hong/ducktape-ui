@@ -426,7 +426,8 @@ where
     }
 }
 
-/// Controlled sheet root. Keep `focus` IDs stable and return
+/// Controlled sheet root. Keep `focus` IDs stable, return
+/// [`ModalEvent::focus_task`] from `update` for focus events, and return
 /// [`FocusScope::transition_task`] when changing `open`.
 pub struct Sheet<'a, Message> {
     underlay: Element<'a, Message>,
