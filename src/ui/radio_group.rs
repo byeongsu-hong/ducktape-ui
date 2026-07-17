@@ -177,7 +177,7 @@ where
                 .tab_stop(tab_stop == Some(index))
                 .on_key_press(move |key, _modifiers| {
                     let command = keyboard_command(&key, orientation)?;
-                    let target = reduce_selection(selected_index, &key_enabled, command)?;
+                    let target = reduce_selection(Some(index), &key_enabled, command)?;
                     Some(key_on_select(key_values[target].clone()))
                 })
                 .style(move |_iced_theme, status| item_style(&theme, status, invalid));
@@ -487,5 +487,69 @@ mod tests {
         .into();
 
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn arrow_navigation_starts_from_the_focused_radio_without_a_selection() {
+        use iced::advanced::{
+            Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget,
+        };
+        use iced::keyboard::{Location, Modifiers, key};
+        use iced::{Event, Pixels, Point, Rectangle, Size};
+
+        let mut element: Element<'_, u8> = radio_group(
+            "plan",
+            [
+                radio_option(1, "Free", &LIGHT),
+                radio_option(2, "Pro", &LIGHT),
+            ],
+            None,
+            |value| value,
+            &LIGHT,
+        )
+        .into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(320.0, 240.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        tree.children[0]
+            .state
+            .downcast_mut::<super::super::focus_control::State>()
+            .focus();
+        let key = keyboard::Key::Named(Named::ArrowDown);
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(key::Code::ArrowDown),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        element.as_widget_mut().update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, [2]);
     }
 }
