@@ -6,9 +6,9 @@ Status on 2026-07-17:
 
 **64 / 64 official components are Shipped.**
 
-- **Shipped**: installable source exists, is compiled by this repository, and satisfies the current behavior contract.
+- **Shipped**: a feature-gated public module exists, is compiled by this repository, and satisfies the current behavior contract.
 - **Planned**: implementation is still required.
-- **Foundation**: installable, compiled iced source is useful, but it does not yet satisfy the named shadcn behavior contract.
+- **Foundation**: a compiled iced module is useful, but it does not yet satisfy the named shadcn behavior contract.
 
 | shadcn/ui component | Status | iced implementation |
 | --- | --- | --- |

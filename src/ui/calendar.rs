@@ -8,14 +8,14 @@
 use std::fmt;
 use std::rc::Rc;
 
-use super::button::{Button, ButtonSize, ButtonVariant, button};
+use super::button::{Button, ButtonSize, ButtonVariant};
 use super::direction::Direction;
 use super::focus_control::{FocusControl, Status, Style as FocusStyle};
 use super::native_select::native_select;
 use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::{self, key::Named};
-use iced::widget::text::LineHeight;
+use iced::widget::text::{IntoFragment, LineHeight};
 use iced::widget::{Column, Container, Row, Space, container, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Pixels, Shadow, Task, widget};
 
@@ -72,7 +72,7 @@ impl Month {
         self.year
     }
 
-    pub const fn number(self) -> u8 {
+    pub const fn number(&self) -> u8 {
         self.number
     }
 
@@ -356,6 +356,28 @@ pub const MONTH_NAMES: [&str; 12] = [
     "November",
     "December",
 ];
+
+/// Caller-owned calendar copy and navigation labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarLabels {
+    pub months: [String; 12],
+    pub weekdays: [String; 7],
+    pub week_number: String,
+    pub previous: String,
+    pub next: String,
+}
+
+impl Default for CalendarLabels {
+    fn default() -> Self {
+        Self {
+            months: MONTH_NAMES.map(str::to_owned),
+            weekdays: WEEKDAYS.map(|weekday| weekday.short_name().to_owned()),
+            week_number: "Wk".into(),
+            previous: "‹".into(),
+            next: "›".into(),
+        }
+    }
+}
 
 const fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
@@ -742,31 +764,52 @@ pub fn focus_calendar_day<Message>(calendar_id: &str, date: Date) -> Task<Messag
     iced::widget::operation::focus(day_focus_id(calendar_id, date))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MonthOption(u8);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthOption {
+    number: u8,
+    label: String,
+}
 
 impl MonthOption {
     pub const fn new(number: u8) -> Option<Self> {
         if number >= 1 && number <= 12 {
-            Some(Self(number))
+            Some(Self {
+                number,
+                label: String::new(),
+            })
         } else {
             None
         }
     }
 
-    pub const fn number(self) -> u8 {
-        self.0
+    pub const fn number(&self) -> u8 {
+        self.number
+    }
+
+    fn labeled(number: u8, label: impl Into<String>) -> Self {
+        Self {
+            number,
+            label: label.into(),
+        }
     }
 }
 
 impl fmt::Display for MonthOption {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(MONTH_NAMES[usize::from(self.0 - 1)])
+        formatter.write_str(if self.label.is_empty() {
+            MONTH_NAMES[usize::from(self.number - 1)]
+        } else {
+            &self.label
+        })
     }
 }
 
 pub fn month_options() -> Vec<MonthOption> {
-    (1..=12).map(MonthOption).collect()
+    MONTH_NAMES
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| MonthOption::labeled(index as u8 + 1, label))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -904,6 +947,9 @@ where
     year_dropdown: bool,
     year_range: (i32, i32),
     direction: Direction,
+    labels: CalendarLabels,
+    previous_content: Option<Element<'a, Message>>,
+    next_content: Option<Element<'a, Message>>,
     theme: Theme,
 }
 
@@ -931,6 +977,9 @@ where
             (state.month.year() + 50).min(MAX_YEAR),
         ),
         direction: Direction::LeftToRight,
+        labels: CalendarLabels::default(),
+        previous_content: None,
+        next_content: None,
         theme: *theme,
     }
 }
@@ -1004,6 +1053,24 @@ where
         self
     }
 
+    #[must_use]
+    pub fn labels(mut self, labels: CalendarLabels) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Replaces the previous and next control content while retaining behavior.
+    #[must_use]
+    pub fn controls(
+        mut self,
+        previous: impl Into<Element<'a, Message>>,
+        next: impl Into<Element<'a, Message>>,
+    ) -> Self {
+        self.previous_content = Some(previous.into());
+        self.next_content = Some(next.into());
+        self
+    }
+
     pub fn width(&self) -> f32 {
         CALENDAR_WIDTH
             + if self.week_numbers {
@@ -1013,7 +1080,7 @@ where
             }
     }
 
-    pub fn into_element(self) -> Element<'a, Message> {
+    pub fn into_element(mut self) -> Element<'a, Message> {
         let width = self.width();
         let header = self.header(width);
         let weekdays = self.weekday_header(width);
@@ -1028,7 +1095,7 @@ where
             .into()
     }
 
-    fn header(&self, width: f32) -> Element<'a, Message> {
+    fn header(&mut self, width: f32) -> Element<'a, Message> {
         let previous_month = self.state.month.previous().filter(|month| {
             self.constraints
                 .minimum()
@@ -1039,7 +1106,17 @@ where
                 .maximum()
                 .is_none_or(|maximum| *month <= maximum.month())
         });
-        let previous = button("‹", &self.theme)
+        let previous_content = self.previous_content.take().unwrap_or_else(|| {
+            text(self.labels.previous.clone())
+                .size(self.theme.typography.sm)
+                .into()
+        });
+        let next_content = self.next_content.take().unwrap_or_else(|| {
+            text(self.labels.next.clone())
+                .size(self.theme.typography.sm)
+                .into()
+        });
+        let previous = Button::new(previous_content, &self.theme)
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Small)
             .width(32)
@@ -1047,7 +1124,7 @@ where
             .on_press((self.on_event)(CalendarEvent::MonthChanged(
                 previous_month.unwrap_or(self.state.month),
             )));
-        let next = button("›", &self.theme)
+        let next = Button::new(next_content, &self.theme)
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Small)
             .width(32)
@@ -1088,10 +1165,14 @@ where
     fn caption(&self) -> Element<'a, Message> {
         if !self.month_dropdown && !self.year_dropdown {
             return container(
-                text(self.state.month.to_string())
-                    .size(self.theme.typography.sm)
-                    .line_height(LineHeight::Absolute(Pixels(16.0)))
-                    .color(self.theme.palette.foreground),
+                text(format!(
+                    "{} {}",
+                    self.labels.months[usize::from(self.state.month.number() - 1)],
+                    self.state.month.year()
+                ))
+                .size(self.theme.typography.sm)
+                .line_height(LineHeight::Absolute(Pixels(16.0)))
+                .color(self.theme.palette.foreground),
             )
             .width(Length::Fill)
             .align_x(Horizontal::Center)
@@ -1103,7 +1184,10 @@ where
         if self.month_dropdown {
             let event = Rc::clone(&self.on_event);
             let year = self.state.month.year();
-            let selected = MonthOption(self.state.month.number());
+            let selected = MonthOption::labeled(
+                self.state.month.number(),
+                self.labels.months[usize::from(self.state.month.number() - 1)].clone(),
+            );
             parts.push(
                 native_select(
                     self.caption_month_options(),
@@ -1121,7 +1205,7 @@ where
         } else {
             parts.push(
                 container(
-                    text(MONTH_NAMES[usize::from(self.state.month.number() - 1)])
+                    text(self.labels.months[usize::from(self.state.month.number() - 1)].clone())
                         .size(self.theme.typography.sm),
                 )
                 .width(104)
@@ -1176,12 +1260,17 @@ where
     }
 
     fn weekday_header(&self, width: f32) -> Element<'a, Message> {
-        let mut cells: Vec<Element<'a, Message>> = WEEKDAYS
-            .into_iter()
-            .map(|weekday| weekday_cell(weekday.short_name(), &self.theme).into())
+        let mut cells: Vec<Element<'a, Message>> = self
+            .labels
+            .weekdays
+            .iter()
+            .map(|weekday| weekday_cell(weekday.clone(), &self.theme).into())
             .collect();
         if self.week_numbers {
-            cells.insert(0, weekday_cell("Wk", &self.theme).into());
+            cells.insert(
+                0,
+                weekday_cell(self.labels.week_number.clone(), &self.theme).into(),
+            );
         }
         if self.direction == Direction::RightToLeft {
             cells.reverse();
@@ -1196,8 +1285,11 @@ where
 
     fn caption_month_options(&self) -> Vec<MonthOption> {
         let year = self.state.month.year();
-        month_options()
-            .into_iter()
+        self.labels
+            .months
+            .iter()
+            .enumerate()
+            .map(|(index, label)| MonthOption::labeled(index as u8 + 1, label.clone()))
             .filter(|option| {
                 self.constraints
                     .month_in_bounds(Month::new(year, option.number()).unwrap())
@@ -1337,7 +1429,7 @@ where
     }
 }
 
-fn weekday_cell<'a, Message>(label: &'static str, theme: &Theme) -> Container<'a, Message>
+fn weekday_cell<'a, Message>(label: impl IntoFragment<'a>, theme: &Theme) -> Container<'a, Message>
 where
     Message: 'a,
 {
@@ -1382,9 +1474,38 @@ pub fn calendar<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    calendar_with_content(
+        month,
+        selected,
+        previous,
+        next,
+        on_select,
+        text("‹"),
+        text("›"),
+        &CalendarLabels::default(),
+        theme,
+    )
+}
+
+/// Compatibility calendar with caller-owned navigation content and labels.
+#[allow(clippy::too_many_arguments)]
+pub fn calendar_with_content<'a, Message>(
+    month: Month,
+    selected: Option<Date>,
+    previous: Message,
+    next: Message,
+    on_select: impl Fn(Date) -> Message,
+    previous_content: impl Into<Element<'a, Message>>,
+    next_content: impl Into<Element<'a, Message>>,
+    labels: &CalendarLabels,
+    theme: &Theme,
+) -> Column<'a, Message>
+where
+    Message: Clone + 'a,
+{
     let header = Row::new()
         .push(
-            button("‹", theme)
+            Button::new(previous_content, theme)
                 .variant(ButtonVariant::Ghost)
                 .size(ButtonSize::Icon)
                 .disabled(month.previous().is_none())
@@ -1392,10 +1513,14 @@ where
         )
         .push(
             container(
-                text(month.to_string())
-                    .size(theme.typography.sm)
-                    .line_height(LineHeight::Absolute(Pixels(16.0)))
-                    .color(theme.palette.foreground),
+                text(format!(
+                    "{} {}",
+                    labels.months[usize::from(month.number() - 1)],
+                    month.year()
+                ))
+                .size(theme.typography.sm)
+                .line_height(LineHeight::Absolute(Pixels(16.0)))
+                .color(theme.palette.foreground),
             )
             .width(Length::Fill)
             .height(DAY_CELL_SIZE)
@@ -1403,7 +1528,7 @@ where
             .align_y(Vertical::Center),
         )
         .push(
-            button("›", theme)
+            Button::new(next_content, theme)
                 .variant(ButtonVariant::Ghost)
                 .size(ButtonSize::Icon)
                 .disabled(month.next().is_none())
@@ -1411,9 +1536,9 @@ where
         )
         .align_y(Alignment::Center)
         .width(CALENDAR_WIDTH);
-    let weekdays = WEEKDAYS.into_iter().fold(
+    let weekdays = labels.weekdays.iter().fold(
         Row::new().width(CALENDAR_WIDTH).height(DAY_CELL_SIZE),
-        |row, weekday| row.push(weekday_cell(weekday.short_name(), theme)),
+        |row, weekday| row.push(weekday_cell(weekday.clone(), theme)),
     );
     let days = month.visible_dates().chunks_exact(7).fold(
         Column::new().width(CALENDAR_WIDTH),
@@ -1604,6 +1729,20 @@ mod tests {
     }
 
     #[test]
+    fn caller_can_replace_labels_and_navigation_content() {
+        let state = CalendarState::new(month(2024, 7), CalendarSelection::Single(None));
+        let mut labels = CalendarLabels::default();
+        labels.months[6] = "칠월".into();
+        let calendar = controlled_calendar("custom", &state, |_| (), &LIGHT)
+            .labels(labels)
+            .controls(text("Back"), text("Forward"));
+
+        assert_eq!(calendar.labels.months[6], "칠월");
+        assert!(calendar.previous_content.is_some());
+        assert!(calendar.next_content.is_some());
+    }
+
+    #[test]
     fn keyboard_navigation_changes_units_and_skips_disabled_dates() {
         let friday = date(2024, 3, 1);
         let constraints = CalendarConstraints::new()
@@ -1632,7 +1771,7 @@ mod tests {
         let july = month(2024, 7);
         let august = month(2024, 8);
         let state = CalendarState::new(july, CalendarSelection::Single(None));
-        let calendar = controlled_calendar("disabled-month", &state, |event| event, &LIGHT)
+        let mut calendar = controlled_calendar("disabled-month", &state, |event| event, &LIGHT)
             .disabled_dates(move |date| date.month() == august);
         let mut header = calendar.header(CALENDAR_WIDTH);
         let renderer = iced::futures::executor::block_on(iced::Renderer::new(
@@ -1677,7 +1816,7 @@ mod tests {
     fn month_navigation_stops_at_hard_date_bounds() {
         let august = month(2024, 8);
         let state = CalendarState::new(august, CalendarSelection::Single(None));
-        let calendar = controlled_calendar("bounded-month", &state, |_| (), &LIGHT)
+        let mut calendar = controlled_calendar("bounded-month", &state, |_| (), &LIGHT)
             .min(Some(date(2024, 8, 12)))
             .max(Some(date(2024, 8, 20)));
 
@@ -1693,8 +1832,12 @@ mod tests {
             .year_range(2024, 2028);
 
         assert_eq!(
-            calendar.caption_month_options(),
-            [MonthOption(6), MonthOption(7), MonthOption(8)]
+            calendar
+                .caption_month_options()
+                .iter()
+                .map(MonthOption::number)
+                .collect::<Vec<_>>(),
+            [6, 7, 8]
         );
         assert_eq!(calendar.caption_year_options(), [YearOption(2026)]);
     }

@@ -56,7 +56,7 @@ pub struct Typography {
     pub xl: f32,
 }
 
-/// Copy this file and edit these values; components consume semantic roles only.
+/// Application-owned design tokens consumed through semantic roles.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
     pub name: &'static str,

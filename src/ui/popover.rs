@@ -965,7 +965,6 @@ pub(crate) fn draw_focus_ring(
 pub(crate) enum PanelKind {
     Popover,
     Tooltip,
-    HoverCard,
 }
 
 pub(crate) fn panel<'a, Message>(
@@ -1006,7 +1005,7 @@ pub(crate) fn panel_style(theme: &UiTheme, kind: PanelKind) -> container::Style 
                 blur_radius: 6.0,
             },
         ),
-        PanelKind::Popover | PanelKind::HoverCard => (
+        PanelKind::Popover => (
             theme.palette.popover,
             theme.palette.popover_foreground,
             theme.palette.border,

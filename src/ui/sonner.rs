@@ -259,7 +259,7 @@ impl SonnerState {
 
     /// Reduced motion forces the readable, non-overlapping expanded layout.
     /// All state changes remain immediate in either mode; no animation clock is
-    /// built into this source-owned component.
+    /// built into this component.
     pub const fn is_expanded(&self) -> bool {
         self.expanded || self.reduced_motion
     }
@@ -592,6 +592,64 @@ where
     Message: Clone + 'a,
     F: Fn(SonnerEvent) -> Message + Clone + 'a,
 {
+    sonner_with_content(state, on_event, default_entry_content, theme)
+}
+
+/// One wired Sonner control. Use [`SonnerControl::content`] for the default
+/// control treatment, or use its ID and message to build a custom control.
+pub struct SonnerControl<Message> {
+    id: Id,
+    message: Message,
+    outlined: bool,
+    theme: Theme,
+}
+
+impl<Message> SonnerControl<Message>
+where
+    Message: Clone,
+{
+    pub fn id(&self) -> Id {
+        self.id.clone()
+    }
+
+    pub fn message(&self) -> Message {
+        self.message.clone()
+    }
+
+    pub fn content<'a>(self, content: impl Into<Element<'a, Message>>) -> Element<'a, Message>
+    where
+        Message: 'a,
+    {
+        let content = container(content)
+            .height(28)
+            .padding([6, 10])
+            .align_y(Vertical::Center);
+        let style_theme = self.theme;
+
+        focus_control(self.id, content, self.message, &self.theme)
+            .style(move |_iced_theme, status| control_style(&style_theme, self.outlined, status))
+            .into()
+    }
+}
+
+/// Action and dismiss controls wired to one toast entry.
+pub struct SonnerControls<Message> {
+    pub action: Option<SonnerControl<Message>>,
+    pub dismiss: SonnerControl<Message>,
+}
+
+/// Renders Sonner behavior around caller-owned toast content.
+pub fn sonner_with_content<'a, Message, F, C>(
+    state: &'a SonnerState,
+    on_event: F,
+    content: C,
+    theme: &Theme,
+) -> Container<'a, Message>
+where
+    Message: Clone + 'a,
+    F: Fn(SonnerEvent) -> Message + Clone + 'a,
+    C: Fn(&'a ToastEntry, SonnerControls<Message>, &Theme) -> Element<'a, Message> + Clone + 'a,
+{
     let mut stack = iced::widget::Column::new()
         .spacing(if state.is_expanded() { 8 } else { 4 })
         .width(TOAST_WIDTH);
@@ -601,7 +659,12 @@ where
     }
 
     for entry in visible {
-        stack = stack.push(render_entry(entry, on_event.clone(), theme));
+        stack = stack.push(render_entry(
+            entry,
+            on_event.clone(),
+            content.clone(),
+            theme,
+        ));
     }
 
     let focus_reporter = FocusReporter {
@@ -619,51 +682,35 @@ where
         .align_y(state.placement.vertical())
 }
 
-fn render_entry<'a, Message, F>(
+fn render_entry<'a, Message, F, C>(
     entry: &'a ToastEntry,
     on_event: F,
+    content: C,
     theme: &Theme,
 ) -> MouseArea<'a, Message>
 where
     Message: Clone + 'a,
     F: Fn(SonnerEvent) -> Message + Clone + 'a,
+    C: Fn(&'a ToastEntry, SonnerControls<Message>, &Theme) -> Element<'a, Message>,
 {
     let id = entry.id;
-    let title = text(entry.data.title())
-        .size(theme.typography.base)
-        .line_height(1.3)
-        .font(Font {
-            weight: Weight::Medium,
-            ..Font::DEFAULT
-        });
-    let mut surface = toast(title, theme).variant(entry.data.toast_variant());
-
-    if let Some(description) = entry.data.description_text() {
-        surface = surface.description(
-            text(description)
-                .size(theme.typography.sm)
-                .line_height(1.4)
-                .color(secondary_text_color(theme, entry.data.toast_variant())),
-        );
-    }
-    if let Some(label) = entry.data.action_label() {
-        surface = surface.action(control(
+    let action = entry.data.action_label().map(|_| {
+        control(
             id,
             "action",
-            label,
             on_event.clone()(SonnerEvent::Action(id)),
             true,
             theme,
-        ));
-    }
-    surface = surface.dismiss(control(
+        )
+    });
+    let dismiss = control(
         id,
         "dismiss",
-        "Dismiss",
         on_event.clone()(SonnerEvent::Dismiss(id)),
         false,
         theme,
-    ));
+    );
+    let surface = content(entry, SonnerControls { action, dismiss }, theme);
 
     let hover_on = on_event.clone();
     let hover_off = on_event.clone();
@@ -695,26 +742,57 @@ where
         )))
 }
 
-fn control<'a, Message>(
-    toast_id: ToastId,
-    kind: &str,
-    label: &'a str,
-    message: Message,
-    outlined: bool,
+fn default_entry_content<'a, Message>(
+    entry: &'a ToastEntry,
+    controls: SonnerControls<Message>,
     theme: &Theme,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let content = container(text(label).size(theme.typography.xs).line_height(1.0))
-        .height(28)
-        .padding([6, 10])
-        .align_y(Vertical::Center);
-    let style_theme = *theme;
+    let title = text(entry.data.title())
+        .size(theme.typography.base)
+        .line_height(1.3)
+        .font(Font {
+            weight: Weight::Medium,
+            ..Font::DEFAULT
+        });
+    let mut surface = toast(title, theme).variant(entry.data.toast_variant());
 
-    focus_control(control_id(toast_id, kind), content, message, theme)
-        .style(move |_iced_theme, status| control_style(&style_theme, outlined, status))
+    if let Some(description) = entry.data.description_text() {
+        surface = surface.description(
+            text(description)
+                .size(theme.typography.sm)
+                .line_height(1.4)
+                .color(secondary_text_color(theme, entry.data.toast_variant())),
+        );
+    }
+    if let (Some(action), Some(label)) = (controls.action, entry.data.action_label()) {
+        surface =
+            surface.action(action.content(text(label).size(theme.typography.xs).line_height(1.0)));
+    }
+    surface
+        .dismiss(
+            controls
+                .dismiss
+                .content(text("Dismiss").size(theme.typography.xs).line_height(1.0)),
+        )
         .into()
+}
+
+fn control<Message>(
+    toast_id: ToastId,
+    kind: &str,
+    message: Message,
+    outlined: bool,
+    theme: &Theme,
+) -> SonnerControl<Message> {
+    SonnerControl {
+        id: control_id(toast_id, kind),
+        message,
+        outlined,
+        theme: *theme,
+    }
 }
 
 fn control_id(toast_id: ToastId, kind: &str) -> Id {
@@ -896,8 +974,11 @@ fn secondary_text_color(theme: &Theme, variant: ToastVariant) -> Color {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::super::theme::{DARK, LIGHT};
     use super::*;
+    use iced::widget::Row;
 
     fn seconds(value: u64) -> Duration {
         Duration::from_secs(value)
@@ -1188,6 +1269,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn caller_renderer_owns_surface_and_control_content() {
+        use std::cell::Cell;
+
+        let mut state = SonnerState::default();
+        state.push(ToastData::new("Saved").action("Undo"), Duration::ZERO);
+        let calls = Rc::new(Cell::new(0));
+        let render_calls = Rc::clone(&calls);
+
+        let _: Element<'_, SonnerEvent> = sonner_with_content(
+            &state,
+            |event| event,
+            move |_entry, controls, _theme| {
+                render_calls.set(render_calls.get() + 1);
+                Row::new()
+                    .push(controls.action.unwrap().content(text("Revert")))
+                    .push(controls.dismiss.content(text("Close")))
+                    .into()
+            },
+            &LIGHT,
+        )
+        .into();
+
+        assert_eq!(calls.get(), 1);
     }
 
     fn contrast(a: Color, b: Color) -> f32 {

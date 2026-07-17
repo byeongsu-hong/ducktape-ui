@@ -1,4 +1,4 @@
-pub mod ui;
+use ducktape_ui::ui;
 
 use std::time::{Duration, Instant};
 
@@ -1087,7 +1087,7 @@ impl Showcase {
                 &theme,
             ),
             alert(
-                text("Warning: review the generated source."),
+                text("Warning: review the selected feature set."),
                 AlertVariant::Warning,
                 &theme,
             ),
@@ -1173,8 +1173,8 @@ impl Showcase {
         let item_example = item(
             Some(avatar_fallback("DU", AvatarSize::Small, &theme).into()),
             "ducktape-ui",
-            Some("Source-owned iced components"),
-            Some(badge("Local", BadgeVariant::Secondary, &theme).into()),
+            Some("Feature-gated iced components"),
+            Some(badge("Library", BadgeVariant::Secondary, &theme).into()),
             &theme,
         );
 
@@ -1374,7 +1374,7 @@ impl Showcase {
             &theme,
         );
         let table_example = column![
-            ui::table::caption("Registry status", &theme),
+            ui::table::caption("Library status", &theme),
             ui::table::frame(component_table, &theme),
         ]
         .spacing(theme.spacing.sm);
@@ -1487,8 +1487,8 @@ impl Showcase {
                 accordion_item(
                     "install",
                     iced::widget::Id::new("showcase-accordion-install"),
-                    text("How is it installed?"),
-                    text("The CLI copies editable Rust source into src/ui."),
+                    text("How is it enabled?"),
+                    text("Select component features on the ducktape-ui dependency."),
                 ),
                 accordion_item(
                     "state",
@@ -1609,16 +1609,19 @@ impl Showcase {
             self.date_picker_focused,
         );
 
-        let slides: Vec<Element<'_, Message>> =
-            ["Source-owned", "Focus-scoped keys", "Pointer + touch swipe"]
-                .into_iter()
-                .map(|copy| {
-                    surface(text(copy), SurfaceVariant::Muted, &theme)
-                        .center_x(Length::Fill)
-                        .center_y(120)
-                        .into()
-                })
-                .collect();
+        let slides: Vec<Element<'_, Message>> = [
+            "Feature-gated",
+            "Focus-scoped keys",
+            "Pointer + touch swipe",
+        ]
+        .into_iter()
+        .map(|copy| {
+            surface(text(copy), SurfaceVariant::Muted, &theme)
+                .center_x(Length::Fill)
+                .center_y(120)
+                .into()
+        })
+        .collect();
         let carousel_direction = if self.dark {
             Direction::RightToLeft
         } else {
@@ -2149,7 +2152,7 @@ impl Showcase {
                 .padding([theme.spacing.sm, theme.spacing.md]),
             column![
                 text("ducktape-ui").size(theme.typography.lg),
-                text("Source-owned iced components with gap-safe pointer transfer.")
+                text("Composable iced components with gap-safe pointer transfer.")
                     .size(theme.typography.sm)
                     .color(theme.palette.muted_foreground),
                 button("Follow", &theme)
@@ -2279,8 +2282,8 @@ impl Showcase {
         let navigation_docs = navigation_menu_list([
             navigation_menu_list_link(
                 iced::widget::Id::new("navigation-docs-install"),
-                "Installation",
-                "Copy source-owned components with the offline CLI.",
+                "Features",
+                "Import only the components enabled in Cargo.toml.",
                 Message::ShowToast(ToastVariant::Default),
                 menu_direction,
                 &theme,
@@ -2769,7 +2772,7 @@ impl Showcase {
             row![
                 column![
                     text("ducktape-ui").size(32),
-                    text("Source-owned components for iced")
+                    text("Feature-gated components for iced")
                         .size(theme.typography.base)
                         .color(theme.palette.muted_foreground),
                 ]
@@ -2815,7 +2818,7 @@ impl Showcase {
             alerts,
             progress_examples,
             text("Checkbox + textarea").size(theme.typography.xl),
-            checkbox("I reviewed the generated source", self.accepted, &theme)
+            checkbox("I reviewed the enabled features", self.accepted, &theme)
                 .on_toggle(Message::AcceptedChanged),
             notes,
             text("Empty state").size(theme.typography.xl),

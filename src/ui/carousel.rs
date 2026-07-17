@@ -867,13 +867,27 @@ pub fn carousel_previous<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    carousel_control(
+    carousel_previous_with_content(
         id,
-        control_label(true, orientation, direction),
+        state,
         on_press,
-        !state.can_previous(),
+        text(control_label(true, orientation, direction)).size(theme.typography.sm),
         theme,
     )
+}
+
+/// A previous control with caller-owned visible content.
+pub fn carousel_previous_with_content<'a, Message>(
+    id: widget::Id,
+    state: CarouselState,
+    on_press: Message,
+    content: impl Into<Element<'a, Message>>,
+    theme: &Theme,
+) -> FocusControl<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    carousel_control(id, content, on_press, !state.can_previous(), theme)
 }
 
 /// A focusable next control disabled at a bounded last slide.
@@ -888,18 +902,32 @@ pub fn carousel_next<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    carousel_control(
+    carousel_next_with_content(
         id,
-        control_label(false, orientation, direction),
+        state,
         on_press,
-        !state.can_next(),
+        text(control_label(false, orientation, direction)).size(theme.typography.sm),
         theme,
     )
 }
 
+/// A next control with caller-owned visible content.
+pub fn carousel_next_with_content<'a, Message>(
+    id: widget::Id,
+    state: CarouselState,
+    on_press: Message,
+    content: impl Into<Element<'a, Message>>,
+    theme: &Theme,
+) -> FocusControl<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    carousel_control(id, content, on_press, !state.can_next(), theme)
+}
+
 fn carousel_control<'a, Message>(
     id: widget::Id,
-    label: &'static str,
+    content: impl Into<Element<'a, Message>>,
     on_press: Message,
     disabled: bool,
     theme: &Theme,
@@ -907,9 +935,7 @@ fn carousel_control<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let content = container(text(label).size(theme.typography.sm))
-        .padding([8, 12])
-        .center_y(36);
+    let content = container(content).padding([8, 12]).center_y(36);
     let theme = *theme;
 
     FocusControl::new(id, content, on_press, &theme)
@@ -967,6 +993,34 @@ pub fn carousel_indicators<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    carousel_indicators_with_content(
+        state,
+        focus_id,
+        on_select,
+        orientation,
+        direction,
+        |index, _selected| {
+            text((index + 1).to_string())
+                .size(theme.typography.xs)
+                .into()
+        },
+        theme,
+    )
+}
+
+/// Numbered indicator behavior with caller-owned visible content.
+pub fn carousel_indicators_with_content<'a, Message>(
+    state: CarouselState,
+    focus_id: impl Fn(usize) -> widget::Id,
+    on_select: impl Fn(usize) -> Message,
+    orientation: CarouselOrientation,
+    direction: Direction,
+    content: impl Fn(usize, bool) -> Element<'a, Message>,
+    theme: &Theme,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
     let mut indices: Vec<_> = (0..state.slide_count()).collect();
     if orientation == CarouselOrientation::Horizontal && direction == Direction::RightToLeft {
         indices.reverse();
@@ -974,7 +1028,7 @@ where
 
     let controls = indices.into_iter().map(|index| {
         let selected = index == state.index();
-        let content = container(text((index + 1).to_string()).size(theme.typography.xs)).center(28);
+        let content = container(content(index, selected)).center(28);
         let theme = *theme;
         Element::from(
             FocusControl::new(focus_id(index), content, on_select(index), &theme)
@@ -1220,5 +1274,35 @@ mod tests {
             &LIGHT,
         );
         assert_eq!(indicators.as_widget().children().len(), 3);
+
+        let custom: Element<'_, usize> = carousel_indicators_with_content(
+            first,
+            |index| widget::Id::from(format!("custom-indicator-{index}")),
+            |index| index,
+            CarouselOrientation::Horizontal,
+            Direction::LeftToRight,
+            |index, selected| text(format!("{index}:{selected}")).into(),
+            &LIGHT,
+        );
+        assert_eq!(custom.as_widget().children().len(), 3);
+
+        let previous: Element<'_, ()> = carousel_previous_with_content(
+            widget::Id::new("custom-previous"),
+            first,
+            (),
+            text("Back"),
+            &LIGHT,
+        )
+        .into();
+        let next: Element<'_, ()> = carousel_next_with_content(
+            widget::Id::new("custom-next"),
+            first,
+            (),
+            text("Forward"),
+            &LIGHT,
+        )
+        .into();
+        assert_eq!(previous.as_widget().children().len(), 1);
+        assert_eq!(next.as_widget().children().len(), 1);
     }
 }

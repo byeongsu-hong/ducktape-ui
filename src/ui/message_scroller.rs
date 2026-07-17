@@ -1033,6 +1033,37 @@ pub fn controlled_message_scroller<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    controlled_message_scroller_with_end_content(
+        state,
+        items,
+        on_event,
+        |unread, on_press| {
+            let label = if unread > 0 {
+                format!("Jump to latest ({unread})")
+            } else {
+                "Jump to latest".to_owned()
+            };
+            button(label, theme)
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Small)
+                .on_press(on_press)
+                .into()
+        },
+        theme,
+    )
+}
+
+/// A controlled transcript with caller-rendered jump-to-end content.
+pub fn controlled_message_scroller_with_end_content<'a, Message>(
+    state: &MessageScrollerState,
+    items: impl IntoIterator<Item = MessageScrollerItem<'a, Message>>,
+    on_event: impl Fn(MessageScrollerEvent) -> Message + 'a,
+    end_content: impl Fn(usize, Message) -> Element<'a, Message>,
+    theme: &Theme,
+) -> MessageScrollerView<'a, Message>
+where
+    Message: Clone + 'a,
+{
     let on_event = Rc::new(on_event);
     let mut metadata = Vec::new();
     let mut rows = Vec::new();
@@ -1080,18 +1111,10 @@ where
 
     let mut layers = vec![viewport];
     if state.can_scroll_end || state.unread_count > 0 {
-        let label = if state.unread_count > 0 {
-            format!("Jump to latest ({})", state.unread_count)
-        } else {
-            "Jump to latest".to_owned()
-        };
-        let end_control: Element<'a, Message> = button(label, theme)
-            .variant(ButtonVariant::Secondary)
-            .size(ButtonSize::Small)
-            .on_press(on_event(MessageScrollerEvent::Command(
-                MessageScrollerCommand::End,
-            )))
-            .into();
+        let end_control = end_content(
+            state.unread_count,
+            on_event(MessageScrollerEvent::Command(MessageScrollerCommand::End)),
+        );
         layers.push(
             container(end_control)
                 .width(Length::Fill)
@@ -1454,8 +1477,31 @@ pub fn style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::super::theme::{DARK, LIGHT};
     use super::*;
+    use iced::widget::text;
+
+    #[test]
+    fn caller_renders_the_jump_to_end_control() {
+        let mut state = MessageScrollerState::new("custom-end");
+        state.can_scroll_end = true;
+        let calls = Rc::new(Cell::new(0));
+        let render_calls = Rc::clone(&calls);
+        let _ = controlled_message_scroller_with_end_content(
+            &state,
+            Vec::<MessageScrollerItem<'_, ()>>::new(),
+            |_| (),
+            move |unread, _on_press| {
+                render_calls.set(render_calls.get() + 1);
+                text(format!("End {unread}")).into()
+            },
+            &LIGHT,
+        );
+
+        assert_eq!(calls.get(), 1);
+    }
 
     fn rect(y: f32, height: f32) -> Rectangle {
         Rectangle {

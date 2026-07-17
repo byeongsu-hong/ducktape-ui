@@ -3,25 +3,163 @@ name = "ducktape-ui"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "The source-owned UI toolkit for iced, built for Ducktape"
+description = "Composable iced components for Ducktape applications"
 license = "MIT"
 repository = "https://github.com/byeongsu-hong/ducktape-ui"
 homepage = "https://github.com/byeongsu-hong/ducktape-ui"
 default-run = "showcase"
 
 [features]
-showcase = ["dep:iced"]
+default = []
+full = [
+    "accordion",
+    "alert",
+    "alert-dialog",
+    "aspect-ratio",
+    "attachment",
+    "avatar",
+    "badge",
+    "breadcrumb",
+    "bubble",
+    "button",
+    "button-group",
+    "calendar",
+    "card",
+    "carousel",
+    "chart",
+    "checkbox",
+    "collapsible",
+    "combobox",
+    "command",
+    "context-menu",
+    "data-table",
+    "date-picker",
+    "dialog",
+    "direction",
+    "drawer",
+    "dropdown-menu",
+    "empty",
+    "field",
+    "focus-control",
+    "hover-card",
+    "input",
+    "input-group",
+    "input-otp",
+    "item",
+    "kbd",
+    "label",
+    "marker",
+    "menu",
+    "menubar",
+    "message",
+    "message-scroller",
+    "modal",
+    "native-select",
+    "navigation-menu",
+    "pagination",
+    "popover",
+    "progress",
+    "radio-group",
+    "resizable",
+    "scroll-area",
+    "segmented-control",
+    "select",
+    "separator",
+    "sheet",
+    "sidebar",
+    "skeleton",
+    "slider",
+    "sonner",
+    "spinner",
+    "surface",
+    "switch",
+    "table",
+    "tabs",
+    "textarea",
+    "theme",
+    "toast",
+    "toggle",
+    "toggle-group",
+    "tooltip",
+    "typography",
+]
+showcase = ["full", "iced/smol"]
+
+theme = ["dep:iced"]
+surface = ["theme"]
+alert = ["theme"]
+button = ["focus-control"]
+input = ["theme"]
+textarea = ["theme"]
+checkbox = ["focus-control"]
+field = ["theme"]
+card = ["surface"]
+badge = ["theme"]
+empty = ["theme"]
+progress = ["theme"]
+separator = ["theme"]
+segmented-control = ["button"]
+aspect-ratio = ["theme"]
+avatar = ["theme"]
+breadcrumb = ["theme"]
+item = ["theme"]
+kbd = ["theme"]
+label = ["theme"]
+pagination = ["button"]
+skeleton = ["theme"]
+typography = ["theme"]
+attachment = ["theme"]
+bubble = ["theme"]
+button-group = ["theme"]
+direction = ["theme"]
+input-group = ["input"]
+marker = ["theme"]
+message = ["theme"]
+message-scroller = ["button", "focus-control", "theme"]
+scroll-area = ["theme"]
+spinner = ["theme"]
+table = ["theme"]
+accordion = ["focus-control"]
+collapsible = ["focus-control"]
+combobox = ["input"]
+native-select = ["direction", "focus-control", "theme"]
+data-table = ["table", "input", "checkbox", "pagination"]
+focus-control = ["theme"]
+calendar = ["button", "direction", "focus-control", "native-select", "theme"]
+date-picker = ["calendar", "direction", "popover", "theme"]
+carousel = ["direction", "focus-control", "theme"]
+input-otp = ["focus-control"]
+radio-group = ["focus-control"]
+slider = ["focus-control"]
+switch = ["focus-control"]
+tabs = ["focus-control"]
+toggle = ["focus-control"]
+toggle-group = ["toggle"]
+resizable = ["focus-control"]
+modal = ["theme"]
+dialog = ["modal", "direction", "theme"]
+alert-dialog = ["modal", "dialog", "direction", "focus-control", "button", "theme"]
+toast = ["theme"]
+sonner = ["theme", "toast", "focus-control"]
+command = ["theme", "focus-control", "input", "scroll-area"]
+chart = ["theme", "iced/canvas"]
+popover = ["theme"]
+navigation-menu = ["direction", "focus-control", "menu", "popover", "tooltip", "theme"]
+tooltip = ["focus-control", "popover", "theme"]
+hover-card = ["popover", "tooltip", "theme"]
+sidebar = ["direction", "focus-control", "scroll-area", "skeleton", "tooltip", "popover", "theme"]
+menu = ["direction", "focus-control", "theme"]
+dropdown-menu = ["menu", "popover"]
+context-menu = ["menu", "popover"]
+menubar = ["menu", "popover", "focus-control"]
+select = ["menu", "popover"]
+sheet = ["modal", "direction", "theme"]
+drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
-iced = { version = "=0.14.0", features = ["advanced", "canvas", "smol"], optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+iced = { version = "=0.14.0", features = ["advanced"], optional = true }
 
 [[bin]]
 name = "showcase"
 path = "src/main.rs"
 required-features = ["showcase"]
-
-[[bin]]
-name = "ducktape-ui"
-path = "src/bin/ducktape-ui.rs"

@@ -141,18 +141,91 @@ pub fn alert_dialog_with_alignment<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    let cancel = text(cancel_label).size(theme.typography.sm);
+    let action = text(action_label).size(theme.typography.sm);
+    alert_dialog_with_controls_and_alignment(
+        underlay,
+        open,
+        focus,
+        title,
+        description,
+        cancel,
+        action,
+        action_variant,
+        direction,
+        alignment,
+        action_alignment,
+        on_event,
+        theme,
+    )
+}
+
+/// Renders an alert dialog with caller-owned cancel and action content.
+#[allow(clippy::too_many_arguments)]
+pub fn alert_dialog_with_controls<'a, Message>(
+    underlay: impl Into<Element<'a, Message>>,
+    open: bool,
+    focus: &AlertDialogFocus,
+    title: impl IntoFragment<'a>,
+    description: impl IntoFragment<'a>,
+    cancel: impl Into<Element<'a, Message>>,
+    action: impl Into<Element<'a, Message>>,
+    action_variant: AlertDialogActionVariant,
+    on_event: impl Fn(AlertDialogEvent) -> Message + 'a,
+    theme: &Theme,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    alert_dialog_with_controls_and_alignment(
+        underlay,
+        open,
+        focus,
+        title,
+        description,
+        cancel,
+        action,
+        action_variant,
+        Direction::default(),
+        DialogAlignment::Start,
+        DialogActionAlignment::End,
+        on_event,
+        theme,
+    )
+}
+
+/// Custom alert controls plus explicit copy and action alignment.
+#[allow(clippy::too_many_arguments)]
+pub fn alert_dialog_with_controls_and_alignment<'a, Message>(
+    underlay: impl Into<Element<'a, Message>>,
+    open: bool,
+    focus: &AlertDialogFocus,
+    title: impl IntoFragment<'a>,
+    description: impl IntoFragment<'a>,
+    cancel: impl Into<Element<'a, Message>>,
+    action: impl Into<Element<'a, Message>>,
+    action_variant: AlertDialogActionVariant,
+    direction: Direction,
+    alignment: DialogAlignment,
+    action_alignment: DialogActionAlignment,
+    on_event: impl Fn(AlertDialogEvent) -> Message + 'a,
+    theme: &Theme,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
     let focus_scope = focus.scope();
     let on_event: Rc<dyn Fn(AlertDialogEvent) -> Message + 'a> = Rc::new(on_event);
     let cancel = alert_control(
         focus.cancel.clone(),
-        cancel_label,
+        cancel,
         (on_event)(AlertDialogEvent::Cancel(AlertDialogCancel::Button)),
         ButtonVariant::Outline,
         theme,
     );
     let action = alert_control(
         focus.action.clone(),
-        action_label,
+        action,
         (on_event)(AlertDialogEvent::Action),
         match action_variant {
             AlertDialogActionVariant::Default => ButtonVariant::Default,
@@ -201,7 +274,7 @@ pub const fn next_open(open: bool, event: &AlertDialogEvent) -> bool {
 
 fn alert_control<'a, Message>(
     id: widget::Id,
-    label: impl IntoFragment<'a>,
+    content: impl Into<Element<'a, Message>>,
     on_activate: Message,
     variant: ButtonVariant,
     theme: &Theme,
@@ -209,7 +282,7 @@ fn alert_control<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let content = container(text(label).size(theme.typography.sm))
+    let content = container(content)
         .height(36.0)
         .padding([0.0, 16.0])
         .align_y(Vertical::Center);
@@ -295,5 +368,28 @@ mod tests {
     fn alert_rules_reject_the_backdrop_but_keep_escape_cancel() {
         assert!(!DismissRules::ALERT_DIALOG.allows(DismissReason::Backdrop));
         assert!(DismissRules::ALERT_DIALOG.allows(DismissReason::Escape));
+    }
+
+    #[test]
+    fn caller_controls_keep_alert_behavior() {
+        let focus = AlertDialogFocus::new(
+            widget::Id::new("cancel"),
+            widget::Id::new("action"),
+            widget::Id::new("trigger"),
+        );
+        let element = alert_dialog_with_controls(
+            text("Page"),
+            false,
+            &focus,
+            "Delete item?",
+            "This cannot be undone.",
+            text("Keep it"),
+            text("Delete forever"),
+            AlertDialogActionVariant::Destructive,
+            |_| (),
+            &LIGHT,
+        );
+
+        assert!(!element.as_widget().children().is_empty());
     }
 }

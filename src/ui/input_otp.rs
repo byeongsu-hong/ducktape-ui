@@ -40,7 +40,7 @@ pub fn is_complete(value: &str, length: usize, pattern: OtpPattern) -> bool {
 /// A controlled, copy/paste-capable one-time-password input.
 ///
 /// One transparent native iced text input owns focus, selection, typing,
-/// backspace, and paste. The source-owned slot layer renders the controlled
+/// backspace, and paste. The slot layer renders the controlled
 /// value without splitting keyboard state across several fields.
 pub struct InputOtp<'a, Message> {
     value: &'a str,
@@ -51,6 +51,7 @@ pub struct InputOtp<'a, Message> {
     id: Option<iced::widget::Id>,
     invalid: bool,
     disabled: bool,
+    separator: Option<Box<dyn Fn() -> Element<'a, Message> + 'a>>,
     theme: Theme,
 }
 
@@ -70,6 +71,7 @@ pub fn input_otp<'a, Message>(
         id: None,
         invalid: false,
         disabled: false,
+        separator: None,
         theme: *theme,
     }
 }
@@ -103,6 +105,13 @@ where
         self
     }
 
+    /// Replaces the visual separator rendered between configured groups.
+    #[must_use]
+    pub fn separator(mut self, separator: impl Fn() -> Element<'a, Message> + 'a) -> Self {
+        self.separator = Some(Box::new(separator));
+        self
+    }
+
     fn into_element(self) -> Element<'a, Message> {
         let value = normalize(self.value, self.length, self.pattern);
         let characters = value.chars().collect::<Vec<_>>();
@@ -123,8 +132,12 @@ where
                 &self.theme,
             ));
             if separators.contains(&(index + 1)) {
+                let separator = self.separator.as_ref().map_or_else(
+                    || text("–").color(self.theme.palette.muted_foreground).into(),
+                    |separator| separator(),
+                );
                 slots = slots.push(
-                    container(text("–").color(self.theme.palette.muted_foreground))
+                    container(separator)
                         .width(SEPARATOR_WIDTH)
                         .height(SLOT_SIZE)
                         .align_x(Horizontal::Center)
@@ -253,6 +266,9 @@ pub fn overlay_style(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::super::focus_control::focusable_count;
     use super::super::theme::LIGHT;
     use super::*;
@@ -304,5 +320,20 @@ mod tests {
 
         assert_eq!(focusable_count(enabled), 1);
         assert_eq!(focusable_count(disabled), 0);
+    }
+
+    #[test]
+    fn caller_separator_is_rendered_at_each_group_boundary() {
+        let calls = Rc::new(Cell::new(0));
+        let render_calls = Rc::clone(&calls);
+        let _: Element<'_, ()> = input_otp("1234", 4, OtpPattern::Digits, |_| (), &LIGHT)
+            .groups([2, 2])
+            .separator(move || {
+                render_calls.set(render_calls.get() + 1);
+                text("custom").into()
+            })
+            .into();
+
+        assert_eq!(calls.get(), 1);
     }
 }
