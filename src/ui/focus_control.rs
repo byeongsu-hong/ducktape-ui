@@ -104,7 +104,7 @@ enum Press {
 /// A focusable shell for controls and passive keyboard regions.
 ///
 /// The caller must route Tab and Shift+Tab to iced's
-/// `advanced::widget::operate::focus_next` and `focus_previous` tasks. A stable
+/// `iced::widget::operation::focus_next` and `focus_previous` tasks. A stable
 /// [`widget::Id`] lets callers focus or query this control with the matching
 /// iced widget operations.
 pub struct FocusControl<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
