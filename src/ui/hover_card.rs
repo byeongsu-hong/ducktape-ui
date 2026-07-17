@@ -491,7 +491,15 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     ) {
         let was_visible = self.presence.is_visible();
         let was_present = self.presence.is_present();
-        if is_escape(event) {
+        let escape = is_escape(event);
+        let escape_captured = if escape && self.presence.is_visible() {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+            shell.is_event_captured()
+        } else {
+            false
+        };
+        if escape && !escape_captured {
             if *self.content_focused {
                 let mut unfocus = widget::operation::focusable::unfocus::<()>();
                 self.floating.operate(layout, renderer, &mut unfocus);
@@ -507,8 +515,10 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
                 self.presence.is_visible() && cursor.is_over(self.floating.bounds(layout));
         }
         if self.presence.is_visible() {
-            self.floating
-                .update(event, layout, cursor, renderer, clipboard, shell);
+            if !escape {
+                self.floating
+                    .update(event, layout, cursor, renderer, clipboard, shell);
+            }
             *self.content_focused = focus_within(|operation| {
                 self.floating.operate(layout, renderer, operation);
             });
@@ -709,7 +719,12 @@ mod tests {
         let first = widget::Id::new("hover-card-first-control");
         let second = widget::Id::new("hover-card-second-control");
         let content = iced::widget::column![
-            FocusControl::new(first.clone(), text("first"), (), &LIGHT),
+            FocusControl::new(first.clone(), text("first"), (), &LIGHT).on_key_press(
+                |key, _modifiers| {
+                    (key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape))
+                        .then_some(())
+                }
+            ),
             FocusControl::new(second.clone(), text("second"), (), &LIGHT),
         ];
         let mut component = hover_card(card_id, text("trigger"), content, &LIGHT)
@@ -794,7 +809,7 @@ mod tests {
         assert!(tree.state.downcast_ref::<State>().content_focused);
         assert!(tree.state.downcast_ref::<State>().presence.is_visible());
 
-        let mut focus_second = widget::operation::focusable::focus::<()>(second);
+        let mut focus_second = widget::operation::focusable::focus::<()>(second.clone());
         operate_all(
             &mut component,
             &mut tree,
@@ -868,8 +883,50 @@ mod tests {
             &mut clipboard,
             &mut shell,
         );
+        assert!(shell.is_event_captured());
+        drop(shell);
         drop(overlay);
 
+        assert_eq!(messages, [()]);
+        assert!(!tree.state.downcast_ref::<State>().focus.is_focused());
+        assert!(tree.state.downcast_ref::<State>().content_focused);
+        assert!(tree.state.downcast_ref::<State>().presence.is_visible());
+
+        let mut focus_second = widget::operation::focusable::focus::<()>(second);
+        operate_all(
+            &mut component,
+            &mut tree,
+            &node,
+            &renderer,
+            &viewport,
+            &mut focus_second,
+        );
+        let mut overlay = component
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open hover card overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        overlay.as_overlay_mut().update(
+            &escape,
+            Layout::new(&overlay_node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        assert!(shell.is_event_captured());
+        drop(shell);
+        drop(overlay);
+
+        assert!(messages.is_empty());
         assert!(tree.state.downcast_ref::<State>().focus.is_focused());
         assert!(!tree.state.downcast_ref::<State>().presence.is_present());
         let content_layout = Layout::new(&overlay_node).children().next().unwrap();
