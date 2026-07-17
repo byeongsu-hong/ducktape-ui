@@ -85,6 +85,9 @@ pub fn reduce_menubar(
         next.open = None;
         return next;
     }
+    next.open = state
+        .open
+        .filter(|index| enabled.get(*index) == Some(&true));
     let current = state
         .focused
         .filter(|index| *index < enabled.len() && enabled[*index])
@@ -121,7 +124,7 @@ pub fn reduce_menubar(
     };
     if let Some(target) = target {
         next.focused = Some(target);
-        if state.open.is_some() || command == MenubarCommand::Open {
+        if next.open.is_some() || command == MenubarCommand::Open {
             next.open = Some(target);
         }
     }
@@ -870,6 +873,41 @@ mod tests {
             MenubarState {
                 focused: Some(1),
                 open: None,
+            }
+        );
+    }
+
+    #[test]
+    fn movement_does_not_reopen_from_removed_open_menu() {
+        let state = MenubarState {
+            focused: Some(0),
+            open: Some(2),
+        };
+
+        let moved = reduce_menubar(
+            &state,
+            &[true, true],
+            MenubarCommand::Right,
+            Direction::LeftToRight,
+        );
+
+        assert_eq!(
+            moved,
+            MenubarState {
+                focused: Some(1),
+                open: None,
+            }
+        );
+        assert_eq!(
+            reduce_menubar(
+                &state,
+                &[true, true],
+                MenubarCommand::Open,
+                Direction::LeftToRight,
+            ),
+            MenubarState {
+                focused: Some(0),
+                open: Some(0),
             }
         );
     }
