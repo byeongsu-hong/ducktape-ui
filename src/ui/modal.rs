@@ -310,10 +310,8 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Modal<'_, Message
             return;
         }
 
-        if is_escape(event) {
-            if self.dismiss.escape {
-                shell.publish((self.on_event)(ModalEvent::Dismiss(DismissReason::Escape)));
-            }
+        if self.dismiss.escape && is_escape(event) {
+            shell.publish((self.on_event)(ModalEvent::Dismiss(DismissReason::Escape)));
             shell.capture_event();
             return;
         }
@@ -674,6 +672,79 @@ mod tests {
         assert_eq!(closed.as_widget().children().len(), 2);
         assert_eq!(open.as_widget().children().len(), 2);
         assert_eq!(closed.as_widget().tag(), open.as_widget().tag());
+    }
+
+    #[test]
+    fn escape_disabled_modal_allows_focused_content_to_handle_escape() {
+        use super::super::focus_control::{FocusControl, State as FocusState};
+        use iced::advanced::{
+            Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget,
+        };
+        use iced::keyboard::{Location, Modifiers, key};
+        use iced::{Pixels, event};
+
+        let content_id = widget::Id::new("content");
+        let content: Element<'_, u8> =
+            FocusControl::new(content_id.clone(), text("dialog"), 1, &LIGHT)
+                .on_key_press(|key, _modifiers| {
+                    (key == keyboard::Key::Named(Named::Escape)).then_some(1)
+                })
+                .into();
+        let focus = FocusScope::new(content_id, widget::Id::new("restore"));
+        let mut element = modal(
+            text("page"),
+            true,
+            content,
+            &focus,
+            DismissRules {
+                backdrop: false,
+                escape: false,
+            },
+            |_| 2,
+            &LIGHT,
+        );
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        tree.children[1].state.downcast_mut::<FocusState>().focus();
+        let key = keyboard::Key::Named(Named::Escape);
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(key::Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        element.as_widget_mut().update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        assert_eq!(shell.event_status(), event::Status::Captured);
+        drop(shell);
+
+        assert_eq!(messages, [1]);
     }
 
     #[test]
