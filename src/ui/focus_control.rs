@@ -333,6 +333,7 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let cursor = pointer_cursor(event, cursor);
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -344,7 +345,6 @@ where
             viewport,
         );
 
-        let cursor = pointer_cursor(event, cursor);
         let is_over = cursor.is_over(layout.bounds());
         // Native scrolling captures presses without a cursor interaction;
         // interactive descendants advertise one and should own focus.
@@ -564,7 +564,8 @@ fn pointer_cursor(event: &Event, cursor: mouse::Cursor) -> mouse::Cursor {
     match event {
         Event::Touch(
             touch::Event::FingerPressed { position, .. }
-            | touch::Event::FingerMoved { position, .. },
+            | touch::Event::FingerMoved { position, .. }
+            | touch::Event::FingerLifted { position, .. },
         ) => mouse::Cursor::Available(*position),
         _ => cursor,
     }
@@ -940,6 +941,75 @@ mod tests {
             handle_event(&mut state, &press, false, true, &9, &mut shell);
         }
         assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn touch_release_uses_its_own_position_for_captured_children() {
+        use iced::advanced::renderer::Headless as _;
+
+        fn activate(renderer: &iced::Renderer, cursor: mouse::Cursor, release: Point) -> Vec<u8> {
+            let viewport = Rectangle::with_size(Size::new(100.0, 40.0));
+            let child = button("child")
+                .on_press(1)
+                .width(Length::Fill)
+                .height(Length::Fill);
+            let mut control: Element<'_, u8> =
+                FocusControl::new(widget::Id::new("touch-release"), child, 2, &LIGHT).into();
+            let mut tree = widget::Tree::new(control.as_widget());
+            let node = control.as_widget_mut().layout(
+                &mut tree,
+                renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let finger = touch::Finger(1);
+            let events = [
+                Event::Touch(touch::Event::FingerPressed {
+                    id: finger,
+                    position: Point::new(20.0, 20.0),
+                }),
+                Event::Touch(touch::Event::FingerLifted {
+                    id: finger,
+                    position: release,
+                }),
+            ];
+            let mut messages = Vec::new();
+
+            for event in events {
+                let mut clipboard = clipboard::Null;
+                let mut shell = Shell::new(&mut messages);
+                control.as_widget_mut().update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    cursor,
+                    renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                assert_eq!(shell.event_status(), event::Status::Captured);
+            }
+
+            assert!(!tree.state.downcast_ref::<State>().is_pressed());
+            messages
+        }
+
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let inside = Point::new(20.0, 20.0);
+        assert_eq!(activate(&renderer, mouse::Cursor::Unavailable, inside), [1]);
+        assert!(
+            activate(
+                &renderer,
+                mouse::Cursor::Available(inside),
+                Point::new(120.0, 20.0),
+            )
+            .is_empty()
+        );
     }
 
     #[test]
