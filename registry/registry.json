@@ -218,8 +218,8 @@
     {
       "name": "message-scroller",
       "type": "component",
-      "description": "Bottom-anchored native transcript viewport with caller-owned follow state.",
-      "dependencies": ["theme"],
+      "description": "Controlled row-aware transcript with intent-aware following, stable anchoring, visibility, keyboard commands, and jump state.",
+      "dependencies": ["button", "focus-control", "theme"],
       "files": [{ "source": "message_scroller.rs", "target": "message_scroller.rs" }]
     },
     {
@@ -281,7 +281,7 @@
     {
       "name": "focus-control",
       "type": "component",
-      "description": "Focusable pointer, touch, Enter, and Space activation shell for passive content.",
+      "description": "Focusable activation shell or passive keyboard region with a visible ring.",
       "dependencies": ["theme"],
       "files": [{ "source": "focus_control.rs", "target": "focus_control.rs" }]
     },
