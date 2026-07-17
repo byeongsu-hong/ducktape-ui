@@ -269,9 +269,13 @@ pub fn reduce_navigation_menu(
             changed(next, focus)
         }
         NavigationMenuCommand::CloseContent => {
-            let restore = state.open.or(Some(current));
+            let restore = state
+                .open
+                .filter(|index| enabled.contains(index) && items[*index].disclosure)
+                .unwrap_or(current);
+            next.focused = Some(restore);
             next.open = None;
-            changed(next, restore.map(NavigationMenuFocus::Trigger))
+            changed(next, Some(NavigationMenuFocus::Trigger(restore)))
         }
     }
 }
@@ -1333,13 +1337,11 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
                 ..
             })
         ) {
-            let restore = self.state.open.or(self.state.focused);
-            let mut next = self.state.clone();
-            next.open = None;
             self.content_focus.unfocus();
-            shell.publish((self.on_event)(changed(
-                next,
-                restore.map(NavigationMenuFocus::Trigger),
+            shell.publish((self.on_event)(reduce_navigation_menu(
+                self.state,
+                self.items,
+                NavigationMenuCommand::CloseContent,
             )));
             shell.capture_event();
             return;
@@ -1473,6 +1475,22 @@ mod tests {
             navigation_menu_trigger_id("main", 2),
             navigation_menu_content_id("main", 2)
         );
+    }
+
+    #[test]
+    fn close_content_falls_back_when_the_open_item_was_removed() {
+        let state = NavigationMenuState {
+            focused: Some(2),
+            open: Some(2),
+            active: None,
+        };
+        let items = [NavigationMenuItemInfo::link("home")];
+
+        let closed = reduce_navigation_menu(&state, &items, NavigationMenuCommand::CloseContent);
+
+        assert_eq!(closed.state().focused, Some(0));
+        assert_eq!(closed.state().open, None);
+        assert_eq!(closed.focus(), Some(NavigationMenuFocus::Trigger(0)));
     }
 
     #[test]
