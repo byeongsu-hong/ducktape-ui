@@ -720,6 +720,11 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
                 ..
             })
         ) {
+            self.floating
+                .update(event, layout, cursor, renderer, clipboard, shell);
+            if shell.is_event_captured() {
+                return;
+            }
             let mut state = self.state.clone();
             state.open = None;
             shell.publish((self.on_event)(MenubarEvent::StateChanged(state)));
@@ -784,9 +789,13 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
 #[cfg(test)]
 mod tests {
     use super::super::focus_control::focusable_count;
-    use super::super::menu::{MenuActivation, MenuActivationKind, MenuItem};
+    use super::super::menu::{MenuActivation, MenuActivationKind, MenuItem, menu_item_id};
     use super::super::theme::{DARK, LIGHT};
     use super::*;
+    use iced::advanced::{
+        Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget,
+    };
+    use iced::keyboard::{Location, Modifiers, key};
 
     #[test]
     fn top_level_navigation_wraps_skips_disabled_and_keeps_open() {
@@ -891,6 +900,100 @@ mod tests {
             menubar("app", menus, &state, &menu_state, |_| (), &LIGHT).into();
         assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn escape_closes_nested_submenu_before_menubar() {
+        let menus = vec![MenubarMenu::new(
+            "file",
+            "File",
+            vec![
+                MenuItem::new("more", "More")
+                    .submenu(vec![MenuEntry::item("nested", "Nested")])
+                    .into(),
+            ],
+        )];
+        let state = MenubarState {
+            focused: Some(0),
+            open: Some(0),
+        };
+        let menu_state = MenuState {
+            focused: Some(vec![0, 0]),
+            open_submenus: vec![vec![0]],
+            ..MenuState::default()
+        };
+        let mut element: Element<'_, MenubarEvent> =
+            menubar("app", menus, &state, &menu_state, |event| event, &LIGHT).into();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open menubar overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let overlay_layout = Layout::new(&overlay_node);
+        let mut focus_child = widget::operation::focusable::focus::<()>(menu_item_id(
+            "menubar:app:file",
+            "nested",
+            &[0, 0],
+        ));
+        overlay
+            .as_overlay_mut()
+            .operate(overlay_layout, &renderer, &mut focus_child);
+        let key = iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape);
+        let escape = Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(key::Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        overlay.as_overlay_mut().update(
+            &escape,
+            overlay_layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        assert!(shell.is_event_captured());
+        drop(shell);
+
+        let expected = MenuState {
+            focused: Some(vec![0]),
+            ..MenuState::default()
+        };
+        assert_eq!(
+            messages,
+            [MenubarEvent::Menu {
+                menu_id: "file".into(),
+                event: MenuEvent::StateChanged(expected),
+            }]
+        );
+        assert_eq!(messages[0].state(&state), state);
     }
 
     #[test]
