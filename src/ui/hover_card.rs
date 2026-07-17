@@ -512,6 +512,10 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
             *self.content_focused = focus_within(|operation| {
                 self.floating.operate(layout, renderer, operation);
             });
+            if *self.content_focused && self.trigger_focus.is_focused() {
+                self.trigger_focus.unfocus();
+                shell.request_redraw();
+            }
         } else {
             *self.content_focused = false;
         }
@@ -660,6 +664,28 @@ mod tests {
     fn overlay_focus_transfer_holds_presence_until_focus_leaves() {
         use iced::advanced::renderer::Headless as _;
 
+        struct FindBounds {
+            id: widget::Id,
+            bounds: Option<Rectangle>,
+        }
+
+        impl widget::Operation for FindBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _state: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&self.id) {
+                    self.bounds = Some(bounds);
+                }
+            }
+        }
+
         fn operate_all(
             component: &mut HoverCardWidget<'_, ()>,
             tree: &mut widget::Tree,
@@ -713,6 +739,48 @@ mod tests {
             &viewport,
             &mut focus_trigger,
         );
+
+        let mut overlay = component
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .expect("open hover card overlay");
+        let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+        let mut find = FindBounds {
+            id: first.clone(),
+            bounds: None,
+        };
+        overlay
+            .as_overlay_mut()
+            .operate(Layout::new(&overlay_node), &renderer, &mut find);
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        overlay.as_overlay_mut().update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&overlay_node),
+            mouse::Cursor::Available(find.bounds.expect("first control bounds").center()),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+        );
+        let descendant_focused = focus_within(|operation| {
+            overlay
+                .as_overlay_mut()
+                .operate(Layout::new(&overlay_node), &renderer, operation);
+        });
+        drop(overlay);
+
+        let state = tree.state.downcast_ref::<State>();
+        assert!(!state.focus.is_focused());
+        assert!(state.content_focused);
+        assert!(state.presence.is_visible());
+        assert!(descendant_focused);
+        tree.state.downcast_mut::<State>().content_hovered = false;
 
         let mut focus_first = widget::operation::focusable::focus::<()>(first.clone());
         operate_all(
