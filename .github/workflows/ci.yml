@@ -10,10 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: ui
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88.0
           components: rustfmt, clippy
+      - run: cargo install --locked --git https://github.com/byeongsu-hong/ducktape-ui-lang --rev 67a1340c5f66012df81867c8dd094b5f01495c1e cargo-ice
+      - run: cargo ice fmt --check
+        working-directory: ui
       - run: cargo fmt --all -- --check
+        working-directory: ui
       - run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: ui
       - run: cargo test --all-targets --all-features
+        working-directory: ui

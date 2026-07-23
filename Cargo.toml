@@ -9,6 +9,9 @@ repository = "https://github.com/byeongsu-hong/ducktape-ui"
 homepage = "https://github.com/byeongsu-hong/ducktape-ui"
 default-run = "showcase"
 
+[package.metadata.ice]
+interface = "src/ice/plugin.ice"
+
 [features]
 default = []
 full = [
@@ -83,7 +86,13 @@ full = [
     "tooltip",
     "typography",
 ]
-showcase = ["full", "iced/smol"]
+ice = ["full"]
+showcase = [
+    "ice",
+    "iced/smol",
+    "dep:ui-lang",
+    "dep:ui-lang-runtime",
+]
 
 theme = ["dep:iced"]
 surface = ["theme"]
@@ -158,6 +167,8 @@ drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
 iced = { version = "=0.14.0", features = ["advanced"], optional = true }
+ui-lang = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0", optional = true }
+ui-lang-runtime = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0", optional = true }
 
 [[bin]]
 name = "showcase"

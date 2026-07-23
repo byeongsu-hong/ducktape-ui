@@ -1,10 +1,60 @@
 # ducktape-ui
 
-Composable, feature-gated UI components for [iced](https://github.com/iced-rs/iced), built first for Ducktape and reusable by any iced application.
+Default, composable UI components for [Ice](https://github.com/byeongsu-hong/ducktape-ui-lang) and [iced](https://github.com/iced-rs/iced).
 
-Applications import the library directly. Each component is a Cargo feature, and enabling one also enables its internal component dependencies.
+Ice is the canonical application authoring surface: `.ice` owns layout, state, routes, styles, and accessibility. The feature-gated Rust modules remain the typed native boundary for retained widgets whose behavior is intentionally lower-level than Ice.
 
-## Quick start
+Core controls remain native Ice nodes so its accessibility tree stays intact; `ducktape-ui` supplies their checked style callbacks. Widgets with opaque retained state cross typed `extern` boundaries instead.
+
+The repository itself follows that split:
+
+- [`src/showcase.ice`](src/showcase.ice) is the complete showcase application.
+- [`src/ice/components.ice`](src/ice/components.ice) contains reusable Ice-native composition.
+- [`src/ice.rs`](src/ice.rs) exposes the native widgets Ice actually needs through checked `extern` adapters.
+- [`src/main.rs`](src/main.rs) only compiles and runs the Ice app.
+
+## Ice quick start
+
+```toml
+[dependencies]
+ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui", features = ["ice"] }
+iced = "=0.14.0"
+ui-lang = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0" }
+ui-lang-runtime = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0" }
+```
+
+```rust
+ui_lang::include_app!("src/app.ice");
+
+fn main() -> iced::Result {
+    App::run()
+}
+```
+
+```ice
+app App
+
+extern ducktape_ui::ice
+  button-style button_style(variant:str, accent:color)
+
+theme
+  bg #f8fafc
+  fg #0f172a
+  primary #2563eb
+  danger #dc2626
+
+on save
+
+state
+  accent:color = color.rgb8(37, 99, 235)
+
+view
+  button "Save" height=36.0 padding=8.0 style=button_style("default", accent) -> save
+```
+
+## Rust library quick start
+
+Each component remains individually feature-gated, and enabling one also enables its internal component dependencies.
 
 ```toml
 [dependencies]
@@ -65,11 +115,12 @@ Use the `full` feature for the complete catalog. The individual feature names an
 cargo run --features showcase --bin showcase
 ```
 
-The showcase imports the same public library API as an external application and exercises the complete feature set.
+The showcase compiles the full Ice graph and crosses typed Rust boundaries only for retained native behavior such as menus, charts, modal focus, transcript measurement, and resizable panels. The full Rust feature set is compiled and exercised by the test suite.
 
 ## Development
 
 ```bash
+cargo ice fmt --check
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
