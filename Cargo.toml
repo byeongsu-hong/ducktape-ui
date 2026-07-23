@@ -9,6 +9,9 @@ repository = "https://github.com/byeongsu-hong/ducktape-ui"
 homepage = "https://github.com/byeongsu-hong/ducktape-ui"
 default-run = "showcase"
 
+[package.metadata.ice]
+interface = "src/ice/plugin.ice"
+
 [features]
 default = []
 full = [
