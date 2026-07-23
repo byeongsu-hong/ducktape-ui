@@ -4,3 +4,6 @@
 //! enable their transitive dependencies automatically.
 
 pub mod ui;
+
+#[cfg(feature = "ice")]
+pub mod ice;
