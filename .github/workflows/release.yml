@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - Cargo.lock
+      - crates/cargo-ice/**
+      - crates/ui-lang-core/**
   push:
     tags: ["v*"]
 
@@ -37,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate tag
+        if: github.event_name == 'push'
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#v}
@@ -72,6 +79,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
