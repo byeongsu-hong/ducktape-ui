@@ -1,1 +1,2 @@
 *.ice linguist-language=Rust
+*.rgba binary

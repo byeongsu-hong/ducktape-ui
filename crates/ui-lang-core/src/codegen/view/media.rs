@@ -332,7 +332,10 @@ pub(in crate::codegen) fn render_media(
                 )?;
                 write!(code, ".on_drag({callback})").unwrap();
             }
-            for (route, method) in [(&options.press, "on_press"), (&options.release, "on_release")] {
+            for (route, method) in [
+                (&options.press, "on_press"),
+                (&options.release, "on_release"),
+            ] {
                 if let Some(route) = route {
                     write!(
                         code,

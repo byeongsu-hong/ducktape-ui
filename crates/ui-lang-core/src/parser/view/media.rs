@@ -389,10 +389,18 @@ pub(in crate::parser) fn parse_resize_handle(
     line: &Line,
 ) -> Result<ViewNode, Error> {
     if !styles.is_empty() {
-        return Err(error("E087", line, "resize-handle does not accept `@` utilities"));
+        return Err(error(
+            "E087",
+            line,
+            "resize-handle does not accept `@` utilities",
+        ));
     }
     if line.children.len() != 1 {
-        return Err(error("E087", line, "resize-handle requires exactly one child"));
+        return Err(error(
+            "E087",
+            line,
+            "resize-handle requires exactly one child",
+        ));
     }
     let mut options = ResizeHandleOptions::default();
     for part in &parts[1..] {

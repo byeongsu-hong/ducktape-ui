@@ -207,7 +207,11 @@ view
 
     // `under=N` still uses iced's native base-layer `Stack`/`push_under`, which
     // already picks the correct intrinsic base.
-    let under = compile(&source.replace("  stack\n", "  stack under=1\n"), "popover.ice").unwrap();
+    let under = compile(
+        &source.replace("  stack\n", "  stack under=1\n"),
+        "popover.ice",
+    )
+    .unwrap();
     assert!(under.contains("::iced::widget::Stack::new()"));
     assert!(under.contains("push_under(__child)"));
     assert!(!under.contains("::ui_lang_runtime::zstack(__children)"));
