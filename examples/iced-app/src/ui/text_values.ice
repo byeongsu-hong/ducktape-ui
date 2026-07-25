@@ -1,16 +1,8 @@
 app NativeTextValues
 
-extern crate::backend
-  sync text_alignment_round_trip(value:text-alignment) -> text-alignment
-  sync text_shaping_round_trip(value:text-shaping) -> text-shaping
-  sync text_wrapping_round_trip(value:text-wrapping) -> text-wrapping
-  sync text_line_height_round_trip(value:text-line-height) -> text-line-height
+use "extern/text_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_alignment:text-alignment = text_alignment.default()

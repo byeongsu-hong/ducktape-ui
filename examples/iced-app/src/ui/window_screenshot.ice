@@ -1,18 +1,8 @@
 app NativeWindowScreenshot
 
-extern crate::backend
-  sync screenshot_sample() -> window-screenshot
-  sync screenshot_round_trip(value:window-screenshot) -> window-screenshot
-  sync screenshot_size() -> size-u32
-  sync screenshot_crop_region() -> rectangle-u32
-  sync screenshot_zero_region() -> rectangle-u32
-  sync screenshot_outside_region() -> rectangle-u32
+use "extern/window_screenshot.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   sample:window-screenshot = screenshot_sample()

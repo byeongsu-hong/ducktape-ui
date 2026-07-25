@@ -1,13 +1,8 @@
 app WidgetSelectors
 
-extern crate::backend
-  selector by_kind(kind:str) -> str
+use "extern/widget_selectors.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   value = ""

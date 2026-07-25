@@ -1,13 +1,8 @@
 app PaddingAngles
 
-extern crate::backend
-  sync unit_round_trip(pixels:pixels, padding:padding, degrees:degrees, radians:radians) -> padding
+use "extern/padding_angles.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   zero_pixels:pixels = pixels.zero()

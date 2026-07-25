@@ -26,7 +26,7 @@ app Tasks
     min-size 480 360
     position centered
 
-use "backend.ice"
+use "extern/backend.ice"
 use "theme.ice"
 use "components/panel.ice"
 
@@ -49,7 +49,9 @@ view
 
 `use` resolves relative to the importing file. Imported declarations share the
 same checked app graph. File-backed errors point to the fragment that caused
-them and include the offending source line and caret.
+them and include the offending source line and caret. Keep typed Rust boundary
+declarations in an `extern/` fragment so app and view files only need the
+one-line `use`.
 
 The punctuation has one job each:
 
@@ -162,7 +164,7 @@ src/
 ├── tests/                    example behavior tests by feature
 └── ui/
     ├── tasks.ice             app and view
-    ├── backend.ice           typed Rust boundary declarations
+    ├── extern/               typed Rust boundaries by feature
     ├── state.ice             UI state
     ├── theme.ice             color tokens
     ├── components/           reusable views

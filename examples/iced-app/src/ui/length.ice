@@ -1,13 +1,8 @@
 app NativeLength
 
-extern crate::backend
-  sync length_round_trip(value:length) -> length
+use "extern/length.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   fill_length:length = length.fill()

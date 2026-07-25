@@ -1,16 +1,8 @@
 app NativeBackgroundGradient
 
-extern crate::backend
-  sync background_round_trip(value:background) -> background
-  sync gradient_round_trip(value:gradient) -> gradient
-  sync linear_round_trip(value:linear-gradient) -> linear-gradient
-  sync color_stop_round_trip(value:color-stop) -> color-stop
+use "extern/background_gradient.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_stop:color-stop = color_stop.default()

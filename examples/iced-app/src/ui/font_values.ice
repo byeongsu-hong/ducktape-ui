@@ -1,17 +1,8 @@
 app NativeFontValues
 
-extern crate::backend
-  sync font_round_trip(value:font) -> font
-  sync family_round_trip(value:font-family) -> font-family
-  sync weight_round_trip(value:font-weight) -> font-weight
-  sync stretch_round_trip(value:font-stretch) -> font-stretch
-  sync style_round_trip(value:font-style) -> font-style
+use "extern/font_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_font:font = font.default()

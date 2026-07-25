@@ -1,13 +1,8 @@
 app NativeRotation
 
-extern crate::backend
-  sync rotation_round_trip(value:rotation) -> rotation
+use "extern/rotation.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   pixel:image = rgba(1, 1, bytes(ff 00 ff ff))

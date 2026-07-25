@@ -1,13 +1,8 @@
 app NativeEventStatus
 
-extern crate::backend
-  sync status_round_trip(value:event-status) -> event-status
+use "extern/event_status.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   ignored:event-status = event_status.ignored()

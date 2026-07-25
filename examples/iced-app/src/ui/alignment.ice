@@ -1,15 +1,8 @@
 app NativeAlignment
 
-extern crate::backend
-  sync alignment_round_trip(value:alignment) -> alignment
-  sync horizontal_round_trip(value:horizontal-alignment) -> horizontal-alignment
-  sync vertical_round_trip(value:vertical-alignment) -> vertical-alignment
+use "extern/alignment.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   start:alignment = alignment.start()

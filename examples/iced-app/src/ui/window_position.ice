@@ -1,14 +1,8 @@
 app NativeWindowPosition
 
-extern crate::backend
-  sync position_round_trip(value:window-position) -> window-position
-  sync responsive_position() -> window-position
+use "extern/window_position.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_position:window-position = window_position.default()

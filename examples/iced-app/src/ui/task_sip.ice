@@ -1,15 +1,8 @@
-extern crate::backend
-  AppError(message:str)
-  sip count_sip(limit:i64) progress=i64 -> i64
-  sip fallible_sip(limit:i64) progress=i64 -> i64 ! AppError
+use "extern/task_sip.ice"
 
 app TaskSip
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 state
   last_progress = 0
