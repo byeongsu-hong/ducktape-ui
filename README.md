@@ -26,7 +26,7 @@ app Tasks
     min-size 480 360
     position centered
 
-use "backend.ice"
+use "extern/backend.ice"
 use "theme.ice"
 use "components/panel.ice"
 
@@ -49,7 +49,9 @@ view
 
 `use` resolves relative to the importing file. Imported declarations share the
 same checked app graph. File-backed errors point to the fragment that caused
-them and include the offending source line and caret.
+them and include the offending source line and caret. Keep typed Rust boundary
+declarations in an `extern/` fragment so app and view files only need the
+one-line `use`.
 
 The punctuation has one job each:
 
@@ -162,7 +164,7 @@ src/
 ├── tests/                    example behavior tests by feature
 └── ui/
     ├── tasks.ice             app and view
-    ├── backend.ice           typed Rust boundary declarations
+    ├── extern/               typed Rust boundaries by feature
     ├── state.ice             UI state
     ├── theme.ice             color tokens
     ├── components/           reusable views
@@ -172,6 +174,28 @@ src/
 [`showcase.ice`](examples/iced-app/src/ui/showcase.ice) is the compile-tested
 extended-surface fixture; focused `.ice` and Rust modules exercise individual
 native surfaces without bloating the readable task app.
+
+## Agent skill
+
+Install the repository's detailed Ice authoring skill with the open
+[`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+npx skills add byeongsu-hong/ducktape-ui-lang --skill design-ice-ui
+```
+
+Use `-g` for a global install, or install from a local checkout while developing
+the skill:
+
+```bash
+npx skills add . --skill design-ice-ui
+```
+
+Then ask your agent to `Use $design-ice-ui` when designing, writing, reviewing,
+or debugging `.ice` files. The skill teaches Ice's design and program model
+instead of translating React/JSX assumptions, and includes focused references
+for the design workflow, language, views and styling, typed Rust boundaries,
+the extended native surface, and live LSP/tooling.
 
 ## Tooling
 
@@ -210,6 +234,27 @@ updates its dotted descendants, while direct dotted descendants and the
 implicit `mount` handler are definition-only. Rename is offered only when every
 reference has an exact retained source span and every workspace app root
 checks.
+
+The LSP is live and intended for editor use. Configure any custom LSP client
+with:
+
+```json
+{
+  "languageId": "ice",
+  "extensions": [".ice"],
+  "command": "cargo",
+  "args": ["ice", "lsp"],
+  "cwd": "<Cargo-workspace-root>",
+  "transport": "stdio"
+}
+```
+
+Keep the importing `app` or `daemon` root open while editing a fragment; Ice
+checks fragments as part of their source graph instead of treating them as
+standalone programs. Initialize the Cargo workspace folder to enable safe
+cross-file rename. Running `cargo ice lsp` directly waits quietly for
+Content-Length-framed JSON-RPC, so launch it through the editor rather than
+typing into its terminal.
 
 `cargo ice compat` analyzes every app graph, checks the exact `iced 0.14.0`,
 `iced_widget 0.14.2`, `ui-lang-runtime`, and AccessKit lockfile baseline,

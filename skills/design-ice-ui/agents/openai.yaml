@@ -1,0 +1,4 @@
+interface:
+  display_name: "Design Ice UI"
+  short_description: "Design checked native UIs with the Ice DSL"
+  default_prompt: "Use $design-ice-ui to design and verify an Ice UI without importing React assumptions."
