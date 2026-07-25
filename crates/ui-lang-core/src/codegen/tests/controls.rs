@@ -85,11 +85,7 @@ view
     );
 
     // The handle refuses to exist without a drag route.
-    let error = compile(
-        &source.replace("drag=sidebar_dragged ", ""),
-        "split.ice",
-    )
-    .unwrap_err();
+    let error = compile(&source.replace("drag=sidebar_dragged ", ""), "split.ice").unwrap_err();
     assert_eq!(error.code, "E087");
 }
 

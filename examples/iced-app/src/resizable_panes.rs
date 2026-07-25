@@ -18,7 +18,10 @@ fn drag_deltas_resize_the_left_pane_with_a_min_clamp() {
     let _ = app.__update(__ResizablePanesMessage::DividerDragged(-100.0, 0.0));
     assert_eq!(app.left_width, 200.0);
     let _ = app.__update(__ResizablePanesMessage::DividerDragged(-100.0, 0.0));
-    assert_eq!(app.left_width, 200.0, "min clamp holds the pane at >= 160px");
+    assert_eq!(
+        app.left_width, 200.0,
+        "min clamp holds the pane at >= 160px"
+    );
 
     // Release clears the active-drag flag.
     let _ = app.__update(__ResizablePanesMessage::DragEnded);

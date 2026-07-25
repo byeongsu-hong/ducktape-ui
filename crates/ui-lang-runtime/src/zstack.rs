@@ -233,9 +233,9 @@ where
                     .zip(tree.children.iter().rev())
                     .zip(layout.children().rev())
                     .position(|((layer, tree), layout)| {
-                        let interaction = layer.as_widget().mouse_interaction(
-                            tree, layout, cursor, viewport, renderer,
-                        );
+                        let interaction = layer
+                            .as_widget()
+                            .mouse_interaction(tree, layout, cursor, viewport, renderer);
 
                         interaction != mouse::Interaction::None
                     })
@@ -287,7 +287,14 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        overlay::from_children(&mut self.children, tree, layout, renderer, viewport, translation)
+        overlay::from_children(
+            &mut self.children,
+            tree,
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 

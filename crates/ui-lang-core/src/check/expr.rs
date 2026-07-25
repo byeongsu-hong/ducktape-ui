@@ -1794,7 +1794,11 @@ pub(crate) fn expr_type(
                     if args.len() != 1 {
                         return Err(Error::new("E152", span, "editor_text expects one argument"));
                     }
-                    require_type(&expr_type(&args[0], env, document, span)?, &Type::Editor, span)?;
+                    require_type(
+                        &expr_type(&args[0], env, document, span)?,
+                        &Type::Editor,
+                        span,
+                    )?;
                     Ok(Type::Str)
                 }
                 "encoded" => {

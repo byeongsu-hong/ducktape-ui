@@ -158,7 +158,9 @@ where
         let state: &mut DragState = tree.state.downcast_mut();
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let grabbing = cursor.position().filter(|_| cursor.is_over(layout.bounds()));
+                let grabbing = cursor
+                    .position()
+                    .filter(|_| cursor.is_over(layout.bounds()));
                 let Some(position) = grabbing else {
                     return;
                 };
