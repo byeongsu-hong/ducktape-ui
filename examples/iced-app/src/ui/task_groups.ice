@@ -1,15 +1,8 @@
-extern crate::backend
-  Task(id:i64, title:str, done:bool)
-  AppError(message:str)
-  create_task(title:str) -> [Task] ! AppError
+use "extern/task_groups.ice"
 
 app TaskGroups
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 on start
   parallel

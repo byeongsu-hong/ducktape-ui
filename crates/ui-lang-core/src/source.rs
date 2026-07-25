@@ -175,6 +175,11 @@ fn load(path: &Path) -> Result<LoadedSource, Error> {
     load_with_overlays(path, &HashMap::<PathBuf, String>::new())
 }
 
+#[cfg(test)]
+pub(crate) fn load_test_source(path: &Path) -> Result<String, Error> {
+    Ok(load(path)?.source)
+}
+
 fn load_with_overlays<S: AsRef<str>>(
     path: &Path,
     overlays: &HashMap<PathBuf, S>,

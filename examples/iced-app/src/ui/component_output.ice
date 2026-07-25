@@ -1,10 +1,7 @@
 app ComponentOutput
 
-extern crate::backend
-  component native_help(active:bool) -> bool
-
-extern plugin_backend
-  component borrowed_help(label:&str, active:&bool) -> bool
+use "extern/component_output.ice"
+use "extern/plugin_backend.ice"
 
 theme
   bg #111111

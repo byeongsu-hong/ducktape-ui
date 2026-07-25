@@ -1,10 +1,6 @@
 app ImageAllocation
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   handle:image = rgba(1, 1, bytes(ff 00 ff ff))

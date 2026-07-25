@@ -1,13 +1,8 @@
 app PointerValues
 
-extern crate::backend
-  sync pointer_click(click:mouse-click, cursor:mouse-cursor, button:mouse-button, finger:touch-finger, position:point, bounds:rectangle) -> mouse-click
+use "extern/pointer_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   position:point = point(12.0, 24.0)

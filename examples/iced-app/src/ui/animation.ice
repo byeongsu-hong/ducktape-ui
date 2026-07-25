@@ -1,15 +1,8 @@
 app NativeAnimation
 
-extern crate::backend
-  Motion(value:f64)
-  sync elastic(value:f64) -> f64
-  sync motion(value:f64) -> Motion
+use "extern/animation.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   expanded:animation[bool] = false

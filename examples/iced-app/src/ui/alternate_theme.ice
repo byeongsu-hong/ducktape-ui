@@ -1,16 +1,8 @@
-extern crate::backend
-  AlternateTheme()
-  sync alternate_theme(active:bool) -> AlternateTheme
-  load_alternate_theme() -> AlternateTheme
-  themer alternate_panel(active:bool) -> unit
+use "extern/alternate_theme.ice"
 
 app AlternateThemeApp
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 state
   active = true

@@ -1,14 +1,8 @@
 app NativeBorderRadius
 
-extern crate::backend
-  sync border_round_trip(value:border) -> border
-  sync radius_round_trip(value:radius) -> radius
+use "extern/border_radius.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_border:border = border.default()

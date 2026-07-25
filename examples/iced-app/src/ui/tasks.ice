@@ -33,7 +33,7 @@ app Tasks
     min-size 320 240
     position centered
 
-use "backend.ice"
+use "extern/backend.ice"
 use "theme.ice"
 use "state.ice"
 use "components/task_row.ice"

@@ -1,13 +1,8 @@
 app NativeScrollDelta
 
-extern crate::backend
-  sync scroll_delta_round_trip(value:scroll-delta) -> scroll-delta
+use "extern/scroll_delta.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   lines:scroll-delta = scroll.lines(0.0, 0.0)
