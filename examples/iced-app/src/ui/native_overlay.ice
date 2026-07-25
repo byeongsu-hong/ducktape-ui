@@ -1,13 +1,8 @@
-extern crate::backend
-  component native_overlay(index:f64) -> unit
+use "extern/native_overlay.ice"
 
 app NativeOverlay
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 state
   index = 42.0

@@ -1,10 +1,6 @@
 app MouseEvents
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 on entered
 

@@ -1,13 +1,8 @@
 app TransformationValues
 
-extern crate::backend
-  sync transformation_round_trip(value:transformation, offset:vector, extent:size) -> transformation
+use "extern/transformation_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   identity:transformation = transform.identity()

@@ -1,14 +1,8 @@
 app GenericEvents
 
-extern crate::backend
-  sync event_name(value:event) -> str
-  sync event_label(value:event) -> str?
+use "extern/generic_events.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   last = "none"

@@ -1,13 +1,8 @@
 app NativeThemeMode
 
-extern crate::backend
-  sync theme_mode_round_trip(value:theme-mode) -> theme-mode
+use "extern/theme_mode.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_mode:theme-mode = theme_mode.default()

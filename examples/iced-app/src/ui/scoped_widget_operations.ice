@@ -1,13 +1,8 @@
 app ScopedOperations
 
-extern crate::backend
-  Task(id:i64, title:str, done:bool)
+use "extern/scoped_widget_operations.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   tasks:[Task] = []

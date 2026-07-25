@@ -1,13 +1,8 @@
 app NativeShadow
 
-extern crate::backend
-  sync shadow_round_trip(value:shadow) -> shadow
+use "extern/shadow.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   default_shadow:shadow = shadow.default()

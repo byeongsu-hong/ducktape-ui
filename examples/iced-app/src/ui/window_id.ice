@@ -1,13 +1,8 @@
 app NativeWindowId
 
-extern crate::backend
-  sync window_id_round_trip(value:window-id) -> window-id
+use "extern/window_id.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   first:window-id = window_id.unique()

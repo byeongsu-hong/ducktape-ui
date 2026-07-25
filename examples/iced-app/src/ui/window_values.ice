@@ -1,16 +1,8 @@
 app NativeWindowValues
 
-extern crate::backend
-  sync direction_round_trip(value:window-direction) -> window-direction
-  sync level_round_trip(value:window-level) -> window-level
-  sync mode_round_trip(value:window-mode) -> window-mode
-  sync attention_round_trip(value:window-attention) -> window-attention
+use "extern/window_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   cardinal:[window-direction] = []

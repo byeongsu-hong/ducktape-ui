@@ -1,14 +1,8 @@
 app GeometryValues
 
-extern crate::backend
-  sync exact_rectangle() -> rectangle-u32
-  sync geometry_round_trip(point:point, snapped:point-u32, vector:vector, size:size, bounds:rectangle, snapped_bounds:rectangle-u32?) -> rectangle
+use "extern/geometry_values.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   origin:point = point.origin()

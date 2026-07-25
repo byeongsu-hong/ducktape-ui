@@ -1,14 +1,8 @@
 app NativeRedrawRequest
 
-extern crate::backend
-  sync redraw_round_trip(value:redraw-request) -> redraw-request
-  sync redraw_now() -> instant
+use "extern/redraw_request.ice"
 
-theme
-  bg #111827
-  fg #f9fafb
-  primary #60a5fa
-  danger #f87171
+use "themes/slate.ice"
 
 state
   next_frame:redraw-request = redraw_request.next_frame()

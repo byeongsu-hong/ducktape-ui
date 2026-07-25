@@ -1,16 +1,8 @@
-extern crate::backend
-  refresh_time() -> i64
-  sync even_refresh(value:i64) -> i64?
-  sync visible_pointer(x:f64, y:f64) -> str?
-  sync allow_frame() -> bool?
+use "extern/timer.ice"
 
 app TimerEvents
 
-theme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
+use "themes/monochrome.ice"
 
 state
   auto_refresh = true
