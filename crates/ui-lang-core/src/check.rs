@@ -13,6 +13,7 @@ fn check(document: &mut Document) -> Result<(), Error> {
     check_slots(document)?;
     check_declared_types(document)?;
     check_theme(document)?;
+    check_recipes(document)?;
     check_qr_data(document)?;
     if let Some(span) = repeated_pane_grid_span(&document.view) {
         return Err(Error::new(
@@ -181,7 +182,6 @@ fn check(document: &mut Document) -> Result<(), Error> {
         &mut signatures,
         &mut ids,
     )?;
-    let pane_grids = static_pane_grids(&document.view, &view_states, document)?;
     for component in &document.components {
         if let Some(span) = pane_grid_span(&component.root) {
             return Err(Error::new(
@@ -205,7 +205,13 @@ fn check(document: &mut Document) -> Result<(), Error> {
         let mut ids = HashSet::new();
         infer_view(&component.root, &env, document, &mut signatures, &mut ids)?;
     }
-    let operation_ids = widget_operation_ids(&document.view, &view_states, document)?;
+    infer_tests(document, &view_states, &mut signatures)?;
+    let mut pane_grids = static_pane_grids(&document.view, &view_states, document)?;
+    let mut operation_ids = widget_operation_ids(&document.view, &view_states, document)?;
+    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+        pane_grids.extend(static_pane_grids(mount, &view_states, document)?);
+        operation_ids.extend(widget_operation_ids(mount, &view_states, document)?);
+    }
     controlled_state_bindings(document, false)?;
     controlled_state_bindings(document, true)?;
     infer_subscriptions(document, &states, &mut signatures)?;
@@ -277,6 +283,7 @@ fn check(document: &mut Document) -> Result<(), Error> {
             check_handler(handler, &states, document, &operation_ids, &HashMap::new())?;
         }
     }
+    check_tests(document, &view_states)?;
     Ok(())
 }
 
@@ -325,6 +332,7 @@ mod options;
 mod state;
 mod style;
 mod subscription;
+mod testing;
 mod view;
 mod widgets;
 
@@ -337,6 +345,7 @@ pub(crate) use state::controlled_state_bindings;
 use state::{check_qr_data, check_theme, pane_grid_span, repeated_pane_grid_span};
 use style::*;
 use subscription::*;
+use testing::*;
 use view::*;
 use widgets::*;
 

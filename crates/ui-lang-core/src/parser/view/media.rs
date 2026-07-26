@@ -23,9 +23,12 @@ pub(in crate::parser) fn parse_media(
         "viewer" => MediaKind::Viewer,
         _ => unreachable!(),
     };
+    let mut id = None;
     let mut options = MediaOptions::default();
     for part in &parts[2..] {
-        if parse_accessibility_option(part, &mut options.accessibility, line)? {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E085", kind)?;
+        } else if parse_accessibility_option(part, &mut options.accessibility, line)? {
         } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
@@ -155,6 +158,7 @@ pub(in crate::parser) fn parse_media(
     }
     Ok(ViewNode::Media {
         kind: media_kind,
+        id,
         source: parse_expr(source, line)?,
         options,
         span: Span::line(line.number),
@@ -203,6 +207,7 @@ pub(in crate::parser) fn parse_tooltip(
             "tooltip requires exactly two children: content, then tip",
         ));
     }
+    let mut id = None;
     let mut options = TooltipOptions {
         position: TooltipPosition::Top,
         gap: Expr::F64(0.0),
@@ -227,7 +232,9 @@ pub(in crate::parser) fn parse_tooltip(
         pixel_snap: None,
     };
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("position=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E086", "tooltip")?;
+        } else if let Some(value) = part.strip_prefix("position=") {
             options.position = match value {
                 "top" => TooltipPosition::Top,
                 "bottom" => TooltipPosition::Bottom,
@@ -309,6 +316,7 @@ pub(in crate::parser) fn parse_tooltip(
         }
     }
     Ok(ViewNode::Tooltip {
+        id,
         options,
         content: Box::new(parse_view(&line.children[0])?),
         tip: Box::new(parse_view(&line.children[1])?),
@@ -327,10 +335,13 @@ pub(in crate::parser) fn parse_mouse_area(
     if line.children.len() != 1 {
         return Err(error("E087", line, "mouse requires exactly one child"));
     }
+    let mut id = None;
     let mut options = MouseAreaOptions::default();
     for part in &parts[1..] {
         let route = |value: &str| parse_route(value, line);
-        if let Some(value) = part.strip_prefix("press=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E087", "mouse")?;
+        } else if let Some(value) = part.strip_prefix("press=") {
             options.press = Some(route(value)?);
         } else if let Some(value) = part.strip_prefix("release=") {
             options.release = Some(route(value)?);
@@ -369,7 +380,20 @@ pub(in crate::parser) fn parse_mouse_area(
             ));
         }
     }
-    if parts.len() == 1 {
+    if options.press.is_none()
+        && options.release.is_none()
+        && options.double_click.is_none()
+        && options.right_press.is_none()
+        && options.right_release.is_none()
+        && options.middle_press.is_none()
+        && options.middle_release.is_none()
+        && options.enter.is_none()
+        && options.move_route.is_none()
+        && options.scroll.is_none()
+        && options.exit.is_none()
+        && options.interaction.is_none()
+        && options.interaction_expr.is_none()
+    {
         return Err(error(
             "E087",
             line,
@@ -377,6 +401,7 @@ pub(in crate::parser) fn parse_mouse_area(
         ));
     }
     Ok(ViewNode::MouseArea {
+        id,
         options,
         content: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),
@@ -402,9 +427,12 @@ pub(in crate::parser) fn parse_resize_handle(
             "resize-handle requires exactly one child",
         ));
     }
+    let mut id = None;
     let mut options = ResizeHandleOptions::default();
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("drag=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E087", "resize-handle")?;
+        } else if let Some(value) = part.strip_prefix("drag=") {
             options.drag = Some(parse_payload_route(value, line, 2)?);
         } else if let Some(value) = part.strip_prefix("press=") {
             options.press = Some(parse_route(value, line)?);
@@ -428,6 +456,7 @@ pub(in crate::parser) fn parse_resize_handle(
         ));
     }
     Ok(ViewNode::ResizeHandle {
+        id,
         options,
         content: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),

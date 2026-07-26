@@ -80,7 +80,15 @@ fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
         parser::parse_with_symbols(&loaded.source).map_err(|error| remap_error(error, loaded))?;
     let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
     check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
-    Ok(document.with_parsed_symbols(remap_symbols(symbols, loaded)))
+    Ok(document
+        .with_parsed_symbols(remap_symbols(symbols, loaded))
+        .with_source_origins(
+            loaded
+                .origins
+                .iter()
+                .map(|origin| (origin.path.clone(), origin.line))
+                .collect(),
+        ))
 }
 
 fn remap_symbols(
@@ -547,6 +555,100 @@ mod tests {
     }
 
     #[test]
+    fn keeps_reused_test_target_aliases_scoped_to_their_test() {
+        let fixture = Fixture::new();
+        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = #root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        fixture.write("app.ice", root);
+
+        let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
+        let aliases = checked
+            .symbols()
+            .iter()
+            .filter(|symbol| symbol.kind == SymbolKind::TestTarget)
+            .collect::<Vec<_>>();
+
+        assert_eq!(aliases.len(), 3);
+        let first_root = aliases
+            .iter()
+            .find(|symbol| symbol.scope.as_deref() == Some("first") && symbol.name == "root")
+            .unwrap();
+        let second_root = aliases
+            .iter()
+            .find(|symbol| symbol.scope.as_deref() == Some("second") && symbol.name == "root")
+            .unwrap();
+        assert_eq!(first_root.definition.line, 12);
+        assert_eq!(first_root.references.len(), 2);
+        assert_eq!(second_root.definition.line, 17);
+        assert_eq!(second_root.references.len(), 1);
+        assert!(first_root.renameable);
+        assert!(second_root.renameable);
+    }
+
+    #[test]
+    fn tracks_dynamic_test_target_key_aliases_in_every_target_context() {
+        let fixture = Fixture::new();
+        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
+        fixture.write("app.ice", root);
+
+        let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
+        let key = checked
+            .symbols()
+            .iter()
+            .find(|symbol| {
+                symbol.kind == SymbolKind::TestTarget
+                    && symbol.scope.as_deref() == Some("dynamic_targets")
+                    && symbol.name == "key"
+            })
+            .unwrap();
+
+        assert_eq!(key.definition.line, 12);
+        assert_eq!(
+            key.references
+                .iter()
+                .map(|reference| reference.line)
+                .collect::<Vec<_>>(),
+            [13, 14, 15, 16]
+        );
+    }
+
+    #[test]
+    fn generated_test_locations_retain_imported_source_origins() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"tests.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n",
+        );
+        fixture.write(
+            "tests.ice",
+            "test imported\n  target root = #root\n  release\n  expect root.visible\n",
+        );
+        let root = fixture.path("app.ice");
+        let part = fixture.path("tests.ice").canonicalize().unwrap();
+
+        let checked = analyze_file_with_source(&root, &fs::read_to_string(&root).unwrap()).unwrap();
+        let release = &checked.tests[0].steps[0].span;
+        let (origin, line) = checked.source_origin(release.line).unwrap();
+        assert_eq!(origin, part);
+        assert_eq!(line, 3);
+
+        let generated = compile_file(root).unwrap().rust;
+        assert!(
+            generated.contains(&format!(
+                "Location::new({:?}, 3, 3, \"release\")",
+                part.display().to_string()
+            )),
+            "generated test did not retain the imported location:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!(
+                "Config::new(\"imported\").source(::ui_lang_runtime::testing::Location::new({:?}, 1, 1, \"test imported\"))",
+                part.display().to_string()
+            )),
+            "generated test config did not retain the imported declaration location:\n{generated}"
+        );
+    }
+
+    #[test]
     fn keeps_component_local_handlers_out_of_global_symbol_navigation() {
         let fixture = Fixture::new();
         let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle()\n  state\n    enabled = false\n  on changed(next)\n    enabled = next\n  checkbox \"Enabled\" checked=enabled -> changed _\non changed\nview\n  Toggle #toggle\n";
@@ -627,6 +729,30 @@ mod tests {
         assert_eq!(handler.name, "submit");
         assert_eq!(reference.start_column, column);
         assert!(handler.renameable);
+    }
+
+    #[test]
+    fn retains_recipe_locations_across_imports() {
+        let fixture = Fixture::new();
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        fixture.write("app.ice", root);
+        fixture.write(
+            "recipes.ice",
+            "recipe panel for box\n  @p-4 bg-surface rounded-md\n",
+        );
+
+        let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
+        let app = fixture.path("app.ice").canonicalize().unwrap();
+        let recipes = fixture.path("recipes.ice").canonicalize().unwrap();
+        let line = root.lines().nth(9).unwrap();
+        let column = line.find("panel").unwrap() + 1;
+        let (panel, reference) = checked.symbol_at(Some(&app), 10, column).unwrap();
+
+        assert_eq!(panel.kind, SymbolKind::Recipe);
+        assert_eq!(panel.name, "panel");
+        assert_eq!(panel.definition.path.as_deref(), Some(recipes.as_path()));
+        assert_eq!(panel.references.as_slice(), std::slice::from_ref(reference));
+        assert!(panel.renameable);
     }
 
     #[test]

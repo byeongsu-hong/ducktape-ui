@@ -31,9 +31,10 @@ pub(in crate::codegen) fn render_children(
                     return Err(Error::new("E121", span, "for expects a list"));
                 };
                 let items = expr_code(items, env, document, ValueMode::Borrowed)?;
+                let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
-                    " for (__ice_index, {item}) in {items}.iter().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {scope}, __ice_index);",
+                    " for (__ice_index, {item}) in {items}.iter().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
                     span.line
                 )
                 .unwrap();
@@ -47,15 +48,8 @@ pub(in crate::codegen) fn render_children(
                         state: None,
                     },
                 );
-                render_children(
-                    out,
-                    children,
-                    document,
-                    message,
-                    &child_env,
-                    "__for_scope.clone()",
-                    slot,
-                )?;
+                set_reconciliation_scope(&mut child_env, "__for_scope.clone()".into());
+                render_children(out, children, document, message, &child_env, scope, slot)?;
                 out.push_str(" }");
             }
             _ => {

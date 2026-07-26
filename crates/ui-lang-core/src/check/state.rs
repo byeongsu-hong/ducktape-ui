@@ -203,6 +203,16 @@ pub(crate) fn controlled_state_bindings(
         &mut HashSet::new(),
         &mut output,
     )?;
+    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+        collect(
+            mount,
+            document,
+            editors,
+            &env,
+            &mut HashSet::new(),
+            &mut output,
+        )?;
+    }
     Ok(output)
 }
 

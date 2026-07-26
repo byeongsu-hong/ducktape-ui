@@ -10,10 +10,12 @@ pub(in crate::check) fn infer_media_group(
     match node {
         ViewNode::Media {
             kind,
+            id,
             source,
             options,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             check_accessibility_options(&options.accessibility, env, document, span)?;
             if options.accessibility.label.is_none() && options.accessibility.description.is_some()
             {
@@ -146,11 +148,13 @@ pub(in crate::check) fn infer_media_group(
             }
         }
         ViewNode::Tooltip {
+            id,
             options,
             content,
             tip,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for (value, label) in [
                 (&options.gap, "tooltip gap"),
                 (&options.padding, "tooltip padding"),
@@ -222,10 +226,12 @@ pub(in crate::check) fn infer_media_group(
             infer_view(tip, env, document, signatures, ids)?;
         }
         ViewNode::MouseArea {
+            id,
             options,
             content,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             if let Some(interaction) = &options.interaction_expr {
                 require_type(
                     &expr_type(interaction, env, document, span)?,
@@ -272,8 +278,12 @@ pub(in crate::check) fn infer_media_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::ResizeHandle {
-            options, content, ..
+            id,
+            options,
+            content,
+            span,
         } => {
+            check_id(id, env, document, ids, span)?;
             if let Some(route) = &options.drag {
                 infer_ordered_payload_route(
                     route,
@@ -290,12 +300,14 @@ pub(in crate::check) fn infer_media_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Canvas {
+            id,
             options,
             locals,
             commands,
             events,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "canvas size")?;
             }

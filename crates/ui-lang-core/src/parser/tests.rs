@@ -56,6 +56,7 @@ fn rejects_rust_and_compiler_reserved_identifiers() {
     assert!(!SymbolKind::Handler.accepts("match"));
     assert!(!SymbolKind::Handler.accepts("_"));
     assert!(!SymbolKind::Component.accepts("Self"));
+    assert!(SymbolKind::Recipe.accepts("primary_action"));
 
     let error = parse("app Demo\nextern backend::crate\nview\n  text \"ok\"\n").unwrap_err();
     assert_eq!(error.code, "E073");
@@ -230,5 +231,7 @@ mod basics;
 mod flows;
 #[path = "tests/operations.rs"]
 mod operations;
+#[path = "tests/testing.rs"]
+mod testing;
 #[path = "tests/values.rs"]
 mod values;

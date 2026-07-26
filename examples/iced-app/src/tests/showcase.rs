@@ -91,3 +91,31 @@ fn reads_and_clears_the_editor_text() {
     assert_eq!(app.notes_text, "");
     let _ = app.__view();
 }
+
+#[test]
+fn renders_the_showcase_through_the_headless_draw_path() {
+    let (mut app, _) = Showcase::__boot();
+    app.tasks = vec![crate::backend::Task {
+        id: 1,
+        title: "Rendered task".into(),
+        done: false,
+    }];
+
+    let counts = super::draw_headlessly(
+        app.__view(),
+        &app.__theme(),
+        iced::Size::new(1600.0, 4000.0),
+    );
+    assert!(
+        counts.quads > 0,
+        "surface widgets must draw quads: {counts:?}"
+    );
+    assert!(
+        counts.primitives > 0,
+        "custom widgets must draw primitives: {counts:?}"
+    );
+    assert!(
+        counts.text > 0,
+        "text widgets must draw glyph runs: {counts:?}"
+    );
+}

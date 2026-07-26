@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn expands_semantic_recipes_before_explicit_overrides() {
+    let source = r#"app Recipes
+recipe page for col
+  w-full h-full gap-6 p-6 bg-bg
+recipe panel for box
+  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
+recipe title for text
+  text-2xl leading-tight font-bold text-fg
+theme
+  bg #101010
+  fg #f0f0f0
+  primary #336699
+  danger #cc0000
+  surface #202020
+  border #404040
+view
+  col @page
+    box p=24.0 @panel bg-danger
+      text "Recipe" @title
+"#;
+    let generated = compile(source, "recipes.ice").unwrap();
+
+    assert!(generated.contains(".spacing(24)"));
+    assert!(generated.contains(".padding(::iced::Padding { top: 24.0"));
+    assert!(
+        generated.contains(".padding(::ui_lang_runtime::bounded_padding(24.0, 24.0, 24.0, 24.0))")
+    );
+    assert!(generated.contains(".size(24)"));
+    assert!(generated.contains(".clip(true)"));
+    assert!(generated.contains("LineHeight::Relative(1.2)"));
+    assert!(generated.contains("weight: ::iced::font::Weight::Bold"));
+    assert!(generated.contains("::iced::Color::from_rgba8(204, 0, 0, 1.000000)"));
+
+    let error = compile(
+        &source.replace("box p=24.0 @panel", "box p=24.0 @page"),
+        "recipes.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E046");
+    assert!(error.message.contains("targets `col`, not `box`"));
+
+    let error = compile(
+        &source.replace(
+            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden",
+            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden\nrecipe panel for box\n  p-4 bg-surface",
+        ),
+        "recipes.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E100");
+    assert!(error.message.contains("duplicate recipe `panel`"));
+
+    let error = compile(
+        &source.replace(
+            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden",
+            "recipe panel for box\n  grid-cols-3",
+        ),
+        "recipes.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E041");
+    assert!(error.message.contains("unsupported utility `grid-cols-3`"));
+}
+
+#[test]
 fn lowers_box_and_flex_sugar_to_native_layouts() {
     let source = r#"app Layouts
 theme

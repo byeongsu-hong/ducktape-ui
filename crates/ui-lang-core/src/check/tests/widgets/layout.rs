@@ -529,20 +529,27 @@ view
   col
     grid cols=2 w=640.0 gap=12.0 h=aspect(16.0,9.0)
       text "Fixed"
-    grid fluid=240.0 h=fill(2)
-      text "Fluid"
+    grid max-cell=240.0 h=fill(2)
+      text "Maximum"
+    grid min-cell=240.0
+      text "Minimum"
 "#;
     analyze(source).unwrap();
 
-    let conflicting = source.replace("cols=2", "cols=2 fluid=240.0");
+    let conflicting = source.replace("cols=2", "cols=2 min-cell=240.0");
     let error = analyze(&conflicting).unwrap_err();
     assert_eq!(error.code, "E074");
     assert!(error.message.contains("mutually exclusive"));
 
-    let zero_fluid = source.replace("fluid=240.0", "fluid=0.0");
-    let error = analyze(&zero_fluid).unwrap_err();
+    let zero_cell = source.replace("min-cell=240.0", "min-cell=0.0");
+    let error = analyze(&zero_cell).unwrap_err();
     assert_eq!(error.code, "E128");
-    assert!(error.message.contains("grid fluid width"));
+    assert!(error.message.contains("grid minimum cell width"));
+
+    let fixed_height = source.replace("grid min-cell=240.0", "grid min-cell=240.0 h=shrink");
+    let error = analyze(&fixed_height).unwrap_err();
+    assert_eq!(error.code, "E074");
+    assert!(error.message.contains("natural row height"));
 
     let zero_aspect = source.replace("aspect(16.0,9.0)", "aspect(16.0,0.0)");
     let error = analyze(&zero_aspect).unwrap_err();

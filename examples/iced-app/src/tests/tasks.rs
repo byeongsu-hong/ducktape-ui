@@ -131,6 +131,17 @@ mod alternate_theme {
         assert!(theme.is_none() && text_color.is_none() && background.is_none());
         let _ = app.__view();
     }
+
+    #[test]
+    fn renders_the_alternate_themer_through_the_headless_draw_path() {
+        let (app, _) = AlternateThemeApp::__boot();
+        let counts = super::super::draw_headlessly(
+            app.__view(),
+            &app.__theme(),
+            iced::Size::new(320.0, 120.0),
+        );
+        assert!(counts.quads > 0 || counts.text > 0);
+    }
 }
 
 #[cfg(test)]

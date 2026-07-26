@@ -50,4 +50,15 @@ mod tests {
         );
         assert_eq!(format_source(&formatted).unwrap(), formatted);
     }
+
+    #[test]
+    fn formats_first_class_test_blocks() {
+        let source = "app Demo\nview\n    col #root\n        text \"ok\"\ntest layout\n    viewport 320 240\n    target root = #root\n    expect root.width ~= 320.0\n";
+        let formatted = format_source(source).unwrap();
+        assert_eq!(
+            formatted,
+            "app Demo\nview\n  col #root\n    text \"ok\"\ntest layout\n  viewport 320 240\n  target root = #root\n  expect root.width ~= 320.0\n"
+        );
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
+    }
 }

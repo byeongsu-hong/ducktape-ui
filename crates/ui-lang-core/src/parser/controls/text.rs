@@ -8,9 +8,12 @@ pub(in crate::parser) fn parse_text(
     let value = parts
         .get(1)
         .ok_or_else(|| error("E063", line, "text expects one expression before `@`"))?;
+    let mut id = None;
     let mut options = TextOptions::default();
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E063", "text")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
             options.height = Some(parse_length(value, line)?);
@@ -53,6 +56,7 @@ pub(in crate::parser) fn parse_text(
     ensure_leaf(line)?;
     Ok(ViewNode::Text {
         value: parse_expr(value, line)?,
+        id,
         options,
         styles,
         span: Span::line(line.number),
@@ -65,10 +69,13 @@ pub(in crate::parser) fn parse_rich_text(
     route_source: Option<&str>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
+    let mut id = None;
     let mut options = TextOptions::default();
     let mut color = None;
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E186", "rich-text")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
             options.height = Some(parse_length(value, line)?);
@@ -114,6 +121,7 @@ pub(in crate::parser) fn parse_rich_text(
         .map(parse_rich_span)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ViewNode::RichText {
+        id,
         options,
         color,
         spans,

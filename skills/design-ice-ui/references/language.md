@@ -2,7 +2,7 @@
 
 Use this reference for the source model, declarations, types, expressions,
 state, handlers, routes, and components. The repository implements language
-revision 1.61; package version `0.1.0` and Iced version `0.14.x` are separate
+revision 1.63; package version `0.1.0` and Iced version `0.14.x` are separate
 version axes.
 
 ## Contents
@@ -16,6 +16,7 @@ version axes.
 - [Handlers, routes, and effects](#handlers-routes-and-effects)
 - [Components and slots](#components-and-slots)
 - [Control flow and identity](#control-flow-and-identity)
+- [First-class tests](#first-class-tests)
 - [Common invalid translations](#common-invalid-translations)
 
 ## Program model
@@ -76,6 +77,7 @@ app | daemon
 use
 extern
 theme
+recipe
 font / qr
 state
 preset
@@ -83,11 +85,12 @@ component
 on
 subscribe
 view
+test
 ```
 
 A source graph has exactly one app/daemon root and one view. Declarations from
 all imports share one checked namespace. Imported fragments cannot declare a
-second app or view.
+second app or view, but may declare graph-unique tests.
 
 ## Minimal application
 
@@ -489,7 +492,37 @@ box #task(task.id)
 ```
 
 Use IDs for widget operations, component-local state identity, panes, and
-accessibility routing. Do not use DOM selectors or assume global uniqueness.
+accessibility routing. Every concrete rendered built-in accepts a direct ID.
+Do not use DOM selectors or assume global uniqueness. A component call ID
+introduces a scope, not a synthetic rendered box; select an identified
+descendant for layout tests.
+
+## First-class tests
+
+Declare generated behavior tests in the same source graph:
+
+```ice
+test counter_contract
+  viewport 320 240
+  mount
+    Counter #counter
+  target root = #counter/root
+  target increment = #counter/increment
+  expect root.width ~= 240.0
+  click increment
+  expect text "1" within root
+```
+
+Optional `preset`, `viewport`, `timeout`, `mount`, and `target` declarations
+must precede actions. Target aliases are scoped to one test and may be reused
+in another. Actions drive the real rendered widgets and generated update/task/
+subscription path. Assertions can read app state, exact visible text/input
+content, post-layout geometry, and structured paint fields. Rust externs are
+real; deterministic variants belong behind a preset or `cfg(test)`, not an Ice
+mock. Finite tasks settle before the next step; subscriptions are re-established
+around simulated events, while intentionally infinite timer/I/O subscriptions
+are sampled rather than awaited to global quiescence. Run `cargo ice test`;
+ordinary Cargo discovers the same generated tests.
 
 ## Common invalid translations
 

@@ -21,9 +21,12 @@ pub(in crate::parser) fn parse_combo_box(
         ));
     }
     let route = route_source.ok_or_else(|| error("E088", line, "combo requires `-> handler _`"))?;
+    let mut id = None;
     let mut options = ComboBoxOptions::default();
     for part in &parts[4..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E088", "combo")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("menu-h=") {
             options.menu_height = Some(parse_length(value, line)?);
@@ -72,6 +75,7 @@ pub(in crate::parser) fn parse_combo_box(
     }
     Ok(ViewNode::ComboBox {
         state: identifier(&parts[1], line)?,
+        id,
         selected: parse_expr(&parts[2], line)?,
         placeholder: string_literal(&parts[3], line)?,
         options,
@@ -254,9 +258,12 @@ pub(in crate::parser) fn parse_pick_list(
         ));
     }
     let route = route_source.ok_or_else(|| error("E087", line, "pick requires `-> handler _`"))?;
+    let mut id = None;
     let mut config = PickListOptions::default();
     for part in &parts[3..] {
-        if let Some(value) = part.strip_prefix("hint=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E087", "pick")?;
+        } else if let Some(value) = part.strip_prefix("hint=") {
             config.placeholder = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("w=") {
             config.width = Some(parse_length(value, line)?);
@@ -303,6 +310,7 @@ pub(in crate::parser) fn parse_pick_list(
     }
     Ok(ViewNode::PickList {
         options: parse_expr(&parts[1], line)?,
+        id,
         selected: parse_expr(&parts[2], line)?,
         options_config: config,
         route: parse_route(route.trim(), line)?,

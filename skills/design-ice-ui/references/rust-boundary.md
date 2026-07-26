@@ -389,7 +389,7 @@ extern crate::backend
   component native_help(active:bool) -> bool
 
 view
-  extern native_help(help_open) -> help_changed _
+  extern native_help(help_open) #help -> help_changed _
 ```
 
 Rust:
@@ -402,8 +402,9 @@ pub fn native_help(active: bool) -> iced::Element<'static, bool> {
 }
 ```
 
-Extern components own their native style and reject `@` utilities and `#` IDs.
-Their declared output controls whether a route is required.
+Extern components own their native style and reject `@` utilities. A direct
+`#id` identifies the bounds of the returned native element for first-class
+tests. Their declared output controls whether a route is required.
 
 Read the exact Rust signatures in `SPEC.md` section 5 and copy the nearest
 fixture. Generated probes are the final compatibility check.
@@ -437,16 +438,19 @@ Normal feature work usually needs only `cargo ice check` and focused tests.
 
 ## Testing
 
-Use Rust's built-in test runner; do not invent an Ice test framework.
-
-Application behavior tests can instantiate the generated app/preset and drive
-messages through Iced's test support. Follow:
+Application behavior uses first-class top-level Ice `test` declarations. They
+compile to Rust's built-in test runner, so no Rust registration or separate
+case grammar is needed. Follow:
 
 ```text
-examples/iced-app/src/tests/
-examples/iced-app/src/tests.rs
-examples/iced-app/src/ui/*.ice
+examples/iced-app/src/ui/component_state.ice
+examples/showcase/src/ui/showcase.ice
 ```
+
+Use named presets or Rust `cfg(test)` implementations when extern behavior must
+be deterministic. The Ice test still calls the real typed Rust boundary; there
+is no DSL mock layer. Run `cargo ice test`, or the narrow package's ordinary
+Cargo tests.
 
 Compiler fixtures are auto-discovered:
 
@@ -467,7 +471,7 @@ When changing an app:
 
 1. Run `cargo ice fmt --check`.
 2. Run `cargo ice check`.
-3. Run the narrow package/test target covering the behavior.
+3. Run `cargo ice test` or the narrow package/test target covering the behavior.
 
 When changing the language implementation, run the `ui-lang-core` suite and
 the relevant app compilation/tests.

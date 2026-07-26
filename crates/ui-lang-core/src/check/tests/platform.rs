@@ -414,6 +414,24 @@ fn checks_widget_selectors() {
 }
 
 #[test]
+fn rejects_comparisons_of_widget_selector_targets() {
+    let source = example!("widget_selectors.ice")
+        .replace(
+            "  found_x:f64? = none",
+            "  found_x:f64? = none\n  same = false",
+        )
+        .replace(
+            "on find_id",
+            "on compare_targets\n  same = found == found\n\non find_id",
+        );
+    let failure = analyze(&source).unwrap_err();
+
+    assert_eq!(failure.code, "E153");
+    assert!(failure.message.contains("target values"));
+    assert!(failure.message.contains("explicit field"));
+}
+
+#[test]
 fn rejects_events_routed_to_mount() {
     let source = r#"app Demo
 theme

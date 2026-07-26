@@ -41,10 +41,12 @@ pub(in crate::check) fn infer_documents_group(
             item,
             items,
             key,
+            id,
             options,
             child,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let Type::List(inner) = expr_type(items, env, document, span)? else {
                 return Err(Error::new("E138", span, "keyed expects a list expression"));
             };
@@ -82,9 +84,11 @@ pub(in crate::check) fn infer_documents_group(
         ViewNode::Lazy {
             dependency,
             binding,
+            id,
             child,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let dependency_type = expr_type(dependency, env, document, span)?;
             if !lazy_hashable(&dependency_type) {
                 return Err(Error::new(
@@ -104,10 +108,12 @@ pub(in crate::check) fn infer_documents_group(
         }
         ViewNode::Markdown {
             content,
+            id,
             options,
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let content_type = env.get(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
             })?;
@@ -225,10 +231,12 @@ pub(in crate::check) fn infer_documents_group(
         ViewNode::Table {
             item,
             rows,
+            id,
             options,
             columns,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let Type::List(inner) = expr_type(rows, env, document, span)? else {
                 return Err(Error::new("E139", span, "table expects a list of rows"));
             };

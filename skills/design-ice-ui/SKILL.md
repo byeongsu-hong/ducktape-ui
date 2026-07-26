@@ -33,6 +33,12 @@ Apply these rules before editing:
   behind typed `sync` or async extern functions instead of embedding Rust.
 - Prefer Core constructs. Use an existing typed Rust adapter for unusual native
   behavior; do not extend the DSL merely to mirror another Iced method.
+- When `ducktape-ui` is available, import its `default.ice` interface once and
+  reuse its checked components and recipes before declaring local equivalents.
+  Use compound variants such as `Alert.Success` and `Badge.Secondary`; do not
+  replace them with free-form variant strings. Do not import its showcase
+  adapter interface into an application; define a typed Rust boundary for
+  product-specific retained widgets.
 - Preserve accessibility: label child-content buttons, label meaningful images,
   never expose secure-input values, and keep source order meaningful.
 
@@ -68,11 +74,16 @@ refactoring `.ice`. Read the other references only when their scope is involved:
 In this repository, start with:
 
 ```text
+crates/ui/src/ice/default.ice            canonical design-system import
+crates/ui/src/ice/components.ice         shared structural components and variants
+crates/ui/src/ice/recipes.ice            shared semantic visual roles
+examples/showcase/src/ui/showcase.ice    catalog and first-class behavior test
 examples/iced-app/src/ui/tasks.ice       readable app root
 examples/iced-app/src/ui/extern/         production and test extern declarations
 examples/iced-app/src/ui/components/     component and slot patterns
 examples/iced-app/src/ui/handlers/       state transitions and effects
-examples/iced-app/src/ui/showcase.ice    extended widget surface
+examples/iced-app/src/ui/component_state.ice  layout, paint, and interaction tests
+examples/iced-app/src/ui/showcase.ice    language widget surface
 examples/iced-app/src/ui/*.ice           focused native fixtures
 examples/apple-music/src/ui/music.ice    complete product-style application
 SPEC.md                                  implemented language revision
@@ -116,6 +127,7 @@ component
 on
 subscribe
 view
+test
 ```
 
 Use one `app` or `daemon` and one `view` across the graph. Split files by
@@ -141,13 +153,25 @@ After a meaningful edit:
 2. Run `cargo ice fmt` to format Rust and every discovered `.ice` file.
 3. Run `cargo ice check` to analyze every app graph and let rustc verify extern
    paths, signatures, generated types, and Cargo features.
-4. Run the narrow relevant Rust test or fixture suite.
-5. Run `cargo ice compat` only when changing backend versions, runtime
+4. Run `cargo ice test` when changing first-class tests or behavior they cover;
+   ordinary Cargo discovers the same generated tests.
+5. Run the narrow relevant Rust test or fixture suite.
+6. Run `cargo ice compat` only when changing backend versions, runtime
    dependencies, compatibility contracts, accessibility bridges, or the
    reference app integration.
 
 Use `cargo ice expand path/to/app.ice` only to diagnose lowering or Rust errors.
 Never edit generated Rust.
+
+For end-to-end generated-app or component behavior, write a top-level Ice
+`test` in the app graph. Use `preset`, `viewport`, or a one-root `mount` for
+setup; declare `target` aliases for rendered descendant IDs; then drive widgets
+and assert app state, exact text, input values, computed bounds, or structured
+paint fields. A component call ID is only an identity scope, so target an
+identified rendered descendant such as `#card/root`. `cargo ice test` checks
+the source graphs and runs the generated tests. Do not register Rust wrappers,
+add a second case format, or mock Rust externs in Ice; deterministic extern
+behavior belongs behind `cfg(test)` or a named preset.
 
 If `cargo ice` is unavailable, inspect `.cargo/config.toml`. In this repository
 it is a local Cargo alias for the `cargo-ice` workspace binary; run commands

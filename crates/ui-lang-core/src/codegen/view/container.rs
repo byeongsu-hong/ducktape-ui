@@ -37,6 +37,9 @@ pub(in crate::codegen) fn render_container(
     if let Some(max_width) = style.max_width {
         write!(code, ".max_width({max_width})").unwrap();
     }
+    if style.clip {
+        code.push_str(".clip(true)");
+    }
     if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
         write!(code, ".padding({padding})").unwrap();
     }
@@ -93,12 +96,13 @@ pub(in crate::codegen) fn render_container(
         code
     };
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {code}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {code}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
     ))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_overlay(
+    id: &Option<Id>,
     options: &OverlayOptions,
     content: &ViewNode,
     layer: &ViewNode,
@@ -108,8 +112,9 @@ pub(in crate::codegen) fn render_overlay(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let content = render_node(content, document, message, env, scope, slot)?;
-    let layer = render_node(layer, document, message, env, scope, slot)?;
+    let child_scope = rendered_child_scope(id.as_ref(), scope, env, document)?;
+    let content = render_node(content, document, message, env, &child_scope, slot)?;
+    let layer = render_node(layer, document, message, env, &child_scope, slot)?;
     let visible = expr_code(&options.visible, env, document, ValueMode::Owned)?;
     let padding = expr_code(&options.padding, env, document, ValueMode::Owned)?;
     let backdrop = theme_color(document, &options.backdrop);
@@ -128,13 +133,15 @@ pub(in crate::codegen) fn render_overlay(
         FlexAlignment::End => "Bottom",
     };
     let noop = format!("{message}::__ExternNoop");
-    Ok(format!(
+    let rendered = format!(
         "{{ let __overlay_base: __IceElement<'_, {message}> = {content}; if {visible} {{ let __overlay_layer: __IceElement<'_, {message}> = {layer}; let __overlay_backdrop = ::iced::widget::container(::iced::widget::space()).width(::iced::Fill).height(::iced::Fill).style(|_| ::iced::widget::container::Style {{ background: ::std::option::Option::Some(::iced::Background::Color({backdrop})), ..::iced::widget::container::Style::default() }}); let __overlay_backdrop: __IceElement<'_, {message}> = ::iced::widget::mouse_area(__overlay_backdrop).on_press({dismiss}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}).into(); let __overlay_panel = ::iced::widget::mouse_area(__overlay_layer).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}); let __overlay_panel: __IceElement<'_, {message}> = ::iced::widget::container(__overlay_panel).width(::iced::Fill).height(::iced::Fill).padding({padding} as f32).align_x(::iced::alignment::Horizontal::{align_x}).align_y(::iced::alignment::Vertical::{align_y}).into(); let __overlay_surface: __IceElement<'_, {message}> = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_backdrop).push(__overlay_panel).into(); ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base).push(::iced::widget::float(__overlay_surface).translate(|_, _| ::iced::Vector::new(::core::f32::EPSILON, 0.0))).into() }} else {{ __overlay_base }} }}"
-    ))
+    );
+    identify_rendered(rendered, id.as_ref(), message, env, document, scope)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_rich_text(
+    id: &Option<Id>,
     options: &TextOptions,
     color: &Option<String>,
     spans: &[RichSpan],
@@ -143,6 +150,7 @@ pub(in crate::codegen) fn render_rich_text(
     document: &Document,
     message: &str,
     env: &HashMap<String, Binding>,
+    scope: &str,
 ) -> Result<String, Error> {
     let spans = spans
         .iter()
@@ -159,7 +167,14 @@ pub(in crate::codegen) fn render_rich_text(
         let callback = route_callback_code(route, "__link", "__link", env, document, message)?;
         write!(code, ".on_link_click({callback})").unwrap();
     }
-    Ok(format!(
+    let rendered = format!(
         "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{spans}]; {code}.into() }}"
+    );
+    let Some(id) = id else {
+        return Ok(rendered);
+    };
+    let id = id_code(id, scope, env, document)?;
+    Ok(format!(
+        "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).into() }}"
     ))
 }

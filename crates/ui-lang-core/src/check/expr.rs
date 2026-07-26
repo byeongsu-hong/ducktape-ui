@@ -1923,6 +1923,13 @@ pub(crate) fn expr_type(
                             "window-screenshot values do not support comparisons",
                         ));
                     }
+                    if contains_target(&left) || contains_target(&right) {
+                        return Err(Error::new(
+                            "E153",
+                            span,
+                            "target values do not support comparisons; compare an explicit field such as `.kind` or `.width` instead",
+                        ));
+                    }
                     if matches!(
                         left,
                         Type::WindowPosition | Type::WindowDirection | Type::WindowAttention

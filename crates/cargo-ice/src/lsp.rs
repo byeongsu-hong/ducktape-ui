@@ -19,7 +19,7 @@ struct Navigation {
     symbol: ui_lang_core::CheckedSymbol,
     family: Vec<ui_lang_core::CheckedSymbol>,
     occurrence: ui_lang_core::SourceRange,
-    declarations: Vec<(ui_lang_core::SymbolKind, String)>,
+    declarations: Vec<(ui_lang_core::SymbolKind, Option<String>, String)>,
     root_uri: String,
 }
 
@@ -49,8 +49,9 @@ impl Navigation {
         self.family.iter().any(|symbol| {
             let renamed = self.family_name(&symbol.name, new_name);
             renamed != symbol.name
-                && self.declarations.iter().any(|(kind, name)| {
+                && self.declarations.iter().any(|(kind, scope, name)| {
                     *kind == self.symbol.kind
+                        && scope == &self.symbol.scope
                         && name == &renamed
                         && !family.contains(&name.as_str())
                 })
@@ -63,6 +64,19 @@ fn same_component_family(root: &str, name: &str) -> bool {
         || name
             .strip_prefix(root)
             .is_some_and(|suffix| suffix.starts_with('.'))
+}
+
+fn same_navigation_family(
+    symbol: &ui_lang_core::CheckedSymbol,
+    candidate: &ui_lang_core::CheckedSymbol,
+) -> bool {
+    candidate.kind == symbol.kind
+        && candidate.scope == symbol.scope
+        && (candidate.name == symbol.name
+            || symbol.kind == ui_lang_core::SymbolKind::Component
+                && same_component_family(&symbol.name, &candidate.name))
+        && (symbol.kind != ui_lang_core::SymbolKind::TestTarget
+            || candidate.definition == symbol.definition)
 }
 
 pub fn run_stdio() -> Result<(), String> {
@@ -534,12 +548,7 @@ fn navigation_at(
         let family = checked
             .symbols()
             .iter()
-            .filter(|candidate| {
-                candidate.kind == symbol.kind
-                    && (candidate.name == symbol.name
-                        || symbol.kind == ui_lang_core::SymbolKind::Component
-                            && same_component_family(&symbol.name, &candidate.name))
-            })
+            .filter(|candidate| same_navigation_family(symbol, candidate))
             .cloned()
             .collect();
         Some(Navigation {
@@ -549,7 +558,7 @@ fn navigation_at(
             declarations: checked
                 .symbols()
                 .iter()
-                .map(|symbol| (symbol.kind, symbol.name.clone()))
+                .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone()))
                 .collect(),
             root_uri: (*root_uri).clone(),
         })
@@ -583,6 +592,7 @@ fn navigation_at(
         }
         let Some(symbol) = checked.symbols().iter().find(|symbol| {
             symbol.kind == navigation.symbol.kind
+                && symbol.scope == navigation.symbol.scope
                 && symbol.name == navigation.symbol.name
                 && symbol.definition == navigation.symbol.definition
         }) else {
@@ -594,12 +604,11 @@ fn navigation_at(
                 navigation.symbol.references.push(reference.clone());
             }
         }
-        for candidate in checked.symbols().iter().filter(|candidate| {
-            candidate.kind == navigation.symbol.kind
-                && (candidate.name == navigation.symbol.name
-                    || navigation.symbol.kind == ui_lang_core::SymbolKind::Component
-                        && same_component_family(&navigation.symbol.name, &candidate.name))
-        }) {
+        for candidate in checked
+            .symbols()
+            .iter()
+            .filter(|candidate| same_navigation_family(&navigation.symbol, candidate))
+        {
             if let Some(existing) = navigation.family.iter_mut().find(|existing| {
                 existing.name == candidate.name && existing.definition == candidate.definition
             }) {
@@ -613,13 +622,15 @@ fn navigation_at(
                 navigation.family.push(candidate.clone());
             }
         }
-        for declaration in checked
-            .symbols()
-            .iter()
-            .map(|symbol| (symbol.kind, symbol.name.clone()))
-        {
-            if !navigation.declarations.contains(&declaration) {
-                navigation.declarations.push(declaration);
+        if navigation.symbol.kind != ui_lang_core::SymbolKind::TestTarget {
+            for declaration in checked
+                .symbols()
+                .iter()
+                .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone()))
+            {
+                if !navigation.declarations.contains(&declaration) {
+                    navigation.declarations.push(declaration);
+                }
             }
         }
     }
@@ -1653,6 +1664,199 @@ mod tests {
     }
 
     #[test]
+    fn completes_first_class_test_mode_from_the_schema() {
+        let uri = "file:///tmp/tests.ice";
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/completion",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 0, "character": 0 } },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        let items = response(&messages, 2)["result"].as_array().unwrap();
+        let completion = |label| {
+            items
+                .iter()
+                .find(|item| item["label"] == label)
+                .unwrap_or_else(|| panic!("missing `{label}` completion"))
+        };
+        assert_eq!(completion("test")["insertText"], "test ${1:name}\n  $0");
+        assert_eq!(
+            completion("target")["insertText"],
+            "target ${1:name} = #${2:id}"
+        );
+        assert_eq!(completion("expect")["insertText"], "expect ${1:condition}");
+        for label in [
+            "preset", "viewport", "timeout", "mount", "click", "hover", "press", "release", "type",
+            "key", "resize", "dispatch", "~=",
+        ] {
+            assert_eq!(completion(label)["insertTextFormat"], 2, "{label}");
+        }
+        for label in crate::schema::document()["core"]["testMode"]["targets"]["directIdNodes"]
+            .as_array()
+            .unwrap()
+        {
+            assert_eq!(
+                completion(label.as_str().unwrap())["insertTextFormat"],
+                2,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn defines_and_renames_handlers_referenced_by_tests() {
+        let uri = "file:///tmp/test-navigation.ice";
+        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  count = 0\non increment\n  count = count + 1\nview\n  text count\ntest dispatches\n  dispatch increment\n";
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": uri, "text": source } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 12 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 12 }, "newName": "bump" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(response(&messages, 2)["result"]["uri"], uri);
+        assert_eq!(
+            response(&messages, 2)["result"]["range"]["start"],
+            json!({ "line": 8, "character": 3 })
+        );
+        let edits = response(&messages, 3)["result"]["changes"][uri]
+            .as_array()
+            .unwrap();
+        assert_eq!(edits.len(), 2);
+        assert!(edits.iter().all(|edit| edit["newText"] == "bump"));
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [8, 13]
+        );
+    }
+
+    #[test]
+    fn test_target_rename_stays_inside_one_test_scope() {
+        let uri = "file:///tmp/test-target-navigation.ice";
+        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = #root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": uri, "text": source } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 }, "newName": "surface" },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 }, "newName": "action" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            response(&messages, 2)["result"]["range"]["start"],
+            json!({ "line": 11, "character": 9 })
+        );
+        let edits = response(&messages, 3)["result"]["changes"][uri]
+            .as_array()
+            .unwrap();
+        assert_eq!(edits.len(), 3);
+        assert!(edits.iter().all(|edit| edit["newText"] == "surface"));
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [11, 13, 13]
+        );
+        assert_eq!(response(&messages, 4)["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn defines_and_renames_test_aliases_inside_dynamic_target_keys() {
+        let uri = "file:///tmp/test-target-key-navigation.ice";
+        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": uri, "text": source } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 12, "character": 28 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 12, "character": 28 }, "newName": "lookup" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            response(&messages, 2)["result"]["range"]["start"],
+            json!({ "line": 11, "character": 9 })
+        );
+        let edits = response(&messages, 3)["result"]["changes"][uri]
+            .as_array()
+            .unwrap();
+        assert_eq!(edits.len(), 5);
+        assert!(edits.iter().all(|edit| edit["newText"] == "lookup"));
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [11, 12, 13, 14, 15]
+        );
+    }
+
+    #[test]
     fn defines_and_safely_renames_checked_symbols_across_imports() {
         let fixture = Fixture::new();
         let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
@@ -1800,6 +2004,57 @@ mod tests {
         assert_eq!(response(&messages, 10)["result"], Value::Null);
         assert_eq!(response(&messages, 11)["error"]["code"], -32602);
         assert_eq!(response(&messages, 12)["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn defines_and_renames_imported_style_recipes() {
+        let fixture = Fixture::new();
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        let recipes = "recipe panel for box\n  @p-4 bg-surface rounded-md\n";
+        fixture.write("app.ice", root);
+        fixture.write("recipes.ice", recipes);
+        let root_uri = file_path_uri(&fixture.path("app.ice"));
+        let recipe_uri = file_path_uri(&fixture.path("recipes.ice"));
+        let workspace_uri = file_path_uri(&fixture.0);
+
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": root_uri, "text": root } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": recipe_uri, "text": recipes } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 }, "newName": "surface_panel" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(response(&messages, 2)["result"]["uri"], recipe_uri);
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&root_uri][0]["newText"],
+            "surface_panel"
+        );
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&recipe_uri][0]["newText"],
+            "surface_panel"
+        );
     }
 
     #[test]
@@ -2198,6 +2453,7 @@ mod tests {
         };
         let symbol = ui_lang_core::CheckedSymbol {
             kind: ui_lang_core::SymbolKind::Component,
+            scope: None,
             name: "Card".to_owned(),
             definition: definition.clone(),
             references: Vec::new(),

@@ -7,6 +7,7 @@ use std::rc::Rc;
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedSymbol {
     pub kind: SymbolKind,
+    pub scope: Option<String>,
     pub name: String,
     pub definition: bool,
     pub range: Option<SourceRange>,
@@ -24,6 +25,17 @@ struct Line {
 
 impl Line {
     fn record_symbol(&self, kind: SymbolKind, name: &str, definition: bool, source: &str) {
+        self.record_scoped_symbol(kind, None, name, definition, source);
+    }
+
+    fn record_scoped_symbol(
+        &self,
+        kind: SymbolKind,
+        scope: Option<&str>,
+        name: &str,
+        definition: bool,
+        source: &str,
+    ) {
         if !self.track_symbols {
             return;
         }
@@ -76,6 +88,7 @@ impl Line {
             });
         self.symbols.borrow_mut().push(ParsedSymbol {
             kind,
+            scope: scope.map(str::to_owned),
             name: name.to_owned(),
             definition,
             range,
@@ -94,6 +107,7 @@ impl Line {
         });
         self.symbols.borrow_mut().push(ParsedSymbol {
             kind: SymbolKind::Component,
+            scope: None,
             name: name.to_owned(),
             definition: false,
             range,
@@ -206,6 +220,54 @@ fn parse_extern_call(
     })
 }
 
+fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
+    let parts = split_words(source);
+    let [name, separator, target] = parts.as_slice() else {
+        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+    };
+    if separator != "for" {
+        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+    }
+    if line.children.is_empty() {
+        return Err(error("E046", line, "recipe requires at least one utility"));
+    }
+    let target = match target.as_str() {
+        "col" => StyleRecipeTarget::Column,
+        "row" => StyleRecipeTarget::Row,
+        "flex" => StyleRecipeTarget::Flex,
+        "grid" => StyleRecipeTarget::Grid,
+        "stack" => StyleRecipeTarget::Stack,
+        "box" => StyleRecipeTarget::Container,
+        "text" => StyleRecipeTarget::Text,
+        "input" => StyleRecipeTarget::Input,
+        "button" => StyleRecipeTarget::Button,
+        _ => {
+            return Err(error(
+                "E046",
+                line,
+                "recipe target must be col, row, flex, grid, stack, box, text, input, or button",
+            ));
+        }
+    };
+    let mut utilities = Vec::new();
+    for child in &line.children {
+        ensure_leaf(child)?;
+        let source = child.text.strip_prefix('@').unwrap_or(&child.text);
+        utilities.extend(source.split_ascii_whitespace().map(str::to_owned));
+    }
+    if utilities.is_empty() {
+        return Err(error("E046", line, "recipe requires at least one utility"));
+    }
+    let name = identifier(name, line)?;
+    line.record_symbol(SymbolKind::Recipe, &name, true, source);
+    Ok(StyleRecipe {
+        name,
+        target,
+        utilities,
+        span: Span::line(line.number),
+    })
+}
+
 pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSymbol>), Error> {
     let symbols = Rc::new(RefCell::new(Vec::new()));
     let lines = line_tree(source, Rc::clone(&symbols))?;
@@ -213,6 +275,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let mut daemon = false;
     let mut settings = AppSettings::default();
     let mut presets = Vec::new();
+    let mut recipes = Vec::new();
     let mut structs = Vec::new();
     let mut functions = Vec::new();
     let mut subscriptions = Vec::new();
@@ -222,6 +285,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let mut states = Vec::new();
     let mut components = Vec::new();
     let mut handlers = Vec::new();
+    let mut tests = Vec::new();
     let mut view = None;
 
     for line in &lines {
@@ -250,6 +314,8 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
                 .hint("declare a named `window name` and open it with `task window open name -> handler _`"));
             }
             daemon = is_daemon;
+        } else if let Some(source) = line.text.strip_prefix("recipe ") {
+            recipes.push(parse_style_recipe(source, line)?);
         } else if let Some(name) = line.text.strip_prefix("preset ") {
             presets.push(parse_preset(name.trim(), line)?);
         } else if let Some(path) = line.text.strip_prefix("extern ") {
@@ -477,6 +543,11 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
             components.push(parse_component(header, line)?);
         } else if let Some(header) = line.text.strip_prefix("on ") {
             handlers.push(parse_handler(header, line)?);
+        } else if line.text == "test" || line.text.starts_with("test ") {
+            tests.push(parse_test_decl(
+                line.text.strip_prefix("test").unwrap().trim(),
+                line,
+            )?);
         } else if line.text == "subscribe" {
             subscriptions.extend(
                 line.children
@@ -551,6 +622,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
         daemon,
         settings,
         presets,
+        recipes,
         structs,
         functions,
         subscriptions,
@@ -560,6 +632,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
         states,
         components,
         handlers,
+        tests,
         view: view.ok_or_else(|| Error::new("E008", &span, "missing `view` block"))?,
     };
     Ok((document, symbols.borrow().clone()))
@@ -572,6 +645,7 @@ mod expression;
 mod settings;
 mod statement;
 pub(crate) mod syntax;
+mod testing;
 pub(crate) mod view;
 
 use canvas::*;
@@ -581,6 +655,7 @@ use expression::*;
 use settings::*;
 use statement::*;
 use syntax::*;
+use testing::*;
 use view::*;
 
 #[cfg(test)]

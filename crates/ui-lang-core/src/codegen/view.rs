@@ -1,5 +1,34 @@
 use super::*;
 
+pub(super) fn identify_rendered(
+    rendered: String,
+    id: Option<&Id>,
+    message: &str,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+    scope: &str,
+) -> Result<String, Error> {
+    let Some(id) = id else {
+        return Ok(rendered);
+    };
+    let id = id_code(id, scope, env, document)?;
+    Ok(format!(
+        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; ::iced::widget::container(__identified).id(::iced::widget::Id::from({id})).into() }}"
+    ))
+}
+
+pub(super) fn rendered_child_scope(
+    id: Option<&Id>,
+    scope: &str,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+) -> Result<String, Error> {
+    id.map_or_else(
+        || Ok(scope.to_owned()),
+        |id| id_code(id, scope, env, document),
+    )
+}
+
 pub(in crate::codegen) fn render_node(
     node: &ViewNode,
     document: &Document,

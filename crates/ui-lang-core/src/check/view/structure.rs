@@ -9,6 +9,7 @@ pub(in crate::check) fn infer_structure_group(
 ) -> Result<bool, Error> {
     match node {
         ViewNode::Theme {
+            id,
             preset,
             text,
             background,
@@ -16,6 +17,7 @@ pub(in crate::check) fn infer_structure_group(
             span,
             ..
         } => {
+            check_id(id, env, document, ids, span)?;
             if let ThemePreset::Factory(factory) = preset {
                 let function =
                     extern_function(document, &factory.function, ExternKind::Theme, span)?;
@@ -37,6 +39,7 @@ pub(in crate::check) fn infer_structure_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Float {
+            id,
             scale,
             x,
             y,
@@ -44,6 +47,7 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             require_type(&expr_type(scale, env, document, span)?, &Type::F64, span)?;
             let mut translate_env = env.clone();
             for name in [
@@ -66,6 +70,7 @@ pub(in crate::check) fn infer_structure_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Pin {
+            id,
             width,
             height,
             x,
@@ -73,6 +78,7 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for value in [x, y] {
                 require_f32_value(value, env, document, "pin position", span)?;
             }
@@ -82,10 +88,12 @@ pub(in crate::check) fn infer_structure_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Sensor {
+            id,
             options,
             content,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for (route, label) in [(&options.show, "show"), (&options.resize, "resize")]
                 .into_iter()
                 .filter_map(|(route, label)| route.as_ref().map(|route| (route, label)))
@@ -132,11 +140,13 @@ pub(in crate::check) fn infer_structure_group(
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Responsive {
+            id,
             content,
             width,
             height,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for length in [width, height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "responsive size")?;
             }

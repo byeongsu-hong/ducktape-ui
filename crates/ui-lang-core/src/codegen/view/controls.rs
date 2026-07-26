@@ -8,6 +8,15 @@ pub(in crate::codegen) fn render_controls(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
+    let id = match node {
+        ViewNode::Toggler { id, .. }
+        | ViewNode::Slider { id, .. }
+        | ViewNode::Progress { id, .. }
+        | ViewNode::Radio { id, .. }
+        | ViewNode::PickList { id, .. }
+        | ViewNode::ComboBox { id, .. } => id.as_ref(),
+        _ => None,
+    };
     let rendered = match node {
         ViewNode::Button {
             label,
@@ -90,7 +99,7 @@ pub(in crate::codegen) fn render_controls(
             );
             code.push_str(&button_style_code(&style, &options.style, env, document)?);
             Ok(format!(
-                "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+                "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
         }
         ViewNode::Checkbox {
@@ -133,7 +142,7 @@ pub(in crate::codegen) fn render_controls(
             .unwrap();
             code.push_str(&checkbox_style_code(style, env, document)?);
             Ok(format!(
-                "{code}; ::ui_lang_runtime::accessible(__checkbox, __a11y_id, ::ui_lang_runtime::Role::CheckBox).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+                "{code}; ::ui_lang_runtime::accessible(__checkbox, __a11y_id, ::ui_lang_runtime::Role::CheckBox).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
         }
         ViewNode::Toggler {
@@ -369,6 +378,7 @@ pub(in crate::codegen) fn render_controls(
             options,
             route,
             span,
+            ..
         } => {
             let state = env.get(state).ok_or_else(|| {
                 Error::new("E150", span, format!("unknown combo state `{state}`"))
@@ -481,5 +491,6 @@ pub(in crate::codegen) fn render_controls(
         }
         _ => return Ok(None),
     }?;
+    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
 }

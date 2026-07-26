@@ -70,6 +70,44 @@ mod component_state {
     ui_lang::include_app!("src/ui/component_state.ice");
 
     #[test]
+    fn selects_pick_list_option_through_rendered_overlay() {
+        let (mut app, _) = ComponentState::__boot();
+        let viewport = iced::Size::new(1800.0, 1200.0);
+        let mut screen =
+            iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
+        let pick = screen
+            .find(iced_test::selector::id(
+                "ComponentState/interactions/root/pick",
+            ))
+            .expect("pick")
+            .bounds();
+        screen.point_at(iced::Point::new(pick.x + 10.0, pick.center_y()));
+        screen
+            .simulate(iced_test::simulator::click())
+            .into_iter()
+            .find(|status| *status == iced::event::Status::Captured)
+            .expect("pick must capture its opening click");
+
+        let option = iced::Point::new(pick.center_x(), pick.y + pick.height + 10.0);
+        screen.point_at(option);
+        screen
+            .simulate([iced::Event::Touch(iced::touch::Event::FingerPressed {
+                id: iced::touch::Finger(0),
+                position: option,
+            })])
+            .into_iter()
+            .find(|status| *status == iced::event::Status::Captured)
+            .expect("pick option must capture its click");
+        for message in screen.into_messages() {
+            let _ = app.__update(message);
+        }
+
+        iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view())
+            .find("pick routed")
+            .expect("selected pick option rerender");
+    }
+
+    #[test]
     fn keeps_component_instances_isolated() {
         let (mut app, _) = ComponentState::__boot();
         let _ = app.__update(__ComponentStateMessage::__CounterHandleIncrement(
@@ -127,6 +165,11 @@ mod component_state {
         let _ = app.__update(current);
         assert!(!app.__ice_component_loader["loader"].loading);
     }
+}
+
+#[cfg(test)]
+mod test_mount_features {
+    ui_lang::include_app!("src/ui/test_mount_features.ice");
 }
 
 #[cfg(test)]

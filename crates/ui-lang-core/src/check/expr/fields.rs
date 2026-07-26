@@ -31,6 +31,17 @@ pub(in crate::check) fn contains_window_screenshot(ty: &Type) -> bool {
     }
 }
 
+pub(in crate::check) fn contains_target(ty: &Type) -> bool {
+    match ty {
+        Type::TestTarget | Type::WidgetTarget => true,
+        Type::List(inner) | Type::Option(inner) | Type::Combo(inner) | Type::Animation(inner) => {
+            contains_target(inner)
+        }
+        Type::Result(output, error) => contains_target(output) || contains_target(error),
+        _ => false,
+    }
+}
+
 pub(in crate::check) fn field_type(
     ty: &Type,
     field: &str,
@@ -346,6 +357,21 @@ pub(in crate::check) fn field_type(
             | "content_y" | "content_width" | "content_height" | "translation_x"
             | "translation_y" => Some(Type::Option(Box::new(Type::F64))),
             "content" => Some(Type::Option(Box::new(Type::Str))),
+            _ => None,
+        },
+        Type::TestTarget => match field {
+            "kind" | "value" => Some(Type::Str),
+            "visible" => Some(Type::Bool),
+            "x" | "y" | "width" | "height" | "left" | "top" | "right" | "bottom" | "center_x"
+            | "center_y" | "visible_x" | "visible_y" | "visible_width" | "visible_height"
+            | "content_x" | "content_y" | "content_width" | "content_height" | "scroll_x"
+            | "scroll_y" | "translation_x" | "translation_y" | "text_size" => Some(Type::F64),
+            "background" => Some(Type::Background),
+            "border" => Some(Type::Border),
+            "shadow" => Some(Type::Shadow),
+            "text_color" => Some(Type::Color),
+            "font" => Some(Type::Font),
+            "line_height" => Some(Type::TextLineHeight),
             _ => None,
         },
         _ => None,

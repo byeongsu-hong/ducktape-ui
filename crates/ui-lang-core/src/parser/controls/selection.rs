@@ -9,6 +9,7 @@ pub(in crate::parser) fn parse_slider(
     let value = parts
         .get(1)
         .ok_or_else(|| error("E076", line, "slider needs a value expression"))?;
+    let mut id = None;
     let mut min = None;
     let mut max = None;
     let mut step = Expr::F64(1.0);
@@ -16,7 +17,9 @@ pub(in crate::parser) fn parse_slider(
     let mut vertical = false;
     let mut release = None;
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("min=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E076", "slider")?;
+        } else if let Some(value) = part.strip_prefix("min=") {
             min = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("max=") {
             max = Some(parse_expr(strip_wrapping_parens(value), line)?);
@@ -54,6 +57,7 @@ pub(in crate::parser) fn parse_slider(
     }
     Ok(ViewNode::Slider {
         value: parse_expr(value, line)?,
+        id,
         min: min.ok_or_else(|| error("E076", line, "slider requires `min=value`"))?,
         max: max.ok_or_else(|| error("E076", line, "slider requires `max=value`"))?,
         step,
@@ -186,12 +190,15 @@ pub(in crate::parser) fn parse_progress(
     let value = parts
         .get(1)
         .ok_or_else(|| error("E077", line, "progress needs a value expression"))?;
+    let mut id = None;
     let mut min = Expr::F64(0.0);
     let mut max = Expr::F64(100.0);
     let mut options = ProgressOptions::default();
     let mut vertical = false;
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("min=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E077", "progress")?;
+        } else if let Some(value) = part.strip_prefix("min=") {
             min = parse_expr(strip_wrapping_parens(value), line)?;
         } else if let Some(value) = part.strip_prefix("max=") {
             max = parse_expr(strip_wrapping_parens(value), line)?;
@@ -249,6 +256,7 @@ pub(in crate::parser) fn parse_progress(
     }
     Ok(ViewNode::Progress {
         value: parse_expr(value, line)?,
+        id,
         min,
         max,
         options,
@@ -267,12 +275,15 @@ pub(in crate::parser) fn parse_radio(
     let label = parts
         .get(1)
         .ok_or_else(|| error("E078", line, "radio needs a label expression"))?;
+    let mut id = None;
     let mut value = None;
     let mut selected = None;
     let mut options = BoolControlOptions::default();
     let mut style = RadioStyleSet::default();
     for part in &parts[2..] {
-        if let Some(source) = part.strip_prefix("value=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E078", "radio")?;
+        } else if let Some(source) = part.strip_prefix("value=") {
             value = Some(parse_expr(strip_wrapping_parens(source), line)?);
         } else if let Some(source) = part.strip_prefix("selected=") {
             selected = Some(parse_expr(strip_wrapping_parens(source), line)?);
@@ -297,6 +308,7 @@ pub(in crate::parser) fn parse_radio(
     }
     Ok(ViewNode::Radio {
         label: parse_expr(label, line)?,
+        id,
         value: value.ok_or_else(|| error("E078", line, "radio requires `value=value`"))?,
         selected: selected
             .ok_or_else(|| error("E078", line, "radio requires `selected=condition`"))?,
@@ -381,10 +393,13 @@ pub(in crate::parser) fn parse_rule(
         Some("vertical") => Axis::Vertical,
         _ => return Err(error("E079", line, "rule uses `rule horizontal|vertical`")),
     };
+    let mut id = None;
     let mut thickness = Expr::F64(1.0);
     let mut options = RuleOptions::default();
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("thickness=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E079", "rule")?;
+        } else if let Some(value) = part.strip_prefix("thickness=") {
             thickness = parse_expr(strip_wrapping_parens(value), line)?;
         } else if let Some(value) = part.strip_prefix("style=") {
             options.style = Some(match value {
@@ -418,6 +433,7 @@ pub(in crate::parser) fn parse_rule(
     }
     Ok(ViewNode::Rule {
         axis,
+        id,
         thickness,
         options,
         styles,
@@ -465,10 +481,13 @@ pub(in crate::parser) fn parse_space(
     line: &Line,
 ) -> Result<ViewNode, Error> {
     ensure_leaf(line)?;
+    let mut id = None;
     let mut width = None;
     let mut height = None;
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E080", "space")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
             height = Some(parse_length(value, line)?);
@@ -481,6 +500,7 @@ pub(in crate::parser) fn parse_space(
         }
     }
     Ok(ViewNode::Space {
+        id,
         width,
         height,
         styles,
