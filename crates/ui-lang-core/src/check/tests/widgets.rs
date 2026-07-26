@@ -95,6 +95,12 @@ view
             "row align=center @items-center\n    text \"x\"",
         ),
         (
+            "overflow",
+            "clip=",
+            "overflow-hidden",
+            "box clip=true @overflow-hidden\n    text \"x\"",
+        ),
+        (
             "spacing",
             "gap=",
             "gap-2",

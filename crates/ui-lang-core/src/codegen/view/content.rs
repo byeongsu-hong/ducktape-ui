@@ -8,6 +8,15 @@ pub(in crate::codegen) fn render_content(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
+    let id = match node {
+        ViewNode::Rule { id, .. }
+        | ViewNode::QrCode { id, .. }
+        | ViewNode::Space { id, .. }
+        | ViewNode::ExternComponent { id, .. }
+        | ViewNode::Themer { id, .. }
+        | ViewNode::Shader { id, .. } => id.as_ref(),
+        _ => None,
+    };
     let rendered = match node {
         ViewNode::Rule {
             axis,
@@ -119,9 +128,13 @@ pub(in crate::codegen) fn render_content(
                 );
             }
             let component_scope = id.as_ref().map_or_else(
-                || format!("format!(\"{{}}/{}@{}\", {scope})", name, span.line),
+                || {
+                    let scope = reconciliation_scope(scope, env);
+                    format!("format!(\"{{}}/{}@{}\", {scope})", name, span.line)
+                },
                 |id| id_code(id, scope, env, document).unwrap_or_else(|_| scope.into()),
             );
+            set_reconciliation_scope(&mut component_env, component_scope.clone());
             let scope_binding = component_scope_binding(name, span.line);
             if !component.states.is_empty() || !component.handlers.is_empty() {
                 let field = component_state_field(name);
@@ -205,11 +218,13 @@ pub(in crate::codegen) fn render_content(
                         format!("slot `{name}` reached codegen without component content"),
                     )
                 })?;
+            let mut content_env = content.env.clone();
+            set_reconciliation_scope(&mut content_env, scope.to_owned());
             render_node(
                 &content.node,
                 document,
                 message,
-                &content.env,
+                &content_env,
                 scope,
                 slot.parent.as_deref(),
             )
@@ -219,6 +234,7 @@ pub(in crate::codegen) fn render_content(
             args,
             route,
             span,
+            ..
         } => {
             let component = find_extern_function(document, function, ExternKind::Component)
                 .ok_or_else(|| {
@@ -264,6 +280,7 @@ pub(in crate::codegen) fn render_content(
             args,
             route,
             span,
+            ..
         } => {
             let themer =
                 find_extern_function(document, function, ExternKind::Themer).ok_or_else(|| {
@@ -288,6 +305,7 @@ pub(in crate::codegen) fn render_content(
             height,
             route,
             span,
+            ..
         } => {
             let shader = find_extern_function(document, function, ExternKind::Shader)
                 .ok_or_else(|| Error::new("E191", span, format!("unknown shader `{function}`")))?;
@@ -306,5 +324,6 @@ pub(in crate::codegen) fn render_content(
         }
         _ => return Ok(None),
     }?;
+    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
 }

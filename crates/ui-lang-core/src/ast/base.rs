@@ -127,6 +127,7 @@ pub enum Type {
     WindowAttention,
     WidgetId,
     WidgetTarget,
+    TestTarget,
     TaskHandle,
     Named(String),
     Unit,
@@ -224,6 +225,7 @@ impl Type {
             Self::WindowAttention => "::iced::window::UserAttention".into(),
             Self::WidgetId => "::iced::widget::Id".into(),
             Self::WidgetTarget => "__IceWidgetTarget".into(),
+            Self::TestTarget => "::ui_lang_runtime::testing::Target".into(),
             Self::TaskHandle => "::iced::task::Handle".into(),
             Self::Named(name) => structs
                 .iter()
@@ -317,6 +319,7 @@ impl Type {
             Self::WindowAttention => "window-attention".into(),
             Self::WidgetId => "widget-id".into(),
             Self::WidgetTarget => "widget-target".into(),
+            Self::TestTarget => "test-target".into(),
             Self::TaskHandle => "task-handle".into(),
             Self::Named(name) => name.clone(),
             Self::Unit => "unit".into(),

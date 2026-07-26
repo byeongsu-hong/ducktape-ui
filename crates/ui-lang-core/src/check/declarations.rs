@@ -175,6 +175,16 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
             ));
         }
     }
+    let mut recipes = HashSet::new();
+    for recipe in &document.recipes {
+        if !recipes.insert(&recipe.name) {
+            return Err(Error::new(
+                "E100",
+                &recipe.span,
+                format!("duplicate recipe `{}`", recipe.name),
+            ));
+        }
+    }
     let mut fields = HashSet::new();
     for qr in &document.qr_codes {
         if !fields.insert(&qr.name) {
@@ -208,6 +218,44 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
                 &handler.span,
                 format!("duplicate handler `{}`", handler.name),
             ));
+        }
+    }
+    let mut tests = HashSet::new();
+    for test in &document.tests {
+        if !tests.insert(&test.name) {
+            return Err(Error::new(
+                "E100",
+                &test.span,
+                format!("duplicate test `{}`", test.name),
+            ));
+        }
+        let mut aliases = HashSet::new();
+        for target in &test.targets {
+            if !aliases.insert(&target.name) {
+                return Err(Error::new(
+                    "E100",
+                    &target.span,
+                    format!(
+                        "duplicate target alias `{}` in test `{}`",
+                        target.name, test.name
+                    ),
+                ));
+            }
+            if document
+                .states
+                .iter()
+                .any(|state| state.name == target.name)
+                || document.daemon && target.name == "window"
+            {
+                return Err(Error::new(
+                    "E100",
+                    &target.span,
+                    format!(
+                        "target alias `{}` conflicts with app state in test `{}`",
+                        target.name, test.name
+                    ),
+                ));
+            }
         }
     }
     let mut components = HashSet::new();
@@ -322,6 +370,17 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
             span,
             "slot is only valid inside a component definition",
         ));
+    }
+    for test in &document.tests {
+        if let Some(mount) = &test.mount
+            && let Some((_, span)) = slots(mount).first()
+        {
+            return Err(Error::new(
+                "E124",
+                span,
+                "slot is only valid inside a component definition",
+            ));
+        }
     }
     for component in &document.components {
         let mut names = HashSet::new();

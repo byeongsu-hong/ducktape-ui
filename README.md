@@ -144,16 +144,61 @@ screen-coordinate bounds are not available through stock Iced 0.14.0. Rich
 text and advanced widgets do not gain accessibility claims from this Core
 contract.
 
-## Run the real iced sample
+## Run the examples
 
 ```bash
 cargo run -p iced-app
 cargo run -p apple-music-example
+cargo run -p showcase
 ```
 
 `apple-music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,
 library browsing, search, sign-in, queueing, and playback controls.
+`showcase` exercises the default `ducktape-ui` component catalog through Ice.
+The library lives in [`crates/ui`](crates/ui), including its importable default
+theme and semantic recipes; the runnable app in
+[`examples/showcase`](examples/showcase) consumes that same interface instead
+of carrying a second control style system. Its catalog uses
+`grid min-cell=...` for CSS-like responsive wrapping, while the shared panel
+recipe applies `@overflow-hidden` so retained content cannot bleed into a
+neighboring cell. `cargo test -p showcase` discovers the first-class Ice test
+in that same source graph as an ordinary generated Rust test. `cargo ice test`
+checks every Ice app graph before running `cargo test --workspace`.
+
+```ice
+test counter_contract
+  preset test
+  viewport 320 240
+  timeout 2s
+  mount
+    Counter #counter
+
+  target root = #counter/root
+  target increment = #counter/increment
+  target result = #counter/result
+
+  expect root.width ~= 240.0
+  click increment
+  expect text "1" within result
+```
+
+Tests use the same checked components, handlers, presets, expressions, and Rust
+extern boundary as production code. IDs select rendered widgets after real
+Iced layout. A component call ID is a scope rather than a synthetic layout box,
+so a test selects an identified descendant such as `#counter/root`. Geometry
+assertions use logical-pixel bounds; paint assertions inspect unambiguous
+tiny-skia quad or text commands for backgrounds, borders, radii, shadows,
+colors, fonts, sizes, and line heights without comparing screenshots.
+
+Interactions replay emitted messages through generated update code and drain
+real tasks recursively before the next statement. Checked `sync` and task
+externs therefore call the same Rust functions used by the app. Deterministic
+test behavior belongs behind a named preset or Rust `cfg(test)` boundary; Ice
+does not add a mock layer. Subscriptions are re-established around simulated
+events; intentionally infinite timer/I/O subscriptions are sampled rather than
+awaited as finite work. See the layout and interaction contracts in
+[`component_state.ice`](examples/iced-app/src/ui/component_state.ice).
 
 The runnable task app is intentionally small and split by concern:
 
@@ -205,6 +250,7 @@ This repository includes a local Cargo alias, so these work from the repo root:
 cargo ice fmt
 cargo ice fmt --check
 cargo ice check
+cargo ice test
 cargo ice clippy
 cargo ice compat
 cargo ice expand examples/iced-app/src/ui/tasks.ice
@@ -214,20 +260,29 @@ scripts/a11y-smoke.sh
 scripts/a11y-windows-check.sh
 ```
 
+`cargo ice test` analyzes every discovered app graph before invoking workspace
+Cargo tests. Ordinary `cargo test` discovers the same generated `#[test]`
+functions; generated Ice tests need no Rust wrapper, registration, or direct
+`iced_test` dependency in the application. Arguments after `test` pass through to Cargo, so
+`cargo ice test render_contract -- --nocapture` runs one generated contract.
+
 `cargo ice schema` prints a generative JSON description of each Core
 construct's context, syntax, child shape, typed properties, binding, and route,
-plus the language revision and backend contract. LSP completion is derived from
-the same construct table.
+plus the first-class test grammar, target fields, execution and renderer
+inspection contracts, language revision, and backend contract. LSP completion
+is derived from the same construct table.
 
 `cargo ice lsp` is a minimal stdio server with full-document synchronization,
-UTF-16 diagnostics, whole-document formatting, and Core completion. For an
-existing app file it overlays every open buffer in the import graph, reanalyzes
+UTF-16 diagnostics, whole-document formatting, and schema-driven Core and test
+completion. For an existing app file it overlays every open buffer in the
+import graph, reanalyzes
 all open app roots after buffer changes, and publishes imported errors at the
-imported URI. Checked component and app-handler symbols support cross-file
-definition and collision-checked rename against those current buffers and every
-closed app root under the initialized workspace. Closing a buffer falls back to
-disk. Component-local handlers are lexical implementation details and are not
-offered as workspace navigation symbols.
+imported URI. Checked component, app-handler, recipe, and test-target symbols
+support definition and collision-checked rename against those current buffers
+and every closed app root under the initialized workspace. Test-target aliases
+are scoped to one test, so the same alias may be reused elsewhere. Closing a
+buffer falls back to disk. Component-local handlers are lexical implementation
+details and are not offered as workspace navigation symbols.
 
 Plain components and compound-family roots rename; renaming a family root
 updates its dotted descendants, while direct dotted descendants and the
@@ -295,16 +350,17 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 1.61 is an executable language revision, not an attempt to replace iced.
+Ice 1.63 is an executable language revision, not an attempt to replace iced.
 Its stable authoring Core is app/state/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
-routing, and typed Rust effects. The extended native surface remains available,
+routing, typed Rust effects, and first-class headless tests over generated
+programs and mounted components. The extended native surface remains available,
 while typed
 `Element`, `Task`, `Subscription`, style, and component boundaries cover unusual
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 1.61; the workspace packages currently use pre-1.0
+specification is revision 1.63; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.

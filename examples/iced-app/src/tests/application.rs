@@ -76,3 +76,24 @@ fn constructs_window_capture_queries() {
     assert_eq!(app.snapshot_scale, 1.5);
     assert_eq!(app.raw_window_id, "42");
 }
+
+#[test]
+fn renders_every_tasks_node_through_the_headless_draw_path() {
+    let (mut app, _) = Tasks::__boot();
+    app.about_open = true;
+    app.tasks = vec![crate::backend::Task {
+        id: 1,
+        title: "Rendered task".into(),
+        done: false,
+    }];
+
+    let counts = super::draw_headlessly(
+        app.__view(),
+        &Tasks::__theme(&app),
+        iced::Size::new(1600.0, 1200.0),
+    );
+    assert!(counts.quads > 0, "surface widgets must draw quads");
+    assert!(counts.primitives > 0, "canvas must draw primitives");
+    assert!(counts.images > 0, "media widgets must draw images");
+    assert!(counts.text > 0, "text widgets must draw glyph runs");
+}

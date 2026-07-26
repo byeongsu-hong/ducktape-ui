@@ -41,7 +41,8 @@ the exact syntax in `SPEC.md` section 4 and a compiling fixture before use.
 
 ### Layout and composition
 
-- `grid`: fixed or fluid grid with gaps, padding, alignment, and sizing.
+- `grid`: fixed columns, CSS-like `min-cell=`, or native `max-cell=` wrapping
+  with gaps, padding, alignment, and sizing.
 - `overlay`: content/layer structure with `when`, dismiss route, backdrop,
   padding, and alignment.
 - `panes`: declarative PaneGrid configuration and dynamic operations.

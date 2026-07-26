@@ -7,6 +7,7 @@ pub struct Document {
     pub daemon: bool,
     pub settings: AppSettings,
     pub presets: Vec<Preset>,
+    pub recipes: Vec<StyleRecipe>,
     pub structs: Vec<ExternStruct>,
     pub functions: Vec<ExternFn>,
     pub subscriptions: Vec<Subscription>,
@@ -16,7 +17,61 @@ pub struct Document {
     pub states: Vec<State>,
     pub components: Vec<Component>,
     pub handlers: Vec<Handler>,
+    pub tests: Vec<TestDecl>,
     pub view: ViewNode,
+}
+
+#[derive(Clone, Debug)]
+pub struct StyleRecipe {
+    pub name: String,
+    pub target: StyleRecipeTarget,
+    pub utilities: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StyleRecipeTarget {
+    Column,
+    Row,
+    Flex,
+    Grid,
+    Stack,
+    Container,
+    Text,
+    Input,
+    Button,
+}
+
+impl StyleRecipeTarget {
+    pub fn source_name(self) -> &'static str {
+        match self {
+            Self::Column => "col",
+            Self::Row => "row",
+            Self::Flex => "flex",
+            Self::Grid => "grid",
+            Self::Stack => "stack",
+            Self::Container => "box",
+            Self::Text => "text",
+            Self::Input => "input",
+            Self::Button => "button",
+        }
+    }
+}
+
+impl Document {
+    pub(crate) fn style_recipe(&self, name: &str) -> Option<&StyleRecipe> {
+        self.recipes.iter().find(|recipe| recipe.name == name)
+    }
+
+    pub(crate) fn expand_styles(&self, styles: &[String]) -> Vec<String> {
+        styles
+            .iter()
+            .flat_map(|style| {
+                self.style_recipe(style)
+                    .map_or_else(|| vec![style.clone()], |recipe| recipe.utilities.clone())
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug)]

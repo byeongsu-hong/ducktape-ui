@@ -11,6 +11,7 @@ exact current Core property table; this guide explains how the pieces compose.
 - [Core widgets](#core-widgets)
 - [View control flow](#view-control-flow)
 - [Theme tokens and colors](#theme-tokens-and-colors)
+- [Semantic recipes](#semantic-recipes)
 - [Typed properties and utilities](#typed-properties-and-utilities)
 - [Native status styles](#native-status-styles)
 - [Scoped IDs](#scoped-ids)
@@ -164,7 +165,10 @@ viewport changes. Consult `cargo ice schema` for route payload fields.
 
 ### Grid and keyed
 
-Use `grid` for column/fluid layout and `keyed` when list identity must remain
+Use `grid min-cell=280.0` for CSS-like wrapping that never shrinks a cell below
+the requested width. Use `max-cell=` only when iced's native behavior of adding
+columns to cap cell width is intended, or `cols=` for a fixed count. These
+three modes are mutually exclusive. Use `keyed` when list identity must remain
 stable. Prefer `for` for a simple unkeyed list. Do not manually index a list;
 Ice has no arbitrary indexing expression.
 
@@ -320,6 +324,34 @@ box bg=linear(1.57, primary@0.0, surface@1.0)
   text "Gradient"
 ```
 
+## Semantic recipes
+
+Use a top-level recipe for a repeated visual role:
+
+```ice
+recipe panel for box
+  @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
+
+recipe primary_action for button
+  @px-4 py-2 bg-primary text-primary_fg rounded-md
+  @hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
+
+view
+  box @panel
+    button "Save" @primary_action -> save
+```
+
+Targets are `col`, `row`, `flex`, `grid`, `stack`, `box`, `text`, `input`, and
+`button`. Recipe names are graph-global, so an imported design-system fragment
+can supply the defaults. Recipes expand in place; later utilities win and
+typed node properties override recipe defaults. Put a local exception before
+the `@`, such as `box p=24.0 @panel`. Recipe bodies are checked even when
+unused, and the LSP can follow or safely rename imported recipe names.
+
+Recipes only group checked utilities and do not compose other recipes. Keep
+one role per recipe; use a component when the repeated thing has structure,
+state, slots, or behavior.
+
 ## Typed properties and utilities
 
 There is no CSS engine, class string, selector matching, cascade, or runtime
@@ -346,22 +378,22 @@ Accepted utility families:
 | --- | --- |
 | wrapper size | `w-full`, `h-full` |
 | max width | `max-w-sm` through `max-w-2xl` |
-| wrapper alignment | `self-center` |
-| spacing | `p-N`, `px-N`, `py-N` on documented targets |
+| alignment | `items-center`, `self-center` on documented targets |
+| spacing | `gap-N`, `p-N`, `px-N`, `py-N` on documented targets |
 | semantic colors | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` |
 | border | `border`, `border-2` |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full` |
-| text | `font-bold` |
+| text | `text-xs` through `text-2xl`, `leading-*`, `font-bold` |
 | button state | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` |
 | input focus | `focus:border-*` |
 
 Spacing `N` is one of `0 1 2 3 4 5 6 8 10 12 16 20 24` and maps to four
 logical pixels per unit. Opacity utility values are `0 25 50 75 100`.
 
-Do not specify the same owned field twice through a typed property and a
-utility. The checker reports an ownership conflict. A rounded layout wrapper
-also needs a background or border; otherwise there is no rendered surface to
-round.
+Do not specify the same owned field twice through a typed property and a direct
+utility. The checker reports an ownership conflict. A typed property may
+intentionally override a recipe default. A rounded layout wrapper also needs a
+background or border; otherwise there is no rendered surface to round.
 
 ## Native status styles
 

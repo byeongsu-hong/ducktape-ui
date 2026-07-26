@@ -149,8 +149,10 @@ view
       stack clip=true w=fill(2) h=120.0 under=1
         text "base"
         text "overlay"
-    grid fluid=fluid_width h=fill(2)
-      text "fluid"
+    grid max-cell=fluid_width h=fill(2)
+      text "maximum"
+    grid min-cell=fluid_width gap=12.0
+      text "minimum"
 "#;
     let generated = compile(source, "controls.ice").unwrap();
     assert!(
@@ -164,6 +166,10 @@ view
     assert!(generated.contains(
             "::iced::widget::grid(__children).height(::iced::Length::FillPortion(2)).fluid(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX))"
         ));
+    assert!(generated.contains(
+        ".grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX)))"
+    ));
+    assert!(generated.contains(".wrap(::ui_lang_runtime::FlexWrap::Wrap)"));
     assert!(generated.contains("::iced::widget::vertical_slider"));
     assert!(generated.contains(
         ".default(50.0).shift_step(0.1).width(20.0 as f32).height(::iced::Length::FillPortion(2))"
@@ -669,4 +675,136 @@ view
     let generated = compile(source, "typography.ice").unwrap();
     assert!(generated.contains(".color(::iced::Color::from_rgba8(0, 0, 0, 0.000000))"));
     assert!(generated.contains(".color(::iced::Color::from_rgba8(51, 102, 153, 0.500000))"));
+}
+
+#[test]
+fn identifies_leaf_widgets_at_their_native_bounds() {
+    let source = r#"app Identified
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  enabled = false
+  amount = 25.0
+  mode = 0
+  choices = ["One", "Two"]
+  selected:str? = none
+  search:combo[str] = ["One", "Two"]
+on toggled(next)
+  enabled = next
+on changed(next)
+  amount = next
+on mode_changed(next)
+  mode = next
+on selected_value(next)
+  selected = some(next)
+view
+  col #root
+    text "Plain" #plain
+    rich-text #rich
+      span "Rich"
+    toggler "Toggle" #toggle checked=enabled -> toggled _
+    slider amount #horizontal min=0.0 max=100.0 -> changed _
+    slider amount #vertical min=0.0 max=100.0 vertical w=20.0 h=100.0 -> changed _
+    radio "Mode" #radio value=1 selected=(mode == 1) -> mode_changed _
+    pick choices selected #pick -> selected_value _
+    combo search selected "Search" #combo -> selected_value _
+"#;
+    let generated = compile(source, "identified.ice").unwrap();
+
+    assert_eq!(generated.matches("let __identified:").count(), 6);
+    assert_eq!(generated.matches("let __identified_text").count(), 1);
+    assert!(generated.contains("let __a11y_key = format!(\"{}/plain\""));
+    assert!(generated.contains(".logical_id(__a11y_key.clone())"));
+    for id in [
+        "rich",
+        "toggle",
+        "horizontal",
+        "vertical",
+        "radio",
+        "pick",
+        "combo",
+    ] {
+        assert!(generated.contains(&format!("/{id}\"")), "missing #{id}");
+    }
+    assert!(generated.contains("::iced::widget::vertical_slider"));
+    assert!(generated.contains("::iced::widget::container(__identified).id("));
+}
+
+#[test]
+fn identifies_every_other_rendered_leaf() {
+    let source = r##"app Leaves
+extern crate::backend
+  component native() -> unit
+  themer themed() -> unit
+  shader shaded() -> unit
+qr code "https://example.com"
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  amount = 50.0
+  docs:markdown = "# Docs"
+on open_link(url)
+view
+  col #root
+    progress amount #progress
+    rule horizontal #rule
+    qr code #qr
+    space #space w=10.0 h=10.0
+    markdown docs #markdown -> open_link _
+    extern native() #extern
+    themer themed() #themer
+    shader shaded() #shader w=20.0 h=20.0
+    image "image.png" #image
+    svg "image.svg" #svg
+    viewer "image.png" #viewer
+    canvas #canvas w=20.0 h=20.0
+"##;
+    let generated = compile(source, "leaves.ice").unwrap();
+
+    assert_eq!(generated.matches("let __identified:").count(), 12);
+    for id in [
+        "progress", "rule", "qr", "space", "markdown", "extern", "themer", "shader", "image",
+        "svg", "viewer", "canvas",
+    ] {
+        assert!(generated.contains(&format!("/{id}\"")), "missing #{id}");
+    }
+}
+
+#[test]
+fn retains_logical_paths_on_accessible_wrappers() {
+    let source = r#"app LogicalIds
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+  checked = false
+on submit
+on checked_changed(next)
+  checked = next
+view
+  col #root
+    box #panel
+      text "Plain" #plain
+    rich-text #rich
+      span "Rich"
+    input "Draft" #input <-> draft
+    button "Save" #button -> submit
+    checkbox "Ready" #checkbox checked=checked -> checked_changed _
+    image "photo.ppm" #image label="Portrait"
+"#;
+    let generated = compile(source, "logical_ids.ice").unwrap();
+
+    assert_eq!(
+        generated.matches("::ui_lang_runtime::accessible(").count(),
+        generated.matches(".logical_id(__a11y_key.clone())").count()
+    );
 }

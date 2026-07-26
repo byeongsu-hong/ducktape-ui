@@ -103,6 +103,7 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::Toggler {
             label,
+            id,
             checked,
             disabled,
             options,
@@ -111,6 +112,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
             if let Some(disabled) = disabled {
@@ -132,6 +134,7 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::Slider {
             value,
+            id,
             min,
             max,
             step,
@@ -143,6 +146,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
             ..
         } => {
+            check_id(id, env, document, ids, span)?;
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(&value_type, Type::F64 | Type::Named(_)) {
                 return Err(Error::new(
@@ -224,6 +228,7 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::Progress {
             value,
+            id,
             min,
             max,
             options,
@@ -231,6 +236,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
             ..
         } => {
+            check_id(id, env, document, ids, span)?;
             for expr in [value, min, max] {
                 require_f32_value(expr, env, document, "progress value", span)?;
             }
@@ -274,6 +280,7 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::Radio {
             label,
+            id,
             value,
             selected,
             options,
@@ -282,6 +289,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(
@@ -311,11 +319,13 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::PickList {
             options,
+            id,
             selected,
             options_config,
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let Type::List(option_type) = expr_type(options, env, document, span)? else {
                 return Err(Error::new("E129", span, "pick options must be a list"));
             };
@@ -382,12 +392,14 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::ComboBox {
             state,
+            id,
             selected,
             options,
             route,
             span,
             ..
         } => {
+            check_id(id, env, document, ids, span)?;
             let Some(Type::Combo(option_type)) = env.get(state) else {
                 return Err(Error::new(
                     "E129",
@@ -469,11 +481,13 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::Rule {
             thickness,
+            id,
             options,
             styles,
             span,
             ..
         } => {
+            check_id(id, env, document, ids, span)?;
             require_nonnegative_f64(thickness, env, document, "rule thickness", span)?;
             if let Some(RuleFill::Percent(percent)) = &options.fill {
                 require_type(&expr_type(percent, env, document, span)?, &Type::F64, span)?;
@@ -501,12 +515,14 @@ pub(in crate::check) fn infer_controls_group(
         }
         ViewNode::QrCode {
             data,
+            id,
             cell_size,
             total_size,
             cell,
             background,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             if !document.qr_codes.iter().any(|item| item.name == *data) {
                 return Err(
                     Error::new("E136", span, format!("unknown qr data `{data}`"))
@@ -528,11 +544,13 @@ pub(in crate::check) fn infer_controls_group(
             }
         }
         ViewNode::Space {
+            id,
             width,
             height,
             styles,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             for length in [width, height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "space length")?;
             }

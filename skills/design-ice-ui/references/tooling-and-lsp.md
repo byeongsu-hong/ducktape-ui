@@ -40,7 +40,7 @@ cargo ice help
 Expected form:
 
 ```text
-cargo ice <fmt [--check] | check | clippy | compat | expand <file.ice> | schema | lsp>
+cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | schema | lsp>
 ```
 
 ## Command reference
@@ -50,15 +50,17 @@ cargo ice <fmt [--check] | check | clippy | compat | expand <file.ice> | schema 
 | `cargo ice fmt` | format Rust and every discovered `.ice` file, then analyze app graphs |
 | `cargo ice fmt --check` | check Rust and Ice formatting without rewriting `.ice` |
 | `cargo ice check` | analyze app graphs, then run workspace `cargo check` |
+| `cargo ice test` | analyze app graphs, then run `cargo test --workspace` including generated Ice tests |
 | `cargo ice clippy` | analyze app graphs, then lint all workspace targets |
 | `cargo ice compat` | verify backend/runtime pins and run reference app tests |
 | `cargo ice expand FILE` | print generated Rust for one app root |
 | `cargo ice schema` | print generative Core/LSP/backend JSON |
 | `cargo ice lsp` | run the live stdio language server |
 
-Discovery recursively scans below the current directory, skipping `.git` and
-`target`. Files with a top-level `app` or `daemon` are roots. Formatting covers
-both roots and imported fragments.
+Discovery recursively scans below the current directory, skipping `.git`,
+worktree metadata, `target`, and `tests/cases` fixture trees. Files with a
+top-level `app` or `daemon` are roots. Formatting covers both roots and imported
+fragments.
 
 `cargo ice check` gives two layers of evidence:
 
@@ -115,7 +117,7 @@ The server advertises:
 - UTF-16 positions;
 - publish diagnostics;
 - whole-document formatting;
-- Core completion;
+- schema-driven Core and test-mode completion;
 - cross-file definition;
 - prepare-rename and workspace rename.
 
@@ -173,14 +175,16 @@ The server uses:
 
 ## Rename rules
 
-Definition and rename operate on checked component and app-handler declarations
-and references.
+Definition and rename operate on checked component, app-handler, semantic
+recipe, and test-target declarations and references.
 
 Supported:
 
 - cross-file go-to-definition for components and app handlers;
 - collision-checked rename for plain component names;
 - collision-checked rename for app handlers;
+- definition and collision-checked rename for recipes;
+- definition and rename for a target alias within its one test scope;
 - compound-family root rename that updates dotted descendants.
 
 Definition-only:
@@ -215,6 +219,8 @@ It reports:
 - Core constructs with valid contexts, canonical syntax, child cardinality,
   typed properties, binding, and route shape;
 - utility ownership and status inheritance;
+- first-class test configuration, actions, assertions, target fields, and
+  runtime/paint contract;
 - LSP behavior;
 - Iced/runtime compatibility contract.
 
@@ -226,6 +232,7 @@ cargo ice schema | jq '.lsp'
 cargo ice schema | jq '.core.documentPrelude'
 cargo ice schema | jq '.core.types'
 cargo ice schema | jq '.core.style'
+cargo ice schema | jq '.core.testMode'
 cargo ice schema | jq '.core.constructs[] | {label, contexts, syntax, children, properties, binding, route}'
 ```
 
@@ -263,6 +270,7 @@ The macro already emits source dependency tracking and extern probes.
 ```bash
 cargo ice fmt --check
 cargo ice check
+cargo ice test
 cargo test -p iced-app <focused-test-filter>
 ```
 

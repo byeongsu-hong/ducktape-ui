@@ -43,7 +43,7 @@ fn run() -> Result<(), String> {
         "lsp" => return lsp::run_stdio(),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | clippy | compat | expand <file.ice> | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | schema | lsp>"
             );
             return Ok(());
         }
@@ -62,7 +62,7 @@ fn run() -> Result<(), String> {
             print!("{}", generated.rust);
             return Ok(());
         }
-        "fmt" | "check" | "clippy" | "compat" => {}
+        "fmt" | "check" | "test" | "clippy" | "compat" => {}
         other => return Err(format!("unknown cargo ice command `{other}`")),
     }
     let files = ice_files(&root)?;
@@ -101,6 +101,13 @@ fn run() -> Result<(), String> {
             analyze(&roots)?;
             cargo(&["check", "--workspace"])?;
         }
+        "test" => {
+            let roots = root_files(&files)?;
+            analyze(&roots)?;
+            let mut cargo_args = vec!["test", "--workspace"];
+            cargo_args.extend(trailing.iter().map(String::as_str));
+            cargo(&cargo_args)?;
+        }
         "clippy" => {
             let roots = root_files(&files)?;
             analyze(&roots)?;
@@ -121,6 +128,7 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
     match command {
         "fmt" => trailing.is_empty() || trailing == ["--check"],
         "expand" => trailing.len() == 1,
+        "test" => true,
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }
@@ -223,6 +231,12 @@ mod tests {
         assert!(valid_command_args("fmt", &["--check".into()]));
         assert!(!valid_command_args("fmt", &["--chek".into()]));
         assert!(!valid_command_args("check", &["extra".into()]));
+        assert!(valid_command_args("test", &[]));
+        assert!(valid_command_args("test", &["render_contract".into()]));
+        assert!(valid_command_args(
+            "test",
+            &["render_contract".into(), "--".into(), "--nocapture".into()]
+        ));
         assert!(valid_command_args("expand", &["app.ice".into()]));
         assert!(!valid_command_args("expand", &[]));
     }

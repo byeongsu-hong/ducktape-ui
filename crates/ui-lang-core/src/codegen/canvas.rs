@@ -49,7 +49,24 @@ pub(in crate::codegen) fn render_canvas(
             state: None,
         },
     );
-    let draw_commands = canvas_commands_code(commands, &canvas_env, document)?;
+    let mut captures = env
+        .values()
+        .filter_map(|binding| match &binding.state {
+            Some(StateBinding::Component { scope, .. }) => Some(scope.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if let Some((_, context)) = component_context(env) {
+        captures.push(context.code.clone());
+    }
+    captures.sort();
+    captures.dedup();
+    let (draw_env, draw_captures) = canvas_capture_env(&canvas_env, &captures, "draw");
+    let (update_env, update_captures) = canvas_capture_env(env, &captures, "update");
+    let (canvas_update_env, _) = canvas_capture_env(&canvas_env, &captures, "update");
+    let (interaction_env, interaction_captures) =
+        canvas_capture_env(&canvas_env, &captures, "interaction");
+    let draw_commands = canvas_commands_code(commands, &draw_env, document)?;
     let use_cache = options.cache.is_some();
     let cache_key = if let Some(dependency) = &options.cache {
         let dependency = expr_code(dependency, env, document, ValueMode::Owned)?;
@@ -62,16 +79,20 @@ pub(in crate::codegen) fn render_canvas(
     let update = canvas_update_code(
         options,
         events,
-        env,
-        &canvas_env,
+        &update_env,
+        &canvas_update_env,
         document,
         message,
         use_cache,
     )?;
     let interaction = if let Some(value) = &options.interaction_expr {
-        let interaction = expr_code(value, &canvas_env, document, ValueMode::Owned)?;
-        if expr_type(value, &env_types(&canvas_env), document, &Span::line(1))?
-            == Type::MouseInteraction
+        let interaction = expr_code(value, &interaction_env, document, ValueMode::Owned)?;
+        if expr_type(
+            value,
+            &env_types(&interaction_env),
+            document,
+            &Span::line(1),
+        )? == Type::MouseInteraction
         {
             interaction
         } else {
@@ -91,7 +112,7 @@ pub(in crate::codegen) fn render_canvas(
     let interaction_outside = options
         .interaction_outside
         .as_ref()
-        .map(|outside| expr_code(outside, &canvas_env, document, ValueMode::Owned))
+        .map(|outside| expr_code(outside, &interaction_env, document, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let cache_group = options.cache_group.as_ref().map_or_else(
@@ -114,11 +135,37 @@ pub(in crate::codegen) fn render_canvas(
         "{ let mut __frame = ::iced::widget::canvas::Frame::new(__renderer, __bounds.size()); __paint(&mut __frame); __frame.into_geometry() }"
     };
     let mut code = format!(
-        "{{ #[allow(dead_code)] struct __IceCanvasState {{ cache: ::std::cell::OnceCell<::iced::widget::canvas::Cache>, cache_key: ::std::cell::Cell<::std::option::Option<u64>>, inside: bool, {state_fields} }} impl ::std::default::Default for __IceCanvasState {{ fn default() -> Self {{ Self {{ cache: ::std::cell::OnceCell::new(), cache_key: ::std::cell::Cell::new(::std::option::Option::None), inside: false, {state_initials} }} }} }} let __cache_key: ::std::option::Option<u64> = {cache_key}; let __cache_group: ::std::option::Option<::iced::widget::canvas::Group> = {cache_group}; let __program = __IceCanvasProgram::<__IceCanvasState, {message}, _, _, _> {{ draw: move |__state: &__IceCanvasState, __renderer: &::iced::Renderer, __theme: &::iced::Theme, __bounds: ::iced::Rectangle, __cursor: ::iced::mouse::Cursor| {{ let _ = (&__cache_key, &__cache_group); {cache_setup} let __paint = move |__frame: &mut ::iced::widget::canvas::Frame| {{ {draw_commands} }}; let __geometry = {geometry}; ::std::vec![__geometry] }}, update: {update}, interaction: move |__state: &__IceCanvasState, __bounds: ::iced::Rectangle, __cursor: ::iced::mouse::Cursor| {{ if ({interaction_outside}) || __cursor.is_over(__bounds) {{ {interaction} }} else {{ ::iced::mouse::Interaction::default() }} }}, message: ::std::marker::PhantomData }}; let __canvas = ::iced::widget::canvas(__program)"
+        "{{ #[allow(dead_code)] struct __IceCanvasState {{ cache: ::std::cell::OnceCell<::iced::widget::canvas::Cache>, cache_key: ::std::cell::Cell<::std::option::Option<u64>>, inside: bool, {state_fields} }} impl ::std::default::Default for __IceCanvasState {{ fn default() -> Self {{ Self {{ cache: ::std::cell::OnceCell::new(), cache_key: ::std::cell::Cell::new(::std::option::Option::None), inside: false, {state_initials} }} }} }} let __cache_key: ::std::option::Option<u64> = {cache_key}; let __cache_group: ::std::option::Option<::iced::widget::canvas::Group> = {cache_group}; {draw_captures}{update_captures}{interaction_captures} let __program = __IceCanvasProgram::<__IceCanvasState, {message}, _, _, _> {{ draw: move |__state: &__IceCanvasState, __renderer: &::iced::Renderer, __theme: &::iced::Theme, __bounds: ::iced::Rectangle, __cursor: ::iced::mouse::Cursor| {{ let _ = (&__cache_key, &__cache_group); {cache_setup} let __paint = |__frame: &mut ::iced::widget::canvas::Frame| {{ {draw_commands} }}; let __geometry = {geometry}; ::std::vec![__geometry] }}, update: {update}, interaction: move |__state: &__IceCanvasState, __bounds: ::iced::Rectangle, __cursor: ::iced::mouse::Cursor| {{ if ({interaction_outside}) || __cursor.is_over(__bounds) {{ {interaction} }} else {{ ::iced::mouse::Interaction::default() }} }}, message: ::std::marker::PhantomData }}; let __canvas = ::iced::widget::canvas(__program)"
     );
     append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
     code.push_str("; __canvas.into() }");
     Ok(code)
+}
+
+fn canvas_capture_env(
+    env: &HashMap<String, Binding>,
+    captures: &[String],
+    phase: &str,
+) -> (HashMap<String, Binding>, String) {
+    let mut captured = env.clone();
+    let mut setup = String::new();
+
+    for (index, scope) in captures.iter().enumerate() {
+        let alias = format!("__canvas_{phase}_scope_{index}");
+        write!(setup, "let {alias} = ({scope}).clone();").unwrap();
+        for binding in captured.values_mut() {
+            binding.code = binding.code.replace(scope, &alias);
+            if let Some(StateBinding::Component {
+                scope: state_scope, ..
+            }) = &mut binding.state
+                && state_scope == scope
+            {
+                *state_scope = alias.clone();
+            }
+        }
+    }
+
+    (captured, setup)
 }
 
 mod commands;

@@ -12,6 +12,11 @@ pub(in crate::codegen) fn render_pane_grid(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
+    let id = Id {
+        name: name.to_owned(),
+        key: None,
+    };
+    let pane_grid_scope = id_code(&id, scope, env, document)?;
     let pane_type = (!templates.is_empty()).then(|| pane_type(name));
     let mut arms = panes
         .iter()
@@ -28,7 +33,7 @@ pub(in crate::codegen) fn render_pane_grid(
                     },
                 );
             }
-            let pane_scope = format!("format!(\"{{}}/{}\", {scope})", pane.name);
+            let pane_scope = format!("format!(\"{{}}/{}\", {pane_grid_scope})", pane.name);
             let pattern = pane_type.as_ref().map_or_else(
                 || rust_string(&pane.name),
                 |pane_type| format!("{pane_type}::__Static({})", rust_string(&pane.name)),
@@ -65,7 +70,7 @@ pub(in crate::codegen) fn render_pane_grid(
         }
         let key = expr_code(&template.key, &template_env, document, ValueMode::Owned)?;
         let pane_scope = format!(
-            "format!(\"{{}}/{}({{}})\", {scope}, __pane_key)",
+            "format!(\"{{}}/{}({{}})\", {pane_grid_scope}, __pane_key)",
             template.item
         );
         let content = render_pane_content(
@@ -153,7 +158,14 @@ pub(in crate::codegen) fn render_pane_grid(
         env,
         document,
     )?;
-    Ok(format!("{code}.into()"))
+    identify_rendered(
+        format!("{code}.into()"),
+        Some(&id),
+        message,
+        env,
+        document,
+        scope,
+    )
 }
 
 pub(in crate::codegen) fn append_pane_grid_style(
@@ -359,6 +371,12 @@ pub(in crate::codegen) fn render_rich_span(
     if let Some(line_height) = &item.options.line_height {
         let line_height = text_line_height_code(line_height, env, document)?;
         write!(code, ".line_height({line_height})").unwrap();
+    } else if let Some(line_height) = style.text_line_height {
+        write!(
+            code,
+            ".line_height(::iced::widget::text::LineHeight::Relative({line_height}))"
+        )
+        .unwrap();
     }
     if let Some(font) = &item.options.font {
         let font = font_preset_code(font, document)?;

@@ -93,6 +93,8 @@ on notifications_changed(next)
 on view_mode_changed(next)
   view_mode = next
 
+on render_coverage_resized(_dx, _dy)
+
 on display_mode_changed(next)
   display_mode = some(next)
 
@@ -449,7 +451,7 @@ view
 
     rule horizontal thickness=1.0 style=weak fill=pad(12,4) color=border r=2.0 snap=true
 
-    grid gap=16.0 w=640.0 h=aspect(16.0,9.0) fluid=280.0 @w-full
+    grid gap=16.0 w=640.0 h=aspect(16.0,9.0) max-cell=280.0 @w-full
       col gap=8.0 p=16.0 @w-full bg-surface rounded-lg
         text "Controls" w=fill h=30.0 size=18.0 line-h-px=22.0 font=default align-x=left align-y=center shape=advanced wrap=word @font-bold text-fg
         theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)
@@ -547,6 +549,11 @@ view
           text "Pinned with flexible bounds" size=12.0 @text-muted
         radio "List" value=0 selected=(view_mode == 0) style=view_radio(loading) -> view_mode_changed _
         radio "Board" value=1 selected=(view_mode == 1) -> view_mode_changed _
+        for mode in display_modes
+          text mode size=12.0 @text-muted
+        resize-handle drag=render_coverage_resized cursor=resize-horizontal
+          box w=8.0 h=24.0 @bg-primary rounded-md
+            text "Resize handle" size=1.0 @text-primary
         grid cols=2 h=shrink gap=4.0 @w-full
           text "Even" size=12.0 @text-muted
           text "height" size=12.0 @text-muted

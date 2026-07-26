@@ -8,6 +8,17 @@ pub(in crate::codegen) fn render_structure(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
+    let id = match node {
+        ViewNode::Theme { id, .. }
+        | ViewNode::Float { id, .. }
+        | ViewNode::Pin { id, .. }
+        | ViewNode::Sensor { id, .. }
+        | ViewNode::Responsive { id, .. }
+        | ViewNode::KeyedColumn { id, .. }
+        | ViewNode::Lazy { id, .. } => id.as_ref(),
+        _ => None,
+    };
+    let child_scope = rendered_child_scope(id, scope, env, document)?;
     let rendered = match node {
         ViewNode::Theme {
             preset,
@@ -16,7 +27,7 @@ pub(in crate::codegen) fn render_structure(
             content,
             ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let mut code = format!(
                 "{{ let __theme_content: __IceElement<'_, {message}> = {content}; ::iced::widget::themer({}, __theme_content)",
                 theme_preset_code(preset, env, document)?
@@ -42,7 +53,7 @@ pub(in crate::codegen) fn render_structure(
             content,
             ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let scale = clamped_f32_code(scale, "f32::EPSILON", "f32::MAX", env, document)?;
             let mut translate_env = env.clone();
             for (name, code) in [
@@ -81,7 +92,7 @@ pub(in crate::codegen) fn render_structure(
             content,
             ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let x = expr_code(x, env, document, ValueMode::Owned)?;
             let y = expr_code(y, env, document, ValueMode::Owned)?;
             let mut code = format!(
@@ -93,7 +104,7 @@ pub(in crate::codegen) fn render_structure(
         ViewNode::Sensor {
             options, content, ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let mut code = format!(
                 "{{ let __sensor_content: __IceElement<'_, {message}> = {content}; ::iced::widget::sensor(__sensor_content)"
             );
@@ -167,8 +178,8 @@ pub(in crate::codegen) fn render_structure(
                 } => {
                     let breakpoint =
                         clamped_f32_code(breakpoint, "f32::EPSILON", "f32::MAX", env, document)?;
-                    let narrow = render_node(narrow, document, message, env, scope, slot)?;
-                    let wide = render_node(wide, document, message, env, scope, slot)?;
+                    let narrow = render_node(narrow, document, message, env, &child_scope, slot)?;
+                    let wide = render_node(wide, document, message, env, &child_scope, slot)?;
                     format!(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }}"
                     )
@@ -197,7 +208,8 @@ pub(in crate::codegen) fn render_structure(
                             state: None,
                         },
                     );
-                    let content = render_node(content, document, message, &child_env, scope, slot)?;
+                    let content =
+                        render_node(content, document, message, &child_env, &child_scope, slot)?;
                     format!(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }}"
                     )
@@ -214,14 +226,26 @@ pub(in crate::codegen) fn render_structure(
             options,
             child,
             span,
+            ..
         } => render_keyed_column(
-            item, items, key, options, child, span, document, message, env, scope, slot,
+            item,
+            items,
+            key,
+            options,
+            child,
+            span,
+            document,
+            message,
+            env,
+            &child_scope,
+            slot,
         ),
         ViewNode::Lazy {
             dependency,
             binding,
             child,
             span,
+            ..
         } => {
             let dependency_type = expr_type(dependency, &env_types(env), document, span)?;
             let dependency = expr_code(dependency, env, document, ValueMode::Owned)?;
@@ -245,10 +269,12 @@ pub(in crate::codegen) fn render_structure(
             )?;
             let dependency_rust = dependency_type.rust(&document.structs);
             Ok(format!(
-                "::iced::widget::lazy(({dependency}, ({scope}).to_owned()), move |__dependency| {{ let {binding}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
+                "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned()), move |__dependency| {{ let {binding}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))
         }
         _ => return Ok(None),
     }?;
-    Ok(Some(rendered))
+    Ok(Some(identify_rendered(
+        rendered, id, message, env, document, scope,
+    )?))
 }

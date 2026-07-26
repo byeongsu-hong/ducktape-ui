@@ -73,6 +73,37 @@ view
 }
 
 #[test]
+fn keeps_component_canvas_draw_callbacks_reusable() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component CounterCanvas()
+  state
+    count = 0
+  on pressed
+    count = count + 1
+  canvas w=120.0 h=40.0
+    event mouse pressed
+      emit pressed
+      capture
+    text count x=4.0 y=16.0 color=fg size=12.0
+view
+  CounterCanvas
+"#;
+    let generated = compile(source, "component-canvas.ice").unwrap();
+
+    assert!(generated.contains("let __paint = |__frame:"));
+    assert!(!generated.contains("let __paint = move |__frame:"));
+    assert!(
+        generated
+            .contains("if __cursor.is_over(__bounds) && let ::std::option::Option::Some(__value)")
+    );
+}
+
+#[test]
 fn lowers_qr_data_and_widget_options() {
     let source = r#"app Codes
 theme
@@ -217,6 +248,43 @@ view
     assert!(generated.contains("::iced::widget::text_input(\"\", &self.draft)"));
     assert!(generated.contains("format!(\"{}/name\""));
     assert!(generated.contains("format!(\"{}/Card@"));
+}
+
+#[test]
+fn keeps_for_reconciliation_scopes_private_from_explicit_ids() {
+    let source = r#"app Repeated
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  groups = [["One", "Two"], ["Three"]]
+component Frame()
+  col #body
+    slot
+component Private(value:str)
+  state
+    seen = ""
+  text value
+view
+  col #list
+    for group in groups
+      for item in group
+        Frame #frame(item)
+          text item #slotted(item)
+        Private value=item
+"#;
+    let generated = compile(source, "repeated.ice").unwrap();
+
+    assert_eq!(generated.matches("let __for_scope = format!").count(), 2);
+    assert!(generated.contains("format!(\"{}/@for:"));
+    assert!(generated.contains("/frame({})"));
+    assert!(generated.contains("/slotted({})"));
+    assert!(!generated.contains("format!(\"{}/frame({})\", __for_scope.clone(), item)"));
+    assert!(!generated.contains("format!(\"{}/slotted({})\", __for_scope.clone(), item)"));
+    assert!(generated.contains("format!(\"{}/Private@"));
+    assert!(generated.contains("\", __for_scope.clone())"));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-# Ice Language Specification 1.61
+# Ice Language Specification 1.63
 
 Status: implemented reference slice
 
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 1.61 syntax.
+marked “planned” is a design constraint, not accepted 1.63 syntax.
 
 ## 1. Design contract
 
@@ -50,7 +50,7 @@ async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 1.61, with one canonical spelling for each construct. Spellings
+for revision 1.63, with one canonical spelling for each construct. Spellings
 removed in this revision are syntax errors and the formatter never translates
 old vocabulary. Future additions or changes require an explicit language
 design and a new revision; future removals require deprecation and migration.
@@ -61,7 +61,7 @@ are the extended surface. It is not a parity roadmap and must not grow only
 because iced exposes another public type or method.
 
 Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 1.61. The workspace packages are
+document specifies language revision 1.63. The workspace packages are
 pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
 resolved iced/iced_widget versions are a third, independent backend baseline.
 
@@ -168,7 +168,7 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
   line. Indentation may only return to an existing level.
 - Empty lines are ignored by the parser and normalized by the formatter.
 - A line whose first non-space characters are `//` is a comment. Inline and
-  block comments are not part of 1.61.
+  block comments are not part of 1.63.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
   or `__`, and `_`, `none`, and Rust keywords are reserved.
 - Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
@@ -190,6 +190,7 @@ app | daemon
 use
 extern
 theme
+recipe
 qr
 state
 preset
@@ -197,6 +198,7 @@ component
 on
 subscribe
 view
+test
 ```
 
 An Ice source graph has exactly one `app` or `daemon` root and one `view`.
@@ -204,8 +206,9 @@ It may have multiple `extern` namespaces; imported plugin fragments can
 therefore bind their own Rust modules beside the application's backend.
 Extern type and function names remain graph-global and duplicates are errors.
 The root file declares the app and normally the view; imported fragments may
-hold any other top-level declarations. The graph may have multiple components
-and handlers. The view and each component have exactly one root node.
+hold any other top-level declarations. The graph may have multiple components,
+handlers, and graph-unique tests. The view and each component have exactly one
+root node.
 
 ## 4. Compact grammar
 
@@ -217,11 +220,12 @@ source_graph   = root_file imported_file*
 root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
 use_decl       = "use" string
-declaration    = extern_decl | theme_decl | font_decl | qr_decl | state_decl
-               | preset_decl | component_decl | handler_decl | subscribe_decl
-               | view_decl
-document       = root_decl extern_decl* theme_decl qr_decl* state_decl? preset_decl*
-                 component_decl* handler_decl* subscribe_decl? view_decl
+declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
+               | qr_decl | state_decl | preset_decl | component_decl
+               | handler_decl | subscribe_decl | view_decl | test_decl
+document       = root_decl extern_decl* theme_decl style_recipe_decl* qr_decl*
+                 state_decl? preset_decl* component_decl* handler_decl*
+                 subscribe_decl? view_decl test_decl*
 
 root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
 app_setting    = "title" expr | "theme" expr
@@ -366,6 +370,15 @@ extern_pane_grid_style_sig
 
 theme_decl     = "theme" INDENT color_entry+
 color_entry    = name color
+
+style_recipe_decl
+               = "recipe" name "for" style_recipe_target
+                 INDENT style_recipe_line+
+style_recipe_target
+               = "col" | "row" | "flex" | "grid" | "stack" | "box"
+               | "text" | "input" | "button"
+style_recipe_line
+               = "@"? utility+
 
 font_decl      = "font" name font_property*
 font_property  = "family=" (string | "serif" | "sans" | "cursive" | "fantasy" | "mono")
@@ -540,21 +553,45 @@ window_event   = "frame" | "opened" | "closed" | "moved" | "resized"
 
 view_decl      = "view" INDENT node
 
+test_decl      = "test" name
+                 (INDENT (test_configuration | target_decl)* test_step*)?
+test_configuration
+               = "preset" name
+               | "viewport" number number
+               | "timeout" positive_integer ("ms" | "s")
+               | "mount" INDENT node
+target_decl    = "target" name "=" widget_target
+test_target    = name | widget_target
+test_step      = "click" test_target
+               | "hover" test_target
+               | "press" test_target
+               | "release"
+               | "type" expr
+               | "key" ("enter" | "escape" | "tab" | "backspace")
+               | "resize" expr expr
+               | "dispatch" name ("(" expr_list? ")")?
+               | "expect" expr
+               | "expect" expr "~=" expr
+               | "expect" ("exists" | "missing") test_target
+               | "expect" "no"? "text" expr ("within" test_target)?
+
 node           = layout | text | input | button | checkbox | toggler
                | slider | progress | radio | pick_list | combo_box
                | rule | qr_code | space | float | pin | sensor | responsive
-               | media | tooltip | mouse_area | canvas | theme_boundary
+               | media | tooltip | mouse_area | resize_handle | canvas
+               | theme_boundary
                | component_call | slot | extern_component_call | themer_view
                | shader_view
                | if_node | match_node | for_node
                | keyed_column | lazy_node | markdown_view | table_view
                | editor_view | box | overlay | rich_text | pane_grid
-layout         = "col" id? column_property* styles? INDENT node+
-               | "row" id? flex_property* styles? INDENT node+
-               | "flex" id? css_flex_property* styles? INDENT node+
-               | "scroll" id? scroll_property* styles? INDENT node scroll_status*
-               | "grid" id? grid_property* styles? INDENT node+
-               | "stack" id? stack_property* styles? INDENT node+
+layout         = "col" id? column_property* styles? (INDENT node+)?
+               | "row" id? flex_property* styles? (INDENT node+)?
+               | "flex" id? css_flex_property* styles? (INDENT node+)?
+               | "scroll" id? scroll_property* styles?
+                 INDENT scroll_status* node scroll_status*
+               | "grid" id? grid_property* styles? (INDENT node+)?
+               | "stack" id? stack_property* styles? (INDENT node+)?
 box            = "box" id? box_property* styles? INDENT node
 box_property   = ("w=" | "h=") length
                    | ("max-w=" | "max-h=") expr
@@ -576,13 +613,13 @@ flex_item_property = "order=" expr
                    | ("m=" | "mx=" | "my="
                      | "mt=" | "mr=" | "mb="
                      | "ml=") ("auto" | expr | "percent(" expr ")")
-overlay        = "overlay" "when=" expr overlay_property*
+overlay        = "overlay" id? "when=" expr overlay_property*
                  INDENT "content" INDENT node
                  INDENT "layer" INDENT node
 overlay_property = "dismiss=" route | "backdrop=" name ("/" u8)?
                  | "p=" expr
                  | ("align-x=" | "align-y=") ("start" | "center" | "end")
-rich_text      = "rich-text" rich_text_property* styles? ("->" route)?
+rich_text      = "rich-text" id? rich_text_property* styles? ("->" route)?
                  INDENT rich_span*
 rich_text_property = ("w=" | "h=") length | "size=" expr
                    | ("line-h=" | "line-h-px=") expr
@@ -601,7 +638,7 @@ rich_span_property = ("size=" | "line-h=" | "line-h-px=") expr
                      | "pl=") expr
                    | "underline" | "underline=" expr
                    | "strike" | "strike=" expr
-pane_grid      = "panes" id pane_grid_property*
+pane_grid      = "panes" "#" name pane_grid_property*
                  INDENT pane_grid_style? pane_configuration pane_declaration*
 pane_grid_property = ("w=" | "h=") length
                    | ("gap=" | "min-size=" | "resize=") expr
@@ -644,7 +681,7 @@ surface_style_property
 background_value = color_ref
                  | "linear(" expr ("," color_ref "@" expr){0,8} ")"
 pane_axis      = "horizontal" | "vertical"
-keyed_column   = "keyed" name "in" expr "by=" expr keyed_property*
+keyed_column   = "keyed" name "in" expr "by=" expr id? keyed_property*
                  INDENT node
 keyed_property = ("w=" | "h=") length | "gap=" expr
                | ("p=" | "px=" | "py="
@@ -652,8 +689,8 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                  | "pl=") expr
                | "max-w=" expr
                | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr "as" name INDENT node
-markdown_view  = "markdown" name markdown_property* "->" route
+lazy_node      = "lazy" expr "as" name id? INDENT node
+markdown_view  = "markdown" name id? markdown_property* "->" route
                  (INDENT markdown_style)?
 markdown_property = ("text-size=" | "h1-size=" | "h2-size="
                   | "h3-size=" | "h4-size=" | "h5-size=" | "h6-size="
@@ -671,7 +708,7 @@ markdown_style_property
                  | "inline-code-r=" | "inline-code-r-tl="
                  | "inline-code-r-tr=" | "inline-code-r-br="
                  | "inline-code-r-bl=") expr
-table_view     = "table" name "in" expr table_property* INDENT table_column+
+table_view     = "table" name "in" expr id? table_property* INDENT table_column+
 table_property = "w=" length
                | ("p=" | "px=" | "py="
                  | "sep=" | "sep-x=" | "sep-y=") expr
@@ -682,7 +719,7 @@ table_column_property = "w=" length
                       | "align-x=" ("left" | "center" | "right")
                       | "align-y=" ("top" | "center" | "bottom")
 editor_view    = "editor" id? "<->" name editor_property*
-                 (INDENT editor_status*)?
+                 ("->" route)? (INDENT editor_status*)?
 editor_property = "hint=" string | "w=" expr | "h=" length
                 | ("min-h=" | "max-h=" | "size="
                   | "line-h=" | "line-h-px=" | "p=") expr
@@ -691,6 +728,7 @@ editor_property = "hint=" string | "w=" expr | "h=" length
                 | "highlight=" string
                 | "highlight-theme=" ("solarized-dark" | "base16-mocha"
                   | "base16-ocean" | "base16-eighties" | "inspired-github")
+                | ("highlighter=" | "key-binding=" | "style=") call
                 | "disabled=" expr
 editor_status  = ("active" | "hovered" | "focused"
                | "focused-hovered" | "disabled") editor_style_property*
@@ -727,7 +765,7 @@ flex_content_alignment = "start" | "end" | "flex-start" | "flex-end"
                        | "space-around" | "space-evenly"
 stack_property = ("w=" | "h=") length | "clip=" expr
                | "under=" u16
-grid_property  = "cols=" expr | "fluid=" expr | "w=" expr
+grid_property  = "cols=" expr | "min-cell=" expr | "max-cell=" expr | "w=" expr
                | "gap=" expr | "h=" grid_sizing
 grid_sizing    = length | "aspect(" expr "," expr ")"
 scroll_property = "dir=" ("vertical" | "horizontal" | "both")
@@ -759,7 +797,7 @@ scroll_style_section
                  scroll_bar_surface_property*
                | "gap" "bg=" background_value
                | "auto" scroll_auto_property*
-text           = "text" expr text_property* styles?
+text           = "text" expr id? text_property* styles?
 text_property  = ("w=" | "h=") length | "size=" expr
                | ("line-h=" | "line-h-px=") expr
                | "font=" font_ref
@@ -800,8 +838,8 @@ checkbox       = "checkbox" expr id? accessibility_property* "checked=" expr
                  bool_property*
                  checkbox_icon_property* checkbox_style? styles? "->" route
                  (INDENT checkbox_status_style*)?
-toggler        = "toggler" expr "checked=" expr bool_property*
-                 ("align=" text_alignment)? styles? "->" route
+toggler        = "toggler" expr id? "checked=" expr bool_property*
+                 ("align=" text_alignment)? ("style=" call)? styles? "->" route
                  (INDENT toggler_status_style*)?
 bool_property  = "disabled=" expr | "size=" expr | "w=" length
                | ("gap=" | "text-size=" | "line-h=") expr
@@ -830,7 +868,7 @@ toggler_style_property = ("bg=" | "fg=") background_value
 text_alignment = "default" | "left" | "center" | "right" | "justified"
 text_wrapping  = "none" | "word" | "glyph" | "word-or-glyph"
 color_ref      = name ("/" u8)?
-slider         = "slider" expr "min=" expr "max=" expr slider_property*
+slider         = "slider" expr id? "min=" expr "max=" expr slider_property*
                  styles? "->" route (INDENT slider_status+)?
 slider_property = ("step=" | "default=" | "shift-step=") expr
                 | ("w=" | "h=") length
@@ -848,7 +886,7 @@ slider_style_property
                | ("handle-r=" | "handle-r-tl="
                  | "handle-r-tr=" | "handle-r-br="
                  | "handle-r-bl=") expr
-progress       = "progress" expr progress_property* styles?
+progress       = "progress" expr id? progress_property* styles?
 progress_property
                = ("min=" | "max=") expr
                | ("length=" | "girth=") length | "vertical"
@@ -858,20 +896,20 @@ progress_property
                | "border=" color_ref
                | ("border-w=" | "r=" | "r-tl="
                  | "r-tr=" | "r-br=" | "r-bl=") expr
-radio          = "radio" expr "value=" expr "selected=" expr
+radio          = "radio" expr id? "value=" expr "selected=" expr
                  radio_property* styles? "->" route
                  (INDENT radio_status_style*)?
 radio_property = ("size=" | "gap=" | "text-size=" | "line-h=") expr
                | "w=" length
                | "shape=" ("auto" | "basic" | "advanced")
                | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
-               | "font=" font_ref
+               | "font=" font_ref | "style=" call
 radio_status_style = ("active" | "hovered")
                      ("selected" | "unselected") radio_style_property*
 radio_style_property = "bg=" background_value
                      | ("dot=" | "border=" | "text=") color_ref
                      | "border-w=" expr
-pick_list      = "pick" expr expr pick_property* "->" route
+pick_list      = "pick" expr expr id? pick_property* "->" route
                  (INDENT pick_child*)?
 pick_property  = "hint=" expr | "w=" length
                | "menu-h=" length | "p=" expr
@@ -904,7 +942,7 @@ pick_icon_property
                = "code=" string | "font=" font_ref
                | ("size=" | "line-h=") expr
                | "shape=" ("auto" | "basic" | "advanced")
-combo_box      = "combo" name expr string combo_property* "->" route
+combo_box      = "combo" name expr string id? combo_property* "->" route
                  (INDENT combo_child*)?
 combo_property = "w=" length | "menu-h=" length
                | "p=" expr | ("text-size=" | "line-h=") expr
@@ -927,21 +965,24 @@ combo_icon_property
                = "code=" string | "font=" font_ref
                | ("size=" | "gap=") expr
                | "side=" ("left" | "right")
-float          = "float" float_property* INDENT node
+float          = "float" id? float_property* INDENT node
 float_property = ("scale=" | "x=" | "y=" | "shadow-x="
                  | "shadow-y=" | "shadow-blur=" | "r="
                  | "r-tl=" | "r-tr=" | "r-br="
                  | "r-bl=") expr
                | "shadow=" color_ref
-pin            = "pin" (("w=" | "h=") length)?
+pin            = "pin" id? (("w=" | "h=") length)*
                  ("x=" expr)? ("y=" expr)? INDENT node
-sensor         = "sensor" sensor_property+ INDENT node
-sensor_property = ("show=" | "resize=" | "hide=") route
+sensor         = "sensor" id? sensor_property* sensor_event sensor_property*
+                 INDENT node
+sensor_property = sensor_event
                 | "key=" expr | "anticipate=" expr | "delay=" expr
-responsive     = "responsive" responsive_mode
-                 (("w=" | "h=") length)? INDENT node+
-responsive_mode = "at=" expr | "size=(" name "," name ")"
-rule           = "rule" ("horizontal" | "vertical") rule_property* styles?
+sensor_event   = ("show=" | "resize=" | "hide=") route
+responsive     = "responsive" id? "at=" expr
+                 (("w=" | "h=") length)* INDENT node node
+               | "responsive" id? "size=(" name "," name ")"
+                 (("w=" | "h=") length)* INDENT node
+rule           = "rule" ("horizontal" | "vertical") id? rule_property* styles?
 rule_property  = "thickness=" expr | "style=" ("default" | "weak")
                | "fill=" rule_fill | "color=" name ("/" u8)?
                | ("r=" | "r-tl=" | "r-tr="
@@ -949,11 +990,11 @@ rule_property  = "thickness=" expr | "style=" ("default" | "weak")
                | "snap=" expr
 rule_fill      = "full" | "percent(" expr ")" | "pad(" u16 ")"
                | "pad(" u16 "," u16 ")"
-qr_code        = "qr" name qr_property*
+qr_code        = "qr" name id? qr_property*
 qr_property    = ("cell-size=" | "size=") expr
                | ("cell=" | "bg=") name ("/" u8)?
-space          = "space" ("w=" length)? ("h=" length)? styles?
-media          = ("image" | "svg" | "viewer") expr media_property*
+space          = "space" id? ("w=" length)? ("h=" length)? styles?
+media          = ("image" | "svg" | "viewer") expr id? media_property*
 media_property = accessibility_property | ("w=" | "h=") length
                | "fit=" ("contain" | "cover" | "fill" | "none" | "scale-down" | expr)
                | "rotate=" expr | "opacity=" expr
@@ -968,7 +1009,7 @@ media_property = accessibility_property | ("w=" | "h=") length
                | ("p=" | "min-scale=" | "max-scale="
                  | "scale-step=") expr
 length         = "fill" | "fill(" u16 ")" | "shrink" | expr
-tooltip        = "tooltip" tooltip_property* INDENT node node
+tooltip        = "tooltip" id? tooltip_property* INDENT node node
 tooltip_property
                = "position=" ("top" | "bottom" | "left" | "right" | "cursor")
                | "gap=" expr | "p=" expr | "delay=" expr | "snap=" expr
@@ -981,14 +1022,17 @@ tooltip_property
                  | "r-tr=" | "r-br=" | "r-bl="
                  | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
                | "px-snap=" expr
-mouse_area     = "mouse" mouse_property+ INDENT node
+mouse_area     = "mouse" id? mouse_property+ INDENT node
 mouse_property = ("press=" | "release=" | "double=" | "right_press="
                | "right_release=" | "middle_press=" | "middle_release="
                | "enter=" | "move=" | "scroll=" | "exit=") route
                | "cursor=" mouse_cursor
-canvas         = "canvas" canvas_property* INDENT canvas_item*
+resize_handle  = "resize-handle" id? "drag=" route
+                 (("press=" | "release=") route)*
+                 ("cursor=" mouse_cursor)? INDENT node
+canvas         = "canvas" id? canvas_property* INDENT canvas_item*
 canvas_property = ("w=" | "h=") length
-                | ("cache=" | "capture=") expr
+                | "cache=" expr | "cache-group=" name | "capture=" expr
                 | ("press=" | "release=" | "right_press=" | "right_release="
                   | "middle_press=" | "middle_release=" | "enter=" | "move="
                   | "scroll=" | "exit=") route
@@ -1051,7 +1095,7 @@ canvas_path_segment = "move" point | "line" point
                     | "rect" point size
                     | "rounded" point size canvas_radius+
                     | "circle" point "r=" expr | "close"
-theme_boundary = "theme" theme_preset? theme_property* INDENT node
+theme_boundary = "theme" id? theme_preset? theme_property* INDENT node
 theme_preset   = "default" | "app" | built_in_iced_theme | theme_call
 theme_call     = name "(" expr_list? ")"
 built_in_iced_theme
@@ -1063,7 +1107,7 @@ built_in_iced_theme
                | "tokyo-night" | "tokyo-night-storm" | "tokyo-night-light"
                | "kanagawa-wave" | "kanagawa-dragon" | "kanagawa-lotus"
                | "moonfly" | "nightfly" | "oxocarbon" | "ferra"
-theme_property = ("fg=" | "bg=") name ("/" u8)?
+theme_property = "fg=" color_ref | "bg=" background_value
 component_name = PascalName ("." PascalName)*
 component_call = component_name component_item*
                  (INDENT (node | named_slot+ | component_call+))?
@@ -1072,10 +1116,10 @@ named_prop     = name "=" expr
 named_slot     = name ":" INDENT node
 slot           = "slot" name?
 extern_component_call
-               = "extern" name "(" expr_list? ")" ("->" route)?
-themer_view    = "themer" name "(" expr_list? ")" ("->" route)?
+               = "extern" name "(" expr_list? ")" id? ("->" route)?
+themer_view    = "themer" name "(" expr_list? ")" id? ("->" route)?
 shader_view    = "shader" name "(" expr_list? ")"
-                 (("w=" | "h=") length)* ("->" route)?
+                 id? (("w=" | "h=") length)* ("->" route)?
 if_node        = "if" expr INDENT node+
 match_node     = "match" expr INDENT match_arm+
 match_arm      = (expr | "_") INDENT node+
@@ -1083,7 +1127,8 @@ for_node       = "for" name "in" expr INDENT node+
 
 property       = "hint=" string | "disabled=" expr | "checked=" expr
 styles         = "@" utility+
-id             = "#" kebab_name | "#" name "(" expr ")"
+id             = static_id | "#" kebab_name "(" expr ")"
+static_id      = "#" kebab_name
 route          = name | name "(" route_arg_list? ")"
 route_arg      = expr | "_"
 ```
@@ -1149,7 +1194,11 @@ theme or selected theme base style, and a non-positive dynamic scale is clamped
 to `f32::EPSILON`. Literal mistakes are rejected during analysis.
 
 The remaining application values lower to iced `Settings` and builder
-configuration.
+configuration. Generated `run` delegates to one internal typed program builder;
+first-class tests use that same program contract—presets, theme, settings,
+update, view, tasks, and subscriptions—without reconstructing application
+wiring. A test `mount` substitutes one checked view root while retaining the
+same generated state/update program. Section 9 defines the complete test mode.
 `executor` is a Rust type path passed to iced's typed `Application::executor`;
 rustc reports a local generated-code error when the type is missing or does not
 implement `iced::Executor`.
@@ -1178,7 +1227,7 @@ codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 1.61.
+compile time. Encoded icon formats remain outside 1.63.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -1738,6 +1787,8 @@ with any `Highlighter`, settings, highlight type, and format function.
 `text_editor::Style`, covering the advanced catalog class. An editor or input
 inside a pure component may bind an `editor` or `str` prop when every call
 passes a direct app state; the checker rejects computed temporary bindings.
+`key-binding=` and the editor's outer `->` route must appear together; an
+editor without a custom binding has neither.
 
 Spaces inside a compound expression should be wrapped in parentheses when the
 expression shares a line with widget properties:
@@ -1832,7 +1883,7 @@ crate::backend::create_task
 Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
 `A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
 messages must satisfy the traits required by generated iced code, notably
-`Clone` for 1.61 message payloads. Generated app and message debug output is
+`Clone` for 1.63 message payloads. Generated app and message debug output is
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
@@ -2424,22 +2475,22 @@ The implemented native nodes are:
 | `col` | vertical children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
 | `row` | horizontal children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
 | `scroll` | one content child; complete direction/scrollbar/builders, every viewport getter and status selector, every concrete Style field, and typed native runtime style callbacks |
-| `grid` | responsive children with pixel width/spacing, fixed columns or fluid max-cell width, and aspect-ratio or evenly distributed `Length` height |
+| `grid` | responsive children with pixel width/spacing, fixed columns, minimum-cell wrapping, or native maximum-cell wrapping, and aspect-ratio or evenly distributed `Length` height |
 | `stack` | overlays children with typed width/height, optional clipping and `under=N` intrinsic-base control |
 | `box` | exactly one child with ID, all length bounds, max bounds, per-axis alignment, clipping, per-side padding, every concrete surface style field including linear backgrounds, and typed native runtime style callbacks |
 | `overlay` | named `content` and `layer` trees with checked visibility, alignment, padding, backdrop and optional dismissal |
-| `text` | one `str`, `i64`, or `f64` expression with bounds, size/line-height, font, alignment, shaping, wrapping, checked color/weight styles, and an AccessKit `Label` role containing the visible value |
-| `rich-text` | zero or more structured spans with rich defaults, complete span highlights and optional string link events |
+| `text` | one `str`, `i64`, or `f64` expression with an optional ID, bounds, size/line-height, font, alignment, shaping, wrapping, checked color/weight styles, and an AccessKit `Label` role containing the visible value |
+| `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events |
 | `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
 | `input` | required `str` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
 | `button` | string label or one child; checked accessible label/description with an explicit label required for child content, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
 | `checkbox` | string label, optional accessible label/description, `CheckBox` role and keyboard activation, bool value/route, disabled, sizing/typography/wrapping/font, custom icon, four presets and complete checked-aware status styles |
-| `toggler` | string label, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |
-| `slider` | `f64` or typed extern numeric value/range/default/normal+shift steps, direction-aware sizing, change/release routes and nested status styles |
+| `toggler` | string label, optional ID, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |
+| `slider` | optional ID, `f64` or typed extern numeric value/range/default/normal+shift steps, direction-aware sizing, change/release routes and nested status styles |
 | `progress` | `f64` value/range, all length/girth variants, vertical axis, five presets, complete concrete style overrides and typed native runtime style callbacks |
-| `radio` | string label, bool/i64/f64/str/extern value route, bool selection, complete sizing/typography/font and selected-aware status styles |
-| `pick` | `[T]` options, `T?` selection, complete typography/handle/status/menu configuration, typed native field/menu style callbacks and `T`-payload route |
-| `combo` | searchable/replaced/incrementally pushed `combo[T]` state, `T?` selection, complete typography/icon/input/menu styles, typed native input/menu style callbacks and all routes |
+| `radio` | string label, optional ID, bool/i64/f64/str/extern value route, bool selection, complete sizing/typography/font and selected-aware status styles |
+| `pick` | `[T]` options, `T?` selection, optional ID, complete typography/handle/status/menu configuration, typed native field/menu style callbacks and `T`-payload route |
+| `combo` | searchable/replaced/incrementally pushed `combo[T]` state, `T?` selection, optional ID, complete typography/icon/input/menu styles, typed native input/menu style callbacks and all routes |
 | `float` | one child with positive scale, bounds/viewport-aware x/y translation, shadow and per-corner shadow radius |
 | `pin` | one child with typed width/height and fixed x/y position |
 | `sensor` | one child with show/resize `(width, height)`, hide, key, anticipation and delay |
@@ -2452,6 +2503,7 @@ The implemented native nodes are:
 | `svg` | SVG path or UTF-8/raw-byte memory expression with typed layout, idle/hover color properties, and a typed native runtime style callback |
 | `tooltip` | exactly two children (content then tip), full positioning/timing, every concrete box style field, and typed native runtime style callbacks |
 | `mouse` | one child; all button/enter/move/scroll/exit events and every iced cursor interaction |
+| `resize-handle` | one child with an optional ID, required `(dx, dy)` drag route, optional press/release routes, and checked cursor interaction |
 | `canvas` | declarative native geometry, raster/SVG drawing, path building, transforms, clipping, typed control flow, grouped dependency caches and pointer events |
 | `theme` | one child with default/app/all built-in iced themes and checked text color plus solid/linear background |
 | `if` | includes its children when a bool expression is true |
@@ -2466,9 +2518,14 @@ The implemented native nodes are:
 DOM or runtime reconciliation layer; the iced backend constructs the current
 element tree from state.
 
-Grid `cols=` and `fluid=` are mutually exclusive. `cols=` is a positive
-`i64`; `fluid=` and both dimensions of `h=aspect(W,H)` are positive `f64`
-values. `w=` and `gap=` are non-negative `f64` pixels. A non-aspect
+Grid `cols=`, `min-cell=`, and `max-cell=` are mutually exclusive. `cols=` is
+a positive `i64`; both cell widths and both dimensions of `h=aspect(W,H)` are
+positive `f64` values. `min-cell=` uses as many columns as fit without making
+a cell narrower than the requested width, matching CSS
+`repeat(auto-fit, minmax(..., 1fr))` behavior with natural row height;
+therefore it does not combine with `h=`. `max-cell=` exposes iced's native
+fluid grid, which adds columns so cells do not exceed the requested width.
+`w=` and `gap=` are non-negative `f64` pixels. A non-aspect
 `h=` accepts `fill`, `fill(N)`, `shrink`, or a non-negative `f64` pixel
 expression and maps to iced's evenly distributed sizing.
 
@@ -2973,14 +3030,15 @@ An extern component is a typed Rust `Element` adapter with owned or borrowed
 parameters:
 
 ```ice
-extern native_help(external_hover) -> external_hover_changed _
-extern borrowed_help(draft, external_hover) -> external_hover_changed _
+extern native_help(external_hover) #help -> external_hover_changed _
+extern borrowed_help(draft, external_hover) #borrowed-help -> external_hover_changed _
 ```
 
 Its arguments and emitted payload are checked against the declaration. A
 non-`unit` output requires a route. A `unit` component may omit the route; its
 messages are mapped to an internal no-op. Extern components own their styling,
-so `@` utilities and `#` IDs are not accepted on the call.
+so `@` utilities are not accepted on the call. A direct `#id` identifies the
+bounds of the returned native element for first-class tests.
 
 Subscriptions are declared separately from activation:
 
@@ -3731,9 +3789,11 @@ view
     TaskField value=draft
 ```
 
-Explicit component IDs create a scope; a component without one uses its name.
-Layout and box IDs create descendant scopes, slot content inherits its
-slot position's scope, keyed rows add `key(value)`, table headers/cells add
+Only explicit component IDs create a public target scope. A component call
+without one receives an internal source-scoped identity for state isolation,
+but its descendants cannot be targeted from the caller. Layout and box IDs
+create descendant scopes, slot content inherits its slot position's scope,
+keyed rows add `key(value)`, table headers/cells add
 `header(index)` or `row(index)/col(index)`, and panes add their name.
 Inside a component handler, the path starts at that component instance, so
 `task widget focus #title` targets its own `#title` descendant without naming
@@ -3955,6 +4015,11 @@ for task in tasks
   TaskRow task=task loading=loading #task(task.id)
 ```
 
+An ordinary `for` adds no public identity segment: the example exposes
+`task(<id>)` directly. The backend may keep a private index scope for automatic
+accessibility identities and no-ID component state, but that private scope is
+never part of a test or widget-operation target.
+
 The logical identity is hierarchical:
 
 ```text
@@ -3962,13 +4027,209 @@ App / component-instance / local-node
 Tasks/task(42)/root
 ```
 
-A component call without an explicit ID receives its component name as the
-instance segment. Repeated component calls should therefore provide a dynamic
-ID. The iced backend lowers identities to native iced IDs on widgets that
-support them (currently input and scroll) and still uses layout/component IDs
-to build descendant scopes.
+A component call must have an explicit ID to create a public instance segment.
+Without one, it receives an internal source-scoped identity used only for state
+isolation. Repeated or externally targeted component calls therefore provide a
+stable dynamic or static ID. The iced backend lowers identities to native
+widget IDs where Iced exposes them and uses layout/component IDs to build
+descendant scopes, so all accepted `#id` forms participate in first-class test
+targeting.
+Every concrete rendered built-in node accepts a direct `#id`; its test target
+uses that node's actual layout and hit-test bounds. `if`, `for`, and `slot` do
+not render boxes and therefore accept no IDs. A component-call `#id`
+remains an instance scope and must be followed by a rendered descendant ID.
 
-## 9. Theme and style
+## 9. First-class test mode
+
+A top-level `test` exercises the generated Iced program or one mounted Ice
+view. It is part of the same checked source graph as production declarations;
+there is no second test-file grammar or Rust registration step.
+
+```ice
+test counter_contract
+  preset test
+  viewport 320 240
+  timeout 2s
+  mount
+    Counter #counter
+
+  target root = #counter/root
+  target increment = #counter/increment
+  target result = #counter/result
+
+  expect root.width ~= 240.0
+  click increment
+  expect text "1" within result
+```
+
+### Declaration and configuration
+
+A test name uses `snake_case` and is unique across the complete import graph.
+Tests may be declared in the root or an imported `.ice` fragment. A test may
+have an empty body. `preset`, `viewport`, `timeout`, `mount`, and `target`
+declarations are optional and may be mixed with one another, but every such
+declaration must precede the first executable step. Each configuration form may
+appear at most once, and a target alias name is unique within its test. The same
+alias may be reused in another test; definition, references, collision checks,
+and LSP rename remain in that one test scope.
+
+Without `preset`, the normal application boot function supplies fresh state
+and its initial task. Without `mount`, the complete application view is tested.
+A `mount` block contains exactly one ordinary checked view root and replaces
+only the view used by that test; it retains the generated app state, update,
+theme, tasks, and subscription contract. App and preset handlers may therefore
+use widget or pane operations whose target exists only in a test mount; any
+mount-only pane state referenced by unconditional generated code is retained in
+the production state shape. The default viewport is `1024 × 768`
+logical pixels. Explicit dimensions must be positive finite values in the Iced
+`f32` range. The default timeout is `2s`; an explicit timeout is a positive
+integer followed by `ms` or `s`. Boot or preset tasks settle before the first
+step. Because a pane-grid ID names generated persistent state, pane-grid IDs
+are unique across the production view and every test mount in one source graph.
+
+### Targets and rendered identity
+
+`target name = #scope/id` gives a checked selector path a local alias. Actions
+and presence/text assertions accept either the alias or a direct `#` path.
+Expressions use the alias as a typed test target, for example
+`expect card.width == 240.0`. An alias stores its selector, not a candidate or
+old bounds: each use resolves against the current rendered tree after the most
+recent update. A dynamic selector key may reference an earlier target alias;
+self and forward references are rejected. Targets themselves are opaque
+identities and are not comparable; compare an explicit field such as `kind`,
+`value`, or `width` instead.
+
+Static paths are checked against the normal scoped ID graph. Dynamic keys use
+the existing widget-target expression and key-type rules. IDs still represent
+identity, not CSS selectors. In particular, a component call ID introduces an
+instance scope but no synthetic layout box. Given `Card #card`, a test selects
+an explicitly identified rendered descendant such as `#card/root`; targeting
+`#card` itself is an error. A missing runtime candidate reports nearby known
+IDs instead of guessing.
+
+### Actions and execution
+
+The executable actions are:
+
+```ice
+click target
+hover target
+press target
+release
+type "text"
+key enter
+resize 800 600
+dispatch top_level_handler
+dispatch top_level_handler(argument, ...)
+```
+
+`click`, `hover`, and `press` resolve a visible target and use the center of its
+visible bounds. `press` leaves the primary mouse button down and `release`
+releases it at the current cursor. `type` sends text to the currently focused
+widget. The named keys are `enter`, `escape`, `tab`, and `backspace`. `resize`
+requires positive runtime dimensions and emits the normal Iced window resize
+event. `dispatch` constructs the checked message for a top-level handler;
+component-local handlers remain private and are exercised through their
+rendered controls.
+
+Every test starts with fresh application state, its own executor/runtime, and
+one persistent headless Iced UI cache. Widget-local state, focus, and other
+retained widget state therefore survive rerenders within that test but never
+leak into another test. After boot and after every action, emitted widget and
+subscription messages are replayed in order through generated update code.
+Finite returned tasks and their recursively emitted messages drain before the
+next statement. Generated subscriptions are re-established after updates and
+receive the same simulated interaction/window events. The timeout protects boot
+and finite-task settling from non-quiescent work; it is not a sleep or
+virtual-clock API. Long-lived timer, I/O, and worker subscriptions are sampled
+around boot and simulated events; they are not awaited to global quiescence,
+because an active subscription may intentionally be infinite.
+
+Checked `sync`, future, task, stream, and subscription externs call their real
+Rust implementations. Their panics and errors are not hidden. Deterministic
+test behavior belongs behind a named preset or a Rust `cfg(test)` implementation
+boundary; Ice has no mock layer.
+
+### Assertions and target fields
+
+The assertion forms are:
+
+```ice
+expect boolean_expression
+expect numeric_expression ~= numeric_expression
+expect exists target
+expect missing target
+expect text string_expression
+expect no text string_expression
+expect text string_expression within target
+expect no text string_expression within target
+```
+
+A boolean expectation uses normal checked app-state expressions, equality, and
+`sync` extern calls. Component-local state remains private. `~=` converts both
+numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
+fail. Text matching is exact over visible rendered text. `within` restricts the
+search to the selected target bounds. `exists` and `missing` are useful for IDs
+whose nodes are conditional at runtime.
+
+A resolved test target exposes these checked fields:
+
+| Family | Fields | Type |
+| --- | --- | --- |
+| identity/content | `kind`, `value` | `str` |
+| visibility | `visible` | `bool` |
+| bounds | `x`, `y`, `width`, `height`, `left`, `top`, `right`, `bottom`, `center_x`, `center_y` | `f64` |
+| clipped bounds | `visible_x`, `visible_y`, `visible_width`, `visible_height` | `f64` |
+| content bounds | `content_x`, `content_y`, `content_width`, `content_height` | `f64` |
+| retained transform | `translation_x`, `translation_y`, `scroll_x`, `scroll_y` | `f64` |
+| surface paint | `background`, `border`, `shadow` | native checked value |
+| text paint | `text_color`, `text_size`, `font`, `line_height` | native checked value |
+
+`border` exposes its normal `color`, `width`, and `radius` fields. `value` is
+available only when the selected runtime candidate exposes text content. The
+clipped/content/transform/scroll fields likewise fail at runtime when that
+candidate has no corresponding retained geometry. This is deliberate: a
+missing measurement is not converted to zero.
+
+Geometry comes from real post-layout Iced bounds in logical pixels. Ice does
+not invent a DOM box model or retained `padding`/`gap` values; tests assert
+relationships between child and parent bounds. For example,
+`expect child.x ~= parent.x + 16.0` checks effective left padding without
+coupling the runtime to a CSS abstraction.
+
+Surface and text fields use structured paint output from a real redraw through
+the default headless tiny-skia renderer. A surface lookup requires exactly one
+quad whose bounds equal the target. A text lookup requires exactly one visible
+text primitive inside it. Zero or multiple matches fail with a request for a
+narrower ID rather than selecting arbitrarily. A custom headless renderer may
+still support layout and interaction, but the structured tiny-skia paint fields
+are unavailable and fail explicitly.
+
+### Failure and generated-code contract
+
+Parser and checker diagnostics reject duplicate test/alias names, declarations
+after executable steps, duplicate or invalid configuration, unknown presets,
+handlers, aliases, fields, or ID paths, component-scope targets, invalid keys,
+wrong expression types, and unsupported renderer contracts when known
+statically. Runtime failures include the test name, normalized Ice statement,
+and source path/line; selector, expected/actual values, current bounds, and
+nearby IDs are included when relevant. Tests imported through `use` retain the
+imported fragment's path and original line rather than the merged source line.
+
+Each declaration lowers to an ordinary `#[cfg(test)] #[test]` function, so both
+`cargo test` and `cargo ice test` discover it. Generated support uses the public
+`ui_lang_runtime::testing::{Location, Config, Driver, Target, step}` API; the
+hidden `step` helper adds Ice source context to panics from generated statement
+evaluation. Generated Ice tests need no Rust wrapper, registration, or
+application-level dependency on the internal simulator crate.
+
+Revision 1.63 deliberately has no DOM, CSS selector engine, computed-style
+object, synthetic component bounds, component-local-state access, test mock
+DSL, virtual time, pixel-snapshot syntax, or multi-window orchestration. The
+removed external ICE test format is not accepted and has no compatibility
+adapter.
+
+## 10. Theme and style
 
 Theme colors are named tokens with `#RRGGBB` or `#RRGGBBAA` values:
 
@@ -4004,32 +4265,57 @@ The Rust function has signature `fn(bool) -> iced::Theme`. It may use
 `Theme::custom_with_fn` to derive the complete extended palette; generated
 probes reject a missing function, wrong arguments, or a different return type.
 
-`@` switches the remainder of a node to checked semantic color, font-emphasis,
-and design-token utilities. Layout, geometry, and text size use typed
-properties such as
-`w=`, `h=`, `p=`, `gap=`, and `r=`. Fixed native widget
-appearance uses `style=` presets; reusable or state-dependent native appearance
-that is more complex than token variants crosses a typed Rust style or
-component boundary.
+`@` switches the remainder of a node to checked utility or recipe names. Put
+typed properties before it. A semantic recipe gives a repeated visual role one
+checked default without adding a runtime style system:
 
-Utilities are resolved at compile time; there is no CSS engine, selector
-matching, cascade, or runtime string parser. Geometry utilities exist only when
-they style a generated wrapper or fill a gap in the typed properties. Direct
-builder geometry uses the typed spelling and the old utility spelling is an
-error on that target.
+```ice
+recipe panel for box
+  @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
+
+recipe primary_action for button
+  @px-4 py-2 bg-primary text-primary_fg rounded-md
+  @hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
+
+view
+  box @panel
+    button "Save" @primary_action -> save
+```
+
+Recipe names are graph-global and must be unique. A recipe may contain one or
+more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
+`stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
+spans. Recipes do not compose other recipes. Applying one to the wrong target
+is `E046`. Every recipe body is checked against its declared target even when
+the recipe is not used by the current view.
+
+Recipes expand in place at compile time. Later utility values win, then direct
+typed properties on the node override recipe defaults. This makes
+`box p=24.0 @panel` a valid local exception. A direct typed property combined
+with a direct utility that owns the same field remains `E045`.
+
+Utilities and recipes are resolved at compile time; there is no CSS engine,
+selector matching, runtime cascade, or runtime string parser. Fixed native
+widget appearance may use `style=` presets; reusable or state-dependent native
+appearance that is more complex than token variants crosses a typed Rust style
+or component boundary.
 
 The accepted utility surface is:
 
 | Family | Values | Effective on |
 | --- | --- | --- |
-| wrapper size | `w-full`, `h-full` | row, col, grid, stack |
-| wrapper max width | `max-w-sm` through `max-w-2xl` | non-flex layout wrappers |
-| wrapper alignment | `self-center` | layout wrappers |
-| wrapper padding | `p-*`, `px-*`, `py-*` | grid and stack |
-| control-axis padding | `px-*`, `py-*` | input and button |
-| text | `font-bold` | text |
+| size | `w-full`, `h-full` | row, col, flex, grid, stack, box; `w-full` also input |
+| max width | `max-w-sm` through `max-w-2xl` | row, col, flex, grid, stack, box |
+| alignment | `items-center` | row, col, flex |
+| wrapper alignment | `self-center` | row, col, grid, stack, box |
+| overflow | `overflow-hidden` | row, col, flex, grid, stack, box |
+| gap | `gap-*` | row, col, flex, grid, stack |
+| padding | `p-*`, `px-*`, `py-*` | row, col, flex, grid, stack, box, input, button |
+| text size | `text-xs` through `text-2xl` | text |
+| line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text |
+| text weight | `font-bold` | text |
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
-| border | `border`, `border-2` | layout wrappers and input |
+| border | `border`, `border-2` | visual layout wrappers, box, input, and button |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full` | layout wrappers, input, and button |
 | states | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` | button |
 | focus | `focus:border-*` | input |
@@ -4055,7 +4341,7 @@ The checker rejects both an unknown utility (`E041`) and a known utility on a
 node where the iced backend would ignore it (`E042`/`E044`). Silent CSS-like
 no-ops are not allowed.
 
-## 10. Diagnostics
+## 11. Diagnostics
 
 Language errors have stable codes and source coordinates:
 
@@ -4104,9 +4390,10 @@ The implemented families are:
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 1.61 does not claim that remapping.
+extern line; 1.63 does not claim that remapping. Generated first-class test
+failures already retain their original root or imported Ice path and line.
 
-## 11. Cargo commands
+## 12. Cargo commands
 
 | Command | Behavior |
 | --- | --- |
@@ -4116,33 +4403,39 @@ extern line; 1.61 does not claim that remapping.
 | `cargo ice fmt` | runs Rust formatting and formats all discovered `.ice` files |
 | `cargo ice fmt --check` | checks both Rust and Ice formatting without changing `.ice` files |
 | `cargo ice check` | language analysis followed by workspace `cargo check` |
+| `cargo ice test [cargo-test args...]` | analyzes every Ice app graph, then runs `cargo test --workspace` with the remaining arguments; ordinary Cargo discovers the same generated tests |
 | `cargo ice clippy` | language analysis followed by workspace clippy |
 | `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
-| `cargo ice schema` | prints the generative Core grammar, style contract, editor capabilities, and backend contract as JSON |
-| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, schema-driven completion, definition, and rename |
+| `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
+| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, schema-driven Core/test completion, definition, and rename |
 
 `cargo-ice` discovers `.ice` files recursively below the current directory,
-skips `.git` and `target`, analyzes files with a top-level `app` or `daemon` as roots, and
-formats both roots and imported fragments.
+skips `.git`, worktree metadata, `target`, and `tests/cases` fixture trees,
+analyzes files with a top-level `app` or `daemon` as roots, and formats both
+roots and imported fragments.
 
 The schema describes every Core construct's valid contexts, canonical syntax,
-child cardinality, typed properties, binding, and route. Completion entries are
-generated from that same construct table instead of a separate vocabulary.
+child cardinality, typed properties, binding, and route. It also describes test
+configuration, actions, assertions, target fields, execution settling, paint
+inspection, and runtime support. Completion entries are generated from that
+same construct table instead of a separate vocabulary.
 
 The LSP uses Content-Length framed stdio, full-document synchronization, and
 the same parser/checker/source map as the compiler. Existing file URIs use the
 open buffers throughout each import graph; imported diagnostics are published
 at the imported URI with UTF-16 ranges. Opening, changing, or closing a buffer
 reanalyzes every open app root, and closing it returns that file to disk.
-Checked component and handler declarations and references retain imported
-source origins, so definition and complete-reference rename use current open
-buffers plus closed app roots under the initialized workspace. Rename validates
-the new identifier, rejects declaration collisions, and waits until every app
-root under the initialized workspace checks. Plain component names and
-compound-family roots are renameable; a family-root rename updates dotted
-descendants, but direct dotted descendants and the implicit `mount` handler are
-definition-only.
+Checked component, handler, recipe, and test-target declarations and references retain
+imported source origins, so definition and complete-reference rename use
+current open buffers plus closed app roots under the initialized workspace.
+Rename validates the new identifier, rejects declaration collisions, and waits
+until every app root under the initialized workspace checks. Plain component
+names, compound-family roots, and recipe names are renameable; a family-root
+rename updates dotted descendants, but direct dotted descendants and the
+implicit `mount` handler are definition-only. A test-target alias is renameable
+only with its definition and references in the same test; an alias with the same
+spelling in another test is unrelated.
 
 The normal runtime and reference-app tests verify deterministic semantic trees,
 focus, keyboard activation, visible focus, password suppression, and action
@@ -4157,9 +4450,9 @@ dependency pins. Headless tests cover dispatch from the bridge to the app
 message. These gates do not expand the single-window or coordinate contract
 above.
 
-## 12. Current coverage and escape hatches
+## 13. Current coverage and escape hatches
 
-The 1.61 native backend covers both windowed applications and windowless
+The 1.63 native backend covers both windowed applications and windowless
 daemons alongside CRUD/settings-style screens, selection, media, hover
 overlays, declarative canvas geometry, and pointer events. Borrowed custom
 widgets and an application-wide renderer type remain the escape hatch for
@@ -4188,7 +4481,7 @@ pure domain conversion   -> typed Rust sync extern
 native window handle     -> typed Rust window callback
 ```
 
-## 13. Reference application
+## 14. Reference application
 
 The readable multi-file task app starts at
 [`examples/iced-app/src/ui/tasks.ice`](examples/iced-app/src/ui/tasks.ice).

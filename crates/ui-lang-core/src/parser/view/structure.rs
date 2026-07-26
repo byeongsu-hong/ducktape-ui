@@ -11,13 +11,16 @@ pub(in crate::parser) fn parse_float(
     if line.children.len() != 1 {
         return Err(error("E089", line, "float requires exactly one child"));
     }
+    let mut id = None;
     let mut scale = Expr::F64(1.0);
     let mut x = Expr::F64(0.0);
     let mut y = Expr::F64(0.0);
     let mut style = FloatStyleOptions::default();
     let parse = |value: &str| parse_expr(strip_wrapping_parens(value), line);
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("scale=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E089", "float")?;
+        } else if let Some(value) = part.strip_prefix("scale=") {
             scale = parse(value)?;
         } else if let Some(value) = part.strip_prefix("x=") {
             x = parse(value)?;
@@ -50,6 +53,7 @@ pub(in crate::parser) fn parse_float(
         }
     }
     Ok(ViewNode::Float {
+        id,
         scale,
         x,
         y,
@@ -70,12 +74,15 @@ pub(in crate::parser) fn parse_pin(
     if line.children.len() != 1 {
         return Err(error("E090", line, "pin requires exactly one child"));
     }
+    let mut id = None;
     let mut width = None;
     let mut height = None;
     let mut x = Expr::F64(0.0);
     let mut y = Expr::F64(0.0);
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E090", "pin")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
             height = Some(parse_length(value, line)?);
@@ -92,6 +99,7 @@ pub(in crate::parser) fn parse_pin(
         }
     }
     Ok(ViewNode::Pin {
+        id,
         width,
         height,
         x,
@@ -112,9 +120,12 @@ pub(in crate::parser) fn parse_sensor(
     if line.children.len() != 1 {
         return Err(error("E091", line, "sensor requires exactly one child"));
     }
+    let mut id = None;
     let mut options = SensorOptions::default();
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("show=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E091", "sensor")?;
+        } else if let Some(value) = part.strip_prefix("show=") {
             options.show = Some(parse_size_route(value, line)?);
         } else if let Some(value) = part.strip_prefix("resize=") {
             options.resize = Some(parse_size_route(value, line)?);
@@ -138,6 +149,7 @@ pub(in crate::parser) fn parse_sensor(
         return Err(error("E091", line, "sensor requires show, resize, or hide"));
     }
     Ok(ViewNode::Sensor {
+        id,
         options,
         content: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),
@@ -156,12 +168,15 @@ pub(in crate::parser) fn parse_responsive(
             "responsive does not accept `@` utilities",
         ));
     }
+    let mut id = None;
     let mut breakpoint = None;
     let mut size = None;
     let mut width = None;
     let mut height = None;
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("at=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E092", "responsive")?;
+        } else if let Some(value) = part.strip_prefix("at=") {
             if breakpoint.is_some() {
                 return Err(error("E092", line, "responsive repeats `at=`"));
             }
@@ -261,6 +276,7 @@ pub(in crate::parser) fn parse_responsive(
         }
     };
     Ok(ViewNode::Responsive {
+        id,
         content,
         width,
         height,

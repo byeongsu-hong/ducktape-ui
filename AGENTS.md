@@ -5,12 +5,12 @@
 This is a Rust 2024 workspace for the Ice UI language. `crates/ui-lang-core/`
 contains the parser, AST, semantic checker, formatter, and Rust code generator.
 `crates/ui-lang/` provides the proc-macro adapter, `crates/ui-lang-runtime/`
-contains runtime widgets and accessibility support, and `crates/cargo-ice/`
-implements the `cargo ice` tooling. Runnable applications live in `examples/`;
-their `.ice` sources are under `src/ui/` and supporting Rust code under
-`src/`. End-to-end language fixtures are in
-`crates/ui-lang-core/tests/cases/`. Treat `vendor/iced_wgpu/` as a pinned local
-patch and do not edit `target/`.
+contains runtime widgets and accessibility support, `crates/ui/` provides the
+default component library, and `crates/cargo-ice/` implements the `cargo ice`
+tooling. Runnable applications live in `examples/`; their `.ice` sources are
+under `src/ui/` and supporting Rust code under `src/`. End-to-end language
+fixtures are in `crates/ui-lang-core/tests/cases/`. Treat `vendor/iced_wgpu/`
+as a pinned local patch and do not edit `target/`.
 
 ## Build, Test, and Development Commands
 
@@ -24,6 +24,7 @@ patch and do not edit `target/`.
 - `cargo run -p iced-app`: run the main reference application.
 
 Use `cargo run -p apple-music-example` for the larger visual example.
+Use `cargo run -p showcase` for the complete default component catalog.
 Platform-specific accessibility checks are in `scripts/`.
 
 ## Coding Style & Naming Conventions

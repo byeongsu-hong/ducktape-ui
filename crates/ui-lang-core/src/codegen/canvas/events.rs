@@ -136,6 +136,14 @@ pub(in crate::codegen) fn canvas_update_code(
     }
     for event in events {
         let filter = canvas_event_filter(&event.source);
+        let pointer_guard = matches!(
+            event.source,
+            SubscriptionSource::Mouse(
+                MouseEvent::Pressed | MouseEvent::Released | MouseEvent::Moved | MouseEvent::Wheel
+            )
+        )
+        .then_some("__cursor.is_over(__bounds) && ")
+        .unwrap_or_default();
         let payloads = canvas_event_payload_types(&event.source);
         let mut event_env = canvas_env.clone();
         for (binding, ty) in event.bindings.iter().zip(payloads) {
@@ -201,7 +209,7 @@ pub(in crate::codegen) fn canvas_update_code(
         };
         write!(
             code,
-            " if let ::std::option::Option::Some(__value) = {filter} {{ let _ = &__value; {bindings} {updates} return {result}; }}"
+            " if {pointer_guard}let ::std::option::Option::Some(__value) = {filter} {{ let _ = &__value; {bindings} {updates} return {result}; }}"
         )
         .unwrap();
     }
