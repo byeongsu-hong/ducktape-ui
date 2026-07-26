@@ -1,5 +1,5 @@
 use iced::theme::Palette as IcedPalette;
-use iced::{Color, Theme as IcedTheme};
+use iced::{Color, Font, Theme as IcedTheme};
 
 /// Semantic colors shared by every component.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,6 +49,8 @@ pub struct Spacing {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Typography {
+    pub font: Font,
+    pub monospace_font: Font,
     pub xs: f32,
     pub sm: f32,
     pub base: f32,
@@ -147,6 +149,8 @@ const SPACING: Spacing = Spacing {
 };
 
 const TYPOGRAPHY: Typography = Typography {
+    font: Font::DEFAULT,
+    monospace_font: Font::MONOSPACE,
     xs: 10.5,
     sm: 12.0,
     base: 13.0,

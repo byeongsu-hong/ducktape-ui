@@ -26,7 +26,7 @@ fn label_style(theme: &Theme) -> LabelStyle {
         color: theme.palette.foreground,
         font: Font {
             weight: Weight::Medium,
-            ..Font::DEFAULT
+            ..theme.typography.font
         },
     }
 }
@@ -41,6 +41,7 @@ mod tests {
         let style = label_style(&LIGHT);
         assert_eq!(style.size, LIGHT.typography.sm);
         assert_eq!(style.color, LIGHT.palette.foreground);
+        assert_eq!(style.font.family, LIGHT.typography.font.family);
         assert_eq!(style.font.weight, Weight::Medium);
     }
 }

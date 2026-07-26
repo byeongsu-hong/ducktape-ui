@@ -53,7 +53,7 @@ use ducktape_ui::ui::{
     theme::LIGHT,
 };
 use iced::widget::{column, container, text};
-use iced::{Element, Length};
+use iced::{Element, Font, Length};
 
 pub use ducktape_ui::ui::{
     calendar::{CalendarEvent, CalendarState},
@@ -1139,7 +1139,10 @@ fn catalog_items(query: &str) -> Vec<String> {
 }
 
 fn theme() -> ducktape_ui::ui::theme::Theme {
-    LIGHT
+    let mut theme = LIGHT;
+    theme.typography.font = Font::with_name("Geist");
+    theme.typography.monospace_font = Font::with_name("Geist Mono");
+    theme
 }
 
 #[cfg(test)]
@@ -1148,7 +1151,11 @@ mod tests {
 
     #[test]
     fn adapters_build_the_checked_default_contracts() {
-        assert_eq!(theme(), LIGHT);
+        assert_eq!(theme().typography.font, Font::with_name("Geist"));
+        assert_eq!(
+            theme().typography.monospace_font,
+            Font::with_name("Geist Mono")
+        );
 
         let _: Element<'_, String> = input_otp("otp", "", false, false);
         let _: Element<'_, ()> = spinner(-1, false);

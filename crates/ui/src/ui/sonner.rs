@@ -759,7 +759,7 @@ where
         .line_height(1.3)
         .font(Font {
             weight: Weight::Medium,
-            ..Font::DEFAULT
+            ..theme.typography.font
         });
     let mut surface = toast(title, theme).variant(entry.data.toast_variant());
 
