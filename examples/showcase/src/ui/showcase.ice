@@ -1,12 +1,17 @@
 app Showcase
   title "ducktape-ui · Ice"
   id "dev.ducktape.ui.showcase"
+  font "../../assets/fonts/Geist.ttf"
+  font "../../assets/fonts/GeistMono.ttf"
   text-size 14
   antialiasing true
   window
     size 1120 820
     min-size 720 560
     position centered
+
+font geist family="Geist" default=true
+font geist_mono family="Geist Mono"
 
 use "components.ice"
 use "../../../../crates/ui/src/ice/default.ice"
@@ -354,7 +359,7 @@ view
               Panel title="Native authoring" description="Search, rich editing, and tooltips use ui-lang primitives directly."
                 col w=fill gap=14.0
                   combo combobox_frameworks searched_framework "Search frameworks" w=fill p=9.0 -> searched_framework_changed _
-                  editor #default-editor <-> textarea_notes hint="Write notes" h=108.0 min-h=80.0 max-h=180.0 size=13.0 p=10.0 wrap=word
+                  editor #default-editor <-> textarea_notes hint="Write notes" h=108.0 min-h=80.0 max-h=180.0 size=13.0 p=10.0 wrap=word font=geist_mono
                     active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
                     hovered border=primary
                     focused border=primary border-w=2.0
