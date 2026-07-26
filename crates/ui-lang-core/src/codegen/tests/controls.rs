@@ -554,6 +554,7 @@ view
     assert!(generated.contains("text::Shaping::Advanced"));
     assert!(generated.contains("text::Wrapping::WordOrGlyph"));
     assert!(generated.contains("..::iced::Font::MONOSPACE"));
+    assert!(generated.contains("::ui_lang_runtime::selectable_text(__text)"));
 }
 
 #[test]

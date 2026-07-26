@@ -2,12 +2,14 @@
 
 mod flex;
 mod resize_handle;
+mod selectable_text;
 #[doc(hidden)]
 pub mod testing;
 mod zstack;
 
 pub use flex::*;
 pub use resize_handle::*;
+pub use selectable_text::*;
 pub use zstack::*;
 
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
