@@ -9,4 +9,4 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-qrcode = { version = "=0.13.0", default-features = false }
+qrcode = { version = "=0.14.1", default-features = false }
