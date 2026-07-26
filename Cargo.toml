@@ -7,6 +7,7 @@ members = [
     "crates/ui",
     "examples/apple-music",
     "examples/iced-app",
+    "examples/notion",
     "examples/showcase",
 ]
 exclude = ["vendor/iced_wgpu"]
