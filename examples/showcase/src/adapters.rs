@@ -1141,7 +1141,7 @@ fn catalog_items(query: &str) -> Vec<String> {
 fn theme() -> ducktape_ui::ui::theme::Theme {
     let mut theme = LIGHT;
     theme.typography.font = Font::with_name("Geist");
-    theme.typography.monospace_font = Font::with_name("Geist Mono");
+    theme.typography.monospace_font = Font::with_name("Geist");
     theme
 }
 
@@ -1152,10 +1152,7 @@ mod tests {
     #[test]
     fn adapters_build_the_checked_default_contracts() {
         assert_eq!(theme().typography.font, Font::with_name("Geist"));
-        assert_eq!(
-            theme().typography.monospace_font,
-            Font::with_name("Geist Mono")
-        );
+        assert_eq!(theme().typography.monospace_font, Font::with_name("Geist"));
 
         let _: Element<'_, String> = input_otp("otp", "", false, false);
         let _: Element<'_, ()> = spinner(-1, false);

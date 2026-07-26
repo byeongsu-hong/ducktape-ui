@@ -1133,6 +1133,10 @@ route          = name | name "(" route_arg_list? ")"
 route_arg      = expr | "_"
 ```
 
+Plain `text` nodes support mouse drag selection across explicit and wrapped
+lines. The active selection supports the platform copy and select-all
+shortcuts; Escape clears it.
+
 Application configuration lives under the app declaration. The four iced
 callbacks accept state expressions directly:
 
