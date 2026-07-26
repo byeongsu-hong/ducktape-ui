@@ -4,7 +4,8 @@ app Music
   bg app_background
   fg app_text
   id "dev.ducktape.ice.music"
-  font "../../../showcase/assets/fonts/Geist.ttf"
+  font "../../../showcase/assets/fonts/Geist-Regular.ttf"
+  font "../../../showcase/assets/fonts/Geist-Bold.ttf"
   text-size 14
   antialiasing true
   window
