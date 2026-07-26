@@ -2,23 +2,39 @@ use "recipes.ice"
 use "components.ice"
 
 theme
-  bg         #ffffff
+  bg         #fdfdfb
   surface    #ffffff
   fg         #2c2b27
-  muted      #606060
-  muted_bg   #f5f5f5
+  muted      #6b6962
+  muted_bg   #f6f5f2
   primary    #26251f
-  primary_fg #efefef
-  secondary  #efefef
-  secondary_fg #2c2b27
-  accent     #ededed
-  accent_fg  #2c2b27
-  danger     #c0483c
+  primary_fg #ffffff
+  secondary  #ffffff
+  secondary_fg #5e5c55
+  accent     #f3f2ef
+  accent_fg  #3f3e39
+  brand      #a05a3c
+  brand_fg   #ffffff
+  brand_bg   #f9f1ea
+  brand_line #e7d2c4
+  danger     #b8544c
   danger_fg  #ffffff
+  danger_bg  #fdf4f3
+  danger_line #efd6d3
+  danger_dot #e0655c
   success    #4f9050
   success_fg #151410
-  warning    #a67938
+  success_bg #eef5f0
+  success_line #cfe3d7
+  success_dot #5cb45f
+  warning    #a07b32
   warning_fg #151410
-  border     #e5e5e5
-  input      #949494
-  ring       #a05a3c
+  warning_bg #fbf4e6
+  warning_line #ecdcae
+  warning_dot #e3b443
+  avatar_bg  #d2d0c7
+  avatar_fg  #4f4d47
+  border     #e7e6e2
+  control_line #e0dfd7
+  input      #8a8983
+  ring       #26251f

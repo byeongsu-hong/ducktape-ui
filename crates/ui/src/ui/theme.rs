@@ -18,15 +18,31 @@ pub struct Palette {
     pub muted_foreground: Color,
     pub accent: Color,
     pub accent_foreground: Color,
+    pub brand: Color,
+    pub brand_foreground: Color,
+    pub brand_background: Color,
+    pub brand_line: Color,
     pub destructive: Color,
     pub destructive_foreground: Color,
+    pub destructive_background: Color,
+    pub destructive_line: Color,
+    pub destructive_dot: Color,
     pub border: Color,
+    pub control_line: Color,
     pub input: Color,
     pub ring: Color,
     pub success: Color,
     pub success_foreground: Color,
+    pub success_background: Color,
+    pub success_line: Color,
+    pub success_dot: Color,
     pub warning: Color,
     pub warning_foreground: Color,
+    pub warning_background: Color,
+    pub warning_line: Color,
+    pub warning_dot: Color,
+    pub avatar: Color,
+    pub avatar_foreground: Color,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,29 +85,45 @@ pub struct Theme {
 pub const LIGHT: Theme = Theme {
     name: "Ducktape Light",
     palette: Palette {
-        background: hex(0xffffff),
+        background: hex(0xfdfdfb),
         foreground: hex(0x2c2b27),
         card: hex(0xffffff),
         card_foreground: hex(0x2c2b27),
         popover: hex(0xffffff),
         popover_foreground: hex(0x2c2b27),
         primary: hex(0x26251f),
-        primary_foreground: hex(0xefefef),
-        secondary: hex(0xefefef),
-        secondary_foreground: hex(0x2c2b27),
-        muted: hex(0xf5f5f5),
-        muted_foreground: hex(0x606060),
-        accent: hex(0xededed),
-        accent_foreground: hex(0x2c2b27),
-        destructive: hex(0xc0483c),
+        primary_foreground: Color::WHITE,
+        secondary: Color::WHITE,
+        secondary_foreground: hex(0x5e5c55),
+        muted: hex(0xf6f5f2),
+        muted_foreground: hex(0x6b6962),
+        accent: hex(0xf3f2ef),
+        accent_foreground: hex(0x3f3e39),
+        brand: hex(0xa05a3c),
+        brand_foreground: Color::WHITE,
+        brand_background: hex(0xf9f1ea),
+        brand_line: hex(0xe7d2c4),
+        destructive: hex(0xb8544c),
         destructive_foreground: Color::WHITE,
-        border: hex(0xe5e5e5),
-        input: hex(0x949494),
-        ring: hex(0xa05a3c),
+        destructive_background: hex(0xfdf4f3),
+        destructive_line: hex(0xefd6d3),
+        destructive_dot: hex(0xe0655c),
+        border: hex(0xe7e6e2),
+        control_line: hex(0xe0dfd7),
+        input: hex(0x8a8983),
+        ring: hex(0x26251f),
         success: hex(0x4f9050),
         success_foreground: hex(0x151410),
-        warning: hex(0xa67938),
+        success_background: hex(0xeef5f0),
+        success_line: hex(0xcfe3d7),
+        success_dot: hex(0x5cb45f),
+        warning: hex(0xa07b32),
         warning_foreground: hex(0x151410),
+        warning_background: hex(0xfbf4e6),
+        warning_line: hex(0xecdcae),
+        warning_dot: hex(0xe3b443),
+        avatar: hex(0xd2d0c7),
+        avatar_foreground: hex(0x4f4d47),
     },
     radius: RADIUS,
     spacing: SPACING,
@@ -115,15 +147,31 @@ pub const DARK: Theme = Theme {
         muted_foreground: hex(0x9f9c95),
         accent: hex(0x2b2a25),
         accent_foreground: hex(0xeceae4),
+        brand: hex(0xc87552),
+        brand_foreground: hex(0x1b1a17),
+        brand_background: hex(0x35231c),
+        brand_line: hex(0x68402f),
         destructive: hex(0xd4655a),
         destructive_foreground: hex(0x1b1a17),
+        destructive_background: hex(0x351d1b),
+        destructive_line: hex(0x713b36),
+        destructive_dot: hex(0xd4655a),
         border: hex(0x2e2d27),
+        control_line: hex(0x4d4b45),
         input: hex(0x6b6a63),
-        ring: hex(0xa05a3c),
+        ring: hex(0xecebe5),
         success: hex(0x6cc06f),
         success_foreground: hex(0x1b1a17),
+        success_background: hex(0x182a1d),
+        success_line: hex(0x345b3b),
+        success_dot: hex(0x6cc06f),
         warning: hex(0xd3a25c),
         warning_foreground: hex(0x1b1a17),
+        warning_background: hex(0x302617),
+        warning_line: hex(0x68512c),
+        warning_dot: hex(0xd3a25c),
+        avatar: hex(0x4d4b45),
+        avatar_foreground: hex(0xeceae4),
     },
     radius: RADIUS,
     spacing: SPACING,
@@ -134,32 +182,45 @@ const RADIUS: Radius = Radius {
     sm: 7.0,
     md: 9.0,
     lg: 11.0,
-    xl: 13.0,
+    xl: 14.0,
 };
 
 const SPACING: Spacing = Spacing {
-    xs: 4.0,
-    sm: 8.0,
-    md: 12.0,
-    lg: 16.0,
-    xl: 24.0,
-    xxl: 32.0,
+    xs: 3.0,
+    sm: 7.0,
+    md: 9.0,
+    lg: 13.0,
+    xl: 18.0,
+    xxl: 22.0,
 };
 
 const TYPOGRAPHY: Typography = Typography {
     xs: 10.5,
-    sm: 12.0,
+    sm: 12.5,
     base: 13.0,
-    lg: 15.5,
-    xl: 18.0,
+    lg: 16.0,
+    xl: 20.0,
 };
 
-pub const ACCENTS: [Color; 3] = [hex(0xa05a3c), hex(0x3d63b8), hex(0x3f7d54)];
+pub const BRANDS: [Color; 3] = [hex(0xa05a3c), hex(0x3d63b8), hex(0x3f7d54)];
 
 impl Theme {
-    /// Changes the runtime accent without changing neutral primary actions.
-    pub const fn with_accent(mut self, accent: Color) -> Self {
-        self.palette.ring = accent;
+    /// Changes the sparse product brand without changing neutral actions or focus.
+    pub fn with_brand(mut self, brand: Color) -> Self {
+        let light_foreground = Color::WHITE;
+        let dark_foreground = hex(0x1b1a17);
+        let light_contrast = light_foreground.relative_contrast(brand);
+        let dark_contrast = dark_foreground.relative_contrast(brand);
+        let light_is_more_legible = light_contrast >= dark_contrast;
+
+        self.palette.brand = brand;
+        self.palette.brand_foreground = if light_is_more_legible {
+            light_foreground
+        } else {
+            dark_foreground
+        };
+        self.palette.brand_background = mix(self.palette.background, brand, 0.09);
+        self.palette.brand_line = mix(self.palette.background, brand, 0.25);
         self
     }
 
@@ -170,7 +231,7 @@ impl Theme {
             IcedPalette {
                 background: self.palette.background,
                 text: self.palette.foreground,
-                primary: self.palette.ring,
+                primary: self.palette.primary,
                 success: self.palette.success,
                 warning: self.palette.warning,
                 danger: self.palette.destructive,
@@ -237,10 +298,38 @@ mod tests {
 
     #[test]
     fn defaults_match_ducktape_design_anchors() {
+        assert_eq!(LIGHT.palette.background, hex(0xfdfdfb));
+        assert_eq!(LIGHT.palette.card, Color::WHITE);
+        assert_eq!(LIGHT.palette.muted, hex(0xf6f5f2));
         assert_eq!(LIGHT.palette.foreground, hex(0x2c2b27));
+        assert_eq!(LIGHT.palette.primary, hex(0x26251f));
+        assert_eq!(LIGHT.palette.brand, hex(0xa05a3c));
         assert_eq!(DARK.palette.background, hex(0x1b1a17));
-        assert_eq!(ACCENTS[0], hex(0xa05a3c));
+        assert_eq!(BRANDS[0], hex(0xa05a3c));
         assert_eq!(LIGHT.radius.md, 9.0);
+        assert_eq!(LIGHT.radius.xl, 14.0);
+        assert_eq!(LIGHT.spacing, SPACING);
+        assert_eq!(LIGHT.typography, TYPOGRAPHY);
+    }
+
+    #[test]
+    fn runtime_brand_does_not_recolor_actions_or_focus() {
+        for base in [LIGHT, DARK] {
+            for brand in BRANDS {
+                let alternate = base.with_brand(brand);
+                assert_eq!(alternate.palette.brand, brand);
+                assert!(alternate.palette.brand_foreground.relative_contrast(brand) >= 4.5);
+                assert_eq!(alternate.palette.primary, base.palette.primary);
+                assert_eq!(alternate.palette.ring, base.palette.ring);
+            }
+        }
+
+        let alternate = LIGHT.with_brand(BRANDS[1]);
+        assert_ne!(
+            alternate.palette.brand_background,
+            LIGHT.palette.brand_background
+        );
+        assert_ne!(alternate.palette.brand_line, LIGHT.palette.brand_line);
     }
 
     #[test]
@@ -258,13 +347,29 @@ mod tests {
             ("secondary_fg", palette.secondary_foreground),
             ("accent", palette.accent),
             ("accent_fg", palette.accent_foreground),
+            ("brand", palette.brand),
+            ("brand_fg", palette.brand_foreground),
+            ("brand_bg", palette.brand_background),
+            ("brand_line", palette.brand_line),
             ("danger", palette.destructive),
             ("danger_fg", palette.destructive_foreground),
+            ("danger_bg", palette.destructive_background),
+            ("danger_line", palette.destructive_line),
+            ("danger_dot", palette.destructive_dot),
             ("success", palette.success),
             ("success_fg", palette.success_foreground),
+            ("success_bg", palette.success_background),
+            ("success_line", palette.success_line),
+            ("success_dot", palette.success_dot),
             ("warning", palette.warning),
             ("warning_fg", palette.warning_foreground),
+            ("warning_bg", palette.warning_background),
+            ("warning_line", palette.warning_line),
+            ("warning_dot", palette.warning_dot),
+            ("avatar_bg", palette.avatar),
+            ("avatar_fg", palette.avatar_foreground),
             ("border", palette.border),
+            ("control_line", palette.control_line),
             ("input", palette.input),
             ("ring", palette.ring),
         ] {
@@ -281,15 +386,33 @@ mod tests {
     }
 
     #[test]
+    fn ice_components_keep_brand_status_and_empty_state_roles() {
+        let recipes = include_str!("../ice/recipes.ice");
+        let components = include_str!("../ice/components.ice");
+
+        assert!(recipes.contains("bg-primary text-primary_fg"));
+        assert!(components.contains("bg=brand r=4.0"));
+        assert!(components.contains("bg=success_bg border=success_line"));
+        assert!(components.contains("w=fill h=fill p=22.0 align-x=center align-y=center"));
+        assert_eq!(
+            components
+                .lines()
+                .filter(|line| line.starts_with("component "))
+                .count(),
+            components.matches("#root").count()
+        );
+    }
+
+    #[test]
     fn semantic_colors_clear_accessibility_contrast() {
         for theme in [LIGHT, DARK] {
             assert!(
                 theme
                     .palette
-                    .input
+                    .ring
                     .relative_contrast(theme.palette.background)
                     >= 3.0,
-                "{} input boundary",
+                "{} focus boundary",
                 theme.name
             );
 
@@ -330,6 +453,11 @@ mod tests {
                     theme.palette.accent,
                 ),
                 (
+                    "brand text",
+                    theme.palette.brand_foreground,
+                    theme.palette.brand,
+                ),
+                (
                     "destructive text",
                     theme.palette.destructive_foreground,
                     theme.palette.destructive,
@@ -344,6 +472,11 @@ mod tests {
                     theme.palette.warning_foreground,
                     theme.palette.warning,
                 ),
+                (
+                    "avatar text",
+                    theme.palette.avatar_foreground,
+                    theme.palette.avatar,
+                ),
             ] {
                 assert!(
                     foreground.relative_contrast(background) >= 4.5,
@@ -352,10 +485,10 @@ mod tests {
                 );
             }
 
-            for (index, accent) in ACCENTS.into_iter().enumerate() {
+            for (index, brand) in BRANDS.into_iter().enumerate() {
                 assert!(
-                    accent.relative_contrast(theme.palette.background) >= 3.0,
-                    "{} accent {index} focus indicator",
+                    brand.relative_contrast(theme.palette.background) >= 3.0,
+                    "{} brand {index}",
                     theme.name
                 );
             }

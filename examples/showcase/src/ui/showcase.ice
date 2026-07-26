@@ -206,8 +206,8 @@ on show_toast
 test app_behavior
   preset test
   viewport 1120 820
-  target primary = #buttons/primary
-  target email_input = #fields/work-email
+  target primary = #buttons/root/primary
+  target email_input = #fields/root/work-email
   expect text "ducktape-ui"
   expect clicks == 0
   click primary
