@@ -93,6 +93,14 @@ fn checks_test_mount_targets_expressions_and_dispatch() {
 }
 
 #[test]
+fn checks_digits_in_snake_case_test_names() {
+    let source = VALID.replace("test render_contract", "test render_contract_2");
+    let document = analyze(&source).unwrap();
+
+    assert_eq!(document.tests[0].name, "render_contract_2");
+}
+
+#[test]
 fn rejects_comparisons_of_rendered_targets() {
     for expression in ["root == root", "root < root", "[root] == [root]"] {
         let source = VALID.replace("count == 0", expression);

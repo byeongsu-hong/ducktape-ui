@@ -1519,7 +1519,7 @@ fn test_contract() -> Value {
             "ordering": "configuration and target aliases may be mixed, but both precede executable statements",
             "preset": { "syntax": "preset <name>", "required": false, "maxOccurrences": 1, "default": "normal application boot" },
             "viewport": { "syntax": "viewport <positive-number> <positive-number>", "required": false, "maxOccurrences": 1, "units": "logical pixels" },
-            "timeout": { "syntax": "timeout <positive-number><ms|s>", "required": false, "maxOccurrences": 1, "default": "2s" },
+            "timeout": { "syntax": "timeout <positive-integer><ms|s>", "required": false, "maxOccurrences": 1, "default": "2s" },
             "mount": { "syntax": "mount", "required": false, "maxOccurrences": 1, "children": { "min": 1, "max": 1, "role": "view-root" }, "default": "complete app view" },
         },
         "targets": {
@@ -2001,6 +2001,10 @@ mod tests {
             false
         );
         assert_eq!(contract["configuration"]["mount"]["children"]["max"], 1);
+        assert_eq!(
+            contract["configuration"]["timeout"]["syntax"],
+            "timeout <positive-integer><ms|s>"
+        );
         assert_eq!(
             contract["interactions"]["dispatch"],
             "dispatch <handler> | dispatch <handler>(<argument>, ...)"

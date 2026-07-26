@@ -8,9 +8,6 @@ description = "Composable iced components for Ducktape applications"
 repository = "https://github.com/byeongsu-hong/ducktape-ui-lang"
 homepage = "https://github.com/byeongsu-hong/ducktape-ui-lang"
 
-[package.metadata.ice]
-interface = "src/ice/default.ice"
-
 [features]
 default = []
 full = [

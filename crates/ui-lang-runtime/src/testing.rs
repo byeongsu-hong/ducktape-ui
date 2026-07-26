@@ -23,8 +23,14 @@ use iced_test::runtime::user_interface::{self, UserInterface};
 use iced_test::runtime::{self, Task};
 use iced_test::selector::{Candidate, Selector};
 use std::any::{Any, TypeId};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::Hasher as _;
 use std::marker::PhantomData;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 /// Source location attached to a generated test operation.
@@ -563,10 +569,148 @@ enum DriverEvent<Message> {
     Action(runtime::Action<Message>),
     Finished,
     Panicked(Box<dyn Any + Send>),
+    SubscriptionStarted(SubscriptionKey),
+    SubscriptionEventHandled(SubscriptionKey),
+    SubscriptionStopped(SubscriptionKey),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SubscriptionKey {
+    id: u64,
+    generation: u64,
+}
+
+struct SubscriptionState {
+    key: SubscriptionKey,
+    listening: AtomicBool,
+    consumed: AtomicUsize,
+}
+
+impl SubscriptionState {
+    fn new(key: SubscriptionKey) -> Self {
+        Self {
+            key,
+            listening: AtomicBool::new(false),
+            consumed: AtomicUsize::new(0),
+        }
+    }
+}
+
+struct SubscriptionInput {
+    inner: subscription::EventStream,
+    state: Arc<SubscriptionState>,
+}
+
+impl SubscriptionInput {
+    fn new(inner: subscription::EventStream, state: Arc<SubscriptionState>) -> Self {
+        state.listening.store(true, Ordering::Release);
+        Self { inner, state }
+    }
+}
+
+impl iced_test::futures::futures::Stream for SubscriptionInput {
+    type Item = subscription::Event;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let result = self.inner.as_mut().poll_next(context);
+        match result {
+            Poll::Ready(Some(event)) => {
+                self.state.consumed.fetch_add(1, Ordering::AcqRel);
+                Poll::Ready(Some(event))
+            }
+            Poll::Ready(None) => {
+                self.state.listening.store(false, Ordering::Release);
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for SubscriptionInput {
+    fn drop(&mut self) {
+        self.state.listening.store(false, Ordering::Release);
+    }
 }
 
 struct PanicRecipe<Message> {
     inner: Box<dyn subscription::Recipe<Output = DriverEvent<Message>>>,
+    state: Arc<SubscriptionState>,
+}
+
+struct SubscriptionStream<Message> {
+    inner: iced_test::futures::BoxStream<DriverEvent<Message>>,
+    state: Arc<SubscriptionState>,
+    acknowledged: usize,
+    started: bool,
+    pending_start: bool,
+    pending_events: usize,
+    pending_stop: bool,
+    terminal: bool,
+}
+
+impl<Message> SubscriptionStream<Message> {
+    fn prepare_handoffs(&mut self, stopped: bool) {
+        if !self.started {
+            self.started = true;
+            self.pending_start = true;
+        }
+        let consumed = self.state.consumed.load(Ordering::Acquire);
+        self.pending_events += consumed.saturating_sub(self.acknowledged);
+        self.acknowledged = consumed;
+        self.pending_stop |= stopped;
+    }
+
+    fn next_handoff(&mut self) -> Option<DriverEvent<Message>> {
+        if self.pending_start {
+            self.pending_start = false;
+            return Some(DriverEvent::SubscriptionStarted(self.state.key));
+        }
+        if self.pending_events > 0 {
+            self.pending_events -= 1;
+            return Some(DriverEvent::SubscriptionEventHandled(self.state.key));
+        }
+        if self.pending_stop {
+            self.pending_stop = false;
+            return Some(DriverEvent::SubscriptionStopped(self.state.key));
+        }
+        None
+    }
+}
+
+impl<Message> iced_test::futures::futures::Stream for SubscriptionStream<Message> {
+    type Item = DriverEvent<Message>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(event) = self.next_handoff() {
+            return Poll::Ready(Some(event));
+        }
+        if self.terminal {
+            return Poll::Ready(None);
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.inner.as_mut().poll_next(context)
+        }));
+        match result {
+            Ok(Poll::Ready(Some(event))) => Poll::Ready(Some(event)),
+            Ok(Poll::Ready(None)) => {
+                self.terminal = true;
+                self.prepare_handoffs(true);
+                self.next_handoff()
+                    .map_or(Poll::Ready(None), |event| Poll::Ready(Some(event)))
+            }
+            Ok(Poll::Pending) => {
+                self.prepare_handoffs(false);
+                self.next_handoff()
+                    .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
+            }
+            Err(payload) => {
+                self.terminal = true;
+                Poll::Ready(Some(DriverEvent::Panicked(payload)))
+            }
+        }
+    }
 }
 
 impl<Message: Send + 'static> subscription::Recipe for PanicRecipe<Message> {
@@ -580,24 +724,29 @@ impl<Message: Send + 'static> subscription::Recipe for PanicRecipe<Message> {
         self: Box<Self>,
         input: subscription::EventStream,
     ) -> iced_test::futures::BoxStream<Self::Output> {
-        let stream = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.inner.stream(input)
-        })) {
-            Ok(stream) => stream,
-            Err(payload) => {
-                return iced_test::futures::futures::stream::once(async {
-                    DriverEvent::Panicked(payload)
-                })
-                .boxed();
-            }
-        };
-        std::panic::AssertUnwindSafe(stream)
-            .catch_unwind()
-            .map(|result| match result {
-                Ok(event) => event,
-                Err(payload) => DriverEvent::Panicked(payload),
-            })
-            .boxed()
+        let PanicRecipe { inner, state } = *self;
+        let input = SubscriptionInput::new(input, Arc::clone(&state)).boxed();
+        let stream =
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.stream(input))) {
+                Ok(stream) => stream,
+                Err(payload) => {
+                    return iced_test::futures::futures::stream::once(async {
+                        DriverEvent::Panicked(payload)
+                    })
+                    .boxed();
+                }
+            };
+        SubscriptionStream {
+            inner: stream,
+            state,
+            acknowledged: 0,
+            started: false,
+            pending_start: false,
+            pending_events: 0,
+            pending_stop: false,
+            terminal: false,
+        }
+        .boxed()
     }
 }
 
@@ -656,6 +805,10 @@ where
     timeout: Duration,
     test_name: &'static str,
     pending_tasks: usize,
+    subscriptions: HashMap<u64, Arc<SubscriptionState>>,
+    next_subscription_generation: u64,
+    pending_subscription_starts: HashSet<SubscriptionKey>,
+    pending_subscription_events: HashMap<SubscriptionKey, usize>,
 }
 
 impl<P> Driver<P>
@@ -763,6 +916,10 @@ where
             timeout: config.timeout,
             test_name: config.name,
             pending_tasks: 0,
+            subscriptions: HashMap::new(),
+            next_subscription_generation: 0,
+            pending_subscription_starts: HashSet::new(),
+            pending_subscription_events: HashMap::new(),
         };
         driver.resubscribe(config.source);
         driver.run_task(task, config.source);
@@ -1006,9 +1163,6 @@ where
     }
 
     fn inspect(&mut self, id: &str, paint: bool, source: Location) -> Option<Target> {
-        if paint {
-            self.redraw(source);
-        }
         let mut layouts = self.with_interface(|interface, renderer, _| {
             find_targets::<P::Message, P::Renderer>(interface, renderer, id)
         });
@@ -1038,30 +1192,30 @@ where
             let theme = self.theme();
             let style = self.program.style(&self.state, &theme);
             let paint_bounds = layout.bounds;
-            self.with_interface(move |interface, renderer, clipboard| {
-                let mut ignored = Vec::new();
-                let _ = interface.update(
-                    &[iced::Event::Window(window::Event::RedrawRequested(
-                        iced::time::Instant::now(),
-                    ))],
-                    cursor,
-                    renderer,
-                    clipboard,
-                    &mut ignored,
-                );
-                interface.draw(
-                    renderer,
-                    &theme,
-                    &iced::advanced::renderer::Style {
-                        text_color: style.text_color,
-                    },
-                    cursor,
-                );
-                match inspect_paint(renderer, paint_bounds) {
-                    Ok((surfaces, texts)) => (None, surfaces, texts),
-                    Err(error) => (Some(error), Vec::new(), Vec::new()),
-                }
-            })
+            let events = vec![iced::Event::Window(window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            ))];
+            let (paint, messages, statuses) =
+                self.with_interface(|interface, renderer, clipboard| {
+                    let mut messages = Vec::new();
+                    let (_, statuses) =
+                        interface.update(&events, cursor, renderer, clipboard, &mut messages);
+                    interface.draw(
+                        renderer,
+                        &theme,
+                        &iced::advanced::renderer::Style {
+                            text_color: style.text_color,
+                        },
+                        cursor,
+                    );
+                    let paint = match inspect_paint(renderer, paint_bounds) {
+                        Ok((surfaces, texts)) => (None, surfaces, texts),
+                        Err(error) => (Some(error), Vec::new(), Vec::new()),
+                    };
+                    (paint, messages, statuses)
+                });
+            self.finish_simulation(events, messages, statuses, source);
+            paint
         } else {
             (None, Vec::new(), Vec::new())
         };
@@ -1127,16 +1281,25 @@ where
     fn simulate(&mut self, events: impl IntoIterator<Item = iced::Event>, source: Location) {
         let events = events.into_iter().collect::<Vec<_>>();
         let cursor = self.cursor;
-        let window = self.window;
         let (messages, statuses) = self.with_interface(|interface, renderer, clipboard| {
             let mut messages = Vec::new();
             let (_, statuses) =
                 interface.update(&events, cursor, renderer, clipboard, &mut messages);
             (messages, statuses)
         });
+        self.finish_simulation(events, messages, statuses, source);
+    }
 
+    fn finish_simulation(
+        &mut self,
+        events: Vec<iced::Event>,
+        messages: Vec<P::Message>,
+        statuses: Vec<iced::event::Status>,
+        source: Location,
+    ) {
+        let window = self.window;
         for (event, status) in events.into_iter().zip(statuses) {
-            self.runtime.broadcast(subscription::Event::Interaction {
+            self.broadcast(subscription::Event::Interaction {
                 window,
                 event,
                 status,
@@ -1165,14 +1328,65 @@ where
                 self.program
                     .subscription(&self.state)
                     .map(|message| DriverEvent::Action(runtime::Action::Output(message)))
-            }))
-            .into_iter()
-            .map(|inner| {
-                Box::new(PanicRecipe { inner })
+            }));
+            let mut identified = Vec::with_capacity(recipes.len());
+            for inner in recipes {
+                let mut hasher = subscription::Hasher::default();
+                inner.hash(&mut hasher);
+                identified.push((hasher.finish(), inner));
+            }
+
+            let mut next_subscriptions = HashMap::new();
+            for (id, _) in &identified {
+                if next_subscriptions.contains_key(id) {
+                    continue;
+                }
+                let state = self.subscriptions.get(id).cloned().unwrap_or_else(|| {
+                    self.next_subscription_generation = self
+                        .next_subscription_generation
+                        .checked_add(1)
+                        .expect("subscription generation overflow");
+                    let key = SubscriptionKey {
+                        id: *id,
+                        generation: self.next_subscription_generation,
+                    };
+                    self.pending_subscription_starts.insert(key);
+                    Arc::new(SubscriptionState::new(key))
+                });
+                next_subscriptions.insert(*id, state);
+            }
+
+            let active = next_subscriptions
+                .values()
+                .map(|state| state.key)
+                .collect::<HashSet<_>>();
+            self.pending_subscription_starts
+                .retain(|key| active.contains(key));
+            self.pending_subscription_events
+                .retain(|key, _| active.contains(key));
+            self.subscriptions = next_subscriptions;
+
+            let recipes = identified.into_iter().map(|(id, inner)| {
+                Box::new(PanicRecipe {
+                    inner,
+                    state: Arc::clone(&self.subscriptions[&id]),
+                })
                     as Box<dyn subscription::Recipe<Output = DriverEvent<P::Message>>>
             });
             self.runtime.track(recipes);
         });
+    }
+
+    fn broadcast(&mut self, event: subscription::Event) {
+        for state in self.subscriptions.values() {
+            if state.listening.load(Ordering::Acquire) {
+                *self
+                    .pending_subscription_events
+                    .entry(state.key)
+                    .or_default() += 1;
+            }
+        }
+        self.runtime.broadcast(event);
     }
 
     fn run_task(&mut self, task: Task<P::Message>, source: Option<Location>) {
@@ -1197,11 +1411,8 @@ where
 
     fn settle(&mut self, source: Option<Location>) {
         let start = Instant::now();
-        let mut idle_polls = 0;
         loop {
-            let mut progressed = false;
             while let Ok(event) = self.receiver.try_recv() {
-                progressed = true;
                 match event {
                     DriverEvent::Action(action) => self.perform(action, source),
                     DriverEvent::Finished => {
@@ -1210,26 +1421,44 @@ where
                     DriverEvent::Panicked(payload) => {
                         resume_panic_with_context(payload, self.test_name, source)
                     }
+                    DriverEvent::SubscriptionStarted(key) => {
+                        self.pending_subscription_starts.remove(&key);
+                    }
+                    DriverEvent::SubscriptionEventHandled(key) => {
+                        if let Some(pending) = self.pending_subscription_events.get_mut(&key) {
+                            *pending = pending.saturating_sub(1);
+                            if *pending == 0 {
+                                self.pending_subscription_events.remove(&key);
+                            }
+                        }
+                    }
+                    DriverEvent::SubscriptionStopped(key) => {
+                        self.pending_subscription_starts.remove(&key);
+                        self.pending_subscription_events.remove(&key);
+                    }
                 }
             }
 
-            if self.pending_tasks == 0 && !progressed {
-                // ponytail: two empty polls cover event-subscription handoff without
-                // pretending long-lived external subscriptions have a finite end.
-                idle_polls += 1;
-                if idle_polls == 2 {
-                    return;
-                }
-            } else {
-                idle_polls = 0;
+            if self.pending_tasks == 0
+                && self.pending_subscription_starts.is_empty()
+                && self.pending_subscription_events.is_empty()
+            {
+                return;
             }
             if start.elapsed() >= self.timeout {
                 let origin = failure_origin(self.test_name, source);
+                let pending_subscription_events = self
+                    .pending_subscription_events
+                    .values()
+                    .copied()
+                    .sum::<usize>();
                 panic!(
-                    "{origin}\nexpected: quiescence within {:?}\nactual: {} task stream(s) still pending after {:?}",
+                    "{origin}\nexpected: quiescence within {:?}\nactual: {} task stream(s) still pending after {:?}; {} subscription startup and {} event handoff(s) pending",
                     self.timeout,
                     self.pending_tasks,
                     start.elapsed(),
+                    self.pending_subscription_starts.len(),
+                    pending_subscription_events,
                 );
             }
             std::thread::sleep(Duration::from_millis(1));
@@ -1280,8 +1509,7 @@ where
                     let _ = channel.send(theme::Mode::None);
                 }
                 runtime::system::Action::NotifyTheme(mode) => {
-                    self.runtime
-                        .broadcast(subscription::Event::SystemThemeChanged(mode));
+                    self.broadcast(subscription::Event::SystemThemeChanged(mode));
                 }
             },
             runtime::Action::Image(runtime::image::Action::Allocate(handle, channel)) => {
@@ -1921,6 +2149,10 @@ mod tests {
 
     struct PaintAndRedrawProbe;
 
+    std::thread_local! {
+        static PROBE_REDRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     impl<Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer> for PaintAndRedrawProbe
     where
         Renderer: iced::advanced::text::Renderer<Font = Font>,
@@ -1985,6 +2217,7 @@ mod tests {
                 event,
                 iced::Event::Window(window::Event::RedrawRequested(_))
             ) {
+                PROBE_REDRAWS.with(|redraws| redraws.set(redraws.get() + 1));
                 shell.publish(Message::ObservedRedraw);
             }
         }
@@ -2003,8 +2236,11 @@ mod tests {
                 crate::accessible(
                     button("Increment")
                         .on_press(Message::Increment)
-                        .style(|_, _| button::Style {
-                            background: Some(Color::from_rgb8(51, 102, 255).into()),
+                        .style(|_, status| button::Style {
+                            background: Some(match status {
+                                button::Status::Disabled => Color::TRANSPARENT.into(),
+                                _ => Color::from_rgb8(51, 102, 255).into(),
+                            }),
                             border: Border {
                                 radius: 6.0.into(),
                                 ..Border::default()
@@ -2063,11 +2299,14 @@ mod tests {
 
     fn subscription(_state: &State) -> iced::Subscription<Message> {
         iced::event::listen_with(|event, _status, _window| {
-            matches!(
+            let observed = matches!(
                 event,
                 iced::Event::Keyboard(keyboard::Event::KeyPressed { .. })
-            )
-            .then_some(Message::ObservedKey)
+            );
+            observed.then(|| {
+                std::thread::sleep(Duration::from_millis(10));
+                Message::ObservedKey
+            })
         })
     }
 
@@ -2144,6 +2383,18 @@ mod tests {
         let scroll = driver.target("App/root/scroll", HERE);
         assert!(scroll.content_height() >= 200.0);
         assert_eq!(scroll.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn paint_inspection_delivers_one_redraw_event() {
+        PROBE_REDRAWS.with(|redraws| redraws.set(0));
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("single_redraw").viewport(320.0, 240.0),
+        );
+
+        let _ = driver.target("App/root", HERE);
+        PROBE_REDRAWS.with(|redraws| assert_eq!(redraws.get(), 1));
     }
 
     #[test]
