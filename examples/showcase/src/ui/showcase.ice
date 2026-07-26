@@ -1,7 +1,8 @@
 app Showcase
   title "ducktape-ui · Ice"
   id "dev.ducktape.ui.showcase"
-  font "../../assets/fonts/Geist.ttf"
+  font "../../assets/fonts/Geist-Regular.ttf"
+  font "../../assets/fonts/Geist-Bold.ttf"
   text-size 14
   antialiasing true
   window

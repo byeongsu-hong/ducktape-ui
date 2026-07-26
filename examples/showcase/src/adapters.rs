@@ -1204,6 +1204,29 @@ mod tests {
     }
 
     #[test]
+    fn bundled_geist_has_real_regular_and_bold_faces() {
+        use iced::advanced::graphics::text::cosmic_text::fontdb::{
+            Database, Family, Query, Stretch, Style, Weight,
+        };
+
+        let mut fonts = Database::new();
+        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Regular.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Bold.ttf").to_vec());
+
+        for weight in [Weight::NORMAL, Weight::BOLD] {
+            let id = fonts
+                .query(&Query {
+                    families: &[Family::Name("Geist")],
+                    weight,
+                    stretch: Stretch::Normal,
+                    style: Style::Normal,
+                })
+                .expect("bundled Geist face must resolve");
+            assert_eq!(fonts.face(id).expect("resolved face").weight, weight);
+        }
+    }
+
+    #[test]
     fn ice_owned_reducers_keep_navigation_and_notifications_controlled() {
         let sidebar = sidebar_apply(
             sidebar_state(),
