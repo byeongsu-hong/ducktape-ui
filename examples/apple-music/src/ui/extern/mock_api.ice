@@ -3,6 +3,7 @@ extern crate::mock_api
   HomeFeed(top_picks:[Album], recently_played:[Album])
   Session(name:str)
   ApiError(message:str)
+  sync cover_path(id:i64) -> str
   load_home() -> HomeFeed ! ApiError
   authenticate() -> Session ! ApiError
   search_catalog(query:str) -> [Album] ! ApiError

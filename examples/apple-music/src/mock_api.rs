@@ -31,8 +31,12 @@ fn album(id: i64, title: &str, artist: &str, eyebrow: &str) -> Album {
         title: title.into(),
         artist: artist.into(),
         eyebrow: eyebrow.into(),
-        cover: format!("examples/apple-music/assets/cover-{id:02}.png"),
+        cover: cover_path(id),
     }
+}
+
+pub fn cover_path(id: i64) -> String {
+    format!("{}/assets/cover-{id:02}.png", env!("CARGO_MANIFEST_DIR"))
 }
 
 fn catalog() -> Vec<Album> {
