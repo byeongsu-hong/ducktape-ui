@@ -344,8 +344,10 @@ view
 "#;
     let generated = compile(source, "composition.ice").unwrap();
 
-    assert!(generated.contains("let __component_content: __IceElement<'_,"));
-    assert!(generated.contains("let __slot_content: __IceElement<'_,"));
+    assert!(generated.contains("(|| { let __component_content: __IceElement<'_,"));
+    assert!(generated.contains("; __component_content })()"));
+    assert!(generated.contains("(|| { let __slot_content: __IceElement<'_,"));
+    assert!(generated.contains("; __slot_content })()"));
 }
 
 #[test]
