@@ -8,12 +8,22 @@ pub(in crate::codegen) fn render_media(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
+    let id = match node {
+        ViewNode::Media { id, .. }
+        | ViewNode::Tooltip { id, .. }
+        | ViewNode::MouseArea { id, .. }
+        | ViewNode::ResizeHandle { id, .. }
+        | ViewNode::Canvas { id, .. } => id.as_ref(),
+        _ => None,
+    };
+    let child_scope = rendered_child_scope(id, scope, env, document)?;
     let rendered = match node {
         ViewNode::Media {
             kind,
             source,
             options,
             span,
+            ..
         } => {
             let source_type = expr_type(source, &env_types(env), document, span)?;
             let source = expr_code(source, env, document, ValueMode::Owned)?;
@@ -199,7 +209,7 @@ pub(in crate::codegen) fn render_media(
                 let (label, description) =
                     accessibility_code(&options.accessibility, String::new, env, document)?;
                 Ok(format!(
-                    "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).label({label}){description}.into() }}"
+                    "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).logical_id(__a11y_key.clone()).label({label}){description}.into() }}"
                 ))
             } else {
                 Ok(format!("{code}.into()"))
@@ -211,8 +221,8 @@ pub(in crate::codegen) fn render_media(
             tip,
             ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
-            let tip = render_node(tip, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
+            let tip = render_node(tip, document, message, env, &child_scope, slot)?;
             let position = match options.position {
                 TooltipPosition::Top => "Top",
                 TooltipPosition::Bottom => "Bottom",
@@ -234,7 +244,7 @@ pub(in crate::codegen) fn render_media(
         ViewNode::MouseArea {
             options, content, ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let mut code = format!(
                 "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
             );
@@ -317,7 +327,7 @@ pub(in crate::codegen) fn render_media(
         ViewNode::ResizeHandle {
             options, content, ..
         } => {
-            let content = render_node(content, document, message, env, scope, slot)?;
+            let content = render_node(content, document, message, env, &child_scope, slot)?;
             let mut code = format!(
                 "{{ let __resize_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::resize_handle(__resize_content)"
             );
@@ -364,5 +374,6 @@ pub(in crate::codegen) fn render_media(
         } => render_canvas(options, locals, commands, events, document, message, env),
         _ => return Ok(None),
     }?;
+    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
 }

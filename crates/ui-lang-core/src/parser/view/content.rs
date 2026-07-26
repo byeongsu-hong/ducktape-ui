@@ -188,9 +188,12 @@ pub(in crate::parser) fn parse_table(
     if line.children.is_empty() {
         return Err(error("E098", line, "table requires at least one column"));
     }
+    let mut id = None;
     let mut options = TableOptions::default();
     for part in &parts[4..] {
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E098", "table")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else {
             let (name, value) = part
@@ -217,6 +220,7 @@ pub(in crate::parser) fn parse_table(
     Ok(ViewNode::Table {
         item: identifier(&parts[1], line)?,
         rows: parse_expr(strip_wrapping_parens(&parts[3]), line)?,
+        id,
         options,
         columns: line
             .children
@@ -312,8 +316,13 @@ pub(in crate::parser) fn parse_markdown(
             "markdown requires a link route such as `-> open_link _`",
         )
     })?;
+    let mut id = None;
     let mut options = MarkdownOptions::default();
     for part in &parts[2..] {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E097", "markdown")?;
+            continue;
+        }
         let (name, value) = part
             .split_once('=')
             .ok_or_else(|| error("E097", line, format!("unknown markdown property `{part}`")))?;
@@ -360,6 +369,7 @@ pub(in crate::parser) fn parse_markdown(
     };
     Ok(ViewNode::Markdown {
         content: identifier(content, line)?,
+        id,
         options: Box::new(options),
         route: parse_route(route, line)?,
         span: Span::line(line.number),
@@ -425,7 +435,7 @@ pub(in crate::parser) fn parse_lazy(
     if !styles.is_empty() {
         return Err(error("E096", line, "lazy does not accept `@` utilities"));
     }
-    if parts.len() != 4 || parts[2] != "as" {
+    if !(4..=5).contains(&parts.len()) || parts[2] != "as" {
         return Err(error("E096", line, "lazy uses `lazy dependency as name`"));
     }
     if line.children.len() != 1 {
@@ -435,9 +445,14 @@ pub(in crate::parser) fn parse_lazy(
             "lazy requires exactly one child subtree",
         ));
     }
+    let mut id = None;
+    for part in &parts[4..] {
+        parse_unique_id(part, &mut id, line, "E096", "lazy")?;
+    }
     Ok(ViewNode::Lazy {
         dependency: parse_expr(strip_wrapping_parens(&parts[1]), line)?,
         binding: identifier(&parts[3], line)?,
+        id,
         child: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),
     })
@@ -468,7 +483,16 @@ pub(in crate::parser) fn parse_keyed_column(
     let key = parts[4]
         .strip_prefix("by=")
         .ok_or_else(|| error("E095", line, "keyed uses `keyed item in items by=item.id`"))?;
-    let options = parse_layout_options("col", &parts[5..], line)?;
+    let mut id = None;
+    let mut option_parts = Vec::new();
+    for part in &parts[5..] {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E095", "keyed")?;
+        } else {
+            option_parts.push(part.clone());
+        }
+    }
+    let options = parse_layout_options("col", &option_parts, line)?;
     if options.clip.is_some() || options.wrap {
         return Err(error(
             "E095",
@@ -480,6 +504,7 @@ pub(in crate::parser) fn parse_keyed_column(
         item: identifier(&parts[1], line)?,
         items: parse_expr(strip_wrapping_parens(&parts[3]), line)?,
         key: parse_expr(strip_wrapping_parens(key), line)?,
+        id,
         options: Box::new(options),
         child: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),
@@ -520,18 +545,18 @@ pub(in crate::parser) fn parse_theme(
     if line.children.len() != 1 {
         return Err(error("E094", line, "theme requires exactly one child"));
     }
+    let mut id = None;
     let mut preset = ThemePreset::Default;
     let mut text = None;
     let mut background = None;
-    let mut start = 1;
-    if let Some(value) = parts.get(1)
-        && !value.contains('=')
-    {
-        preset = parse_theme_preset(value, line)?;
-        start = 2;
-    }
-    for part in &parts[start..] {
-        if let Some(value) = part.strip_prefix("fg=") {
+    let mut preset_seen = false;
+    for part in &parts[1..] {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E094", "theme")?;
+        } else if !preset_seen && !part.contains('=') {
+            preset = parse_theme_preset(part, line)?;
+            preset_seen = true;
+        } else if let Some(value) = part.strip_prefix("fg=") {
             text = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("bg=") {
             background = Some(parse_background_value(value, line)?);
@@ -544,6 +569,7 @@ pub(in crate::parser) fn parse_theme(
         }
     }
     Ok(ViewNode::Theme {
+        id,
         preset,
         text,
         background,
@@ -584,12 +610,15 @@ pub(in crate::parser) fn parse_qr_code(
     let data = parts
         .get(1)
         .ok_or_else(|| error("E093", line, "qr needs a declared data name"))?;
+    let mut id = None;
     let mut cell_size = None;
     let mut total_size = None;
     let mut cell = None;
     let mut background = None;
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("cell-size=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E093", "qr")?;
+        } else if let Some(value) = part.strip_prefix("cell-size=") {
             cell_size = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("size=") {
             total_size = Some(parse_expr(strip_wrapping_parens(value), line)?);
@@ -610,6 +639,7 @@ pub(in crate::parser) fn parse_qr_code(
     }
     Ok(ViewNode::QrCode {
         data: identifier(data, line)?,
+        id,
         cell_size,
         total_size,
         cell,

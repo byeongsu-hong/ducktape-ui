@@ -473,3 +473,204 @@ view
     };
     assert!(options.accessibility.label.is_some());
 }
+
+#[test]
+fn parses_ids_on_leaf_widgets_without_layout_wrappers() {
+    let document = parse(
+        r#"app Identified
+state
+  enabled = false
+  amount = 25.0
+  mode = 0
+  choices = ["One", "Two"]
+  selected:str? = none
+  search:combo[str] = ["One", "Two"]
+on toggled(next)
+on changed(next)
+on selected_value(next)
+view
+  col
+    text "Plain" #plain
+    rich-text #rich
+      span "Rich"
+    toggler "Toggle" #toggle checked=enabled -> toggled _
+    slider amount #horizontal min=0.0 max=100.0 -> changed _
+    slider amount #vertical min=0.0 max=100.0 vertical w=20.0 h=100.0 -> changed _
+    radio "Mode" #radio value=1 selected=(mode == 1) -> selected_value _
+    pick choices selected #pick -> selected_value _
+    combo search selected "Search" #combo -> selected_value _
+"#,
+    )
+    .unwrap();
+    let ViewNode::Layout { children, .. } = &document.view else {
+        panic!("expected column");
+    };
+    let ids = children
+        .iter()
+        .map(|node| match node {
+            ViewNode::Text { id, .. }
+            | ViewNode::RichText { id, .. }
+            | ViewNode::Toggler { id, .. }
+            | ViewNode::Slider { id, .. }
+            | ViewNode::Radio { id, .. }
+            | ViewNode::PickList { id, .. }
+            | ViewNode::ComboBox { id, .. } => id.as_ref().unwrap().name.as_str(),
+            _ => panic!("expected identified leaf"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "plain",
+            "rich",
+            "toggle",
+            "horizontal",
+            "vertical",
+            "radio",
+            "pick",
+            "combo"
+        ]
+    );
+}
+
+#[test]
+fn parses_ids_on_every_other_rendered_leaf() {
+    let document = parse(
+        r##"app Leaves
+extern crate::backend
+  component native() -> unit
+  themer themed() -> unit
+  shader shaded() -> unit
+qr code "https://example.com"
+state
+  amount = 50.0
+  docs:markdown = "# Docs"
+on open_link(url)
+view
+  col
+    progress amount #progress
+    rule horizontal #rule
+    qr code #qr
+    space #space w=10.0 h=10.0
+    markdown docs #markdown -> open_link _
+    extern native() #extern
+    themer themed() #themer
+    shader shaded() #shader w=20.0 h=20.0
+    image "image.png" #image
+    svg "image.svg" #svg
+    viewer "image.png" #viewer
+    canvas #canvas w=20.0 h=20.0
+"##,
+    )
+    .unwrap();
+    let ViewNode::Layout { children, .. } = &document.view else {
+        panic!("expected column");
+    };
+    let ids = children
+        .iter()
+        .map(|node| match node {
+            ViewNode::Progress { id, .. }
+            | ViewNode::Rule { id, .. }
+            | ViewNode::QrCode { id, .. }
+            | ViewNode::Space { id, .. }
+            | ViewNode::Markdown { id, .. }
+            | ViewNode::ExternComponent { id, .. }
+            | ViewNode::Themer { id, .. }
+            | ViewNode::Shader { id, .. }
+            | ViewNode::Media { id, .. }
+            | ViewNode::Canvas { id, .. } => id.as_ref().unwrap().name.as_str(),
+            _ => panic!("expected identified leaf"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "progress", "rule", "qr", "space", "markdown", "extern", "themer", "shader", "image",
+            "svg", "viewer", "canvas"
+        ]
+    );
+}
+
+#[test]
+fn parses_ids_on_every_concrete_structural_widget() {
+    let source = r#"app StructuralIds
+view
+  col
+    overlay #overlay when=true
+      content
+        text "base"
+      layer
+        text "layer"
+    keyed item in items by=item #keyed
+      text item
+    lazy true as value #lazy
+      text value
+    table row in rows #table
+      col
+        header
+          text "Header"
+        cell
+          text row
+    tooltip #tooltip
+      text "content"
+      text "tip"
+    mouse #mouse press=clicked
+      text "mouse"
+    resize-handle #resize drag=resized
+      text "resize"
+    theme #theme dark
+      text "theme"
+    float #float
+      text "float"
+    pin #pin
+      text "pin"
+    sensor #sensor show=shown
+      text "sensor"
+    responsive #responsive size=(width, height)
+      text width
+    panes #panes
+      pane first
+        text "pane"
+"#;
+    let document = parse(source).unwrap();
+    let ViewNode::Layout { children, .. } = &document.view else {
+        panic!("expected root layout");
+    };
+    let ids = children
+        .iter()
+        .map(|node| match node {
+            ViewNode::Overlay { id, .. }
+            | ViewNode::KeyedColumn { id, .. }
+            | ViewNode::Lazy { id, .. }
+            | ViewNode::Table { id, .. }
+            | ViewNode::Tooltip { id, .. }
+            | ViewNode::MouseArea { id, .. }
+            | ViewNode::ResizeHandle { id, .. }
+            | ViewNode::Theme { id, .. }
+            | ViewNode::Float { id, .. }
+            | ViewNode::Pin { id, .. }
+            | ViewNode::Sensor { id, .. }
+            | ViewNode::Responsive { id, .. } => id.as_ref().expect("structural id").name.as_str(),
+            ViewNode::PaneGrid { name, .. } => name.as_str(),
+            _ => panic!("unexpected structural node"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "overlay",
+            "keyed",
+            "lazy",
+            "table",
+            "tooltip",
+            "mouse",
+            "resize",
+            "theme",
+            "float",
+            "pin",
+            "sensor",
+            "responsive",
+            "panes",
+        ]
+    );
+}

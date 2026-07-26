@@ -130,10 +130,12 @@ pub(in crate::check) fn infer_components_group(
         ViewNode::Slot { .. } => {}
         ViewNode::ExternComponent {
             function,
+            id,
             args,
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let component = extern_function(document, function, ExternKind::Component, span)?;
             check_call_args(component, args, env, document, span)?;
             match (&component.output, route) {
@@ -159,10 +161,12 @@ pub(in crate::check) fn infer_components_group(
         }
         ViewNode::Themer {
             function,
+            id,
             args,
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let themer = extern_function(document, function, ExternKind::Themer, span)?;
             check_call_args(themer, args, env, document, span)?;
             match (&themer.output, route) {
@@ -188,12 +192,14 @@ pub(in crate::check) fn infer_components_group(
         }
         ViewNode::Shader {
             function,
+            id,
             args,
             width,
             height,
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let shader = extern_function(document, function, ExternKind::Shader, span)?;
             check_call_args(shader, args, env, document, span)?;
             for length in [width, height].into_iter().flatten() {

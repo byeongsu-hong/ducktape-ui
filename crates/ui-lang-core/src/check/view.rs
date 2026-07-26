@@ -106,6 +106,7 @@ pub(in crate::check) fn lazy_hashable(ty: &Type) -> bool {
         | Type::WindowMode
         | Type::WindowAttention
         | Type::WidgetTarget
+        | Type::TestTarget
         | Type::TaskHandle
         | Type::Image
         | Type::ImageAllocation

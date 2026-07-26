@@ -11,6 +11,8 @@ mod native;
 mod platform;
 #[path = "tests/tasks.rs"]
 mod tasks;
+#[path = "tests/testing.rs"]
+mod testing;
 #[path = "tests/widgets.rs"]
 mod widgets;
 

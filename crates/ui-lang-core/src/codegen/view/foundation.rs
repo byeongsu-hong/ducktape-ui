@@ -29,11 +29,14 @@ pub(in crate::codegen) fn render_foundation(
             options, id, styles, content, span, document, message, env, scope, slot,
         ),
         ViewNode::Overlay {
+            id,
             options,
             content,
             layer,
             ..
-        } => render_overlay(options, content, layer, document, message, env, scope, slot),
+        } => render_overlay(
+            id, options, content, layer, document, message, env, scope, slot,
+        ),
         ViewNode::PaneGrid {
             name,
             options,
@@ -45,6 +48,7 @@ pub(in crate::codegen) fn render_foundation(
         ),
         ViewNode::Text {
             value,
+            id,
             options,
             styles,
             span,
@@ -52,24 +56,27 @@ pub(in crate::codegen) fn render_foundation(
             let style = Style::parse(styles, document);
             let value = expr_code(value, env, document, ValueMode::Owned)?;
             let accessibility_key =
-                accessibility_key_code(None, "text", span, scope, env, document)?;
+                accessibility_key_code(id.as_ref(), "text", span, scope, env, document)?;
             let mut code = "::iced::widget::text(__text_value.clone())".to_owned();
             append_text_options(&mut code, options, &style, env, document)?;
             if let Some(color) = style.text_color {
                 write!(code, ".color({})", theme_color(document, &color)).unwrap();
             }
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).value(__text_value).into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
             ))
         }
         ViewNode::RichText {
+            id,
             options,
             color,
             spans,
             styles,
             route,
             ..
-        } => render_rich_text(options, color, spans, styles, route, document, message, env),
+        } => render_rich_text(
+            id, options, color, spans, styles, route, document, message, env, scope,
+        ),
         ViewNode::Input {
             label,
             id,
@@ -229,7 +236,7 @@ pub(in crate::codegen) fn render_foundation(
                 )
             };
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled_value}; let __secure = {secure_value}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({input}, __a11y_id, __role).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).value_maybe((!__secure).then(|| ({}).clone())).disabled(__disabled){accessibility_description}; {view} }}",
+                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled_value}; let __secure = {secure_value}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({input}, __a11y_id, __role).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).value_maybe((!__secure).then(|| ({}).clone())).disabled(__disabled){accessibility_description}; {view} }}",
                 state.code,
             ))
         }

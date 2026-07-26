@@ -2,6 +2,8 @@
 
 mod flex;
 mod resize_handle;
+#[doc(hidden)]
+pub mod testing;
 mod zstack;
 
 pub use flex::*;
@@ -60,6 +62,7 @@ enum FocusBehavior {
 #[derive(Clone)]
 struct Semantics<Message> {
     id: StableId,
+    logical_id: Option<String>,
     role: Role,
     label: Option<String>,
     description: Option<String>,
@@ -86,6 +89,7 @@ impl<Message> Semantics<Message> {
 
         Self {
             id,
+            logical_id: None,
             role,
             label: None,
             description: None,
@@ -207,6 +211,13 @@ impl<'a, Message, Theme, Renderer> Accessible<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
+    /// Retains the logical Ice selector used to build this semantic node.
+    #[doc(hidden)]
+    pub fn logical_id(mut self, id: impl Into<String>) -> Self {
+        self.semantics.logical_id = Some(id.into());
+        self
+    }
+
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.semantics.label = Some(label.into());
         self

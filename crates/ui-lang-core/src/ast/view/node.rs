@@ -18,6 +18,7 @@ pub enum ViewNode {
         span: Span,
     },
     Overlay {
+        id: Option<Id>,
         options: OverlayOptions,
         content: Box<ViewNode>,
         layer: Box<ViewNode>,
@@ -33,11 +34,13 @@ pub enum ViewNode {
     },
     Text {
         value: Expr,
+        id: Option<Id>,
         options: TextOptions,
         styles: Vec<String>,
         span: Span,
     },
     RichText {
+        id: Option<Id>,
         options: TextOptions,
         color: Option<String>,
         spans: Vec<RichSpan>,
@@ -78,6 +81,7 @@ pub enum ViewNode {
     },
     Toggler {
         label: Expr,
+        id: Option<Id>,
         checked: Expr,
         disabled: Option<Expr>,
         options: BoolControlOptions,
@@ -88,6 +92,7 @@ pub enum ViewNode {
     },
     Slider {
         value: Expr,
+        id: Option<Id>,
         min: Expr,
         max: Expr,
         step: Expr,
@@ -100,6 +105,7 @@ pub enum ViewNode {
     },
     Progress {
         value: Expr,
+        id: Option<Id>,
         min: Expr,
         max: Expr,
         options: ProgressOptions,
@@ -109,6 +115,7 @@ pub enum ViewNode {
     },
     Radio {
         label: Expr,
+        id: Option<Id>,
         value: Expr,
         selected: Expr,
         options: BoolControlOptions,
@@ -119,6 +126,7 @@ pub enum ViewNode {
     },
     PickList {
         options: Expr,
+        id: Option<Id>,
         selected: Expr,
         options_config: PickListOptions,
         route: Route,
@@ -126,6 +134,7 @@ pub enum ViewNode {
     },
     ComboBox {
         state: String,
+        id: Option<Id>,
         selected: Expr,
         placeholder: String,
         options: ComboBoxOptions,
@@ -134,6 +143,7 @@ pub enum ViewNode {
     },
     Rule {
         axis: Axis,
+        id: Option<Id>,
         thickness: Expr,
         options: RuleOptions,
         styles: Vec<String>,
@@ -141,6 +151,7 @@ pub enum ViewNode {
     },
     QrCode {
         data: String,
+        id: Option<Id>,
         cell_size: Option<Expr>,
         total_size: Option<Expr>,
         cell: Option<String>,
@@ -148,6 +159,7 @@ pub enum ViewNode {
         span: Span,
     },
     Space {
+        id: Option<Id>,
         width: Option<LengthValue>,
         height: Option<LengthValue>,
         styles: Vec<String>,
@@ -168,6 +180,7 @@ pub enum ViewNode {
         item: String,
         items: Expr,
         key: Expr,
+        id: Option<Id>,
         options: Box<LayoutOptions>,
         child: Box<ViewNode>,
         span: Span,
@@ -175,11 +188,13 @@ pub enum ViewNode {
     Lazy {
         dependency: Expr,
         binding: String,
+        id: Option<Id>,
         child: Box<ViewNode>,
         span: Span,
     },
     Markdown {
         content: String,
+        id: Option<Id>,
         options: Box<MarkdownOptions>,
         route: Route,
         span: Span,
@@ -194,6 +209,7 @@ pub enum ViewNode {
     Table {
         item: String,
         rows: Expr,
+        id: Option<Id>,
         options: TableOptions,
         columns: Vec<TableColumn>,
         span: Span,
@@ -212,18 +228,21 @@ pub enum ViewNode {
     },
     ExternComponent {
         function: String,
+        id: Option<Id>,
         args: Vec<Expr>,
         route: Option<Route>,
         span: Span,
     },
     Themer {
         function: String,
+        id: Option<Id>,
         args: Vec<Expr>,
         route: Option<Route>,
         span: Span,
     },
     Shader {
         function: String,
+        id: Option<Id>,
         args: Vec<Expr>,
         width: Option<LengthValue>,
         height: Option<LengthValue>,
@@ -232,27 +251,32 @@ pub enum ViewNode {
     },
     Media {
         kind: MediaKind,
+        id: Option<Id>,
         source: Expr,
         options: MediaOptions,
         span: Span,
     },
     Tooltip {
+        id: Option<Id>,
         options: TooltipOptions,
         content: Box<ViewNode>,
         tip: Box<ViewNode>,
         span: Span,
     },
     MouseArea {
+        id: Option<Id>,
         options: MouseAreaOptions,
         content: Box<ViewNode>,
         span: Span,
     },
     ResizeHandle {
+        id: Option<Id>,
         options: ResizeHandleOptions,
         content: Box<ViewNode>,
         span: Span,
     },
     Canvas {
+        id: Option<Id>,
         options: Box<CanvasOptions>,
         locals: Vec<State>,
         commands: Vec<CanvasCommand>,
@@ -260,6 +284,7 @@ pub enum ViewNode {
         span: Span,
     },
     Theme {
+        id: Option<Id>,
         preset: ThemePreset,
         text: Option<String>,
         background: Option<BackgroundValue>,
@@ -267,6 +292,7 @@ pub enum ViewNode {
         span: Span,
     },
     Float {
+        id: Option<Id>,
         scale: Expr,
         x: Expr,
         y: Expr,
@@ -275,6 +301,7 @@ pub enum ViewNode {
         span: Span,
     },
     Pin {
+        id: Option<Id>,
         width: Option<LengthValue>,
         height: Option<LengthValue>,
         x: Expr,
@@ -283,11 +310,13 @@ pub enum ViewNode {
         span: Span,
     },
     Sensor {
+        id: Option<Id>,
         options: SensorOptions,
         content: Box<ViewNode>,
         span: Span,
     },
     Responsive {
+        id: Option<Id>,
         content: ResponsiveContent,
         width: Option<LengthValue>,
         height: Option<LengthValue>,

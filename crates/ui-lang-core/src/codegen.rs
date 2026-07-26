@@ -1,9 +1,28 @@
 use crate::ast::*;
 use crate::check::{controlled_state_bindings, expr_type};
-use crate::{CheckedDocument, Error};
+use crate::{CheckedDocument, Error, canonical_snake};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
+
+const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
+
+fn reconciliation_scope<'a>(public_scope: &'a str, env: &'a HashMap<String, Binding>) -> &'a str {
+    env.get(RECONCILIATION_SCOPE_BINDING)
+        .map_or(public_scope, |binding| binding.code.as_str())
+}
+
+fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
+    env.insert(
+        RECONCILIATION_SCOPE_BINDING.into(),
+        Binding {
+            code,
+            ty: Type::Str,
+            local: true,
+            state: None,
+        },
+    );
+}
 
 pub(in crate::codegen) fn find_extern_function<'a>(
     document: &'a Document,
@@ -127,7 +146,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
     }
-    for node in pane_grids(&document.view) {
+    for (node, test_only) in document_pane_grids(document) {
         let ViewNode::PaneGrid {
             name,
             configuration,
@@ -142,6 +161,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         } else {
             pane_type(name)
         };
+        if test_only {
+            writeln!(out, "#[cfg(test)]").unwrap();
+        }
         writeln!(
             out,
             "pub(crate) {}: ::iced::widget::pane_grid::State<{pane_state}>,",
@@ -149,6 +171,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
         if pane_split_slots(configuration).iter().any(Option::is_some) {
+            if test_only {
+                writeln!(out, "#[cfg(test)]").unwrap();
+            }
             writeln!(
                 out,
                 "pub(crate) {}: ::std::collections::BTreeMap<&'static str, ::iced::widget::pane_grid::Split>,",
@@ -269,11 +294,14 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     if has_animations(document) {
         writeln!(out, "__AnimationFrame,").unwrap();
     }
-    for node in pane_grids(&document.view) {
+    for (node, test_only) in document_pane_grids(document) {
         let ViewNode::PaneGrid { name, options, .. } = node else {
             unreachable!()
         };
         if options.resize_leeway.is_some() {
+            if test_only {
+                writeln!(out, "#[cfg(test)]").unwrap();
+            }
             writeln!(
                 out,
                 "{}(::iced::widget::pane_grid::ResizeEvent),",
@@ -282,6 +310,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
             .unwrap();
         }
         if options.draggable {
+            if test_only {
+                writeln!(out, "#[cfg(test)]").unwrap();
+            }
             writeln!(
                 out,
                 "{}(::iced::widget::pane_grid::DragEvent),",
@@ -302,7 +333,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "impl {} {{", document.app).unwrap();
     generate_named_windows(&mut out, document, source_path);
-    writeln!(out, "pub fn run() -> ::iced::Result {{").unwrap();
     let subscription = ".subscription(Self::__subscription)";
     let default_font = document
         .fonts
@@ -361,8 +391,22 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     } else {
         "::iced::application(Self::__boot, Self::__update, Self::__view)"
     };
-    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}.run()").unwrap();
-    writeln!(out, "}}").unwrap();
+    let program = if document.daemon {
+        "::iced::Daemon"
+    } else {
+        "::iced::Application"
+    };
+    writeln!(
+        out,
+        "fn __program() -> {program}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
+    )
+    .unwrap();
+    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
+    writeln!(
+        out,
+        "}}\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
+    )
+    .unwrap();
 
     generate_theme(&mut out, document)?;
     generate_boot(&mut out, document, &message)?;
@@ -370,7 +414,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_update(&mut out, document, &message)?;
     generate_subscription(&mut out, document, &message)?;
     generate_view(&mut out, document, &message)?;
+    generate_test_mounts(&mut out, document, &message, source_path)?;
     writeln!(out, "}}").unwrap();
+    generate_tests(&mut out, document, &message, source_path)?;
     Ok(out)
 }
 
@@ -383,6 +429,7 @@ mod settings;
 mod statement;
 mod style;
 mod subscription;
+mod testing;
 mod view;
 
 use application::*;
@@ -394,6 +441,7 @@ use settings::*;
 use statement::*;
 use style::*;
 use subscription::*;
+use testing::*;
 use view::*;
 
 #[cfg(test)]

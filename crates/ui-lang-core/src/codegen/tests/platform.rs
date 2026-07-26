@@ -600,11 +600,11 @@ view
             .contains("Id::from(format!(\"{}/list({})\", \"DynamicOperations\", self.selected))")
     );
     assert!(
-        generated.contains("let __a11y_key = format!(\"{}/field({})\", __for_scope.clone(), id)")
+        generated.contains("let __a11y_key = format!(\"{}/field({})\", \"DynamicOperations\", id)")
     );
     assert!(generated.contains(".id(::iced::widget::Id::from(__a11y_key.clone()))"));
     assert!(generated.contains(
-        ".id(::iced::widget::Id::from(format!(\"{}/list({})\", __for_scope.clone(), id)))"
+        ".id(::iced::widget::Id::from(format!(\"{}/list({})\", \"DynamicOperations\", id)))"
     ));
 }
 
@@ -614,9 +614,9 @@ fn lowers_scoped_widget_operations() {
     let generated = compile(source, "scoped_widget_operations.ice").unwrap();
 
     for id in [
-        "Id::new(\"ScopedOperations/Field/field\")",
+        "Id::new(\"ScopedOperations/default/field\")",
         "Id::new(\"ScopedOperations/frame/inner-frame/slot-field\")",
-        "Id::new(\"ScopedOperations/details/list\")",
+        "Id::new(\"ScopedOperations/workspace/details/list\")",
     ] {
         assert!(generated.contains(id), "missing {id}");
     }

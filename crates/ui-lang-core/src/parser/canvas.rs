@@ -8,10 +8,13 @@ pub(in crate::parser) fn parse_canvas(
     if !styles.is_empty() {
         return Err(error("E190", line, "canvas does not accept `@` utilities"));
     }
+    let mut id = None;
     let mut options = CanvasOptions::default();
     for part in &parts[1..] {
         let expr = |value: &str| parse_expr(strip_wrapping_parens(value), line);
-        if let Some(value) = part.strip_prefix("w=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E190", "canvas")?;
+        } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {
             options.height = Some(parse_length(value, line)?);
@@ -93,6 +96,7 @@ pub(in crate::parser) fn parse_canvas(
         }
     }
     Ok(ViewNode::Canvas {
+        id,
         options: Box::new(options),
         locals,
         commands,

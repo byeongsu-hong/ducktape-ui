@@ -153,7 +153,7 @@ pub(in crate::codegen) fn generate_pane_types(
     out: &mut String,
     document: &Document,
 ) -> Result<(), Error> {
-    for node in pane_grids(&document.view) {
+    for (node, test_only) in document_pane_grids(document) {
         let ViewNode::PaneGrid {
             name, templates, ..
         } = node
@@ -164,9 +164,10 @@ pub(in crate::codegen) fn generate_pane_types(
             continue;
         }
         let pane_type = pane_type(name);
+        let cfg = if test_only { "#[cfg(test)]\n" } else { "" };
         writeln!(
             out,
-            "#[derive(Debug, Clone, PartialEq)]\nenum {pane_type} {{\n__Static(&'static str),"
+            "{cfg}#[derive(Debug, Clone, PartialEq)]\nenum {pane_type} {{\n__Static(&'static str),"
         )
         .unwrap();
         for template in templates {
@@ -179,7 +180,7 @@ pub(in crate::codegen) fn generate_pane_types(
             )
             .unwrap();
         }
-        writeln!(out, "}}\nimpl {pane_type} {{\nfn __name(&self) -> ::std::string::String {{\nmatch self {{\nSelf::__Static(__name) => (*__name).to_owned(),").unwrap();
+        writeln!(out, "}}\n{cfg}impl {pane_type} {{\nfn __name(&self) -> ::std::string::String {{\nmatch self {{\nSelf::__Static(__name) => (*__name).to_owned(),").unwrap();
         for template in templates {
             writeln!(
                 out,
@@ -369,6 +370,47 @@ pub(in crate::codegen) fn pane_grids(root: &ViewNode) -> Vec<&ViewNode> {
     output
 }
 
+pub(in crate::codegen) fn document_pane_grids(document: &Document) -> Vec<(&ViewNode, bool)> {
+    fn statements_reference_grid(statements: &[Statement], name: &str) -> bool {
+        statements.iter().any(|statement| match statement {
+            Statement::PaneOperation { grid, .. } => grid == name,
+            Statement::TaskGroup { statements, .. } => statements_reference_grid(statements, name),
+            Statement::Abortable { task, .. } => {
+                statements_reference_grid(::std::slice::from_ref(task), name)
+            }
+            _ => false,
+        })
+    }
+
+    let referenced = |name: &str| {
+        document
+            .handlers
+            .iter()
+            .any(|handler| statements_reference_grid(&handler.statements, name))
+            || document
+                .presets
+                .iter()
+                .any(|preset| statements_reference_grid(&preset.statements, name))
+    };
+    pane_grids(&document.view)
+        .into_iter()
+        .map(|node| (node, false))
+        .chain(
+            document
+                .tests
+                .iter()
+                .filter_map(|test| test.mount.as_ref())
+                .flat_map(pane_grids)
+                .map(|node| {
+                    let ViewNode::PaneGrid { name, .. } = node else {
+                        unreachable!()
+                    };
+                    (node, !referenced(name))
+                }),
+        )
+        .collect()
+}
+
 pub(in crate::codegen) fn uses_canvas(document: &Document) -> bool {
     !canvases(document).is_empty()
 }
@@ -452,6 +494,9 @@ pub(in crate::codegen) fn canvases(
     for component in &document.components {
         collect(&component.root, &mut output);
     }
+    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+        collect(mount, &mut output);
+    }
     output
 }
 
@@ -526,5 +571,11 @@ pub(in crate::codegen) fn needs_extern_noop(document: &Document) -> bool {
             _ => false,
         }
     }
-    contains(&document.view) || document.components.iter().any(|item| contains(&item.root))
+    contains(&document.view)
+        || document.components.iter().any(|item| contains(&item.root))
+        || document
+            .tests
+            .iter()
+            .filter_map(|test| test.mount.as_ref())
+            .any(contains)
 }

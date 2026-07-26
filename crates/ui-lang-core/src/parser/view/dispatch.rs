@@ -96,6 +96,9 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
             (left, Some(right))
         });
     let (core, styles) = split_style_utilities(without_route);
+    for style in &styles {
+        line.record_symbol(SymbolKind::Recipe, style, false, style);
+    }
     let parts = split_words(core);
     let Some(kind) = parts.first().map(String::as_str) else {
         return Err(error("E061", line, "empty view node"));

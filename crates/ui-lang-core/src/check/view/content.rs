@@ -10,18 +10,21 @@ pub(in crate::check) fn infer_content_group(
     match node {
         ViewNode::Text {
             value,
+            id,
             options,
             styles,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             let ty = expr_type(value, env, document, span)?;
             if !matches!(ty, Type::Str | Type::I64 | Type::F64) {
                 return Err(type_error(span, &Type::Str, &ty).hint("text accepts str, i64, or f64"));
             }
             check_text_options(options, env, document, span)?;
-            check_styles(styles, document, span, StyleTarget::Text)?;
+            check_styles(styles, document, span, StyleTarget::Text(options))?;
         }
         ViewNode::RichText {
+            id,
             options,
             color,
             spans,
@@ -29,6 +32,7 @@ pub(in crate::check) fn infer_content_group(
             route,
             span,
         } => {
+            check_id(id, env, document, ids, span)?;
             check_text_options(options, env, document, span)?;
             check_styles(
                 styles,
@@ -36,6 +40,8 @@ pub(in crate::check) fn infer_content_group(
                 span,
                 StyleTarget::RichText {
                     typed_color: color.is_some(),
+                    typed_size: options.size.is_some(),
+                    typed_line_height: options.line_height.is_some(),
                 },
             )?;
             if color

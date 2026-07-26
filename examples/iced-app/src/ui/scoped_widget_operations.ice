@@ -25,7 +25,7 @@ on focus_component
   task widget focus #outer(selected)/inner/field
 
 on focus_default
-  task widget focus #Field/field
+  task widget focus #default/field
 
 on focus_slot
   task widget focus #frame/inner-frame/slot-field
@@ -40,12 +40,12 @@ on focus_cell
   task widget focus #row(row_index)/col(column_index)/cell
 
 on snap_pane
-  task widget snap #details/list 0.0 1.0
+  task widget snap #workspace/details/list 0.0 1.0
 
 view
   col
     Wrapper value=value #outer(selected)
-    Field value=value
+    Field value=value #default
     Frame #frame
       Frame #inner-frame
         input "Slotted" #slot-field <-> value

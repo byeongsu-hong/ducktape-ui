@@ -253,7 +253,10 @@ pub(in crate::codegen) fn accessibility_key_code(
     document: &Document,
 ) -> Result<String, Error> {
     id.map_or_else(
-        || Ok(format!("format!(\"{{}}/@{kind}:{}\", {scope})", span.line)),
+        || {
+            let scope = reconciliation_scope(scope, env);
+            Ok(format!("format!(\"{{}}/@{kind}:{}\", {scope})", span.line))
+        },
         |id| id_code(id, scope, env, document),
     )
 }
@@ -285,33 +288,48 @@ pub(in crate::codegen) fn widget_target_code(
     env: &HashMap<String, Binding>,
     document: &Document,
 ) -> Result<String, Error> {
+    let constructor = if component_context(env).is_none()
+        && target.segments.iter().all(|segment| segment.key.is_none())
+    {
+        "new"
+    } else {
+        "from"
+    };
+    Ok(format!(
+        "::iced::widget::Id::{constructor}({})",
+        widget_target_path_code(target, env, document)?
+    ))
+}
+
+pub(in crate::codegen) fn widget_target_path_code(
+    target: &WidgetTarget,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+) -> Result<String, Error> {
     if let Some((_, context)) = component_context(env) {
         let mut scope = context.code.clone();
         for segment in &target.segments {
             scope = id_code(segment, &scope, env, document)?;
         }
-        return Ok(format!("::iced::widget::Id::from({scope})"));
+        return Ok(scope);
     }
     if target.segments.iter().all(|segment| segment.key.is_none()) {
-        return Ok(format!(
-            "::iced::widget::Id::new({})",
-            rust_string(&format!(
-                "{}/{}",
-                document.app,
-                target
-                    .segments
-                    .iter()
-                    .map(|segment| segment.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("/")
-            ))
-        ));
+        return Ok(rust_string(&format!(
+            "{}/{}",
+            document.app,
+            target
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>()
+                .join("/")
+        )));
     }
     let mut scope = rust_string(&document.app);
     for segment in &target.segments {
         scope = id_code(segment, &scope, env, document)?;
     }
-    Ok(format!("::iced::widget::Id::from({scope})"))
+    Ok(scope)
 }
 
 pub(in crate::codegen) fn widget_selector_code(

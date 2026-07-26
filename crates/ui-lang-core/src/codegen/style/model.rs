@@ -9,7 +9,9 @@ pub(in crate::codegen) struct Style {
     pub(in crate::codegen) gap: Option<u16>,
     pub(in crate::codegen) items_center: bool,
     pub(in crate::codegen) self_center: bool,
+    pub(in crate::codegen) clip: bool,
     pub(in crate::codegen) text_size: Option<u16>,
+    pub(in crate::codegen) text_line_height: Option<f32>,
     pub(in crate::codegen) bold: bool,
     pub(in crate::codegen) text_color: Option<String>,
     pub(in crate::codegen) background: Option<String>,
@@ -23,9 +25,9 @@ pub(in crate::codegen) struct Style {
 }
 
 impl Style {
-    pub(in crate::codegen) fn parse(tokens: &[String], _document: &Document) -> Self {
+    pub(in crate::codegen) fn parse(tokens: &[String], document: &Document) -> Self {
         let mut style = Self::default();
-        for token in tokens {
+        for token in document.expand_styles(tokens) {
             let (variant, utility) = token
                 .split_once(':')
                 .map_or((None, token.as_str()), |(a, b)| (Some(a), b));
@@ -59,12 +61,17 @@ impl Style {
                 "max-w-2xl" => style.max_width = Some(672),
                 "items-center" => style.items_center = true,
                 "self-center" => style.self_center = true,
+                "overflow-hidden" => style.clip = true,
                 "text-xs" => style.text_size = Some(12),
                 "text-sm" => style.text_size = Some(14),
                 "text-base" => style.text_size = Some(16),
                 "text-lg" => style.text_size = Some(18),
                 "text-xl" => style.text_size = Some(20),
                 "text-2xl" => style.text_size = Some(24),
+                "leading-tight" => style.text_line_height = Some(1.2),
+                "leading-snug" => style.text_line_height = Some(1.35),
+                "leading-normal" => style.text_line_height = Some(1.5),
+                "leading-relaxed" => style.text_line_height = Some(1.65),
                 "font-bold" => style.bold = true,
                 "border" => style.border_width = 1,
                 "border-2" => style.border_width = 2,
@@ -169,6 +176,8 @@ pub(in crate::codegen) fn button_style_code(
         || style.hover_background.is_some()
         || style.pressed_background.is_some()
         || style.text_color.is_some()
+        || style.border_width != 0
+        || style.border_color.is_some()
         || style.radius != 0
         || style.disabled_opacity.is_some();
     let has_typed = typed.active.is_some()
@@ -244,6 +253,17 @@ pub(in crate::codegen) fn button_style_code(
                 code,
                 " __style.text_color = {};",
                 theme_color(document, text)
+            )
+            .unwrap();
+        }
+        if style.border_width > 0 {
+            write!(code, " __style.border.width = {}.0;", style.border_width).unwrap();
+        }
+        if let Some(border) = &style.border_color {
+            write!(
+                code,
+                " __style.border.color = {};",
+                theme_color(document, border)
             )
             .unwrap();
         }

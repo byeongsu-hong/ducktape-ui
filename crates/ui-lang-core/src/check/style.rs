@@ -29,20 +29,21 @@ pub(in crate::check) fn check_id(
     Ok(())
 }
 
-// Current lowering order is box callback -> utilities -> typed fields; input callback ->
-// utilities -> typed builder/status fields; and button preset/callback -> utilities -> typed
-// builder/status fields. font= and @font-bold compose, with the utility selecting bold weight.
-// Layout utilities may style an outer wrapper, sometimes in addition to the inner widget (stack
-// sizing), so they have no global precedence. A top-level `preset` is boot/state data, not a
-// reusable visual style.
+// Recipes expand in place before utility validation and lowering. Direct typed fields are applied
+// after recipe defaults, while setting the same field through a typed property and a direct
+// utility remains an error. font= and @font-bold compose, with the utility selecting bold weight.
 #[derive(Clone, Copy)]
 pub(in crate::check) enum StyleTarget<'a> {
     Layout(Layout, &'a LayoutOptions),
     Container(&'a ContainerOptions),
     PaneContent(&'a ContainerStyleOptions),
     PaneTitle(&'a ContainerStyleOptions),
-    Text,
-    RichText { typed_color: bool },
+    Text(&'a TextOptions),
+    RichText {
+        typed_color: bool,
+        typed_size: bool,
+        typed_line_height: bool,
+    },
     RichSpan(&'a RichSpanOptions),
     Input(&'a InputOptions),
     Button(&'a ButtonOptions),
@@ -53,6 +54,124 @@ pub(in crate::check) enum StyleTarget<'a> {
     Radio,
     Rule,
     Space,
+}
+
+pub(in crate::check) fn check_recipes(document: &Document) -> Result<(), Error> {
+    for recipe in &document.recipes {
+        match recipe.target {
+            StyleRecipeTarget::Column => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Layout(Layout::Column, &LayoutOptions::default()),
+            )?,
+            StyleRecipeTarget::Row => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Layout(Layout::Row, &LayoutOptions::default()),
+            )?,
+            StyleRecipeTarget::Flex => {
+                let options = LayoutOptions {
+                    flexbox: Some(FlexboxOptions::default()),
+                    ..LayoutOptions::default()
+                };
+                check_styles(
+                    &recipe.utilities,
+                    document,
+                    &recipe.span,
+                    StyleTarget::Layout(Layout::Row, &options),
+                )?;
+            }
+            StyleRecipeTarget::Grid => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Layout(Layout::Grid, &LayoutOptions::default()),
+            )?,
+            StyleRecipeTarget::Stack => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Layout(Layout::Stack, &LayoutOptions::default()),
+            )?,
+            StyleRecipeTarget::Container => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Container(&ContainerOptions::default()),
+            )?,
+            StyleRecipeTarget::Text => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Text(&TextOptions::default()),
+            )?,
+            StyleRecipeTarget::Input => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Input(&InputOptions::default()),
+            )?,
+            StyleRecipeTarget::Button => check_styles(
+                &recipe.utilities,
+                document,
+                &recipe.span,
+                StyleTarget::Button(&ButtonOptions::default()),
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn style_target_name(target: StyleTarget<'_>) -> &'static str {
+    match target {
+        StyleTarget::Layout(_, options) if options.flexbox.is_some() => "flex",
+        StyleTarget::Layout(Layout::Column, _) => "col",
+        StyleTarget::Layout(Layout::Row, _) => "row",
+        StyleTarget::Layout(Layout::Scroll, _) => "scroll",
+        StyleTarget::Layout(Layout::Grid, _) => "grid",
+        StyleTarget::Layout(Layout::Stack, _) => "stack",
+        StyleTarget::Container(_) => "box",
+        StyleTarget::PaneContent(_) => "pane",
+        StyleTarget::PaneTitle(_) => "pane title",
+        StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_) => "text",
+        StyleTarget::Input(_) => "input",
+        StyleTarget::Button(_) => "button",
+        StyleTarget::Checkbox => "checkbox",
+        StyleTarget::Toggler => "toggler",
+        StyleTarget::Slider => "slider",
+        StyleTarget::Progress => "progress",
+        StyleTarget::Radio => "radio",
+        StyleTarget::Rule => "rule",
+        StyleTarget::Space => "space",
+    }
+}
+
+fn recipe_matches(target: StyleTarget<'_>, recipe: StyleRecipeTarget) -> bool {
+    match recipe {
+        StyleRecipeTarget::Column => matches!(
+            target,
+            StyleTarget::Layout(Layout::Column, options) if options.flexbox.is_none()
+        ),
+        StyleRecipeTarget::Row => matches!(
+            target,
+            StyleTarget::Layout(Layout::Row, options) if options.flexbox.is_none()
+        ),
+        StyleRecipeTarget::Flex => matches!(
+            target,
+            StyleTarget::Layout(_, options) if options.flexbox.is_some()
+        ),
+        StyleRecipeTarget::Grid => matches!(target, StyleTarget::Layout(Layout::Grid, _)),
+        StyleRecipeTarget::Stack => matches!(target, StyleTarget::Layout(Layout::Stack, _)),
+        StyleRecipeTarget::Container => matches!(target, StyleTarget::Container(_)),
+        StyleRecipeTarget::Text => matches!(
+            target,
+            StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+        ),
+        StyleRecipeTarget::Input => matches!(target, StyleTarget::Input(_)),
+        StyleRecipeTarget::Button => matches!(target, StyleTarget::Button(_)),
+    }
 }
 
 pub(in crate::check) fn valid_theme_color(value: &str, document: &Document) -> bool {
@@ -87,6 +206,25 @@ pub(in crate::check) fn check_styles(
     span: &Span,
     target: StyleTarget<'_>,
 ) -> Result<(), Error> {
+    let declared_styles = styles;
+    for style in declared_styles {
+        if let Some(recipe) = document.style_recipe(style)
+            && !recipe_matches(target, recipe.target)
+        {
+            return Err(Error::new(
+                "E046",
+                span,
+                format!(
+                    "recipe `{}` targets `{}`, not `{}`",
+                    recipe.name,
+                    recipe.target.source_name(),
+                    style_target_name(target)
+                ),
+            ));
+        }
+    }
+    let expanded_styles = document.expand_styles(declared_styles);
+    let styles = expanded_styles.as_slice();
     let spacing = [
         "0", "1", "2", "3", "4", "5", "6", "8", "10", "12", "16", "20", "24",
     ];
@@ -107,26 +245,7 @@ pub(in crate::check) fn check_styles(
             target,
             StyleTarget::PaneContent(_) | StyleTarget::PaneTitle(_)
         );
-    let target_name = match target {
-        StyleTarget::Layout(Layout::Column, _) => "col",
-        StyleTarget::Layout(Layout::Row, _) => "row",
-        StyleTarget::Layout(Layout::Scroll, _) => "scroll",
-        StyleTarget::Layout(Layout::Grid, _) => "grid",
-        StyleTarget::Layout(Layout::Stack, _) => "stack",
-        StyleTarget::Container(_) => "box",
-        StyleTarget::PaneContent(_) => "pane",
-        StyleTarget::PaneTitle(_) => "pane title",
-        StyleTarget::Text | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_) => "text",
-        StyleTarget::Input(_) => "input",
-        StyleTarget::Button(_) => "button",
-        StyleTarget::Checkbox => "checkbox",
-        StyleTarget::Toggler => "toggler",
-        StyleTarget::Slider => "slider",
-        StyleTarget::Progress => "progress",
-        StyleTarget::Radio => "radio",
-        StyleTarget::Rule => "rule",
-        StyleTarget::Space => "space",
-    };
+    let target_name = style_target_name(target);
 
     for original in styles {
         let (variant, utility) = original
@@ -134,9 +253,16 @@ pub(in crate::check) fn check_styles(
             .map_or((None, original.as_str()), |(variant, utility)| {
                 (Some(variant), utility)
             });
-        let color = ["bg-", "text-", "border-"]
+        let color = ["bg-", "border-"]
             .iter()
-            .find_map(|prefix| utility.strip_prefix(prefix));
+            .find_map(|prefix| utility.strip_prefix(prefix))
+            .or_else(|| {
+                is_text_color_utility(utility).then(|| {
+                    utility
+                        .strip_prefix("text-")
+                        .expect("text color utility has a text prefix")
+                })
+            });
         let valid_color = color.is_some_and(|value| valid_theme_color(value, document));
         let valid_spacing = ["p-", "px-", "py-", "gap-"].iter().any(|prefix| {
             utility
@@ -152,7 +278,19 @@ pub(in crate::check) fn check_styles(
                 | "max-w-lg"
                 | "max-w-xl"
                 | "max-w-2xl"
+                | "items-center"
                 | "self-center"
+                | "overflow-hidden"
+                | "text-xs"
+                | "text-sm"
+                | "text-base"
+                | "text-lg"
+                | "text-xl"
+                | "text-2xl"
+                | "leading-tight"
+                | "leading-snug"
+                | "leading-normal"
+                | "leading-relaxed"
                 | "font-bold"
                 | "border"
                 | "border-2"
@@ -177,10 +315,16 @@ pub(in crate::check) fn check_styles(
 
         let supported = match variant {
             Some("hover" | "pressed") => {
-                matches!(target, StyleTarget::Button(_)) && utility.starts_with("bg-")
+                matches!(target, StyleTarget::Button(_))
+                    && utility
+                        .strip_prefix("bg-")
+                        .is_some_and(|color| valid_theme_color(color, document))
             }
             Some("focus") => {
-                matches!(target, StyleTarget::Input(_)) && utility.starts_with("border-")
+                matches!(target, StyleTarget::Input(_))
+                    && utility
+                        .strip_prefix("border-")
+                        .is_some_and(|color| valid_theme_color(color, document))
             }
             Some("disabled") => {
                 matches!(target, StyleTarget::Button(_)) && utility.starts_with("opacity-")
@@ -188,53 +332,64 @@ pub(in crate::check) fn check_styles(
             Some(_) => false,
             None => match utility {
                 "w-full" | "h-full" => {
-                    matches!(
-                        target,
-                        StyleTarget::Layout(
-                            Layout::Column | Layout::Row | Layout::Grid | Layout::Stack,
-                            _
-                        )
-                    ) && !is_css_flex
+                    is_box || matches!(target, StyleTarget::Input(_)) && utility == "w-full"
                 }
-                "max-w-sm" | "max-w-md" | "max-w-lg" | "max-w-xl" | "max-w-2xl" => {
-                    is_layout_box && !is_css_flex
+                "max-w-sm" | "max-w-md" | "max-w-lg" | "max-w-xl" | "max-w-2xl" => is_box,
+                "items-center" => {
+                    matches!(target, StyleTarget::Layout(Layout::Column | Layout::Row, _))
                 }
-                "self-center" => is_layout_box && !is_css_flex,
+                "self-center" => is_box && !is_css_flex,
+                "overflow-hidden" => is_box,
+                utility if is_text_size_utility(utility) => matches!(
+                    target,
+                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                ),
+                utility if is_text_line_height_utility(utility) => matches!(
+                    target,
+                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                ),
                 "font-bold" => matches!(
                     target,
-                    StyleTarget::Text | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
                 ),
-                "border" | "border-2" => is_layout_box || matches!(target, StyleTarget::Input(_)),
-                "rounded-sm" | "rounded" | "rounded-md" | "rounded-lg" | "rounded-full" => {
-                    is_layout_box
+                "border" | "border-2" => {
+                    is_visual_box
                         || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
-                _ if utility.starts_with("gap-") => false,
-                _ if utility.starts_with("p-") => {
-                    matches!(target, StyleTarget::Layout(Layout::Grid | Layout::Stack, _))
+                "rounded-sm" | "rounded" | "rounded-md" | "rounded-lg" | "rounded-full" => {
+                    is_visual_box
+                        || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
-                _ if utility.starts_with("px-") || utility.starts_with("py-") => matches!(
+                _ if utility.starts_with("gap-") => matches!(
                     target,
-                    StyleTarget::Layout(Layout::Grid | Layout::Stack, _)
-                        | StyleTarget::Input(_)
-                        | StyleTarget::Button(_)
+                    StyleTarget::Layout(
+                        Layout::Column | Layout::Row | Layout::Grid | Layout::Stack,
+                        _
+                    )
                 ),
+                _ if utility.starts_with("p-")
+                    || utility.starts_with("px-")
+                    || utility.starts_with("py-") =>
+                {
+                    is_box || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
+                }
                 _ if utility.starts_with("bg-") => {
                     is_visual_box
                         || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
-                _ if utility.starts_with("text-") => {
+                _ if is_text_color_utility(utility) => {
                     is_visual_box
                         || matches!(
                             target,
-                            StyleTarget::Text
+                            StyleTarget::Text(_)
                                 | StyleTarget::RichText { .. }
                                 | StyleTarget::RichSpan(_)
                                 | StyleTarget::Button(_)
                         )
                 }
                 _ if utility.starts_with("border-") => {
-                    is_visual_box || matches!(target, StyleTarget::Input(_))
+                    is_visual_box
+                        || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
                 _ => false,
             },
@@ -263,7 +418,7 @@ pub(in crate::check) fn check_styles(
         .iter()
         .map(|style| base_utility(style))
         .any(|utility| utility.starts_with("border-") && utility != "border-2");
-    if (is_visual_box || matches!(target, StyleTarget::Input(_)))
+    if (is_visual_box || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_)))
         && has_border_color
         && !has_border
         && !has_typed_border
@@ -289,7 +444,7 @@ pub(in crate::check) fn check_styles(
             "rounded layout requires a background or border on the same node",
         ));
     }
-    check_style_ownership(styles, span, target)?;
+    check_style_ownership(declared_styles, span, target)?;
     Ok(())
 }
 
@@ -299,33 +454,138 @@ fn check_style_ownership(
     target: StyleTarget<'_>,
 ) -> Result<(), Error> {
     match target {
-        StyleTarget::Layout(kind, options) => match kind {
-            Layout::Scroll | Layout::Column | Layout::Row | Layout::Grid => {}
-            Layout::Stack => {
-                reject_stack_size_overlap(
-                    span,
+        StyleTarget::Layout(kind, options) => {
+            reject_duplicate_style_property(
+                span,
+                options.clip.is_some(),
+                "overflow",
+                "clip=",
+                last_utility(styles, None, |utility| utility == "overflow-hidden"),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                options.spacing.is_some(),
+                "spacing",
+                "gap=",
+                last_utility(styles, None, |utility| utility.starts_with("gap-")),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                has_padding(&options.padding),
+                "padding",
+                "p=",
+                last_utility(styles, None, is_padding_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                options.align.is_some()
+                    || options
+                        .flexbox
+                        .as_ref()
+                        .is_some_and(|flex| flex.align_items.is_some()),
+                "alignment",
+                if options.flexbox.is_some() {
+                    "items="
+                } else {
+                    "align="
+                },
+                last_utility(styles, None, |utility| utility == "items-center"),
+            )?;
+            match kind {
+                Layout::Scroll | Layout::Column | Layout::Row | Layout::Grid => {}
+                Layout::Stack => {
+                    reject_stack_size_overlap(
+                        span,
+                        options.width.is_some(),
+                        "width",
+                        "w=",
+                        last_utility(styles, None, |utility| utility == "w-full"),
+                    )?;
+                    reject_stack_size_overlap(
+                        span,
+                        options.height.is_some(),
+                        "height",
+                        "h=",
+                        last_utility(styles, None, |utility| utility == "h-full"),
+                    )?;
+                }
+            }
+        }
+        StyleTarget::Container(options) => {
+            for (typed, property, owner, utility) in [
+                (
                     options.width.is_some(),
                     "width",
                     "w=",
                     last_utility(styles, None, |utility| utility == "w-full"),
-                )?;
-                reject_stack_size_overlap(
-                    span,
+                ),
+                (
                     options.height.is_some(),
                     "height",
                     "h=",
                     last_utility(styles, None, |utility| utility == "h-full"),
-                )?;
+                ),
+                (
+                    options.max_width.is_some(),
+                    "max-width",
+                    "max-w=",
+                    last_utility(styles, None, |utility| utility.starts_with("max-w-")),
+                ),
+                (
+                    has_padding(&options.padding),
+                    "padding",
+                    "p=",
+                    last_utility(styles, None, is_padding_utility),
+                ),
+                (
+                    options.clip.is_some(),
+                    "overflow",
+                    "clip=",
+                    last_utility(styles, None, |utility| utility == "overflow-hidden"),
+                ),
+            ] {
+                reject_duplicate_style_property(span, typed, property, owner, utility)?;
             }
-        },
-        StyleTarget::Container(options) => {
             check_direct_surface_ownership(styles, span, &options.style)?;
         }
         StyleTarget::PaneContent(style) | StyleTarget::PaneTitle(style) => {
             check_direct_surface_ownership(styles, span, style)?;
         }
-        StyleTarget::Text => {}
-        StyleTarget::RichText { typed_color, .. } => {
+        StyleTarget::Text(options) => {
+            reject_duplicate_style_property(
+                span,
+                options.size.is_some(),
+                "text size",
+                "size=",
+                last_utility(styles, None, is_text_size_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                options.line_height.is_some(),
+                "text line height",
+                "line-h=",
+                last_utility(styles, None, is_text_line_height_utility),
+            )?;
+        }
+        StyleTarget::RichText {
+            typed_color,
+            typed_size,
+            typed_line_height,
+        } => {
+            reject_duplicate_style_property(
+                span,
+                typed_size,
+                "text size",
+                "size=",
+                last_utility(styles, None, is_text_size_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                typed_line_height,
+                "text line height",
+                "line-h=",
+                last_utility(styles, None, is_text_line_height_utility),
+            )?;
             reject_duplicate_style_property(
                 span,
                 typed_color,
@@ -337,6 +597,20 @@ fn check_style_ownership(
         StyleTarget::RichSpan(options) => {
             reject_duplicate_style_property(
                 span,
+                options.size.is_some(),
+                "text size",
+                "size=",
+                last_utility(styles, None, is_text_size_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                options.line_height.is_some(),
+                "text line height",
+                "line-h=",
+                last_utility(styles, None, is_text_line_height_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
                 options.color.is_some(),
                 "text color",
                 "color=",
@@ -346,11 +620,20 @@ fn check_style_ownership(
         StyleTarget::Input(options) => {
             reject_duplicate_style_property(
                 span,
+                options.width.is_some(),
+                "width",
+                "w=",
+                last_utility(styles, None, |utility| utility == "w-full"),
+            )?;
+            reject_duplicate_style_property(
+                span,
                 options.padding.is_some(),
                 "padding",
                 "p=",
                 last_utility(styles, None, |utility| {
-                    utility.starts_with("px-") || utility.starts_with("py-")
+                    utility.starts_with("p-")
+                        || utility.starts_with("px-")
+                        || utility.starts_with("py-")
                 }),
             )?;
             for (name, status, focused) in [
@@ -372,7 +655,9 @@ fn check_style_ownership(
                 "padding",
                 "p=",
                 last_utility(styles, None, |utility| {
-                    utility.starts_with("px-") || utility.starts_with("py-")
+                    utility.starts_with("p-")
+                        || utility.starts_with("px-")
+                        || utility.starts_with("py-")
                 }),
             )?;
             for (name, status) in [
@@ -420,6 +705,20 @@ fn check_direct_surface_ownership(
             "border color",
             "border=",
             last_utility(styles, None, is_border_color_utility),
+        ),
+        (
+            style.border_width.is_some(),
+            "border width",
+            "border-w=",
+            last_utility(styles, None, |utility| {
+                matches!(utility, "border" | "border-2")
+            }),
+        ),
+        (
+            has_radius(style),
+            "radius",
+            "r=",
+            last_utility(styles, None, |utility| utility.starts_with("rounded")),
         ),
     ] {
         reject_duplicate_style_property(span, typed, property, owner, utility)?;
@@ -578,11 +877,39 @@ fn last_utility<'a>(
 }
 
 fn is_text_color_utility(utility: &str) -> bool {
-    utility.starts_with("text-")
+    utility.starts_with("text-") && !is_text_size_utility(utility)
+}
+
+fn is_text_size_utility(utility: &str) -> bool {
+    matches!(
+        utility,
+        "text-xs" | "text-sm" | "text-base" | "text-lg" | "text-xl" | "text-2xl"
+    )
+}
+
+fn is_text_line_height_utility(utility: &str) -> bool {
+    matches!(
+        utility,
+        "leading-tight" | "leading-snug" | "leading-normal" | "leading-relaxed"
+    )
 }
 
 fn is_border_color_utility(utility: &str) -> bool {
     utility.starts_with("border-") && utility != "border-2"
+}
+
+fn is_padding_utility(utility: &str) -> bool {
+    utility.starts_with("p-") || utility.starts_with("px-") || utility.starts_with("py-")
+}
+
+fn has_padding(options: &PaddingOptions) -> bool {
+    options.all.is_some()
+        || options.x.is_some()
+        || options.y.is_some()
+        || options.top.is_some()
+        || options.right.is_some()
+        || options.bottom.is_some()
+        || options.left.is_some()
 }
 
 fn has_radius(options: &ContainerStyleOptions) -> bool {

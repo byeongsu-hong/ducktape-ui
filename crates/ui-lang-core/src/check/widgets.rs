@@ -11,6 +11,28 @@ pub(in crate::check) fn widget_operation_ids(
     env: &HashMap<String, Type>,
     document: &Document,
 ) -> Result<Vec<WidgetIdPath>, Error> {
+    Ok(collect_widget_ids(root, env, document, false)?.targets)
+}
+
+pub(in crate::check) struct TestWidgetIds {
+    pub targets: Vec<WidgetIdPath>,
+    pub component_scopes: Vec<WidgetIdPath>,
+}
+
+pub(in crate::check) fn test_widget_ids(
+    root: &ViewNode,
+    env: &HashMap<String, Type>,
+    document: &Document,
+) -> Result<TestWidgetIds, Error> {
+    collect_widget_ids(root, env, document, true)
+}
+
+fn collect_widget_ids(
+    root: &ViewNode,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    inspect_all: bool,
+) -> Result<TestWidgetIds, Error> {
     fn segment(
         id: &Id,
         env: &HashMap<String, Type>,
@@ -57,6 +79,7 @@ pub(in crate::check) fn widget_operation_ids(
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect(
         node: &ViewNode,
         env: &HashMap<String, Type>,
@@ -65,6 +88,8 @@ pub(in crate::check) fn widget_operation_ids(
         slot: Option<&WidgetIdSlot>,
         components: &mut Vec<(String, Span)>,
         output: &mut Vec<WidgetIdPath>,
+        component_scopes: &mut Vec<WidgetIdPath>,
+        inspect_all: bool,
     ) -> Result<(), Error> {
         match node {
             ViewNode::Layout {
@@ -74,26 +99,54 @@ pub(in crate::check) fn widget_operation_ids(
                 span,
                 ..
             } => {
-                if *kind == Layout::Scroll {
+                if inspect_all || *kind == Layout::Scroll {
                     record(scope, id, env, document, span, output)?;
                 }
                 let child_scope = scoped(scope, id, env, document, span)?;
                 for child in children {
-                    collect(child, env, document, &child_scope, slot, components, output)?;
+                    collect(
+                        child,
+                        env,
+                        document,
+                        &child_scope,
+                        slot,
+                        components,
+                        output,
+                        component_scopes,
+                        inspect_all,
+                    )?;
                 }
             }
             ViewNode::Input { id, span, .. } | ViewNode::TextEditor { id, span, .. } => {
                 record(scope, id, env, document, span, output)?;
             }
+            ViewNode::Text { id, span, .. }
+            | ViewNode::RichText { id, span, .. }
+            | ViewNode::Toggler { id, span, .. }
+            | ViewNode::Slider { id, span, .. }
+            | ViewNode::Progress { id, span, .. }
+            | ViewNode::Radio { id, span, .. }
+            | ViewNode::PickList { id, span, .. }
+            | ViewNode::ComboBox { id, span, .. }
+            | ViewNode::Rule { id, span, .. }
+            | ViewNode::QrCode { id, span, .. }
+            | ViewNode::Space { id, span, .. }
+            | ViewNode::Markdown { id, span, .. }
+            | ViewNode::ExternComponent { id, span, .. }
+            | ViewNode::Themer { id, span, .. }
+            | ViewNode::Shader { id, span, .. }
+            | ViewNode::Media { id, span, .. }
+            | ViewNode::Canvas { id, span, .. }
+                if inspect_all =>
+            {
+                record(scope, id, env, document, span, output)?;
+            }
             ViewNode::Container {
                 id, content, span, ..
-            }
-            | ViewNode::Button {
-                id,
-                content: Some(content),
-                span,
-                ..
             } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
                 let child_scope = scoped(scope, id, env, document, span)?;
                 collect(
                     content,
@@ -103,11 +156,47 @@ pub(in crate::check) fn widget_operation_ids(
                     slot,
                     components,
                     output,
+                    component_scopes,
+                    inspect_all,
                 )?;
+            }
+            ViewNode::Button {
+                id, content, span, ..
+            } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
+                if let Some(content) = content {
+                    let child_scope = scoped(scope, id, env, document, span)?;
+                    collect(
+                        content,
+                        env,
+                        document,
+                        &child_scope,
+                        slot,
+                        components,
+                        output,
+                        component_scopes,
+                        inspect_all,
+                    )?;
+                }
+            }
+            ViewNode::Checkbox { id, span, .. } if inspect_all => {
+                record(scope, id, env, document, span, output)?;
             }
             ViewNode::If { children, .. } => {
                 for child in children {
-                    collect(child, env, document, scope, slot, components, output)?;
+                    collect(
+                        child,
+                        env,
+                        document,
+                        scope,
+                        slot,
+                        components,
+                        output,
+                        component_scopes,
+                        inspect_all,
+                    )?;
                 }
             }
             ViewNode::For {
@@ -122,23 +211,37 @@ pub(in crate::check) fn widget_operation_ids(
                 let mut child_env = env.clone();
                 child_env.insert(item.clone(), *inner);
                 for child in children {
-                    collect(child, &child_env, document, scope, slot, components, output)?;
+                    collect(
+                        child,
+                        &child_env,
+                        document,
+                        scope,
+                        slot,
+                        components,
+                        output,
+                        component_scopes,
+                        inspect_all,
+                    )?;
                 }
             }
             ViewNode::KeyedColumn {
                 item,
                 items,
                 key,
+                id,
                 child,
                 span,
                 ..
             } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
                 let Type::List(inner) = expr_type(items, env, document, span)? else {
                     unreachable!("checker validates keyed lists")
                 };
                 let mut child_env = env.clone();
                 child_env.insert(item.clone(), *inner);
-                let mut child_scope = scope.clone();
+                let mut child_scope = scoped(scope, id, env, document, span)?;
                 child_scope.push((
                     "key".into(),
                     Some(expr_type(key, &child_env, document, span)?),
@@ -151,35 +254,120 @@ pub(in crate::check) fn widget_operation_ids(
                     slot,
                     components,
                     output,
+                    component_scopes,
+                    inspect_all,
                 )?;
             }
             ViewNode::Lazy {
                 dependency,
                 binding,
+                id,
                 child,
                 span,
             } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
                 let mut child_env = env.clone();
                 child_env.insert(binding.clone(), expr_type(dependency, env, document, span)?);
-                collect(child, &child_env, document, scope, slot, components, output)?;
+                let child_scope = scoped(scope, id, env, document, span)?;
+                collect(
+                    child,
+                    &child_env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
             }
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, env, document, scope, slot, components, output)?;
-                collect(tip, env, document, scope, slot, components, output)?;
+            ViewNode::Tooltip {
+                id,
+                content,
+                tip,
+                span,
+                ..
+            } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
+                let child_scope = scoped(scope, id, env, document, span)?;
+                collect(
+                    content,
+                    env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
+                collect(
+                    tip,
+                    env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
             }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, env, document, scope, slot, components, output)?;
-                collect(layer, env, document, scope, slot, components, output)?;
+            ViewNode::Overlay {
+                id,
+                content,
+                layer,
+                span,
+                ..
+            } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
+                let child_scope = scoped(scope, id, env, document, span)?;
+                collect(
+                    content,
+                    env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
+                collect(
+                    layer,
+                    env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
             }
             ViewNode::PaneGrid {
-                panes, templates, ..
+                name,
+                panes,
+                templates,
+                ..
             } => {
+                let mut grid_scope = scope.clone();
+                grid_scope.push((name.clone(), None));
+                if inspect_all && !output.contains(&grid_scope) {
+                    output.push(grid_scope.clone());
+                }
                 for pane in panes {
                     let mut pane_env = env.clone();
                     if let Some(binding) = &pane.maximized {
                         pane_env.insert(binding.clone(), Type::Bool);
                     }
-                    let mut pane_scope = scope.clone();
+                    let mut pane_scope = grid_scope.clone();
                     pane_scope.push((pane.name.clone(), None));
                     for node in pane.nodes() {
                         collect(
@@ -190,6 +378,8 @@ pub(in crate::check) fn widget_operation_ids(
                             slot,
                             components,
                             output,
+                            component_scopes,
+                            inspect_all,
                         )?;
                     }
                 }
@@ -205,7 +395,7 @@ pub(in crate::check) fn widget_operation_ids(
                     if let Some(binding) = &template.pane.maximized {
                         template_env.insert(binding.clone(), Type::Bool);
                     }
-                    let mut pane_scope = scope.clone();
+                    let mut pane_scope = grid_scope.clone();
                     pane_scope.push((
                         template.item.clone(),
                         Some(expr_type(
@@ -224,6 +414,8 @@ pub(in crate::check) fn widget_operation_ids(
                             slot,
                             components,
                             output,
+                            component_scopes,
+                            inspect_all,
                         )?;
                     }
                 }
@@ -231,17 +423,22 @@ pub(in crate::check) fn widget_operation_ids(
             ViewNode::Table {
                 item,
                 rows,
+                id,
                 columns,
                 span,
                 ..
             } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
+                }
+                let child_scope = scoped(scope, id, env, document, span)?;
                 let Type::List(inner) = expr_type(rows, env, document, span)? else {
                     unreachable!("checker validates table rows")
                 };
                 let mut cell_env = env.clone();
                 cell_env.insert(item.clone(), *inner);
                 for column in columns {
-                    let mut header_scope = scope.clone();
+                    let mut header_scope = child_scope.clone();
                     header_scope.push(("header".into(), Some(Type::I64)));
                     collect(
                         &column.header,
@@ -251,8 +448,10 @@ pub(in crate::check) fn widget_operation_ids(
                         slot,
                         components,
                         output,
+                        component_scopes,
+                        inspect_all,
                     )?;
-                    let mut cell_scope = scope.clone();
+                    let mut cell_scope = child_scope.clone();
                     cell_scope.push(("row".into(), Some(Type::I64)));
                     cell_scope.push(("col".into(), Some(Type::I64)));
                     collect(
@@ -263,6 +462,8 @@ pub(in crate::check) fn widget_operation_ids(
                         slot,
                         components,
                         output,
+                        component_scopes,
+                        inspect_all,
                     )?;
                 }
             }
@@ -273,6 +474,9 @@ pub(in crate::check) fn widget_operation_ids(
                 span,
                 ..
             } => {
+                let Some(id) = id else {
+                    return Ok(());
+                };
                 let call = (name.clone(), span.clone());
                 if components.contains(&call) {
                     return Err(Error::new(
@@ -287,12 +491,18 @@ pub(in crate::check) fn widget_operation_ids(
                     .find(|component| component.name == *name)
                     .expect("checker validates component names");
                 let mut component_scope = scope.clone();
-                if let Some(id) = id {
-                    component_scope.push(segment(id, env, document, span)?);
-                } else {
-                    component_scope.push((name.clone(), None));
+                component_scope.push(segment(id, env, document, span)?);
+                if inspect_all && !component_scopes.contains(&component_scope) {
+                    component_scopes.push(component_scope.clone());
                 }
-                let component_env = component.params.iter().cloned().collect();
+                let mut component_env: HashMap<String, Type> =
+                    component.params.iter().cloned().collect();
+                component_env.extend(
+                    component
+                        .states
+                        .iter()
+                        .map(|state| (state.name.clone(), state.ty.clone())),
+                );
                 let component_slot = (!slots.is_empty()).then(|| WidgetIdSlot {
                     entries: slots
                         .iter()
@@ -309,6 +519,8 @@ pub(in crate::check) fn widget_operation_ids(
                     component_slot.as_ref(),
                     components,
                     output,
+                    component_scopes,
+                    inspect_all,
                 )?;
                 components.pop();
             }
@@ -325,41 +537,106 @@ pub(in crate::check) fn widget_operation_ids(
                         slot.parent.as_deref(),
                         components,
                         output,
+                        component_scopes,
+                        inspect_all,
                     )?;
                 }
             }
-            ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. } => {
-                collect(content, env, document, scope, slot, components, output)?;
+            ViewNode::MouseArea {
+                id, content, span, ..
             }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, env, document, scope, slot, components, output)?;
-                    collect(wide, env, document, scope, slot, components, output)?;
+            | ViewNode::ResizeHandle {
+                id, content, span, ..
+            }
+            | ViewNode::Theme {
+                id, content, span, ..
+            }
+            | ViewNode::Float {
+                id, content, span, ..
+            }
+            | ViewNode::Pin {
+                id, content, span, ..
+            }
+            | ViewNode::Sensor {
+                id, content, span, ..
+            } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
                 }
-                ResponsiveContent::Size {
-                    width,
-                    height,
+                let child_scope = scoped(scope, id, env, document, span)?;
+                collect(
                     content,
-                } => {
-                    let mut child_env = env.clone();
-                    child_env.insert(width.clone(), Type::F64);
-                    child_env.insert(height.clone(), Type::F64);
-                    collect(
-                        content, &child_env, document, scope, slot, components, output,
-                    )?;
+                    env,
+                    document,
+                    &child_scope,
+                    slot,
+                    components,
+                    output,
+                    component_scopes,
+                    inspect_all,
+                )?;
+            }
+            ViewNode::Responsive {
+                id, content, span, ..
+            } => {
+                if inspect_all {
+                    record(scope, id, env, document, span, output)?;
                 }
-            },
+                let child_scope = scoped(scope, id, env, document, span)?;
+                match content {
+                    ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                        collect(
+                            narrow,
+                            env,
+                            document,
+                            &child_scope,
+                            slot,
+                            components,
+                            output,
+                            component_scopes,
+                            inspect_all,
+                        )?;
+                        collect(
+                            wide,
+                            env,
+                            document,
+                            &child_scope,
+                            slot,
+                            components,
+                            output,
+                            component_scopes,
+                            inspect_all,
+                        )?;
+                    }
+                    ResponsiveContent::Size {
+                        width,
+                        height,
+                        content,
+                    } => {
+                        let mut child_env = env.clone();
+                        child_env.insert(width.clone(), Type::F64);
+                        child_env.insert(height.clone(), Type::F64);
+                        collect(
+                            content,
+                            &child_env,
+                            document,
+                            &child_scope,
+                            slot,
+                            components,
+                            output,
+                            component_scopes,
+                            inspect_all,
+                        )?;
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
     }
 
     let mut output = Vec::new();
+    let mut component_scopes = Vec::new();
     collect(
         root,
         env,
@@ -368,8 +645,13 @@ pub(in crate::check) fn widget_operation_ids(
         None,
         &mut Vec::new(),
         &mut output,
+        &mut component_scopes,
+        inspect_all,
     )?;
-    Ok(output)
+    Ok(TestWidgetIds {
+        targets: output,
+        component_scopes,
+    })
 }
 
 pub(in crate::check) fn check_widget_target(

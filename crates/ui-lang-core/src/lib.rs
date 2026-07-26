@@ -23,12 +23,15 @@ use std::path::{Path, PathBuf};
 pub struct CheckedDocument {
     document: Document,
     symbols: Vec<CheckedSymbol>,
+    source_origins: Vec<(PathBuf, usize)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SymbolKind {
     Component,
     Handler,
+    Recipe,
+    TestTarget,
 }
 
 impl SymbolKind {
@@ -42,6 +45,7 @@ impl SymbolKind {
                         .is_some_and(|ch| ch.is_ascii_uppercase())
             }),
             Self::Handler => name != "mount" && valid_identifier(name),
+            Self::Recipe | Self::TestTarget => valid_identifier(name),
         }
     }
 }
@@ -65,6 +69,11 @@ fn valid_rust_identifier(name: &str) -> bool {
 
 fn valid_identifier(name: &str) -> bool {
     name != "none" && !name.starts_with("__") && valid_rust_identifier(name)
+}
+
+fn canonical_snake(name: &str) -> bool {
+    name.split('_')
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_lowercase()))
 }
 
 fn has_windows_drive_prefix(path: &str) -> bool {
@@ -91,6 +100,7 @@ impl SourceRange {
 #[derive(Clone, Debug)]
 pub struct CheckedSymbol {
     pub kind: SymbolKind,
+    pub scope: Option<String>,
     pub name: String,
     pub definition: SourceRange,
     pub references: Vec<SourceRange>,
@@ -102,6 +112,7 @@ impl CheckedDocument {
         Self {
             document,
             symbols: Vec::new(),
+            source_origins: Vec::new(),
         }
     }
 
@@ -126,17 +137,19 @@ impl CheckedDocument {
     pub(crate) fn with_parsed_symbols(mut self, parsed: Vec<parser::ParsedSymbol>) -> Self {
         struct Builder {
             kind: SymbolKind,
+            scope: Option<String>,
             name: String,
             definition: Option<SourceRange>,
             references: Vec<SourceRange>,
             complete: bool,
         }
 
-        let mut symbols = BTreeMap::<(SymbolKind, String), Builder>::new();
+        let mut symbols = BTreeMap::<(SymbolKind, Option<String>, String), Builder>::new();
         for parsed in parsed {
-            let key = (parsed.kind, parsed.name.clone());
+            let key = (parsed.kind, parsed.scope.clone(), parsed.name.clone());
             let symbol = symbols.entry(key).or_insert_with(|| Builder {
                 kind: parsed.kind,
+                scope: parsed.scope,
                 name: parsed.name,
                 definition: None,
                 references: Vec::new(),
@@ -160,6 +173,7 @@ impl CheckedDocument {
                 let definition = symbol.definition?;
                 Some(CheckedSymbol {
                     kind: symbol.kind,
+                    scope: symbol.scope,
                     renameable: symbol.complete
                         && !(symbol.kind == SymbolKind::Handler && symbol.name == "mount"),
                     name: symbol.name,
@@ -169,6 +183,17 @@ impl CheckedDocument {
             })
             .collect();
         self
+    }
+
+    pub(crate) fn with_source_origins(mut self, origins: Vec<(PathBuf, usize)>) -> Self {
+        self.source_origins = origins;
+        self
+    }
+
+    pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
+        self.source_origins
+            .get(merged_line.checked_sub(1)?)
+            .map(|(path, line)| (path.as_path(), *line))
     }
 }
 

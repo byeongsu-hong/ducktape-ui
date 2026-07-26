@@ -4,8 +4,10 @@ members = [
     "crates/ui-lang-runtime",
     "crates/ui-lang",
     "crates/cargo-ice",
+    "crates/ui",
     "examples/apple-music",
     "examples/iced-app",
+    "examples/showcase",
 ]
 exclude = ["vendor/iced_wgpu"]
 resolver = "3"

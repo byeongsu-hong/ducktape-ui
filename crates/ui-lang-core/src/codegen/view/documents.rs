@@ -8,6 +8,11 @@ pub(in crate::codegen) fn render_documents(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
+    let id = match node {
+        ViewNode::Markdown { id, .. } | ViewNode::Table { id, .. } => id.as_ref(),
+        _ => None,
+    };
+    let child_scope = rendered_child_scope(id, scope, env, document)?;
     let rendered = match node {
         ViewNode::Markdown {
             content,
@@ -295,8 +300,18 @@ pub(in crate::codegen) fn render_documents(
             options,
             columns,
             span,
+            ..
         } => render_table(
-            item, rows, options, columns, span, document, message, env, scope, slot,
+            item,
+            rows,
+            options,
+            columns,
+            span,
+            document,
+            message,
+            env,
+            &child_scope,
+            slot,
         ),
         ViewNode::If { span, .. } | ViewNode::For { span, .. } => Err(Error::new(
             "E170",
@@ -305,5 +320,6 @@ pub(in crate::codegen) fn render_documents(
         )),
         _ => return Ok(None),
     }?;
+    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
 }

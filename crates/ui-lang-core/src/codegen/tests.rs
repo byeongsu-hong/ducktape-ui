@@ -76,3 +76,7 @@ mod graphics;
 mod layout;
 #[path = "tests/platform.rs"]
 mod platform;
+#[path = "tests/render_coverage.rs"]
+mod render_coverage;
+#[path = "tests/testing.rs"]
+mod testing;

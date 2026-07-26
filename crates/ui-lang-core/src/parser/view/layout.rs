@@ -210,6 +210,7 @@ pub(in crate::parser) fn parse_overlay(
         }
     }
 
+    let mut id = None;
     let mut visible = None;
     let mut dismiss = None;
     let mut backdrop = "black/50".to_owned();
@@ -217,7 +218,9 @@ pub(in crate::parser) fn parse_overlay(
     let mut align_x = FlexAlignment::Center;
     let mut align_y = FlexAlignment::Center;
     for part in &parts[1..] {
-        if let Some(value) = part.strip_prefix("when=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E185", "overlay")?;
+        } else if let Some(value) = part.strip_prefix("when=") {
             visible = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("dismiss=") {
             dismiss = Some(parse_route(value, line)?);
@@ -239,6 +242,7 @@ pub(in crate::parser) fn parse_overlay(
     }
     let visible = visible.ok_or_else(|| error("E185", line, "overlay requires `when=`"))?;
     Ok(ViewNode::Overlay {
+        id,
         options: OverlayOptions {
             visible,
             dismiss,

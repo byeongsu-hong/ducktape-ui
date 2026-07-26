@@ -89,12 +89,6 @@ pub(in crate::codegen) fn rust_identifier_hex(value: &str) -> String {
     value.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
-pub(in crate::codegen) fn canonical_snake(value: &str) -> bool {
-    value
-        .split('_')
-        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_lowercase()))
-}
-
 fn canonical_component(value: &str) -> bool {
     value.as_bytes().split_first().is_some_and(|(first, rest)| {
         first.is_ascii_uppercase()
@@ -274,6 +268,25 @@ pub(in crate::codegen) fn native_field_projection(
     code: &str,
 ) -> Option<(String, Type)> {
     let projected = match (ty, field) {
+        (Type::TestTarget, field) => {
+            let ty = match field {
+                "kind" | "value" => Type::Str,
+                "visible" => Type::Bool,
+                "x" | "y" | "width" | "height" | "left" | "top" | "right" | "bottom"
+                | "center_x" | "center_y" | "visible_x" | "visible_y" | "visible_width"
+                | "visible_height" | "content_x" | "content_y" | "content_width"
+                | "content_height" | "scroll_x" | "scroll_y" | "translation_x"
+                | "translation_y" | "text_size" => Type::F64,
+                "background" => Type::Background,
+                "border" => Type::Border,
+                "shadow" => Type::Shadow,
+                "text_color" => Type::Color,
+                "font" => Type::Font,
+                "line_height" => Type::TextLineHeight,
+                _ => return None,
+            };
+            (format!("({code}).{field}()"), ty)
+        }
         (Type::Key, "kind") => (
             format!(
                 "match &({code}) {{ ::iced::keyboard::Key::Named(_) => \"named\", ::iced::keyboard::Key::Character(_) => \"character\", ::iced::keyboard::Key::Unidentified => \"unidentified\" }}.to_owned()"

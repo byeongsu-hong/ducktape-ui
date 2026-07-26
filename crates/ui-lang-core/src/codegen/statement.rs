@@ -462,7 +462,7 @@ pub(in crate::codegen) fn generate_statements(
                 ..
             } => {
                 let field = pane_field(grid);
-                let dynamic = pane_grids(&document.view).into_iter().any(|node| {
+                let dynamic = document_pane_grids(document).into_iter().any(|(node, _)| {
                     matches!(node, ViewNode::PaneGrid { name, templates, .. } if name == grid && !templates.is_empty())
                 });
                 let pane = |reference: &PaneReference| {

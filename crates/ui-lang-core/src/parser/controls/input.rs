@@ -394,12 +394,15 @@ pub(in crate::parser) fn parse_toggler(
     let label = parts
         .get(1)
         .ok_or_else(|| error("E075", line, "toggler needs a label expression"))?;
+    let mut id = None;
     let mut checked = None;
     let mut disabled = None;
     let mut options = BoolControlOptions::default();
     let mut style = TogglerStyleSet::default();
     for part in &parts[2..] {
-        if let Some(value) = part.strip_prefix("checked=") {
+        if part.starts_with('#') {
+            parse_unique_id(part, &mut id, line, "E075", "toggler")?;
+        } else if let Some(value) = part.strip_prefix("checked=") {
             checked = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("disabled=") {
             disabled = Some(parse_expr(strip_wrapping_parens(value), line)?);
@@ -424,6 +427,7 @@ pub(in crate::parser) fn parse_toggler(
     }
     Ok(ViewNode::Toggler {
         label: parse_expr(label, line)?,
+        id,
         checked: checked.ok_or_else(|| error("E075", line, "toggler requires `checked=value`"))?,
         disabled,
         options,
