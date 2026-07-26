@@ -37,8 +37,8 @@ properties override recipe defaults. Every recipe is checked at declaration
 time, including unused imported recipes. Parser, checker, and codegen tests
 cover expansion, typed overrides, typography, invalid bodies, duplicate
 declarations, and target mismatch. Recipe definitions and references also
-participate in cross-file LSP definition and safe rename. The `ducktape-ui`
-default interface and showcase compile through the same recipe path, and a
+participate in cross-file LSP definition and safe rename. The workspace-local
+`ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
 First-class Ice tests are native in 1.63. Top-level `test` declarations reuse

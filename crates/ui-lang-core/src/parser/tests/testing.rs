@@ -69,6 +69,13 @@ fn parses_complete_first_class_test_declarations() {
 }
 
 #[test]
+fn accepts_digits_in_snake_case_test_names() {
+    let document = parse("app Demo\ntest render_contract_2\nview\n  text \"ok\"\n").unwrap();
+
+    assert_eq!(document.tests[0].name, "render_contract_2");
+}
+
+#[test]
 fn rejects_invalid_test_declaration_shapes() {
     for (body, message) in [
         ("test RenderContract\n", "snake_case"),

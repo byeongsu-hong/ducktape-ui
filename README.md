@@ -156,8 +156,8 @@ cargo run -p showcase
 art, a real-time liquid-glass player, and a local mock API for discovery,
 library browsing, search, sign-in, queueing, and playback controls.
 `showcase` exercises the default `ducktape-ui` component catalog through Ice.
-The library lives in [`crates/ui`](crates/ui), including its importable default
-theme and semantic recipes; the runnable app in
+The library lives in [`crates/ui`](crates/ui), including its workspace-local
+Ice interface, default theme, and semantic recipes; the runnable app in
 [`examples/showcase`](examples/showcase) consumes that same interface instead
 of carrying a second control style system. Its catalog uses
 `grid min-cell=...` for CSS-like responsive wrapping, while the shared panel

@@ -24,6 +24,11 @@ fn keeps_generated_rust_names_distinct() {
         super::event_filter_type("foo_state")
     );
     assert_ne!(
+        super::event_filter_type("foo2"),
+        super::event_filter_type("foo_2")
+    );
+    assert_ne!(super::pane_type("foo2"), super::pane_type("foo_2"));
+    assert_ne!(
         super::pane_field("work_splits"),
         super::pane_splits_field("work")
     );

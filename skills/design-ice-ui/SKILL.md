@@ -33,12 +33,14 @@ Apply these rules before editing:
   behind typed `sync` or async extern functions instead of embedding Rust.
 - Prefer Core constructs. Use an existing typed Rust adapter for unusual native
   behavior; do not extend the DSL merely to mirror another Iced method.
-- When `ducktape-ui` is available, import its `default.ice` interface once and
-  reuse its checked components and recipes before declaring local equivalents.
-  Use compound variants such as `Alert.Success` and `Badge.Secondary`; do not
-  replace them with free-form variant strings. Do not import its showcase
-  adapter interface into an application; define a typed Rust boundary for
-  product-specific retained widgets.
+- When the `ducktape-ui` source interface exists at a stable relative path,
+  import its `default.ice` once and reuse its checked components and recipes
+  before declaring local equivalents. A Cargo dependency alone does not create
+  an Ice import path; otherwise vendor its complete `src/ice` directory or use
+  the Rust API. Use compound variants such as `Alert.Success` and
+  `Badge.Secondary`; do not replace them with free-form variant strings. Do not
+  import its showcase adapter interface into an application; define a typed
+  Rust boundary for product-specific retained widgets.
 - Preserve accessibility: label child-content buttons, label meaningful images,
   never expose secure-input values, and keep source order meaningful.
 
@@ -74,7 +76,7 @@ refactoring `.ice`. Read the other references only when their scope is involved:
 In this repository, start with:
 
 ```text
-crates/ui/src/ice/default.ice            canonical design-system import
+crates/ui/src/ice/default.ice            workspace design-system entry source
 crates/ui/src/ice/components.ice         shared structural components and variants
 crates/ui/src/ice/recipes.ice            shared semantic visual roles
 examples/showcase/src/ui/showcase.ice    catalog and first-class behavior test

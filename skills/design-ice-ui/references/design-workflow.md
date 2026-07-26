@@ -90,13 +90,15 @@ property.
 
 ## Build the visual system
 
-If the application uses `ducktape-ui`, import its `default.ice` interface and
-start with the shared components and recipes. Do not copy them into the app or
-rebuild their variants from raw color and geometry values. Add a local
-component only for product-specific structure that the shared layer does not
-represent. The showcase adapter interface contains fixed catalog data; do not
-import it into a product application. Put retained behavior behind a typed
-boundary owned by that application.
+If the application has the `ducktape-ui` source interface at a stable relative
+path, import its `default.ice` and start with the shared components and recipes.
+A Cargo dependency alone does not create an Ice import path; otherwise vendor
+the complete `src/ice` directory or use the Rust API. Do not copy individual
+declarations into the app or rebuild their variants from raw color and geometry
+values. Add a local component only for product-specific structure that the
+shared layer does not represent. The showcase adapter interface contains fixed
+catalog data; do not import it into a product application. Put retained
+behavior behind a typed boundary owned by that application.
 
 Start from semantic tokens:
 

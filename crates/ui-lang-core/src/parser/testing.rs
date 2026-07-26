@@ -4,7 +4,7 @@ const TEST_ERROR: &str = "E194";
 
 pub(in crate::parser) fn parse_test_decl(source: &str, line: &Line) -> Result<TestDecl, Error> {
     let name = identifier(source, line)?;
-    if !crate::canonical_snake(&name) {
+    if !test_name(&name) {
         return Err(error(TEST_ERROR, line, "test names use snake_case"));
     }
 
@@ -134,6 +134,15 @@ pub(in crate::parser) fn parse_test_decl(source: &str, line: &Line) -> Result<Te
         targets,
         steps,
         span: Span::line(line.number),
+    })
+}
+
+fn test_name(name: &str) -> bool {
+    name.split('_').all(|part| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
     })
 }
 

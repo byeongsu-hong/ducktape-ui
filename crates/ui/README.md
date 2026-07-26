@@ -15,28 +15,16 @@ The workspace follows that split:
 - [`../../examples/showcase/src/adapters.rs`](../../examples/showcase/src/adapters.rs) and [`../../examples/showcase/src/ui/adapters.ice`](../../examples/showcase/src/ui/adapters.ice) contain the catalog-only retained-widget adapters.
 - [`../../examples/showcase/src/main.rs`](../../examples/showcase/src/main.rs) only compiles and runs the Ice app.
 
-## Ice quick start
+## Ice interface in this workspace
 
-```toml
-[dependencies]
-ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang" }
-iced = "=0.14.0"
-ui-lang = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0" }
-ui-lang-runtime = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", version = "=0.1.0" }
-```
-
-```rust
-ui_lang::include_app!("src/app.ice");
-
-fn main() -> iced::Result {
-    App::run()
-}
-```
+Ice `use` paths are relative to the importing `.ice` file; Cargo packages do
+not currently provide package-aware Ice imports. The workspace showcase uses
+the checked source interface directly:
 
 ```ice
 app App
 
-use "path/to/ducktape-ui/src/ice/default.ice"
+use "../../../../crates/ui/src/ice/default.ice"
 
 state
   email = ""
@@ -52,8 +40,10 @@ view
       button "Save" @primary_action -> save
 ```
 
-The package interface points to `src/ice/default.ice`, which imports only the
-default theme, reusable recipes, and the shared Ice components in
+Outside this source workspace, vendor the `src/ice` directory at a stable
+application-relative path or use the Rust library below. The workspace entry
+file [`src/ice/default.ice`](src/ice/default.ice) imports only the default
+theme, reusable recipes, and the shared Ice components in
 [`src/ice/components.ice`](src/ice/components.ice). Visual
 variants use checked compound names such as `Alert.Success`, `Badge.Warning`,
 and `Typography.Muted`; there are no free-form variant strings that can silently
