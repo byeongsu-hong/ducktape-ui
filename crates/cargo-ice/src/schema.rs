@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const LANGUAGE_REVISION: &str = "1.61";
+pub const LANGUAGE_REVISION: &str = "1.62";
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
 pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
@@ -28,6 +28,11 @@ impl Completion {
 const COMPLETIONS: &[Completion] = &[
     Completion::new("app", "declaration", "app ${1:Name}\n  $0"),
     Completion::new("use", "declaration", "use \"${1:path}.ice\""),
+    Completion::new(
+        "recipe",
+        "declaration",
+        "recipe ${1:panel} for ${2:box}\n  @${3:w-full p-5}",
+    ),
     Completion::new("extern", "declaration", "extern ${1:crate::backend}\n  $0"),
     Completion::new("state", "declaration", "state\n  ${1:name} = ${2:value}"),
     Completion::new(
@@ -274,6 +279,14 @@ fn construct_schema(item: &Completion) -> Value {
             &["document"],
             "use \"<relative-path>.ice\"",
             leaf(),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
+        "recipe" => details(
+            &["document"],
+            "recipe <name> for <col|row|flex|grid|stack|box|text|input|button>",
+            child_shape(1, None, "utility-line"),
             no_binding(),
             no_route(),
             Vec::new(),
@@ -632,6 +645,14 @@ fn construct_schema(item: &Completion) -> Value {
 fn style_contract() -> Value {
     json!({
         "utilitySyntax": "forms omit the leading `@` marker",
+        "recipes": {
+            "declaration": "recipe <name> for <target>",
+            "use": "@<name>",
+            "targets": ["col", "row", "flex", "grid", "stack", "box", "text", "input", "button"],
+            "expansion": "checked utility tokens expand in place",
+            "precedence": "later utilities win; direct typed properties override recipe defaults",
+            "composition": false,
+        },
         "statusCascade": {
             "base": "active fields apply to every native interaction status",
             "checked": "checked/selected statuses inherit their matching active checked/unchecked or selected/unselected fields",
@@ -646,40 +667,33 @@ fn style_contract() -> Value {
             "TOKEN": "checked semantic theme token",
         },
         "utilities": {
-            "wrapperOwnedGeometry": [
+            "size": [
                 {
-                    "targets": ["row", "col", "grid"],
-                    "forms": ["w-full", "h-full", "max-w-sm", "max-w-md", "max-w-lg", "max-w-xl", "max-w-2xl", "self-center"],
-                    "ownership": "outer wrapper",
+                    "targets": ["row", "col", "flex", "grid", "stack", "box"],
+                    "forms": ["w-full", "h-full", "max-w-sm", "max-w-md", "max-w-lg", "max-w-xl", "max-w-2xl"],
                 },
                 {
-                    "targets": ["stack"],
-                    "forms": ["max-w-sm", "max-w-md", "max-w-lg", "max-w-xl", "max-w-2xl", "self-center"],
-                    "ownership": "outer wrapper",
-                },
-                {
-                    "targets": ["grid", "stack"],
-                    "patterns": ["p-N", "px-N", "py-N"],
-                    "ownership": "outer wrapper",
+                    "targets": ["row", "col", "grid", "stack", "box"],
+                    "forms": ["self-center"],
                 },
             ],
-            "dualOwnerGeometry": [
-                {
-                    "targets": ["stack"],
-                    "forms": ["w-full", "h-full"],
-                    "ownership": "inner stack and outer wrapper",
-                    "conflict": "E045 when combined with typed stack width or height",
-                },
-            ],
-            "typedPropertyGaps": [
-                {
-                    "targets": ["input", "button"],
-                    "patterns": ["px-N", "py-N"],
-                    "reason": "no equivalent axis-specific top-level padding property",
-                },
-            ],
-            "semantic": ["bg-TOKEN", "text-TOKEN", "border-TOKEN", "state variants", "font-bold"],
-            "rule": "utilities are target-specific; typed properties own direct builder fields",
+            "inputSize": { "targets": ["input"], "forms": ["w-full"] },
+            "spacing": {
+                "targets": ["row", "col", "flex", "grid", "stack", "box", "input", "button"],
+                "patterns": ["p-N", "px-N", "py-N"],
+            },
+            "gap": {
+                "targets": ["row", "col", "flex", "grid", "stack"],
+                "patterns": ["gap-N"],
+            },
+            "alignment": { "targets": ["row", "col", "flex"], "forms": ["items-center"] },
+            "overflow": { "targets": ["row", "col", "flex", "grid", "stack", "box"], "forms": ["overflow-hidden"] },
+            "text": {
+                "targets": ["text"],
+                "forms": ["text-xs", "text-sm", "text-base", "text-lg", "text-xl", "text-2xl", "leading-tight", "leading-snug", "leading-normal", "leading-relaxed", "font-bold"],
+            },
+            "semantic": ["bg-TOKEN", "text-TOKEN", "border-TOKEN", "border", "border-2", "rounded-*", "state variants"],
+            "rule": "utilities and recipes are target-specific; direct typed properties override recipe defaults but conflict with direct utilities that own the same field",
         },
     })
 }
@@ -739,7 +753,7 @@ pub fn document() -> Value {
             },
             "definition": {
                 "supported": true,
-                "symbols": ["component", "handler"],
+                "symbols": ["component", "handler", "recipe"],
                 "componentLocalHandlers": false,
                 "crossFile": true,
                 "source": "checked reference spans and imported source origins",
@@ -747,7 +761,7 @@ pub fn document() -> Value {
             "rename": {
                 "supported": true,
                 "prepare": true,
-                "symbols": ["component", "handler"],
+                "symbols": ["component", "handler", "recipe"],
                 "componentLocalHandlers": false,
                 "componentRule": "plain names and compound-family roots; a root rename cascades to dotted descendants",
                 "definitionOnly": ["dotted component descendants", "mount handler"],
@@ -866,6 +880,7 @@ mod tests {
         const CORE_CONTRACT: &[&str] = &[
             "app",
             "use",
+            "recipe",
             "state",
             "component",
             "slot",
@@ -926,6 +941,7 @@ mod tests {
             assert!(!find(label)["properties"].as_array().unwrap().is_empty());
         }
         assert_eq!(find("view")["children"]["min"], 1);
+        assert_eq!(find("recipe")["children"]["min"], 1);
         assert_eq!(find("scroll")["children"]["max"], 1);
         assert_eq!(find("input")["binding"]["operator"], "<->");
         assert!(
@@ -962,8 +978,10 @@ mod tests {
         let schema = document();
         let styles = &schema["core"]["style"];
         assert_eq!(
-            styles["utilities"]["dualOwnerGeometry"][0]["targets"],
-            serde_json::json!(["stack"])
+            styles["recipes"]["targets"],
+            serde_json::json!([
+                "col", "row", "flex", "grid", "stack", "box", "text", "input", "button"
+            ])
         );
         assert!(
             styles["utilities"]["rule"]

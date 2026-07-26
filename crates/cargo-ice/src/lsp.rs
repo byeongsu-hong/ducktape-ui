@@ -1803,6 +1803,57 @@ mod tests {
     }
 
     #[test]
+    fn defines_and_renames_imported_style_recipes() {
+        let fixture = Fixture::new();
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        let recipes = "recipe panel for box\n  @p-4 bg-surface rounded-md\n";
+        fixture.write("app.ice", root);
+        fixture.write("recipes.ice", recipes);
+        let root_uri = file_path_uri(&fixture.path("app.ice"));
+        let recipe_uri = file_path_uri(&fixture.path("recipes.ice"));
+        let workspace_uri = file_path_uri(&fixture.0);
+
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": root_uri, "text": root } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": recipe_uri, "text": recipes } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 }, "newName": "surface_panel" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(response(&messages, 2)["result"]["uri"], recipe_uri);
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&root_uri][0]["newText"],
+            "surface_panel"
+        );
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&recipe_uri][0]["newText"],
+            "surface_panel"
+        );
+    }
+
+    #[test]
     fn imported_rename_requires_an_initialized_workspace() {
         let fixture = Fixture::new();
         let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";

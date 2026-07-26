@@ -29,6 +29,7 @@ pub struct CheckedDocument {
 pub enum SymbolKind {
     Component,
     Handler,
+    Recipe,
 }
 
 impl SymbolKind {
@@ -42,6 +43,7 @@ impl SymbolKind {
                         .is_some_and(|ch| ch.is_ascii_uppercase())
             }),
             Self::Handler => name != "mount" && valid_identifier(name),
+            Self::Recipe => valid_identifier(name),
         }
     }
 }

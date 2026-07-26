@@ -449,7 +449,7 @@ view
 
     rule horizontal thickness=1.0 style=weak fill=pad(12,4) color=border r=2.0 snap=true
 
-    grid gap=16.0 w=640.0 h=aspect(16.0,9.0) fluid=280.0 @w-full
+    grid gap=16.0 w=640.0 h=aspect(16.0,9.0) max-cell=280.0 @w-full
       col gap=8.0 p=16.0 @w-full bg-surface rounded-lg
         text "Controls" w=fill h=30.0 size=18.0 line-h-px=22.0 font=default align-x=left align-y=center shape=advanced wrap=word @font-bold text-fg
         theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)

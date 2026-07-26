@@ -206,6 +206,54 @@ fn parse_extern_call(
     })
 }
 
+fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
+    let parts = split_words(source);
+    let [name, separator, target] = parts.as_slice() else {
+        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+    };
+    if separator != "for" {
+        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+    }
+    if line.children.is_empty() {
+        return Err(error("E046", line, "recipe requires at least one utility"));
+    }
+    let target = match target.as_str() {
+        "col" => StyleRecipeTarget::Column,
+        "row" => StyleRecipeTarget::Row,
+        "flex" => StyleRecipeTarget::Flex,
+        "grid" => StyleRecipeTarget::Grid,
+        "stack" => StyleRecipeTarget::Stack,
+        "box" => StyleRecipeTarget::Container,
+        "text" => StyleRecipeTarget::Text,
+        "input" => StyleRecipeTarget::Input,
+        "button" => StyleRecipeTarget::Button,
+        _ => {
+            return Err(error(
+                "E046",
+                line,
+                "recipe target must be col, row, flex, grid, stack, box, text, input, or button",
+            ));
+        }
+    };
+    let mut utilities = Vec::new();
+    for child in &line.children {
+        ensure_leaf(child)?;
+        let source = child.text.strip_prefix('@').unwrap_or(&child.text);
+        utilities.extend(source.split_ascii_whitespace().map(str::to_owned));
+    }
+    if utilities.is_empty() {
+        return Err(error("E046", line, "recipe requires at least one utility"));
+    }
+    let name = identifier(name, line)?;
+    line.record_symbol(SymbolKind::Recipe, &name, true, source);
+    Ok(StyleRecipe {
+        name,
+        target,
+        utilities,
+        span: Span::line(line.number),
+    })
+}
+
 pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSymbol>), Error> {
     let symbols = Rc::new(RefCell::new(Vec::new()));
     let lines = line_tree(source, Rc::clone(&symbols))?;
@@ -213,6 +261,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let mut daemon = false;
     let mut settings = AppSettings::default();
     let mut presets = Vec::new();
+    let mut recipes = Vec::new();
     let mut structs = Vec::new();
     let mut functions = Vec::new();
     let mut subscriptions = Vec::new();
@@ -250,6 +299,8 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
                 .hint("declare a named `window name` and open it with `task window open name -> handler _`"));
             }
             daemon = is_daemon;
+        } else if let Some(source) = line.text.strip_prefix("recipe ") {
+            recipes.push(parse_style_recipe(source, line)?);
         } else if let Some(name) = line.text.strip_prefix("preset ") {
             presets.push(parse_preset(name.trim(), line)?);
         } else if let Some(path) = line.text.strip_prefix("extern ") {
@@ -551,6 +602,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
         daemon,
         settings,
         presets,
+        recipes,
         structs,
         functions,
         subscriptions,

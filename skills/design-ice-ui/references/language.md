@@ -2,7 +2,7 @@
 
 Use this reference for the source model, declarations, types, expressions,
 state, handlers, routes, and components. The repository implements language
-revision 1.61; package version `0.1.0` and Iced version `0.14.x` are separate
+revision 1.62; package version `0.1.0` and Iced version `0.14.x` are separate
 version axes.
 
 ## Contents
@@ -76,6 +76,7 @@ app | daemon
 use
 extern
 theme
+recipe
 font / qr
 state
 preset

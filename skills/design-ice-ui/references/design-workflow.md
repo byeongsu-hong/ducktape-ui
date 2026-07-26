@@ -90,6 +90,14 @@ property.
 
 ## Build the visual system
 
+If the application uses `ducktape-ui`, import its `default.ice` interface and
+start with the shared components and recipes. Do not copy them into the app or
+rebuild their variants from raw color and geometry values. Add a local
+component only for product-specific structure that the shared layer does not
+represent. The showcase adapter interface contains fixed catalog data; do not
+import it into a product application. Put retained behavior behind a typed
+boundary owned by that application.
+
 Start from semantic tokens:
 
 ```text
@@ -110,7 +118,9 @@ Establish:
 - restrained radius, border, and shadow use.
 
 Use typed geometry properties first. Use checked `@` utilities for semantic
-colors, font emphasis, and documented wrapper gaps. Use structured native
+colors, font emphasis, and documented wrapper gaps. When a visual role repeats,
+declare one target-specific semantic `recipe` and import it with the theme.
+Use a component only when structure or behavior repeats. Use structured native
 status blocks only for meaningful state deltas.
 
 ## Design every interaction state
@@ -169,12 +179,12 @@ tree.
 
 Implement in this order:
 
-1. Declare the app settings and semantic theme.
+1. Declare the app settings, semantic theme, and repeated visual recipes.
 2. Declare typed Rust boundaries.
 3. Declare minimal state.
 4. Implement handlers and complete effect routes.
-5. Build the view tree.
-6. Extract only proven component boundaries.
+5. Build the view tree from recipes and typed local exceptions.
+6. Extract only proven structural component boundaries.
 7. Add status styling and polish.
 8. Check accessibility labels and source order.
 

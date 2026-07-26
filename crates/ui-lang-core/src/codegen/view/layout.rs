@@ -15,6 +15,27 @@ pub(in crate::codegen) fn render_layout(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let style = Style::parse(styles, document);
+    if kind == Layout::Grid && options.min_cell.is_some() {
+        let mut flex_options = options.clone();
+        flex_options.width.get_or_insert(LengthValue::Fill);
+        flex_options.flexbox = Some(FlexboxOptions {
+            direction: FlexDirectionValue::Row,
+            wrap: FlexWrapValue::Wrap,
+            ..FlexboxOptions::default()
+        });
+        return render_flexbox(
+            &flex_options,
+            id,
+            styles,
+            children,
+            span,
+            document,
+            message,
+            env,
+            scope,
+            slot,
+        );
+    }
     let accessibility_key =
         accessibility_key_code(id.as_ref(), "layout", span, scope, env, document)?;
     if kind == Layout::Scroll {
@@ -271,11 +292,11 @@ pub(in crate::codegen) fn render_layout(
                 }
             }
         }
-        if let Some(fluid) = &options.fluid {
+        if let Some(max_cell) = &options.max_cell {
             write!(
                 body,
                 ".fluid({})",
-                clamped_f32_code(fluid, "f32::EPSILON", "f32::MAX", env, document)?
+                clamped_f32_code(max_cell, "f32::EPSILON", "f32::MAX", env, document)?
             )
             .unwrap();
         } else if options.columns.is_some() {
@@ -327,6 +348,8 @@ pub(in crate::codegen) fn render_layout(
                 expr_code(clip, env, document, ValueMode::Owned)?
             )
             .unwrap();
+        } else if style.clip {
+            body.push_str(".clip(true)");
         }
         if options.wrap {
             body.push_str(".wrap()");
@@ -367,12 +390,17 @@ pub(in crate::codegen) fn render_layout(
                 expr_code(clip, env, document, ValueMode::Owned)?
             )
             .unwrap();
+        } else if style.clip {
+            body.push_str(".clip(true)");
         }
         append_dimensions(&mut body, [&options.width, &options.height], env, document)?;
         append_size(&mut body, &style);
     }
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
+    if kind == Layout::Grid && style.clip {
+        body.push_str(".clip(true)");
+    }
     if matches!(kind, Layout::Grid | Layout::Stack)
         && let Some(padding) = style.padding_code()
     {
@@ -427,6 +455,7 @@ fn render_flexbox(
         env,
         &child_scope,
         slot,
+        options.min_cell.as_ref(),
     )?;
     write!(
         body,
@@ -546,6 +575,8 @@ fn render_flexbox(
             expr_code(clip, env, document, ValueMode::Owned)?
         )
         .unwrap();
+    } else if style.clip {
+        body.push_str(".clip(true)");
     }
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
@@ -569,6 +600,7 @@ fn render_flex_children(
     env: &HashMap<String, Binding>,
     scope: &str,
     slot: Option<&SlotContext>,
+    min_cell: Option<&Expr>,
 ) -> Result<(), Error> {
     for child in children {
         match child {
@@ -579,7 +611,7 @@ fn render_flex_children(
             } => {
                 let condition = expr_code(condition, env, document, ValueMode::Owned)?;
                 write!(out, " if {condition} {{").unwrap();
-                render_flex_children(out, children, document, message, env, scope, slot)?;
+                render_flex_children(out, children, document, message, env, scope, slot, min_cell)?;
                 out.push_str(" }");
             }
             ViewNode::For {
@@ -616,16 +648,24 @@ fn render_flex_children(
                     &child_env,
                     "__for_scope.clone()",
                     slot,
+                    min_cell,
                 )?;
                 out.push_str(" }");
             }
             _ => {
                 let rendered = render_node(child, document, message, env, scope, slot)?;
-                let options = match child {
-                    ViewNode::Container { options, .. } => Some(&options.flex_item),
-                    _ => None,
+                let item = if let Some(min_cell) = min_cell {
+                    format!(
+                        "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
+                        clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", env, document,)?
+                    )
+                } else {
+                    let options = match child {
+                        ViewNode::Container { options, .. } => Some(&options.flex_item),
+                        _ => None,
+                    };
+                    flex_item_code("__flex_child", options, env, document)?
                 };
-                let item = flex_item_code("__flex_child", options, env, document)?;
                 write!(
                     out,
                     " let __flex_child: __IceElement<'_, {message}> = {rendered}; __items.push({item});"

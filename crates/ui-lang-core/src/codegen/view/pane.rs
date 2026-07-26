@@ -359,6 +359,12 @@ pub(in crate::codegen) fn render_rich_span(
     if let Some(line_height) = &item.options.line_height {
         let line_height = text_line_height_code(line_height, env, document)?;
         write!(code, ".line_height({line_height})").unwrap();
+    } else if let Some(line_height) = style.text_line_height {
+        write!(
+            code,
+            ".line_height(::iced::widget::text::LineHeight::Relative({line_height}))"
+        )
+        .unwrap();
     }
     if let Some(font) = &item.options.font {
         let font = font_preset_code(font, document)?;

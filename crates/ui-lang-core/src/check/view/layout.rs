@@ -23,9 +23,14 @@ pub(in crate::check) fn infer_layout_group(
                     return Err(Error::new("E124", span, "grid cols must be positive"));
                 }
             }
-            if let Some(fluid) = &options.fluid {
-                require_type(&expr_type(fluid, env, document, span)?, &Type::F64, span)?;
-                require_f32_literal_range(fluid, f64::EPSILON, None, "grid fluid width", span)?;
+            for (value, label) in [
+                (&options.min_cell, "grid minimum cell width"),
+                (&options.max_cell, "grid maximum cell width"),
+            ] {
+                if let Some(value) = value {
+                    require_type(&expr_type(value, env, document, span)?, &Type::F64, span)?;
+                    require_f32_literal_range(value, f64::EPSILON, None, label, span)?;
+                }
             }
             if let Some(height) = &options.grid_height {
                 match height {

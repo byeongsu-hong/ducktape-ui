@@ -302,7 +302,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "impl {} {{", document.app).unwrap();
     generate_named_windows(&mut out, document, source_path);
-    writeln!(out, "pub fn run() -> ::iced::Result {{").unwrap();
     let subscription = ".subscription(Self::__subscription)";
     let default_font = document
         .fonts
@@ -361,8 +360,22 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     } else {
         "::iced::application(Self::__boot, Self::__update, Self::__view)"
     };
-    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}.run()").unwrap();
-    writeln!(out, "}}").unwrap();
+    let program = if document.daemon {
+        "::iced::Daemon"
+    } else {
+        "::iced::Application"
+    };
+    writeln!(
+        out,
+        "fn __program() -> {program}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
+    )
+    .unwrap();
+    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
+    writeln!(
+        out,
+        "}}\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
+    )
+    .unwrap();
 
     generate_theme(&mut out, document)?;
     generate_boot(&mut out, document, &message)?;

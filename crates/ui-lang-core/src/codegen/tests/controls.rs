@@ -149,8 +149,10 @@ view
       stack clip=true w=fill(2) h=120.0 under=1
         text "base"
         text "overlay"
-    grid fluid=fluid_width h=fill(2)
-      text "fluid"
+    grid max-cell=fluid_width h=fill(2)
+      text "maximum"
+    grid min-cell=fluid_width gap=12.0
+      text "minimum"
 "#;
     let generated = compile(source, "controls.ice").unwrap();
     assert!(
@@ -164,6 +166,10 @@ view
     assert!(generated.contains(
             "::iced::widget::grid(__children).height(::iced::Length::FillPortion(2)).fluid(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX))"
         ));
+    assert!(generated.contains(
+        ".grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX)))"
+    ));
+    assert!(generated.contains(".wrap(::ui_lang_runtime::FlexWrap::Wrap)"));
     assert!(generated.contains("::iced::widget::vertical_slider"));
     assert!(generated.contains(
         ".default(50.0).shift_step(0.1).width(20.0 as f32).height(::iced::Length::FillPortion(2))"

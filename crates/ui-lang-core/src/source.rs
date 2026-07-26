@@ -630,6 +630,30 @@ mod tests {
     }
 
     #[test]
+    fn retains_recipe_locations_across_imports() {
+        let fixture = Fixture::new();
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        fixture.write("app.ice", root);
+        fixture.write(
+            "recipes.ice",
+            "recipe panel for box\n  @p-4 bg-surface rounded-md\n",
+        );
+
+        let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
+        let app = fixture.path("app.ice").canonicalize().unwrap();
+        let recipes = fixture.path("recipes.ice").canonicalize().unwrap();
+        let line = root.lines().nth(9).unwrap();
+        let column = line.find("panel").unwrap() + 1;
+        let (panel, reference) = checked.symbol_at(Some(&app), 10, column).unwrap();
+
+        assert_eq!(panel.kind, SymbolKind::Recipe);
+        assert_eq!(panel.name, "panel");
+        assert_eq!(panel.definition.path.as_deref(), Some(recipes.as_path()));
+        assert_eq!(panel.references.as_slice(), std::slice::from_ref(reference));
+        assert!(panel.renameable);
+    }
+
+    #[test]
     fn keeps_the_implicit_mount_hook_out_of_rename() {
         let fixture = Fixture::new();
         let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non mount\nview\n  text \"Ready\"\n";

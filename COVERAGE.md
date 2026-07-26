@@ -6,7 +6,7 @@ resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
 This is an implementation inventory, not a roadmap. A partial or missing row does
 not imply planned Ice syntax; uncommon behavior should use an existing typed
 Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-Language revision 1.61 and the workspace's pre-1.0 package version `0.1.0`
+Language revision 1.62 and the workspace's pre-1.0 package version `0.1.0`
 are intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
@@ -28,6 +28,18 @@ Future externs; `run latest` filters stale completions by scope and call site.
 Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
 interaction-specific delta.
+
+Top-level semantic style recipes are native Core declarations in 1.62. They
+package checked utility tokens for one declared target (`col`, `row`, `flex`,
+`grid`, `stack`, `box`, `text`, `input`, or `button`), expand across imported
+source graphs, preserve later-utility precedence, and let direct typed node
+properties override recipe defaults. Every recipe is checked at declaration
+time, including unused imported recipes. Parser, checker, and codegen tests
+cover expansion, typed overrides, typography, invalid bodies, duplicate
+declarations, and target mismatch. Recipe definitions and references also
+participate in cross-file LSP definition and safe rename. The `ducktape-ui`
+default interface and showcase compile through the same recipe path, and a
+focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
 ## Accessibility
 
@@ -64,7 +76,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 1.61 has thirty-three checked Rust boundaries:
+Ice 1.62 has thirty-three checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |
@@ -118,7 +130,7 @@ public behavior has direct documented Ice syntax and tests.
 | `combo_box` | native | native typed replaceable and incrementally pushable search state/selection, every builder setter, complete text-input icon, every concrete input Style field across active/hovered/focused/focused-hovered/disabled statuses, complete menu overlay Style fields, typed native input/menu style callbacks, and all events |
 | `box` | native | native one-child container with ID, complete concrete layout API, every concrete Style field including linear background, text, per-corner border, shadow and pixel snap, plus typed theme-aware runtime callbacks covering the default Theme's advanced classes |
 | `float` | native | one child, positive scale, all original-bounds and viewport geometry exposed as scoped f64 translation inputs, and every concrete Style field through checked shadow color/offset/blur and per-corner shadow radius |
-| `grid` | native | dynamic children, pixel spacing/width, fixed or fluid columns, aspect-ratio or all `Length` height modes |
+| `grid` | native | dynamic children, pixel spacing/width, fixed columns, CSS-like minimum-cell wrapping, native maximum-cell wrapping, and aspect-ratio or all `Length` height modes |
 | `image` | native | path, encoded-memory and RGBA handles; all four iced length variants, fit, filter, floating/solid rotation, opacity, scale, expand, per-corner radius and crop cover the complete concrete widget API |
 | `image::Viewer` | native | path or memory/RGBA handle, all length and fit modes, both filters, padding, minimum/maximum scale and scale step cover the complete public builder API |
 | `keyed` | native | typed list template with bool/i64/f64 identity keys, automatic keyed child scopes, spacing/per-side padding/all `Length` bounds, max width and alignment |
@@ -154,12 +166,12 @@ public behavior has direct documented Ice syntax and tests.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets and run |
+| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets, run, and an in-crate typed program hook used by the existing `iced_test` DSL |
 | `Daemon` | native | `daemon Name` lowers to `iced::daemon`, rejects an unnamed initial window, exposes the current typed window ID to each per-window view/title/theme/scale callback, preserves named window templates and all shared settings, and standalone `exit` lowers to the native lifecycle task |
 | `Animation<T>` | native | first-class checked `animation[bool]`, `animation[f64]`, and rustc-verified custom Float state map to native `Animation<T>`; every built-in or typed custom easing, preset/ms/s duration, delay, finite/forever repetition, auto-reverse, implicit/exact-instant transition, value/progress/remaining queries, f32/optional-f32 interpolation projection, and active-only native frame subscription are covered |
 | explicit image allocation | native | `task image allocate handle` lowers to native `image::allocate` with required exact success/error routes; `image-allocation` retains GPU memory and exposes handle plus exact `Size<u32>`, `image-error` preserves all five native variants with kind/message projections, and `image-memory` plus downgrade/upgrade covers weak retention; requires iced's `image` feature |
 | debug timing | native | `debug-span?` owns exact non-clone `iced::debug::Span` state; checked `debug start name -> state` finishes any prior span before native `time`, `debug finish state` consumes it exactly once, `debug.active(state)` reads its presence, and generic `debug.time_with(name, value)` preserves the value type; iced's `debug` feature activates reporting while its native no-op implementation remains available without the feature |
-| `Theme` and styles | native | all 22 built-in default-renderer themes, generated app palettes, typed native factories including `custom`/`custom_with_fn` and complete extended-palette logic, app/nested selection, checked color tokens and utilities, complete widget-native catalogs, concrete style fields, and typed runtime callbacks |
+| `Theme` and styles | native | all 22 built-in default-renderer themes, generated app palettes, typed native factories including `custom`/`custom_with_fn` and complete extended-palette logic, app/nested selection, checked color tokens and target-scoped utilities, imported semantic recipes with deterministic precedence, complete widget-native catalogs, concrete style fields, and typed runtime callbacks |
 | `theme::Mode` | native | default and all none/light/dark variants, compact kind projection, equality, exact typed extern passage, equivalent app theme/factory behavior, and deliberate ordering/lazy rejection matching the native enum cover the complete public value behavior |
 | `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
 | `Subscription` | native | complete application-facing construction and composition: typed arbitrary adapters, `none`, `batch`, checked conditional activation/status filters, direct every/repeat timers, native `listen`/`listen_with`/`listen_raw` generic events, input-method/keyboard/mouse/touch/window sources (with optional typed IDs on all eleven discrete window events) and system theme changes, typed `run`/`run_with` workers, custom `Recipe` factories through `from_recipe`, raw `EventStream` filters with hashable identity, `with` identity context, typed `map` routing, noncapturing typed `filter_map`, and `units`; advanced `into_recipes` is runtime-consumer plumbing rather than subscription construction or behavior |

@@ -1,4 +1,4 @@
-# Ice Language Specification 1.61
+# Ice Language Specification 1.62
 
 Status: implemented reference slice
 
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 1.61 syntax.
+marked “planned” is a design constraint, not accepted 1.62 syntax.
 
 ## 1. Design contract
 
@@ -50,7 +50,7 @@ async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 1.61, with one canonical spelling for each construct. Spellings
+for revision 1.62, with one canonical spelling for each construct. Spellings
 removed in this revision are syntax errors and the formatter never translates
 old vocabulary. Future additions or changes require an explicit language
 design and a new revision; future removals require deprecation and migration.
@@ -61,7 +61,7 @@ are the extended surface. It is not a parity roadmap and must not grow only
 because iced exposes another public type or method.
 
 Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 1.61. The workspace packages are
+document specifies language revision 1.62. The workspace packages are
 pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
 resolved iced/iced_widget versions are a third, independent backend baseline.
 
@@ -168,7 +168,7 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
   line. Indentation may only return to an existing level.
 - Empty lines are ignored by the parser and normalized by the formatter.
 - A line whose first non-space characters are `//` is a comment. Inline and
-  block comments are not part of 1.61.
+  block comments are not part of 1.62.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
   or `__`, and `_`, `none`, and Rust keywords are reserved.
 - Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
@@ -190,6 +190,7 @@ app | daemon
 use
 extern
 theme
+recipe
 qr
 state
 preset
@@ -217,11 +218,12 @@ source_graph   = root_file imported_file*
 root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
 use_decl       = "use" string
-declaration    = extern_decl | theme_decl | font_decl | qr_decl | state_decl
-               | preset_decl | component_decl | handler_decl | subscribe_decl
-               | view_decl
-document       = root_decl extern_decl* theme_decl qr_decl* state_decl? preset_decl*
-                 component_decl* handler_decl* subscribe_decl? view_decl
+declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
+               | qr_decl | state_decl | preset_decl | component_decl
+               | handler_decl | subscribe_decl | view_decl
+document       = root_decl extern_decl* theme_decl style_recipe_decl* qr_decl*
+                 state_decl? preset_decl* component_decl* handler_decl*
+                 subscribe_decl? view_decl
 
 root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
 app_setting    = "title" expr | "theme" expr
@@ -366,6 +368,15 @@ extern_pane_grid_style_sig
 
 theme_decl     = "theme" INDENT color_entry+
 color_entry    = name color
+
+style_recipe_decl
+               = "recipe" name "for" style_recipe_target
+                 INDENT style_recipe_line+
+style_recipe_target
+               = "col" | "row" | "flex" | "grid" | "stack" | "box"
+               | "text" | "input" | "button"
+style_recipe_line
+               = "@"? utility+
 
 font_decl      = "font" name font_property*
 font_property  = "family=" (string | "serif" | "sans" | "cursive" | "fantasy" | "mono")
@@ -727,7 +738,7 @@ flex_content_alignment = "start" | "end" | "flex-start" | "flex-end"
                        | "space-around" | "space-evenly"
 stack_property = ("w=" | "h=") length | "clip=" expr
                | "under=" u16
-grid_property  = "cols=" expr | "fluid=" expr | "w=" expr
+grid_property  = "cols=" expr | "min-cell=" expr | "max-cell=" expr | "w=" expr
                | "gap=" expr | "h=" grid_sizing
 grid_sizing    = length | "aspect(" expr "," expr ")"
 scroll_property = "dir=" ("vertical" | "horizontal" | "both")
@@ -1149,7 +1160,10 @@ theme or selected theme base style, and a non-positive dynamic scale is clamped
 to `f32::EPSILON`. Literal mistakes are rejected during analysis.
 
 The remaining application values lower to iced `Settings` and builder
-configuration.
+configuration. Generated `run` delegates to one internal typed program builder;
+in-crate test harnesses can pass that exact program, including its presets,
+theme, settings, update, view, and subscriptions, to `iced_test` without
+reconstructing application wiring.
 `executor` is a Rust type path passed to iced's typed `Application::executor`;
 rustc reports a local generated-code error when the type is missing or does not
 implement `iced::Executor`.
@@ -1178,7 +1192,7 @@ codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 1.61.
+compile time. Encoded icon formats remain outside 1.62.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -1832,7 +1846,7 @@ crate::backend::create_task
 Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
 `A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
 messages must satisfy the traits required by generated iced code, notably
-`Clone` for 1.61 message payloads. Generated app and message debug output is
+`Clone` for 1.62 message payloads. Generated app and message debug output is
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
@@ -2424,7 +2438,7 @@ The implemented native nodes are:
 | `col` | vertical children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
 | `row` | horizontal children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
 | `scroll` | one content child; complete direction/scrollbar/builders, every viewport getter and status selector, every concrete Style field, and typed native runtime style callbacks |
-| `grid` | responsive children with pixel width/spacing, fixed columns or fluid max-cell width, and aspect-ratio or evenly distributed `Length` height |
+| `grid` | responsive children with pixel width/spacing, fixed columns, minimum-cell wrapping, or native maximum-cell wrapping, and aspect-ratio or evenly distributed `Length` height |
 | `stack` | overlays children with typed width/height, optional clipping and `under=N` intrinsic-base control |
 | `box` | exactly one child with ID, all length bounds, max bounds, per-axis alignment, clipping, per-side padding, every concrete surface style field including linear backgrounds, and typed native runtime style callbacks |
 | `overlay` | named `content` and `layer` trees with checked visibility, alignment, padding, backdrop and optional dismissal |
@@ -2466,9 +2480,14 @@ The implemented native nodes are:
 DOM or runtime reconciliation layer; the iced backend constructs the current
 element tree from state.
 
-Grid `cols=` and `fluid=` are mutually exclusive. `cols=` is a positive
-`i64`; `fluid=` and both dimensions of `h=aspect(W,H)` are positive `f64`
-values. `w=` and `gap=` are non-negative `f64` pixels. A non-aspect
+Grid `cols=`, `min-cell=`, and `max-cell=` are mutually exclusive. `cols=` is
+a positive `i64`; both cell widths and both dimensions of `h=aspect(W,H)` are
+positive `f64` values. `min-cell=` uses as many columns as fit without making
+a cell narrower than the requested width, matching CSS
+`repeat(auto-fit, minmax(..., 1fr))` behavior with natural row height;
+therefore it does not combine with `h=`. `max-cell=` exposes iced's native
+fluid grid, which adds columns so cells do not exceed the requested width.
+`w=` and `gap=` are non-negative `f64` pixels. A non-aspect
 `h=` accepts `fill`, `fill(N)`, `shrink`, or a non-negative `f64` pixel
 expression and maps to iced's evenly distributed sizing.
 
@@ -4004,32 +4023,57 @@ The Rust function has signature `fn(bool) -> iced::Theme`. It may use
 `Theme::custom_with_fn` to derive the complete extended palette; generated
 probes reject a missing function, wrong arguments, or a different return type.
 
-`@` switches the remainder of a node to checked semantic color, font-emphasis,
-and design-token utilities. Layout, geometry, and text size use typed
-properties such as
-`w=`, `h=`, `p=`, `gap=`, and `r=`. Fixed native widget
-appearance uses `style=` presets; reusable or state-dependent native appearance
-that is more complex than token variants crosses a typed Rust style or
-component boundary.
+`@` switches the remainder of a node to checked utility or recipe names. Put
+typed properties before it. A semantic recipe gives a repeated visual role one
+checked default without adding a runtime style system:
 
-Utilities are resolved at compile time; there is no CSS engine, selector
-matching, cascade, or runtime string parser. Geometry utilities exist only when
-they style a generated wrapper or fill a gap in the typed properties. Direct
-builder geometry uses the typed spelling and the old utility spelling is an
-error on that target.
+```ice
+recipe panel for box
+  @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
+
+recipe primary_action for button
+  @px-4 py-2 bg-primary text-primary_fg rounded-md
+  @hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
+
+view
+  box @panel
+    button "Save" @primary_action -> save
+```
+
+Recipe names are graph-global and must be unique. A recipe may contain one or
+more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
+`stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
+spans. Recipes do not compose other recipes. Applying one to the wrong target
+is `E046`. Every recipe body is checked against its declared target even when
+the recipe is not used by the current view.
+
+Recipes expand in place at compile time. Later utility values win, then direct
+typed properties on the node override recipe defaults. This makes
+`box p=24.0 @panel` a valid local exception. A direct typed property combined
+with a direct utility that owns the same field remains `E045`.
+
+Utilities and recipes are resolved at compile time; there is no CSS engine,
+selector matching, runtime cascade, or runtime string parser. Fixed native
+widget appearance may use `style=` presets; reusable or state-dependent native
+appearance that is more complex than token variants crosses a typed Rust style
+or component boundary.
 
 The accepted utility surface is:
 
 | Family | Values | Effective on |
 | --- | --- | --- |
-| wrapper size | `w-full`, `h-full` | row, col, grid, stack |
-| wrapper max width | `max-w-sm` through `max-w-2xl` | non-flex layout wrappers |
-| wrapper alignment | `self-center` | layout wrappers |
-| wrapper padding | `p-*`, `px-*`, `py-*` | grid and stack |
-| control-axis padding | `px-*`, `py-*` | input and button |
-| text | `font-bold` | text |
+| size | `w-full`, `h-full` | row, col, flex, grid, stack, box; `w-full` also input |
+| max width | `max-w-sm` through `max-w-2xl` | row, col, flex, grid, stack, box |
+| alignment | `items-center` | row, col, flex |
+| wrapper alignment | `self-center` | row, col, grid, stack, box |
+| overflow | `overflow-hidden` | row, col, flex, grid, stack, box |
+| gap | `gap-*` | row, col, flex, grid, stack |
+| padding | `p-*`, `px-*`, `py-*` | row, col, flex, grid, stack, box, input, button |
+| text size | `text-xs` through `text-2xl` | text |
+| line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text |
+| text weight | `font-bold` | text |
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
-| border | `border`, `border-2` | layout wrappers and input |
+| border | `border`, `border-2` | visual layout wrappers, box, input, and button |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full` | layout wrappers, input, and button |
 | states | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` | button |
 | focus | `focus:border-*` | input |
@@ -4104,7 +4148,7 @@ The implemented families are:
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 1.61 does not claim that remapping.
+extern line; 1.62 does not claim that remapping.
 
 ## 11. Cargo commands
 
@@ -4135,14 +4179,14 @@ the same parser/checker/source map as the compiler. Existing file URIs use the
 open buffers throughout each import graph; imported diagnostics are published
 at the imported URI with UTF-16 ranges. Opening, changing, or closing a buffer
 reanalyzes every open app root, and closing it returns that file to disk.
-Checked component and handler declarations and references retain imported
-source origins, so definition and complete-reference rename use current open
-buffers plus closed app roots under the initialized workspace. Rename validates
-the new identifier, rejects declaration collisions, and waits until every app
-root under the initialized workspace checks. Plain component names and
-compound-family roots are renameable; a family-root rename updates dotted
-descendants, but direct dotted descendants and the implicit `mount` handler are
-definition-only.
+Checked component, handler, and recipe declarations and references retain
+imported source origins, so definition and complete-reference rename use
+current open buffers plus closed app roots under the initialized workspace.
+Rename validates the new identifier, rejects declaration collisions, and waits
+until every app root under the initialized workspace checks. Plain component
+names, compound-family roots, and recipe names are renameable; a family-root
+rename updates dotted descendants, but direct dotted descendants and the
+implicit `mount` handler are definition-only.
 
 The normal runtime and reference-app tests verify deterministic semantic trees,
 focus, keyboard activation, visible focus, password suppression, and action
@@ -4159,7 +4203,7 @@ above.
 
 ## 12. Current coverage and escape hatches
 
-The 1.61 native backend covers both windowed applications and windowless
+The 1.62 native backend covers both windowed applications and windowless
 daemons alongside CRUD/settings-style screens, selection, media, hover
 overlays, declarative canvas geometry, and pointer events. Borrowed custom
 widgets and an application-wide renderer type remain the escape hatch for

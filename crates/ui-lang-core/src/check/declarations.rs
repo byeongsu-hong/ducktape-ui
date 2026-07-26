@@ -175,6 +175,16 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
             ));
         }
     }
+    let mut recipes = HashSet::new();
+    for recipe in &document.recipes {
+        if !recipes.insert(&recipe.name) {
+            return Err(Error::new(
+                "E100",
+                &recipe.span,
+                format!("duplicate recipe `{}`", recipe.name),
+            ));
+        }
+    }
     let mut fields = HashSet::new();
     for qr in &document.qr_codes {
         if !fields.insert(&qr.name) {

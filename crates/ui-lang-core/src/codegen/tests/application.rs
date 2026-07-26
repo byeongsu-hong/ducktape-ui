@@ -952,7 +952,7 @@ view
         .split_once("fn __window_0()")
         .unwrap()
         .1
-        .split_once("pub fn run()")
+        .split_once("fn __program()")
         .unwrap()
         .0;
 
@@ -965,6 +965,18 @@ view
     ));
     assert!(!generated.contains("claim_window"));
     assert!(!generated.contains("::iced::window::Event::Opened"));
+}
+
+#[test]
+fn exposes_the_generated_program_to_in_crate_test_harnesses() {
+    let generated = compile(
+        "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Ready\"\n",
+        "app.ice",
+    )
+    .unwrap();
+
+    assert!(generated.contains("fn __program() -> ::iced::Application<impl ::iced::Program"));
+    assert!(generated.contains("Self::__program().run()"));
 }
 
 #[test]

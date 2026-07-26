@@ -33,6 +33,12 @@ Apply these rules before editing:
   behind typed `sync` or async extern functions instead of embedding Rust.
 - Prefer Core constructs. Use an existing typed Rust adapter for unusual native
   behavior; do not extend the DSL merely to mirror another Iced method.
+- When `ducktape-ui` is available, import its `default.ice` interface once and
+  reuse its checked components and recipes before declaring local equivalents.
+  Use compound variants such as `Alert.Success` and `Badge.Secondary`; do not
+  replace them with free-form variant strings. Do not import its showcase
+  adapter interface into an application; define a typed Rust boundary for
+  product-specific retained widgets.
 - Preserve accessibility: label child-content buttons, label meaningful images,
   never expose secure-input values, and keep source order meaningful.
 
@@ -68,11 +74,17 @@ refactoring `.ice`. Read the other references only when their scope is involved:
 In this repository, start with:
 
 ```text
+crates/ui/src/ice/default.ice            canonical design-system import
+crates/ui/src/ice/components.ice         shared structural components and variants
+crates/ui/src/ice/recipes.ice            shared semantic visual roles
+examples/showcase/src/ui/showcase.ice    complete default component catalog
+examples/showcase/tests/cases/           generated-app behavior through iced_test
+examples/showcase/tests/snapshots/       headless visual regression baselines
 examples/iced-app/src/ui/tasks.ice       readable app root
 examples/iced-app/src/ui/extern/         production and test extern declarations
 examples/iced-app/src/ui/components/     component and slot patterns
 examples/iced-app/src/ui/handlers/       state transitions and effects
-examples/iced-app/src/ui/showcase.ice    extended widget surface
+examples/iced-app/src/ui/showcase.ice    language widget surface
 examples/iced-app/src/ui/*.ice           focused native fixtures
 examples/apple-music/src/ui/music.ice    complete product-style application
 SPEC.md                                  implemented language revision
@@ -148,6 +160,11 @@ After a meaningful edit:
 
 Use `cargo ice expand path/to/app.ice` only to diagnose lowering or Rust errors.
 Never edit generated Rust.
+
+For end-to-end generated-app behavior, fix initial state with an Ice `preset`,
+put the existing `iced_test` DSL cases under `tests/cases/*.ice`, and call
+`iced_test::run` with the generated in-crate program. Keep screenshot regression
+in a Rust test using the headless snapshot API; do not invent a second test DSL.
 
 If `cargo ice` is unavailable, inspect `.cargo/config.toml`. In this repository
 it is a local Cargo alias for the `cargo-ice` workspace binary; run commands

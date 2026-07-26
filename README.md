@@ -144,16 +144,27 @@ screen-coordinate bounds are not available through stock Iced 0.14.0. Rich
 text and advanced widgets do not gain accessibility claims from this Core
 contract.
 
-## Run the real iced sample
+## Run the examples
 
 ```bash
 cargo run -p iced-app
 cargo run -p apple-music-example
+cargo run -p showcase
 ```
 
 `apple-music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,
 library browsing, search, sign-in, queueing, and playback controls.
+`showcase` exercises the default `ducktape-ui` component catalog through Ice.
+The library lives in [`crates/ui`](crates/ui), including its importable default
+theme and semantic recipes; the runnable app in
+[`examples/showcase`](examples/showcase) consumes that same interface instead
+of carrying a second control style system. Its catalog uses
+`grid min-cell=...` for CSS-like responsive wrapping, while the shared panel
+recipe applies `@overflow-hidden` so retained content cannot bleed into a
+neighboring cell. `cargo test -p showcase` runs the generated program headlessly:
+the existing `iced_test` DSL covers click, typing, and key behavior from the
+`test` preset, while Rust's snapshot API compares the complete initial render.
 
 The runnable task app is intentionally small and split by concern:
 
@@ -295,7 +306,7 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 1.61 is an executable language revision, not an attempt to replace iced.
+Ice 1.62 is an executable language revision, not an attempt to replace iced.
 Its stable authoring Core is app/state/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, and typed Rust effects. The extended native surface remains available,
@@ -304,7 +315,7 @@ while typed
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 1.61; the workspace packages currently use pre-1.0
+specification is revision 1.62; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.

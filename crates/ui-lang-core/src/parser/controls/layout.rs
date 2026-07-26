@@ -199,16 +199,27 @@ pub(in crate::parser) fn parse_layout_options(
             }
             options.spacing = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if kind == "grid"
-            && let Some(value) = part.strip_prefix("fluid=")
+            && let Some(value) = part.strip_prefix("min-cell=")
         {
-            if options.fluid.is_some() {
+            if options.min_cell.is_some() {
                 return Err(error(
                     "E074",
                     line,
                     format!("invalid layout property `{part}`"),
                 ));
             }
-            options.fluid = Some(parse_expr(strip_wrapping_parens(value), line)?);
+            options.min_cell = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if kind == "grid"
+            && let Some(value) = part.strip_prefix("max-cell=")
+        {
+            if options.max_cell.is_some() {
+                return Err(error(
+                    "E074",
+                    line,
+                    format!("invalid layout property `{part}`"),
+                ));
+            }
+            options.max_cell = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if is_flex && parse_padding_option(part, &mut options.padding, line)? {
         } else if kind == "col"
             && let Some(value) = part.strip_prefix("max-w=")
@@ -294,11 +305,27 @@ pub(in crate::parser) fn parse_layout_options(
             "wrap-gap and wrap-align require `wrap`",
         ));
     }
-    if options.columns.is_some() && options.fluid.is_some() {
+    if [
+        options.columns.is_some(),
+        options.min_cell.is_some(),
+        options.max_cell.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count()
+        > 1
+    {
         return Err(error(
             "E074",
             line,
-            "grid cols and fluid are mutually exclusive",
+            "grid cols, min-cell, and max-cell are mutually exclusive",
+        ));
+    }
+    if options.min_cell.is_some() && options.grid_height.is_some() {
+        return Err(error(
+            "E074",
+            line,
+            "grid min-cell uses natural row height and cannot combine with h=",
         ));
     }
     if let Some(scroll) = &options.scroll

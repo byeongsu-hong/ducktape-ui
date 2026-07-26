@@ -19,7 +19,7 @@ pub(in crate::check) fn infer_content_group(
                 return Err(type_error(span, &Type::Str, &ty).hint("text accepts str, i64, or f64"));
             }
             check_text_options(options, env, document, span)?;
-            check_styles(styles, document, span, StyleTarget::Text)?;
+            check_styles(styles, document, span, StyleTarget::Text(options))?;
         }
         ViewNode::RichText {
             options,
@@ -36,6 +36,8 @@ pub(in crate::check) fn infer_content_group(
                 span,
                 StyleTarget::RichText {
                     typed_color: color.is_some(),
+                    typed_size: options.size.is_some(),
+                    typed_line_height: options.line_height.is_some(),
                 },
             )?;
             if color

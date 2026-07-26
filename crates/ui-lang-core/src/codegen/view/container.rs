@@ -37,6 +37,9 @@ pub(in crate::codegen) fn render_container(
     if let Some(max_width) = style.max_width {
         write!(code, ".max_width({max_width})").unwrap();
     }
+    if style.clip {
+        code.push_str(".clip(true)");
+    }
     if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
         write!(code, ".padding({padding})").unwrap();
     }

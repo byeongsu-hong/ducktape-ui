@@ -13,6 +13,7 @@ fn check(document: &mut Document) -> Result<(), Error> {
     check_slots(document)?;
     check_declared_types(document)?;
     check_theme(document)?;
+    check_recipes(document)?;
     check_qr_data(document)?;
     if let Some(span) = repeated_pane_grid_span(&document.view) {
         return Err(Error::new(
