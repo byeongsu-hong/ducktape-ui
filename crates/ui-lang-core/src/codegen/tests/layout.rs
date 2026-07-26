@@ -8,7 +8,7 @@ recipe page for col
 recipe panel for box
   w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
 recipe title for text
-  text-2xl leading-tight font-bold text-fg
+  text-22px leading-tight font-bold text-fg
 theme
   bg #101010
   fg #f0f0f0
@@ -28,7 +28,7 @@ view
     assert!(
         generated.contains(".padding(::ui_lang_runtime::bounded_padding(24.0, 24.0, 24.0, 24.0))")
     );
-    assert!(generated.contains(".size(24)"));
+    assert!(generated.contains(".size(22)"));
     assert!(generated.contains(".clip(true)"));
     assert!(generated.contains("LineHeight::Relative(1.2)"));
     assert!(generated.contains("weight: ::iced::font::Weight::Bold"));
@@ -63,6 +63,61 @@ view
     .unwrap_err();
     assert_eq!(error.code, "E041");
     assert!(error.message.contains("unsupported utility `grid-cols-3`"));
+}
+
+#[test]
+fn lowers_exact_pixel_recipe_utilities() {
+    let source = r#"app ExactRecipes
+recipe action for button
+  px-16px py-11px rounded-9px bg-primary text-primary_fg
+recipe caption for text
+  text-12.5px text-fg
+theme
+  bg #101010
+  fg #f0f0f0
+  primary #336699
+  primary_fg #ffffff
+  danger #cc0000
+on pressed
+view
+  col
+    button "Save" @action -> pressed
+    text "Caption" @caption
+"#;
+    let generated = compile(source, "exact-recipes.ice").unwrap();
+
+    assert!(generated.contains("top: 11.0, right: 16.0, bottom: 11.0, left: 16.0"));
+    assert!(generated.contains("__style.border.radius = 9.0.into()"));
+    assert!(generated.contains(".size(12.5)"));
+}
+
+#[test]
+fn lowers_monospace_and_exact_font_weight_recipe_utilities() {
+    let source = r#"app FontRecipes
+recipe meta for text
+  text-11px font-mono font-medium text-fg
+recipe label for text
+  text-10px font-mono font-semibold text-fg
+recipe strong for text
+  font-bold text-fg
+theme
+  bg #101010
+  fg #f0f0f0
+  primary #336699
+  danger #cc0000
+view
+  col
+    text "Meta" @meta
+    text "Label" @label
+    text "Strong" @strong
+"#;
+    let generated = compile(source, "font-recipes.ice").unwrap();
+
+    assert!(generated.contains("weight: ::iced::font::Weight::Medium, ..::iced::Font::MONOSPACE"));
+    assert!(
+        generated.contains("weight: ::iced::font::Weight::Semibold, ..::iced::Font::MONOSPACE")
+    );
+    assert!(generated.contains("weight: ::iced::font::Weight::Bold, ..::iced::Font::DEFAULT"));
 }
 
 #[test]

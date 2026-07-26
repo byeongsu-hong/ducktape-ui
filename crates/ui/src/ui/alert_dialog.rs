@@ -141,8 +141,8 @@ pub fn alert_dialog_with_alignment<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let cancel = text(cancel_label).size(theme.typography.sm);
-    let action = text(action_label).size(theme.typography.sm);
+    let cancel = text(cancel_label).size(theme.typography.caption);
+    let action = text(action_label).size(theme.typography.caption);
     alert_dialog_with_controls_and_alignment(
         underlay,
         open,
@@ -310,7 +310,7 @@ fn control_style(theme: &Theme, variant: ButtonVariant, status: FocusStatus) -> 
         focus_ring: Border {
             color: theme.palette.ring,
             width: 2.0,
-            radius: (theme.radius.md + 4.0).into(),
+            radius: (theme.radius.button + 4.0).into(),
         },
         focus_offset: 2.0,
     }

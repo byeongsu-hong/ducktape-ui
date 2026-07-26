@@ -22,7 +22,7 @@ where
     Message: 'a,
 {
     let label = text(label)
-        .size(theme.typography.sm)
+        .size(theme.typography.meta)
         .color(theme.palette.muted_foreground);
 
     let content: Element<'a, Message> = if variant == MarkerVariant::Separator {
@@ -63,7 +63,7 @@ pub fn style(theme: &Theme, variant: MarkerVariant) -> iced::widget::container::
             } else {
                 0.0
             },
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }

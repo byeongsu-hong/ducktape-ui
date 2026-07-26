@@ -51,7 +51,7 @@ pub fn style(theme: &Theme, variant: BubbleVariant) -> iced::widget::container::
         border: Border {
             color: border,
             width: border_width,
-            radius: theme.radius.xl.into(),
+            radius: theme.radius.card.into(),
         },
         ..Default::default()
     }

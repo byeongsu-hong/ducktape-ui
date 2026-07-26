@@ -4,19 +4,25 @@ use iced::widget::text::IntoFragment;
 use iced::widget::{Container, Text, container, text};
 use iced::{Background, Border, Color, Font};
 
+const UI_FONT_FAMILY: Family = Family::Name("Geist");
+const MACHINE_FONT_FAMILY: Family = Family::Name("Geist Mono");
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TextRole {
-    H1,
-    H2,
-    H3,
-    H4,
+    Display,
+    ScreenTitle,
+    SectionTitle,
+    PaneHeader,
     #[default]
-    Paragraph,
-    Lead,
-    Large,
-    Small,
-    Muted,
-    InlineCode,
+    Body,
+    List,
+    Caption,
+    Machine,
+    Meta,
+    MetaCompact,
+    FieldLabel,
+    NavLabel,
+    Badge,
 }
 
 /// Applies a consistent visual text role without adding layout.
@@ -38,7 +44,7 @@ where
     Message: 'a,
 {
     let styled_theme = *theme;
-    container(typography(content, TextRole::InlineCode, theme))
+    container(typography(content, TextRole::Machine, theme))
         .padding([theme.spacing.xs / 2.0, theme.spacing.xs])
         .style(move |_iced_theme| inline_code_style(&styled_theme))
 }
@@ -55,75 +61,96 @@ fn role_style(role: TextRole, theme: &Theme) -> RoleStyle {
     let palette = theme.palette;
     let typography = theme.typography;
     let (size, line_height, color, family, weight) = match role {
-        TextRole::H1 => (
-            typography.xl * 2.0,
-            1.1,
-            palette.foreground,
-            Family::SansSerif,
-            Weight::Bold,
-        ),
-        TextRole::H2 => (
-            typography.xl * 1.67,
-            1.15,
-            palette.foreground,
-            Family::SansSerif,
-            Weight::Semibold,
-        ),
-        TextRole::H3 => (
-            typography.xl * 1.33,
+        TextRole::Display => (
+            typography.display,
             1.2,
             palette.foreground,
-            Family::SansSerif,
+            UI_FONT_FAMILY,
             Weight::Semibold,
         ),
-        TextRole::H4 => (
-            typography.xl,
-            1.25,
+        TextRole::ScreenTitle => (
+            typography.screen_title,
+            1.2,
             palette.foreground,
-            Family::SansSerif,
+            UI_FONT_FAMILY,
             Weight::Semibold,
         ),
-        TextRole::Paragraph => (
-            typography.base,
-            1.6,
+        TextRole::SectionTitle => (
+            typography.section_title,
+            1.2,
             palette.foreground,
-            Family::SansSerif,
+            UI_FONT_FAMILY,
+            Weight::Semibold,
+        ),
+        TextRole::PaneHeader => (
+            typography.pane_header,
+            1.3,
+            palette.foreground,
+            UI_FONT_FAMILY,
+            Weight::Semibold,
+        ),
+        TextRole::Body => (
+            typography.body,
+            1.55,
+            palette.accent_foreground,
+            UI_FONT_FAMILY,
             Weight::Normal,
         ),
-        TextRole::Lead => (
-            typography.lg,
-            1.5,
-            palette.muted_foreground,
-            Family::SansSerif,
-            Weight::Normal,
-        ),
-        TextRole::Large => (
-            typography.lg,
+        TextRole::List => (
+            typography.list,
             1.4,
-            palette.foreground,
-            Family::SansSerif,
-            Weight::Semibold,
-        ),
-        TextRole::Small => (
-            typography.sm,
-            1.4,
-            palette.foreground,
-            Family::SansSerif,
+            palette.accent_foreground,
+            UI_FONT_FAMILY,
             Weight::Medium,
         ),
-        TextRole::Muted => (
-            typography.sm,
+        TextRole::Caption => (
+            typography.caption,
             1.4,
             palette.muted_foreground,
-            Family::SansSerif,
+            UI_FONT_FAMILY,
             Weight::Normal,
         ),
-        TextRole::InlineCode => (
-            typography.sm,
+        TextRole::Machine => (
+            typography.machine,
             1.4,
-            palette.foreground,
-            Family::Monospace,
+            palette.secondary_foreground,
+            MACHINE_FONT_FAMILY,
+            Weight::Normal,
+        ),
+        TextRole::Meta => (
+            typography.meta,
+            1.4,
+            palette.muted_foreground,
+            MACHINE_FONT_FAMILY,
             Weight::Medium,
+        ),
+        TextRole::MetaCompact => (
+            typography.meta_compact,
+            1.4,
+            palette.muted_foreground,
+            MACHINE_FONT_FAMILY,
+            Weight::Medium,
+        ),
+        TextRole::FieldLabel => (
+            typography.field_label,
+            1.3,
+            palette.muted_foreground,
+            MACHINE_FONT_FAMILY,
+            Weight::Semibold,
+        ),
+        TextRole::NavLabel => (
+            typography.nav_label,
+            1.3,
+            palette.accent_foreground,
+            UI_FONT_FAMILY,
+            Weight::Semibold,
+        ),
+        TextRole::Badge => (
+            typography.badge,
+            1.3,
+            palette.foreground,
+            MACHINE_FONT_FAMILY,
+            Weight::Semibold,
         ),
     };
 
@@ -144,7 +171,7 @@ fn inline_code_style(theme: &Theme) -> iced::widget::container::Style {
         background: Some(Background::Color(theme.palette.muted)),
         text_color: Some(theme.palette.foreground),
         border: Border {
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.chip.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -159,21 +186,34 @@ mod tests {
     #[test]
     fn roles_map_to_theme_typography_and_palette() {
         assert_eq!(
-            role_style(TextRole::H1, &LIGHT).size,
-            LIGHT.typography.xl * 2.0
+            role_style(TextRole::Display, &LIGHT).size,
+            LIGHT.typography.display
         );
         assert_eq!(
-            role_style(TextRole::Paragraph, &LIGHT).size,
-            LIGHT.typography.base
+            role_style(TextRole::Body, &LIGHT).size,
+            LIGHT.typography.body
         );
         assert_eq!(
-            role_style(TextRole::Muted, &LIGHT).color,
+            role_style(TextRole::Caption, &LIGHT).color,
             LIGHT.palette.muted_foreground
         );
         assert_eq!(
-            role_style(TextRole::InlineCode, &LIGHT).font.family,
-            Family::Monospace
+            role_style(TextRole::Machine, &LIGHT).font.family,
+            Family::Name("Geist Mono")
         );
+        assert_eq!(
+            role_style(TextRole::Display, &LIGHT).font.family,
+            Family::Name("Geist")
+        );
+        assert_eq!(
+            role_style(TextRole::FieldLabel, &LIGHT).font.weight,
+            Weight::Semibold
+        );
+        assert_eq!(
+            role_style(TextRole::Meta, &LIGHT).font.weight,
+            Weight::Medium
+        );
+        assert_eq!(role_style(TextRole::Badge, &LIGHT).size, 9.0);
     }
 
     #[test]
@@ -184,6 +224,6 @@ mod tests {
             Some(Background::Color(LIGHT.palette.muted))
         );
         assert_eq!(style.text_color, Some(LIGHT.palette.foreground));
-        assert_eq!(style.border.radius, LIGHT.radius.sm.into());
+        assert_eq!(style.border.radius, LIGHT.radius.chip.into());
     }
 }

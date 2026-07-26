@@ -2,11 +2,11 @@
 
 use super::direction::Direction;
 use super::modal::{DismissRules, FocusScope, ModalEvent, modal};
-use super::theme::{Theme, alpha};
+use super::theme::Theme;
 use iced::alignment::Horizontal;
 use iced::widget::text::IntoFragment;
 use iced::widget::{Column, Container, container, text};
-use iced::{Background, Border, Element, Length, Shadow, Vector};
+use iced::{Background, Border, Element, Length};
 
 pub const DIALOG_MAX_WIDTH: f32 = 512.0;
 
@@ -200,7 +200,7 @@ where
         .push(
             text(title)
                 .width(Length::Fill)
-                .size(theme.typography.xl)
+                .size(theme.typography.section_title)
                 .line_height(1.2)
                 .align_x(horizontal)
                 .color(theme.palette.popover_foreground),
@@ -208,7 +208,7 @@ where
         .push(
             text(description)
                 .width(Length::Fill)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .line_height(1.45)
                 .align_x(horizontal)
                 .color(theme.palette.muted_foreground),
@@ -248,13 +248,9 @@ pub fn panel_style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.input,
             width: 1.0,
-            radius: theme.radius.xl.into(),
+            radius: theme.radius.modal.into(),
         },
-        shadow: Shadow {
-            color: alpha(iced::Color::BLACK, 0.24),
-            offset: Vector::new(0.0, 10.0),
-            blur_radius: 28.0,
-        },
+        shadow: theme.elevation.modal,
         ..Default::default()
     }
 }

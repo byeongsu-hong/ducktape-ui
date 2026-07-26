@@ -22,7 +22,7 @@ theme
   danger_bg  #fdf4f3
   danger_line #efd6d3
   danger_dot #e0655c
-  success    #4f9050
+  success    #5f9e74
   success_fg #151410
   success_bg #eef5f0
   success_line #cfe3d7
@@ -34,7 +34,17 @@ theme
   warning_dot #e3b443
   avatar_bg  #d2d0c7
   avatar_fg  #4f4d47
+  toast_bg   #26251f
+  toast_fg   #f3f1ea
   border     #e7e6e2
   control_line #e0dfd7
   input      #8a8983
   ring       #26251f
+  glass_thin #fdfcfa80
+  glass_regular #fdfcfa9e
+  glass_sheet #fdfcfadb
+  shadow_popover #28262221
+  shadow_toast #28262238
+  shadow_modal #2826224d
+  shadow_window #28262238
+  shadow_window_secondary #2826221a

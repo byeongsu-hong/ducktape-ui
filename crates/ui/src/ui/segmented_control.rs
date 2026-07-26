@@ -62,7 +62,7 @@ where
             border: Border {
                 color: theme.palette.border,
                 width: 1.0,
-                radius: theme.radius.lg.into(),
+                radius: theme.radius.card.into(),
             },
             ..Default::default()
         })

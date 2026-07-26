@@ -24,10 +24,10 @@ where
 {
     column![
         text(title)
-            .size(theme.typography.lg)
+            .size(theme.typography.section_title)
             .color(theme.palette.card_foreground),
         text(description)
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .color(theme.palette.muted_foreground),
     ]
     .spacing(theme.spacing.xs)

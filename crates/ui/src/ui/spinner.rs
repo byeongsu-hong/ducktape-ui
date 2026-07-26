@@ -39,7 +39,7 @@ where
                     theme.palette.foreground,
                     opacity(position, frame, reduced_motion),
                 ),
-                theme.radius.sm,
+                theme.radius.row,
             ))
         };
     }

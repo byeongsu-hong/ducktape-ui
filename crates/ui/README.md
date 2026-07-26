@@ -46,7 +46,7 @@ file [`src/ice/default.ice`](src/ice/default.ice) imports only the default
 theme, reusable recipes, and the shared Ice components in
 [`src/ice/components.ice`](src/ice/components.ice). Visual
 variants use checked compound names such as `Alert.Success`, `Badge.Warning`,
-and `Typography.Muted`; there are no free-form variant strings that can silently
+and `Typography.Caption`; there are no free-form variant strings that can silently
 render an empty component. Its Ice tokens are checked against the retained Rust
 `LIGHT` palette, so the default path needs no repeated accent argument or
 parallel control-style callbacks. Custom retained themes use the Rust component
@@ -64,6 +64,12 @@ Each component remains individually feature-gated, and enabling one also enables
 ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", features = ["button", "input", "card"] }
 iced = "=0.14.0"
 ```
+
+`ducktape-ui` does not silently choose an iced platform. Consumers that use it
+without a separate default-featured `iced` dependency opt into `x11` or
+`wayland`; either standalone native platform feature includes iced's minimal
+thread-pool executor. The executor is also available as a direct `thread-pool`
+passthrough, while wasm consumers leave all three native features disabled.
 
 ```rust
 use ducktape_ui::ui::{
@@ -91,9 +97,27 @@ All theme fields are public, so an application can derive its own tokens without
 
 ```rust
 let mut theme = LIGHT;
-theme.radius.md = 4.0;
+theme.radius.button = 4.0;
 theme.spacing.lg = 20.0;
 ```
+
+Radius roles are named `chip`, `row`, `button`, `card`, and `modal`; typography
+uses the design roles from `display` through `badge` instead of generic size
+aliases. `Theme::glass` exposes the exact thin, regular, and sheet alpha colors
+without claiming a blur implementation, while `Theme::elevation` provides the
+popover, toast, modal, and two-layer application-window shadows.
+
+The source success color on its tint measures 2.86:1, so status labels use the
+neutral foreground and keep success as a redundant dot/icon. Avatar initials
+remain text: the default `#4f4d47` foreground clears 4.5:1 against the avatar
+fill.
+
+Native typography roles name the canonical Geist and Geist Mono families and
+encode their exact sizes and weights. This crate does not bundle font assets:
+the consuming application must preload both families through iced's application
+`font` settings before rendering these roles. Ice applications likewise load
+the font bytes at the app boundary; their default font supplies Geist while the
+shared `font-mono` recipes select the loaded monospace face.
 
 ## Custom content
 
@@ -139,5 +163,6 @@ cargo ice test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features
-cargo check -p ducktape-ui --no-default-features --features button
+cargo check -p ducktape-ui --no-default-features --features button,x11
+cargo check -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button
 ```

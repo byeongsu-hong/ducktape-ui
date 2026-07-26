@@ -22,11 +22,11 @@ struct LabelStyle {
 
 fn label_style(theme: &Theme) -> LabelStyle {
     LabelStyle {
-        size: theme.typography.sm,
-        color: theme.palette.foreground,
+        size: theme.typography.field_label,
+        color: theme.palette.muted_foreground,
         font: Font {
-            weight: Weight::Medium,
-            ..Font::DEFAULT
+            weight: Weight::Semibold,
+            ..Font::MONOSPACE
         },
     }
 }
@@ -39,8 +39,8 @@ mod tests {
     #[test]
     fn label_uses_semantic_text_tokens() {
         let style = label_style(&LIGHT);
-        assert_eq!(style.size, LIGHT.typography.sm);
-        assert_eq!(style.color, LIGHT.palette.foreground);
-        assert_eq!(style.font.weight, Weight::Medium);
+        assert_eq!(style.size, LIGHT.typography.field_label);
+        assert_eq!(style.color, LIGHT.palette.muted_foreground);
+        assert_eq!(style.font.weight, Weight::Semibold);
     }
 }

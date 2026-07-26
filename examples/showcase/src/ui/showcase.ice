@@ -309,8 +309,8 @@ view
                   Card
                     Card.Header
                       col gap=3.0
-                        Typography.Heading content="Default card"
-                        Typography.Muted content="Compound slots keep structure readable."
+                        Typography.SectionTitle content="Default card"
+                        Typography.Caption content="Compound slots keep structure readable."
                     Card.Body
                       Surface
                         Message author="ducktape-ui" copy="Everything visible here is composed from Ice declarations." initials="UI" outgoing=false

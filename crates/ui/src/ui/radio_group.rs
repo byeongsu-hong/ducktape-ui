@@ -40,7 +40,7 @@ where
     RadioOption::new(
         value,
         text(label)
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .line_height(iced::widget::text::LineHeight::Relative(1.25)),
     )
 }
@@ -292,7 +292,7 @@ pub fn item_style(theme: &Theme, status: Status, invalid: bool) -> focus_control
     } else {
         theme.palette.foreground
     });
-    style.border.radius = theme.radius.md.into();
+    style.border.radius = theme.radius.button.into();
     style.focus_ring.color = if invalid {
         theme.palette.destructive
     } else {

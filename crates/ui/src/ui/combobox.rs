@@ -24,7 +24,7 @@ where
 
     combo_box(state, placeholder, selection, on_selected)
         .padding([8, 12])
-        .size(theme.typography.sm)
+        .size(theme.typography.list)
         .input_style(move |_iced_theme, status| input_style(&theme, InputVariant::Default, status))
         .menu_style(move |_iced_theme| menu_style(&theme))
 }
@@ -35,7 +35,7 @@ pub fn menu_style(theme: &Theme) -> menu::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         text_color: theme.palette.popover_foreground,
         selected_text_color: theme.palette.accent_foreground,

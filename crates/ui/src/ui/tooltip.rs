@@ -72,7 +72,7 @@ pub fn tooltip<'a, Message>(
         },
         open_delay: DEFAULT_OPEN_DELAY,
         close_delay: DEFAULT_CLOSE_DELAY,
-        padding: Padding::new(6.0).horizontal(12.0),
+        padding: Padding::new(5.0).horizontal(9.0),
         disabled: false,
         focusable: true,
         theme: *theme,
@@ -809,7 +809,7 @@ mod tests {
         );
         assert_eq!(component.config.placement, Placement::Top);
         assert_eq!(component.config.max_width, 320.0);
-        assert_eq!(component.padding, Padding::new(6.0).horizontal(12.0));
+        assert_eq!(component.padding, Padding::new(5.0).horizontal(9.0));
         assert!(component.focusable);
         assert_eq!(DEFAULT_TEXT_SIZE, 12.0);
         assert_eq!(DEFAULT_LINE_HEIGHT, 16.0);

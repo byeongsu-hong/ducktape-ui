@@ -28,14 +28,14 @@ where
             text(title)
                 .width(Length::Fill)
                 .align_x(Horizontal::Center)
-                .size(theme.typography.lg)
+                .size(theme.typography.section_title)
                 .color(theme.palette.foreground),
         )
         .push(
             text(description)
                 .width(Length::Fill)
                 .align_x(Horizontal::Center)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .color(theme.palette.muted_foreground),
         );
 

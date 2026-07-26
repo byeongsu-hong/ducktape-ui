@@ -175,7 +175,7 @@ where
                     .align_y(Vertical::Center),
             )
             .push(
-                container(text(if open { "−" } else { "+" }).size(theme.typography.base))
+                container(text(if open { "−" } else { "+" }).size(theme.typography.list))
                     .width(20)
                     .align_x(Horizontal::Center)
                     .align_y(Vertical::Center),
@@ -263,13 +263,13 @@ pub fn trigger_style(theme: &Theme, status: Status) -> FocusStyle {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         shadow: Shadow::default(),
         focus_ring: Border {
             color: theme.palette.ring,
             width: 2.0,
-            radius: (theme.radius.md + 2.0).into(),
+            radius: (theme.radius.button + 2.0).into(),
         },
         focus_offset: 1.0,
     }

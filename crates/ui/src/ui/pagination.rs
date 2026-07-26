@@ -85,7 +85,7 @@ where
 {
     container(
         text("…")
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .color(theme.palette.muted_foreground),
     )
     .center_x(Length::Fixed(36.0))

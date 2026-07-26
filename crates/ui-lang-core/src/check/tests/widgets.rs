@@ -131,6 +131,12 @@ view
             "rich-text color=fg @text-primary\n    span \"x\"",
         ),
         (
+            "font family",
+            "font=",
+            "font-mono",
+            "text \"x\" font=default @font-mono",
+        ),
+        (
             "text size",
             "size=",
             "text-sm",
@@ -212,7 +218,7 @@ view
         "input \"x\" <-> value style=input_base() @bg-primary",
         "button \"x\" style=button_base() @bg-primary -> pressed",
         "button \"x\" @disabled:opacity-50 -> pressed\n    disabled bg=bg",
-        "text \"x\" font=mono style=text_base() @font-bold text-primary",
+        "text \"x\" font=mono style=text_base() @font-semibold text-primary",
     ] {
         analyze(&format!("{header}  {view}\n")).unwrap();
     }
@@ -220,6 +226,34 @@ view
     let view = "box border=primary @border-danger\n    text \"x\"";
     let error = analyze(&format!("{header}  {view}\n")).unwrap_err();
     assert_eq!(error.code, "E044", "{view}");
+}
+
+#[test]
+fn checks_exact_pixel_style_utilities() {
+    let source = r#"app ExactUtilities
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on pressed
+view
+  col gap=1.0
+    button "Save" @px-16px py-11px rounded-9px bg-primary text-fg -> pressed
+    text "Body" @text-13.5px
+"#;
+    analyze(source).unwrap();
+
+    for utility in [
+        "px-1.5px",
+        "rounded-0px",
+        "rounded-1.5px",
+        "text-0px",
+        "text-NaNpx",
+    ] {
+        let error = analyze(&source.replace("px-16px", utility)).unwrap_err();
+        assert_eq!(error.code, "E041", "{utility}");
+    }
 }
 
 #[test]

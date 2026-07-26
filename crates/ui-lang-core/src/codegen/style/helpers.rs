@@ -132,6 +132,26 @@ pub(in crate::codegen) fn app_default_font_code(document: &Document) -> String {
         .unwrap_or_else(|| "::iced::Font::DEFAULT".into())
 }
 
+pub(in crate::codegen) fn styled_font_code(
+    font: Option<&FontPreset>,
+    style: &Style,
+    document: &Document,
+) -> Result<Option<String>, Error> {
+    let base = match font {
+        Some(font) => Some(font_preset_code(font, document)?),
+        None if style.font_monospace => Some("::iced::Font::MONOSPACE".into()),
+        None if style.font_weight.is_some() => Some(app_default_font_code(document)),
+        None => None,
+    };
+    Ok(base.map(|font| match style.font_weight {
+        Some(weight) => format!(
+            "::iced::Font {{ weight: ::iced::font::Weight::{}, ..{font} }}",
+            weight.code()
+        ),
+        None => font,
+    }))
+}
+
 pub(in crate::codegen) fn text_alignment_code(alignment: TextAlignment) -> &'static str {
     match alignment {
         TextAlignment::Default => "Default",

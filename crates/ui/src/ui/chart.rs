@@ -1109,7 +1109,7 @@ fn draw_axes(
             content: format_number(value),
             position: Point::new(geometry.plot.x - 8.0, y),
             color: label,
-            size: Pixels(theme.typography.xs),
+            size: Pixels(theme.typography.meta_compact),
             align_x: TextAlignment::Right,
             align_y: Vertical::Center,
             ..canvas::Text::default()
@@ -1135,7 +1135,7 @@ fn draw_axes(
             content: datum.label.clone(),
             position: Point::new(datum.x, geometry.plot.y + geometry.plot.height + 10.0),
             color: label,
-            size: Pixels(theme.typography.xs),
+            size: Pixels(theme.typography.meta_compact),
             align_x: TextAlignment::Center,
             align_y: Vertical::Top,
             ..canvas::Text::default()
@@ -1259,7 +1259,7 @@ fn draw_centered_text(frame: &mut canvas::Frame, content: &str, color: Color, th
         content: content.to_owned(),
         position: frame.center(),
         color,
-        size: Pixels(theme.typography.sm),
+        size: Pixels(theme.typography.caption),
         align_x: TextAlignment::Center,
         align_y: Vertical::Center,
         ..canvas::Text::default()
@@ -1791,7 +1791,7 @@ where
 {
     let mut content = Column::new().spacing(theme.spacing.sm).push(
         text(model.label.clone())
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .color(theme.palette.foreground),
     );
     for entry in &model.entries {
@@ -1799,11 +1799,11 @@ where
             row![
                 tooltip_indicator(entry.color, model.indicator),
                 text(entry.name.clone())
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .color(theme.palette.muted_foreground)
                     .width(Length::Fill),
                 text(format_number(entry.value))
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .color(theme.palette.foreground)
                     .align_x(Horizontal::Right),
             ]
@@ -1854,7 +1854,7 @@ pub fn tooltip_style(theme: &UiTheme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         shadow: Shadow {
             color: alpha(
@@ -1914,7 +1914,7 @@ where
                         }
                     }),
                     text(series.label.clone())
-                        .size(theme.typography.sm)
+                        .size(theme.typography.caption)
                         .color(theme.palette.muted_foreground),
                 ]
                 .spacing(theme.spacing.sm)
@@ -1973,7 +1973,7 @@ where
 {
     let mut body = Column::new().spacing(0).push(
         text(model.caption.clone())
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .color(theme.palette.muted_foreground),
     );
     body = body.push(companion_row(&model.headers, true, theme));
@@ -1990,7 +1990,7 @@ where
             border: Border {
                 color: theme.palette.border,
                 width: 1.0,
-                radius: theme.radius.lg.into(),
+                radius: theme.radius.card.into(),
             },
             ..Default::default()
         })
@@ -2005,7 +2005,7 @@ where
         |row, (index, value)| {
             row.push(
                 text(value.clone())
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .color(if header {
                         theme.palette.muted_foreground
                     } else {

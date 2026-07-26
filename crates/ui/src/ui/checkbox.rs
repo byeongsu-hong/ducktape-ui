@@ -29,7 +29,7 @@ where
             .label(label)
             .size(16)
             .spacing(theme.spacing.sm)
-            .text_size(theme.typography.sm)
+            .text_size(theme.typography.caption)
             .style(move |_iced_theme, status| style(&theme, status)),
         checked,
         on_toggle: None,
@@ -124,7 +124,7 @@ pub fn style(theme: &Theme, status: iced_checkbox::Status) -> iced_checkbox::Sty
         border: Border {
             color: border,
             width: 1.0,
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.row.into(),
         },
         text_color: Some(text),
     }

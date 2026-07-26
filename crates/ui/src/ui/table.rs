@@ -39,7 +39,7 @@ where
 /// Styles a plain text column header.
 pub fn header<'a>(label: impl IntoFragment<'a>, theme: &Theme) -> Text<'a> {
     text(label)
-        .size(theme.typography.sm)
+        .size(theme.typography.list)
         .color(theme.palette.muted_foreground)
 }
 
@@ -77,7 +77,7 @@ where
 /// Creates muted caption text. Place it directly before or after [`frame`].
 pub fn caption<'a>(label: impl IntoFragment<'a>, theme: &Theme) -> Text<'a> {
     text(label)
-        .size(theme.typography.sm)
+        .size(theme.typography.caption)
         .color(theme.palette.muted_foreground)
 }
 
@@ -88,7 +88,7 @@ pub fn frame_style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.lg.into(),
+            radius: theme.radius.card.into(),
         },
         ..Default::default()
     }

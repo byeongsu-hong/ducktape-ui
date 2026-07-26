@@ -300,7 +300,7 @@ where
                 let trigger_theme = self.theme;
                 let content = container(
                     text(menu.label.clone())
-                        .size(self.theme.typography.sm)
+                        .size(self.theme.typography.caption)
                         .line_height(LineHeight::Absolute(Pixels(16.0))),
                 )
                 .height(MENUBAR_HEIGHT - 4.0)
@@ -458,7 +458,7 @@ pub fn menubar_style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }
@@ -481,9 +481,9 @@ pub fn menubar_trigger_style(theme: &Theme, opened: bool, status: Status) -> foc
     } else {
         theme.palette.foreground
     });
-    style.border.radius = theme.radius.sm.into();
+    style.border.radius = theme.radius.row.into();
     style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.sm.into();
+    style.focus_ring.radius = theme.radius.row.into();
     style.focus_offset = 0.0;
     style
 }

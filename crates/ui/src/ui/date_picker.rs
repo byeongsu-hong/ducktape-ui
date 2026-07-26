@@ -471,7 +471,7 @@ where
         } else {
             let label = container(
                 text(value_label.unwrap_or(self.placeholder))
-                    .size(self.theme.typography.sm)
+                    .size(self.theme.typography.caption)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(foreground),
             )
@@ -480,7 +480,7 @@ where
             .align_y(Vertical::Center);
             let icon = container(
                 text("▦")
-                    .size(self.theme.typography.base)
+                    .size(self.theme.typography.list)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(alpha(foreground, 0.82)),
             )
@@ -632,7 +632,7 @@ pub fn trigger_style(
                 theme.palette.input
             },
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }

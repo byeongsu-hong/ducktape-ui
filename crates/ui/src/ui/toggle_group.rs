@@ -188,7 +188,7 @@ where
                     count,
                     self.orientation,
                     self.spacing,
-                    self.theme.radius.md,
+                    self.theme.radius.button,
                 ))
                 .disabled(self.disabled || item.disabled)
                 .on_key_press(move |key, _modifiers| {

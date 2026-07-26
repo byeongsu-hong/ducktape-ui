@@ -1502,7 +1502,7 @@ fn style_contract() -> Value {
             "overflow": { "targets": ["row", "col", "flex", "grid", "stack", "box"], "forms": ["overflow-hidden"] },
             "text": {
                 "targets": ["text"],
-                "forms": ["text-xs", "text-sm", "text-base", "text-lg", "text-xl", "text-2xl", "leading-tight", "leading-snug", "leading-normal", "leading-relaxed", "font-bold"],
+                "forms": ["text-xs", "text-sm", "text-base", "text-lg", "text-xl", "text-2xl", "leading-tight", "leading-snug", "leading-normal", "leading-relaxed", "font-mono", "font-medium", "font-semibold", "font-bold"],
             },
             "semantic": ["bg-TOKEN", "text-TOKEN", "border-TOKEN", "border", "border-2", "rounded-*", "state variants"],
             "rule": "utilities and recipes are target-specific; direct typed properties override recipe defaults but conflict with direct utilities that own the same field",
