@@ -11,7 +11,7 @@ where
 {
     let font = Font {
         weight: Weight::Medium,
-        ..Font::MONOSPACE
+        ..theme.typography.monospace_font
     };
     let styled_theme = *theme;
 

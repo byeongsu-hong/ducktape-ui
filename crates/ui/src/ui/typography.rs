@@ -1,5 +1,5 @@
 use super::theme::Theme;
-use iced::font::{Family, Weight};
+use iced::font::Weight;
 use iced::widget::text::IntoFragment;
 use iced::widget::{Container, Text, container, text};
 use iced::{Background, Border, Color, Font};
@@ -54,75 +54,75 @@ struct RoleStyle {
 fn role_style(role: TextRole, theme: &Theme) -> RoleStyle {
     let palette = theme.palette;
     let typography = theme.typography;
-    let (size, line_height, color, family, weight) = match role {
+    let (size, line_height, color, font, weight) = match role {
         TextRole::H1 => (
             typography.xl * 2.0,
             1.1,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Bold,
         ),
         TextRole::H2 => (
             typography.xl * 1.67,
             1.15,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Semibold,
         ),
         TextRole::H3 => (
             typography.xl * 1.33,
             1.2,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Semibold,
         ),
         TextRole::H4 => (
             typography.xl,
             1.25,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Semibold,
         ),
         TextRole::Paragraph => (
             typography.base,
             1.6,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Normal,
         ),
         TextRole::Lead => (
             typography.lg,
             1.5,
             palette.muted_foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Normal,
         ),
         TextRole::Large => (
             typography.lg,
             1.4,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Semibold,
         ),
         TextRole::Small => (
             typography.sm,
             1.4,
             palette.foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Medium,
         ),
         TextRole::Muted => (
             typography.sm,
             1.4,
             palette.muted_foreground,
-            Family::SansSerif,
+            typography.font,
             Weight::Normal,
         ),
         TextRole::InlineCode => (
             typography.sm,
             1.4,
             palette.foreground,
-            Family::Monospace,
+            typography.monospace_font,
             Weight::Medium,
         ),
     };
@@ -131,11 +131,7 @@ fn role_style(role: TextRole, theme: &Theme) -> RoleStyle {
         size,
         line_height,
         color,
-        font: Font {
-            family,
-            weight,
-            ..Font::DEFAULT
-        },
+        font: Font { weight, ..font },
     }
 }
 
@@ -158,21 +154,28 @@ mod tests {
 
     #[test]
     fn roles_map_to_theme_typography_and_palette() {
+        let mut theme = LIGHT;
+        theme.typography.font = Font::with_name("Geist");
+        theme.typography.monospace_font = Font::with_name("Geist Mono");
         assert_eq!(
-            role_style(TextRole::H1, &LIGHT).size,
+            role_style(TextRole::H1, &theme).size,
             LIGHT.typography.xl * 2.0
         );
         assert_eq!(
-            role_style(TextRole::Paragraph, &LIGHT).size,
+            role_style(TextRole::Paragraph, &theme).size,
             LIGHT.typography.base
         );
         assert_eq!(
-            role_style(TextRole::Muted, &LIGHT).color,
+            role_style(TextRole::Muted, &theme).color,
             LIGHT.palette.muted_foreground
         );
         assert_eq!(
-            role_style(TextRole::InlineCode, &LIGHT).font.family,
-            Family::Monospace
+            role_style(TextRole::Paragraph, &theme).font.family,
+            Font::with_name("Geist").family
+        );
+        assert_eq!(
+            role_style(TextRole::InlineCode, &theme).font.family,
+            Font::with_name("Geist Mono").family
         );
     }
 
