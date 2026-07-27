@@ -60,7 +60,17 @@ component CarouselDemo()
   on next
     slide = slide % 3 + 1
   col w=fill gap=8.0
-    box w=fill h=88.0 p=16.0 align-x=center align-y=center bg=accent border=border border-w=1.0 r=9.0
+    box
+      with
+        w=fill
+        h=88.0
+        p=16.0
+        align-x=center
+        align-y=center
+        bg=accent
+        border=border
+        border-w=1.0
+        r=9.0
       col align=center gap=4.0
         text "Slide" size=11.0 @text-muted
         text slide size=24.0 @font-bold text-primary

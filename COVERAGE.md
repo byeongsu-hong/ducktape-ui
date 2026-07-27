@@ -48,6 +48,10 @@ Components expose closed checked contracts: named events carry zero or more
 ordered typed payloads, every call site routes each event in caller scope, and
 direct app-handler references from component bodies are rejected. The single
 typed `->` output remains the default-event shorthand.
+Component contracts also support required and optional slots; missing optional
+slots lower to no child, and `provided(Name)` is folded at each call site.
+First-child `with` metadata blocks preserve long checked property and utility
+lists without changing the view tree.
 `run replace` uses native abort handles to cancel and replace prior work at the
 same component scope and call site. `lifetime mounted` prunes disappeared
 scopes, dropping local state, generation counters, and abort-on-drop handles;

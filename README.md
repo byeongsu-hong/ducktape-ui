@@ -131,6 +131,10 @@ prop are the only accepted sources.
 Component props may use a closed, pure default such as
 `component Panel(title:str, elevated:bool=false)`; a call omits only props that
 declare defaults, and defaults cannot capture state or other parameters.
+Named slots may be optional (`slot Footer?`); `provided(Footer)` conditionally
+removes wrappers when the caller omits that slot. Long component or widget
+metadata may move into a first-child `with` block with one checked property or
+`@` utility per line.
 Literal `match` arms retain first-match behavior, with `_` as an optional final
 fallback:
 

@@ -31,7 +31,9 @@ pub(in crate::codegen) fn generate_view(
     } else {
         "__ice_root_scope.as_str()".into()
     };
-    let rendered_root = render_node(&document.view, document, message, &env, &root_scope, None)?;
+    let rendered_root =
+        render_node_if_present(&document.view, document, message, &env, &root_scope, None)?
+            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
     let window_arg = if document.daemon {
         ", window: ::iced::window::Id"
     } else {

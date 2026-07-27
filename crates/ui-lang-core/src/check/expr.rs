@@ -49,6 +49,31 @@ pub(crate) fn expr_type(
             Ok(ty)
         }
         Expr::Call { name, args } => {
+            if unqualified_name(name) == "provided" {
+                let [Expr::Path(path)] = args.as_slice() else {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        "provided expects one component slot name",
+                    ));
+                };
+                let [slot] = path.as_slice() else {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        "provided expects one component slot name",
+                    ));
+                };
+                let slot = unqualified_name(slot);
+                if !env.contains_key(&format!("\0slot-provided:{slot}")) {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        format!("component does not declare slot `{slot}`"),
+                    ));
+                }
+                return Ok(Type::Bool);
+            }
             if let Some((enum_name, variant_name)) = name.split_once('.')
                 && let Some((_, variant)) = ui_enum_variant(document, enum_name, variant_name)
             {

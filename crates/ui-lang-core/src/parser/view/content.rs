@@ -532,12 +532,18 @@ pub(in crate::parser) fn parse_slot(
             "slot accepts an optional name and no properties or styles",
         ));
     }
+    let (name, optional) = parts.get(1).map_or_else(
+        || Ok(("children".into(), false)),
+        |name| {
+            let (name, optional) = name
+                .strip_suffix('?')
+                .map_or((name.as_str(), false), |name| (name, true));
+            Ok::<_, Error>((identifier(name, line)?, optional))
+        },
+    )?;
     Ok(ViewNode::Slot {
-        name: parts
-            .get(1)
-            .map(|name| identifier(name, line))
-            .transpose()?
-            .unwrap_or_else(|| "children".into()),
+        name,
+        optional,
         span: Span::line(line.number),
     })
 }

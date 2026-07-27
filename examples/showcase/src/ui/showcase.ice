@@ -270,20 +270,36 @@ test catalog_layout
   expect fields.y > badges.bottom
 
 view
-  overlay when=dialog_open dismiss=close_dialog backdrop=black/45 p=24.0 align-x=center align-y=center
+  overlay
+    with
+      when=dialog_open
+      dismiss=close_dialog
+      backdrop=black/45
+      p=24.0
+      align-x=center
+      align-y=center
     content
       box #app w=fill h=fill bg=bg
         scroll #catalog-scroll dir=vertical w=fill h=fill
           col #page @page
             row w=fill align=center
-              PageHeader title="ducktape-ui" description="Default iced components, composed and checked by Ice."
+              PageHeader
+                with
+                  title="ducktape-ui"
+                  description="Default iced components, composed and checked by Ice."
               space w=fill h=1.0
               Badge label="ui-lang"
 
-            Alert title="Ice is the source of truth" description="Layout, state, routes, styles, and accessibility are generated from .ice files."
+            Alert
+              with
+                title="Ice is the source of truth"
+                description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
             grid #catalog-grid gap=20.0 min-cell=500.0 @w-full
-              Panel title="Buttons" description="Clear defaults with native focus and disabled behavior." #buttons
+              Panel #buttons
+                with
+                  title="Buttons"
+                  description="Clear defaults with native focus and disabled behavior."
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
                     button "Primary" #primary @primary_action -> clicked
@@ -297,7 +313,10 @@ view
                     text clicks size=13.0 @font-bold text-primary
                     Badge.Secondary label="events"
 
-              Panel title="Badges & keyboard" description="Compact status and shortcut primitives." #badges
+              Panel #badges
+                with
+                  title="Badges & keyboard"
+                  description="Compact status and shortcut primitives."
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
                     Badge label="Default"
@@ -312,27 +331,51 @@ view
                     Kbd label="⌘"
                     Kbd label="K"
 
-              Panel title="Fields" description="Labels, help copy, validation, and native editing." #fields
+              Panel #fields
+                with
+                  title="Fields"
+                  description="Labels, help copy, validation, and native editing."
                 col w=fill gap=14.0
                   col w=fill gap=6.0
-                    input "Work email" #work-email description="We only use this address for product updates." <-> email hint="you@example.com" @control
+                    input "Work email" #work-email <-> email
+                      with
+                        description="We only use this address for product updates."
+                        hint="you@example.com"
+                        @control
                     text "We only use this address for product updates." size=12.0 @text-muted
                   Field label="Framework" description="Pick the runtime you want to build on."
-                    pick native_select_frameworks native_select_framework hint="Choose a framework" w=fill -> framework_changed _
+                    pick native_select_frameworks native_select_framework -> framework_changed _
+                      with
+                        hint="Choose a framework"
+                        w=fill
                   if email != ""
                     text email size=12.0 @text-muted
-                    Alert.Success title="Controlled input" description="The value is owned by Ice application state."
+                    Alert.Success
+                      with
+                        title="Controlled input"
+                        description="The value is owned by Ice application state."
                   InputGroup #project-url
                     row w=fill gap=4.0 align=center
                       text "https://ducktape.dev/" size=12.0 @text-muted
-                      input "" #project-slug label="Project slug" <-> project_slug hint="ui-lang" w=fill p=6.0
+                      input "" #project-slug <-> project_slug
+                        with
+                          label="Project slug"
+                          hint="ui-lang"
+                          w=fill
+                          p=6.0
                         active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
                         hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
                         focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
 
               Panel title="Selection" description="Controlled values stay in the Ice state block."
                 col w=fill gap=14.0
-                  checkbox "Accept the component contract" checked=accepted size=16.0 gap=8.0 text-size=14.0 style=checkbox_style() -> accepted_changed _
+                  checkbox "Accept the component contract" -> accepted_changed _
+                    with
+                      checked=accepted
+                      size=16.0
+                      gap=8.0
+                      text-size=14.0
+                      style=checkbox_style()
                   row gap=10.0 align=center
                     extern switch("showcase-notifications", notifications, false) -> notifications_changed _
                     text "Product notifications" size=13.0 @text-fg
@@ -344,14 +387,27 @@ view
                       progress volume length=fill girth=5.0 style=progress_success_style()
                     text volume size=12.0 @text-muted
 
-              Panel title="Composition" description="Slots keep caller state and handlers in their original scope."
+              Panel
+                with
+                  title="Composition"
+                  description="Slots keep caller state and handlers in their original scope."
                 col w=fill gap=12.0
-                  Item title="Default components" description="One visual language across the application." meta="Ready"
+                  Item
+                    with
+                      title="Default components"
+                      description="One visual language across the application."
+                      meta="Ready"
                     Avatar initials="UI"
                   Attachment name="component-contract.ice" meta="4.2 KB · Ice source"
-                  Alert.Warning title="Caller ownership stays explicit" description="Pass slots and events instead of hiding application behavior in a component."
+                  Alert.Warning
+                    with
+                      title="Caller ownership stays explicit"
+                      description="Pass slots and events instead of hiding application behavior in a component."
 
-              Panel title="Foundations" description="The small pieces compose into application-specific surfaces."
+              Panel
+                with
+                  title="Foundations"
+                  description="The small pieces compose into application-specific surfaces."
                 col w=fill gap=14.0
                   Breadcrumb current="Components"
                     row gap=8.0
@@ -365,7 +421,12 @@ view
                         Typography.Caption content="Compound slots keep structure readable."
                     Card.Body
                       Surface
-                        Message author="ducktape-ui" copy="Everything visible here is composed from Ice declarations." initials="UI" outgoing=false
+                        Message
+                          with
+                            author="ducktape-ui"
+                            copy="Everything visible here is composed from Ice declarations."
+                            initials="UI"
+                            outgoing=false
                     Card.Footer
                       row w=fill gap=8.0 align=center
                         Marker label="stable" active=true
@@ -376,16 +437,34 @@ view
                             button "Cancel" @ghost_action -> clicked
                             button "Apply" @primary_action -> clicked
                   Separator
-                  Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
+                  Bubble
+                    with
+                      copy="Incoming and outgoing content keep explicit alignment."
+                      outgoing=false
                   Bubble copy="Caller state still owns the conversation." outgoing=true
 
-              Panel title="Disclosure" description="Reusable components may own instance-scoped UI state."
+              Panel
+                with
+                  title="Disclosure"
+                  description="Reusable components may own instance-scoped UI state."
                 col w=fill
-                  AccordionItem question="Where does state live?" answer="Application state stays with the app. Small interaction state may live inside a reusable Ice component." #state
-                  AccordionItem question="What stays in Rust?" answer="Domain rules, I/O, and advanced native widget escape hatches." #rust
-                  AccordionItem question="Is accessibility optional?" answer="No. Ice emits the semantic tree and keyboard focus contract with the view." #accessibility
+                  AccordionItem #state
+                    with
+                      question="Where does state live?"
+                      answer="Application state stays with the app. Small interaction state may live inside a reusable Ice component."
+                  AccordionItem #rust
+                    with
+                      question="What stays in Rust?"
+                      answer="Domain rules, I/O, and advanced native widget escape hatches."
+                  AccordionItem #accessibility
+                    with
+                      question="Is accessibility optional?"
+                      answer="No. Ice emits the semantic tree and keyboard focus contract with the view."
 
-              Panel title="Stateful primitives" description="Disclosure, toggles, segments, and carousel state stay inside reusable Ice components."
+              Panel
+                with
+                  title="Stateful primitives"
+                  description="Disclosure, toggles, segments, and carousel state stay inside reusable Ice components."
                 col w=fill gap=14.0
                   CollapsibleDemo #collapsible
                   Separator
@@ -403,10 +482,24 @@ view
                 box w=fill
                   PaginationDemo #pagination
 
-              Panel title="Native authoring" description="Search, rich editing, and tooltips use ui-lang primitives directly."
+              Panel
+                with
+                  title="Native authoring"
+                  description="Search, rich editing, and tooltips use ui-lang primitives directly."
                 col w=fill gap=14.0
-                  combo combobox_frameworks searched_framework "Search frameworks" w=fill p=9.0 -> searched_framework_changed _
-                  editor #default-editor <-> textarea_notes hint="Write notes" h=108.0 min-h=80.0 max-h=180.0 size=13.0 p=10.0 wrap=word
+                  combo combobox_frameworks searched_framework "Search frameworks" -> searched_framework_changed _
+                    with
+                      w=fill
+                      p=9.0
+                  editor #default-editor <-> textarea_notes
+                    with
+                      hint="Write notes"
+                      h=108.0
+                      min-h=80.0
+                      max-h=180.0
+                      size=13.0
+                      p=10.0
+                      wrap=word
                     active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
                     hovered border=primary
                     focused border=primary border-w=2.0
@@ -418,11 +511,17 @@ view
                           Kbd label="⌘"
                           Kbd label="K"
 
-              Panel title="Command palette" description="Ice owns query and active state; Rust retains native editing, navigation, and focus."
+              Panel
+                with
+                  title="Command palette"
+                  description="Ice owns query and active state; Rust retains native editing, navigation, and focus."
                 box w=fill
                   extern command(command) -> command_changed _
 
-              Panel title="Advanced selection" description="Grouped options, typeahead, overlay collision, and focus remain controlled through Ice."
+              Panel
+                with
+                  title="Advanced selection"
+                  description="Grouped options, typeahead, overlay collision, and focus remain controlled through Ice."
                 col w=fill gap=12.0
                   extern menubar(menubar) -> menubar_changed _
                   row gap=12.0 align=center
@@ -431,7 +530,10 @@ view
                   extern context_menu(context_menu) -> context_menu_changed _
                   extern hover_card()
 
-              Panel title="Layout & data" description="Aspect ratio, scrolling, and table layout compile from Ice."
+              Panel
+                with
+                  title="Layout & data"
+                  description="Aspect ratio, scrolling, and table layout compile from Ice."
                 col w=fill gap=14.0
                   AspectRatioDemo
                     text "16 / 9" size=20.0 @font-bold text-primary
@@ -447,7 +549,11 @@ view
                     input "Filter components" <-> catalog_query hint="Filter components" @control
                     button "Sort" @outline_action -> catalog_sort_changed
                     text catalog_sort size=11.0 @text-muted
-                  table item in data_table_rows(catalog_query, catalog_sort, catalog_page) w=fill p=8.0 sep-y=1.0
+                  table item in data_table_rows(catalog_query, catalog_sort, catalog_page)
+                    with
+                      w=fill
+                      p=8.0
+                      sep-y=1.0
                     col w=fill align-x=left align-y=center
                       header
                         text "Component" size=12.0 @font-bold text-fg
@@ -459,13 +565,25 @@ view
                       cell
                         text "Ice" size=12.0 @text-primary
                   row w=fill gap=8.0 align=center
-                    button "Previous" disabled=(catalog_page <= 0) @secondary_action -> catalog_previous
+                    button "Previous" -> catalog_previous
+                      with
+                        disabled=(catalog_page <= 0)
+                        @secondary_action
                     text (catalog_page + 1) size=12.0 @text-muted
-                    button "Next" disabled=(!data_table_can_next(catalog_query, catalog_page)) @secondary_action -> catalog_next
+                    button "Next" -> catalog_next
+                      with
+                        disabled=(!data_table_can_next(catalog_query, catalog_page))
+                        @secondary_action
 
-              Panel title="Identity & calendar" description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
+              Panel
+                with
+                  title="Identity & calendar"
+                  description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
                 col w=fill gap=14.0
-                  Field label="Verification code" description="Paste and keyboard editing stay inside one native focus target."
+                  Field
+                    with
+                      label="Verification code"
+                      description="Paste and keyboard editing stay inside one native focus target."
                     extern input_otp("showcase-otp", otp, false, false) -> otp_changed _
                   row w=fill gap=10.0 align=center
                     extern spinner(clicks, false)
@@ -473,29 +591,47 @@ view
                   extern date_picker(date_picker) -> date_picker_changed _
                   extern calendar(calendar) -> calendar_changed _
 
-              Panel title="Chart" description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
+              Panel
+                with
+                  title="Chart"
+                  description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
                 box w=fill
                   extern chart(chart_hover) -> chart_hovered _
 
-              Panel title="Modal contracts" description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
+              Panel
+                with
+                  title="Modal contracts"
+                  description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
                 box w=fill
                   extern alert_dialog(alert_dialog) -> alert_dialog_changed _
 
-              Panel title="Navigation" description="Sidebar collapse and active route remain controlled by Ice."
+              Panel
+                with
+                  title="Navigation"
+                  description="Sidebar collapse and active route remain controlled by Ice."
                 col w=fill gap=16.0
                   extern navigation_menu(navigation_menu) -> navigation_menu_changed _
                   box w=fill h=240.0 clip=true
                     extern sidebar(sidebar) -> sidebar_changed _
 
-              Panel title="Notifications" description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
+              Panel
+                with
+                  title="Notifications"
+                  description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
                 box w=fill h=220.0 clip=true
                   extern sonner(sonner) -> sonner_changed _
 
-              Panel title="Messages" description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
+              Panel
+                with
+                  title="Messages"
+                  description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
                 box w=fill h=220.0 clip=true
                   extern message_scroller(message_scroller) -> message_scroller_changed _
 
-              Panel title="Edge panels" description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
+              Panel
+                with
+                  title="Edge panels"
+                  description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
                 box w=fill h=160.0 clip=true
                   extern drawer(drawer) -> drawer_changed _
 
@@ -503,14 +639,23 @@ view
                 box w=fill
                   SkeletonDemo
 
-              Panel title="Native escape hatches" description="Ice owns composition and state; advanced widgets cross one typed boundary."
+              Panel
+                with
+                  title="Native escape hatches"
+                  description="Ice owns composition and state; advanced widgets cross one typed boundary."
                 col w=fill gap=14.0
                   extern resizable_demo(native_sizes) -> native_resized _
                   extern popover_demo(native_popover) -> native_popover_changed _
 
-              Panel title="Empty state" description="A useful default before application-specific actions."
+              Panel
+                with
+                  title="Empty state"
+                  description="A useful default before application-specific actions."
                 box w=fill
-                  EmptyState title="No components found" description="Try a different filter or create the first component."
+                  EmptyState
+                    with
+                      title="No components found"
+                      description="Try a different filter or create the first component."
 
             row w=fill gap=12.0 align=center
               button "Open dialog" @primary_action -> open_dialog
@@ -525,9 +670,15 @@ view
         Dialog.Header
           col gap=4.0
             text "Default dialog" size=20.0 @font-bold text-fg
-            text "The overlay, dismissal route, and focusable controls are declared in Ice." size=13.0 @text-muted
+            text "The overlay, dismissal route, and focusable controls are declared in Ice."
+              with
+                size=13.0
+                @text-muted
         Dialog.Body
-          Alert title="No Rust view code" description="The proc macro emits ordinary iced code at compile time."
+          Alert
+            with
+              title="No Rust view code"
+              description="The proc macro emits ordinary iced code at compile time."
         Dialog.Actions
           row w=fill gap=8.0 align=end
             space w=fill h=1.0

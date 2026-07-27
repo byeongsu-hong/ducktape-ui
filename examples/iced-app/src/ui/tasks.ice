@@ -85,7 +85,18 @@ view
             text snapshot_scale size=14.0 @text-muted
 
         row gap=12.0 align=center @w-full
-          input "New task" <-> draft hint="What needs doing?" disabled=loading submit=submit w=fill @px-4 py-3 bg-surface border border-border rounded-lg
+          input "New task" <-> draft
+            with
+              hint="What needs doing?"
+              disabled=loading
+              submit=submit
+              w=fill
+              @px-4
+              @py-3
+              @bg-surface
+              @border
+              @border-border
+              @rounded-lg
           button "Add" disabled=!can_submit style=success @px-4 py-3 disabled:opacity-50 -> submit
             active bg=linear(1.57, primary@0.0, surface@1.0) text=white border=primary border-w=1.0 r=8.0 shadow=black/25 shadow-y=2.0 shadow-blur=4.0 px-snap=true
             hovered bg=linear(1.57, surface@0.0, primary@1.0) text=white r=10.0
@@ -95,7 +106,15 @@ view
         if has_error
           row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
             text error size=14.0 @text-white
-            button "Retry" disabled=loading style=danger @px-4 py-2 bg-white text-danger rounded-md -> retry
+            button "Retry" -> retry
+              with
+                disabled=loading
+                style=danger
+                @px-4
+                @py-2
+                @bg-white
+                @text-danger
+                @rounded-md
 
         lazy loading as busy
           col
@@ -133,7 +152,15 @@ view
               box w=fill h=fill p=16.0
                 col gap=12.0
                   text "Drag, resize, or arrange this pane." size=14.0 @text-muted
-                  canvas w=fill h=160.0 cache=detail_mode cache-group=details capture=true cursor=(cursor_state) cursor-outside=true
+                  canvas
+                    with
+                      w=fill
+                      h=160.0
+                      cache=detail_mode
+                      cache-group=details
+                      capture=true
+                      cursor=(cursor_state)
+                      cursor-outside=true
                     state
                       cursor_state = "crosshair"
                       hits = 0
@@ -162,12 +189,25 @@ view
                     svg "examples/iced-app/assets/ice.svg" x=312.0 y=16.0 w=48.0 h=48.0 color=primary opacity=0.9
                   shader status_shader(1.0) w=fill h=32.0 -> shader_hovered _
                   row wrap gap=8.0
-                    radio "Summary" value="summary" selected=(detail_mode == "summary") size=16.0 gap=6.0 text-size=14.0 line-h=1.2 shape=advanced wrap=word font=default -> detail_mode_changed _
+                    radio "Summary" -> detail_mode_changed _
+                      with
+                        value="summary"
+                        selected=(detail_mode == "summary")
+                        size=16.0
+                        gap=6.0
+                        text-size=14.0
+                        line-h=1.2
+                        shape=advanced
+                        wrap=word
+                        font=default
                       active selected bg=linear(1.57, primary@0.0, surface@1.0) dot=fg border=primary border-w=2.0 text=fg
                       active unselected bg=surface dot=primary border=border text=muted
                       hovered selected bg=primary dot=fg border=fg text=fg
                       hovered unselected bg=bg dot=primary border=primary text=fg
-                    radio "Activity" value="activity" selected=(detail_mode == "activity") -> detail_mode_changed _
+                    radio "Activity" -> detail_mode_changed _
+                      with
+                        value="activity"
+                        selected=(detail_mode == "activity")
                     button "Restore" -> restore_workspace
                     button "Swap" -> swap_workspace
                     button "Move left" -> move_details_left

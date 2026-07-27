@@ -567,6 +567,81 @@ view
 }
 
 #[test]
+fn checks_optional_component_slots_and_provided() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Card()
+  col
+    slot Body
+    if provided(Footer)
+      box
+        slot Footer?
+view
+  Card
+    Body:
+      text "Body"
+"#;
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace("provided(Footer)", "provided(Missing)")).unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert!(error.message.contains("does not declare slot `Missing`"));
+
+    let error = analyze(&source.replace("slot Footer?", "slot Footer")).unwrap_err();
+    assert_eq!(error.code, "E124");
+    assert!(error.message.contains("requires slot `Footer`"));
+}
+
+#[test]
+fn checks_multiline_with_metadata() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Panel(title:str)
+  box
+    slot
+view
+  Panel
+    with
+      title="Editor"
+    input "Draft" <-> draft
+      with
+        hint="Write"
+        disabled=false
+        @p-4
+      active border=primary
+"#;
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace(
+        "  Panel\n    with\n      title=\"Editor\"\n    input",
+        "  Panel\n    text \"before metadata\"\n    with\n      title=\"Editor\"\n    input",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E040");
+    assert!(error.message.contains("first metadata child"));
+}
+
+#[test]
 fn checks_compound_component_slots() {
     let source = r#"app Demo
 theme contract AppTheme

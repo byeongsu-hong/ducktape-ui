@@ -779,6 +779,7 @@ pub(in crate::parser) fn parse_handler(header: &str, line: &Line) -> Result<Hand
 
 pub(in crate::parser) fn parse_route(source: &str, line: &Line) -> Result<Route, Error> {
     let source = source.trim();
+    let line = line.origin_for(source);
     if let Some(open) = source.find('(') {
         let close = matching_paren(source, line)?;
         if !source[close + 1..].trim().is_empty() {

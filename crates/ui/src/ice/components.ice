@@ -174,7 +174,17 @@ component Message(author:str, copy:str, initials:str, outgoing:bool)
       Avatar initials=initials
 
 component Kbd(label:str)
-  box #root px=7.0 py=3.0 bg=accent border=border border-w=1.0 r=5.0 shadow=black/10 shadow-y=1.0 shadow-blur=2.0
+  box #root
+    with
+      px=7.0
+      py=3.0
+      bg=accent
+      border=border
+      border-w=1.0
+      r=5.0
+      shadow=black/10
+      shadow-y=1.0
+      shadow-blur=2.0
     text label @meta text-fg
 
 component Separator()
@@ -194,7 +204,17 @@ component Typography.Machine(content:str)
     text content @machine text-fg
 
 component EmptyState(title:str, description:str)
-  box #root w=fill h=fill p=22.0 align-x=center align-y=center bg=muted_bg border=border border-w=1.0 r=11.0
+  box #root
+    with
+      w=fill
+      h=fill
+      p=22.0
+      align-x=center
+      align-y=center
+      bg=muted_bg
+      border=border
+      border-w=1.0
+      r=11.0
     col w=fill align=center gap=7.0
       box w=42.0 h=42.0 align-x=center align-y=center bg=surface border=border border-w=1.0 r=21.0
         text "◇" size=20.0 @text-primary
@@ -230,7 +250,17 @@ component AccordionItem(question:str, answer:str)
         text answer wrap=word @body text-muted
 
 component Toast(title:str, description:str)
-  box #root w=fill max-w=360.0 px=14.0 py=10.0 bg=toast_bg r=10.0 shadow=shadow_toast shadow-y=6.0 shadow-blur=18.0
+  box #root
+    with
+      w=fill
+      max-w=360.0
+      px=14.0
+      py=10.0
+      bg=toast_bg
+      r=10.0
+      shadow=shadow_toast
+      shadow-y=6.0
+      shadow-blur=18.0
     row w=fill gap=9.0 align=center
       box w=6.0 h=6.0 bg=success_dot r=3.0
         space w=1.0 h=1.0
@@ -240,7 +270,18 @@ component Toast(title:str, description:str)
       slot
 
 component Dialog()
-  box #root w=fill max-w=418.0 px=20.0 pt=18.0 pb=20.0 bg=surface r=14.0 shadow=shadow_modal shadow-y=24.0 shadow-blur=60.0
+  box #root
+    with
+      w=fill
+      max-w=418.0
+      px=20.0
+      pt=18.0
+      pb=20.0
+      bg=surface
+      r=14.0
+      shadow=shadow_modal
+      shadow-y=24.0
+      shadow-blur=60.0
     col w=fill gap=18.0
       slot Header
       slot Body

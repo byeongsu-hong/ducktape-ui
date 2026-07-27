@@ -17,6 +17,13 @@ pub(in crate::codegen) fn render_children(
                 ..
             } => {
                 let condition = expr_code(condition, env, document, ValueMode::Owned)?;
+                if condition == "false" {
+                    continue;
+                }
+                if condition == "true" {
+                    render_children(out, children, document, message, env, scope, slot)?;
+                    continue;
+                }
                 write!(out, " if {condition} {{").unwrap();
                 render_children(out, children, document, message, env, scope, slot)?;
                 out.push_str(" }");
@@ -86,8 +93,11 @@ pub(in crate::codegen) fn render_children(
                 out.push_str(" }");
             }
             _ => {
-                let child = render_node(child, document, message, env, scope, slot)?;
-                write!(out, " __children.push({child});").unwrap();
+                if let Some(child) =
+                    render_node_if_present(child, document, message, env, scope, slot)?
+                {
+                    write!(out, " __children.push({child});").unwrap();
+                }
             }
         }
     }

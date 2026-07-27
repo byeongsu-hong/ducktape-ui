@@ -176,6 +176,18 @@ pub(in crate::codegen) fn expr_code(
             code
         }
         Expr::Call { name, args } => {
+            if unqualified_name(name) == "provided" {
+                let [Expr::Path(path)] = args.as_slice() else {
+                    unreachable!("checker validates provided slot names")
+                };
+                let [slot] = path.as_slice() else {
+                    unreachable!("checker validates provided slot names")
+                };
+                let slot = unqualified_name(slot);
+                return Ok(env
+                    .contains_key(&format!("\0slot-provided:{slot}"))
+                    .to_string());
+            }
             if let Some((enum_name, variant_name)) = name.split_once('.')
                 && document.enums.iter().any(|item| {
                     item.name == enum_name

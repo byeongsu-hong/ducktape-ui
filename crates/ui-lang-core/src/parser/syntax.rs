@@ -31,6 +31,8 @@ pub(in crate::parser) fn line_tree(
             number: index + 1,
             indent,
             text: trimmed.into(),
+            original_text: trimmed.into(),
+            metadata: Vec::new(),
             children: Vec::new(),
             namespace: namespaces[index].clone(),
             symbols: std::rc::Rc::clone(&symbols),
@@ -369,5 +371,7 @@ pub(in crate::parser) fn error(
     line: &Line,
     message: impl Into<String>,
 ) -> Error {
+    let message = message.into();
+    let line = line.diagnostic_origin(&message);
     Error::new(code, &Span::line(line.number), message)
 }

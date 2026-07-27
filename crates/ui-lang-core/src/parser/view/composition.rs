@@ -18,6 +18,18 @@ pub(in crate::parser) fn split_style_utilities<'a>(
     )
 }
 
+pub(crate) fn split_style_utilities_for_format(source: &str) -> (&str, Vec<String>) {
+    split_top_marker(source, "@").map_or_else(
+        || (source.trim(), Vec::new()),
+        |(core, styles)| {
+            (
+                core.trim(),
+                styles.split_whitespace().map(str::to_owned).collect(),
+            )
+        },
+    )
+}
+
 pub(in crate::parser) fn parse_component_children(
     component: &str,
     line: &Line,

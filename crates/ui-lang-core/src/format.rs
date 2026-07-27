@@ -1,4 +1,10 @@
+use crate::parser::{
+    split_style_utilities_for_format as split_style_utilities,
+    split_top_marker_for_format as split_top_marker, split_words_for_format as split_words,
+};
 use crate::{Error, parse};
+
+const MAX_INLINE_NODE: usize = 100;
 
 pub fn format_source(source: &str) -> Result<String, Error> {
     parse(source)?;
@@ -33,12 +39,261 @@ pub fn format_fragment(source: &str) -> String {
         output.push_str(text);
         output.push('\n');
     }
+    rewrap_node_metadata(&output)
+}
+
+fn rewrap_node_metadata(source: &str) -> String {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let indent = line.len() - line.trim_start().len();
+        let restricted_context = parent_is_status(&lines, index, indent)
+            || inside_block(&lines, index, indent, "canvas")
+            || (line.split_ascii_whitespace().next() == Some("col")
+                && parent_is(&lines, index, indent, "table"));
+        if lines.get(index + 1).is_some_and(|next| {
+            next.len() - next.trim_start().len() == indent + 2 && next.trim() == "with"
+        }) {
+            let mut end = index + 2;
+            while lines.get(end).is_some_and(|entry| {
+                !entry.trim().is_empty() && entry.len() - entry.trim_start().len() == indent + 4
+            }) {
+                end += 1;
+            }
+            let metadata = lines[index + 2..end]
+                .iter()
+                .map(|entry| entry.trim())
+                .collect::<Vec<_>>();
+            let merged = merge_metadata(line.trim(), &metadata);
+            if !metadata.is_empty()
+                && (indent == 0
+                    || restricted_context
+                    || !wrappable_node(line.trim())
+                    || indent + merged.chars().count() <= MAX_INLINE_NODE)
+            {
+                output.push_str(&" ".repeat(indent));
+                output.push_str(&merged);
+                output.push('\n');
+                index = end;
+                continue;
+            }
+        }
+        if indent > 0
+            && !restricted_context
+            && indent + line.trim().chars().count() > MAX_INLINE_NODE
+            && let Some((parent, metadata)) = split_metadata(line.trim())
+        {
+            output.push_str(&" ".repeat(indent));
+            output.push_str(&parent);
+            output.push('\n');
+            output.push_str(&" ".repeat(indent + 2));
+            output.push_str("with\n");
+            for entry in metadata {
+                output.push_str(&" ".repeat(indent + 4));
+                output.push_str(&entry);
+                output.push('\n');
+            }
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+        index += 1;
+    }
     output
+}
+
+fn merge_metadata(parent: &str, metadata: &[&str]) -> String {
+    let (node, route) = split_top_marker(parent, "->").map_or((parent, None), |(node, route)| {
+        (node.trim(), Some(route.trim()))
+    });
+    let (core, existing) = split_style_utilities(node);
+    let mut merged = core.to_owned();
+    let mut utilities = existing;
+    for entry in metadata {
+        if let Some(styles) = entry.strip_prefix('@') {
+            utilities.extend(
+                styles
+                    .split_ascii_whitespace()
+                    .map(|style| style.trim_start_matches('@').to_owned()),
+            );
+        } else {
+            merged.push(' ');
+            merged.push_str(entry);
+        }
+    }
+    if !utilities.is_empty() {
+        merged.push_str(" @");
+        merged.push_str(&utilities.join(" "));
+    }
+    if let Some(route) = route {
+        merged.push_str(" -> ");
+        merged.push_str(route);
+    }
+    merged
+}
+
+fn split_metadata(source: &str) -> Option<(String, Vec<String>)> {
+    let (node, route) = split_top_marker(source, "->").map_or((source, None), |(node, route)| {
+        (node.trim(), Some(route.trim()))
+    });
+    let (core, utilities) = split_style_utilities(node);
+    let parts = split_words(core);
+    let head = parts.first()?;
+    if !wrappable_node(source) {
+        return None;
+    }
+    let mut inline = vec![head.clone()];
+    let mut metadata = Vec::new();
+    for part in &parts[1..] {
+        if property(part) || bind_prop(part) {
+            metadata.push(part.to_string());
+        } else {
+            inline.push(part.to_string());
+        }
+    }
+    metadata.extend(utilities.into_iter().map(|utility| format!("@{utility}")));
+    if metadata.is_empty() {
+        return None;
+    }
+    let mut parent = inline.join(" ");
+    if let Some(route) = route {
+        parent.push_str(" -> ");
+        parent.push_str(route);
+    }
+    Some((parent, metadata))
+}
+
+fn wrappable_node(source: &str) -> bool {
+    source
+        .split_ascii_whitespace()
+        .next()
+        .is_some_and(|head| head.chars().next().is_some_and(char::is_uppercase) || is_node(head))
+}
+
+fn property(part: &str) -> bool {
+    part.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
+}
+
+fn bind_prop(part: &str) -> bool {
+    part.split_once("<->").is_some_and(|(name, value)| {
+        !name.is_empty()
+            && !value.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    })
+}
+
+fn is_node(name: &str) -> bool {
+    matches!(
+        name,
+        "col"
+            | "row"
+            | "flex"
+            | "scroll"
+            | "grid"
+            | "stack"
+            | "box"
+            | "text"
+            | "input"
+            | "button"
+            | "checkbox"
+            | "toggler"
+            | "slider"
+            | "progress"
+            | "radio"
+            | "pick"
+            | "combo"
+            | "rule"
+            | "qr"
+            | "space"
+            | "float"
+            | "pin"
+            | "sensor"
+            | "responsive"
+            | "image"
+            | "svg"
+            | "viewer"
+            | "tooltip"
+            | "mouse"
+            | "resize-handle"
+            | "canvas"
+            | "theme"
+            | "keyed"
+            | "lazy"
+            | "markdown"
+            | "editor"
+            | "table"
+            | "overlay"
+            | "rich-text"
+    )
+}
+
+fn parent_is_status(lines: &[&str], index: usize, indent: usize) -> bool {
+    lines[..index]
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty() && line.len() - line.trim_start().len() < indent)
+        .and_then(|line| line.split_ascii_whitespace().next())
+        .is_some_and(|name| {
+            matches!(
+                name,
+                "active"
+                    | "hovered"
+                    | "dragged"
+                    | "focused"
+                    | "focused-hovered"
+                    | "pressed"
+                    | "disabled"
+                    | "opened"
+                    | "opened-hovered"
+                    | "selected"
+                    | "rail"
+                    | "scroller"
+                    | "x-rail"
+                    | "x-scroller"
+                    | "y-rail"
+                    | "y-scroller"
+            )
+        })
+}
+
+fn parent_is(lines: &[&str], index: usize, indent: usize, parent: &str) -> bool {
+    lines[..index]
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty() && line.len() - line.trim_start().len() < indent)
+        .is_some_and(|line| line.split_ascii_whitespace().next() == Some(parent))
+}
+
+fn inside_block(lines: &[&str], index: usize, indent: usize, block: &str) -> bool {
+    let mut child_indent = indent;
+    for line in lines[..index].iter().rev() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let line_indent = line.len() - line.trim_start().len();
+        if line_indent >= child_indent {
+            continue;
+        }
+        if line.split_ascii_whitespace().next() == Some(block) {
+            return true;
+        }
+        child_indent = line_indent;
+    }
+    false
 }
 
 #[cfg(test)]
 mod tests {
-    use super::format_source;
+    use super::{format_fragment, format_source};
 
     #[test]
     fn collapses_repeated_blank_lines_and_formats_indentation_idempotently() {
@@ -83,11 +338,31 @@ mod tests {
     }
 
     #[test]
+    fn formats_multiline_with_metadata() {
+        let source = "app Demo\nstate\n    draft = \"\"\nview\n    input \"Draft\" <-> draft\n        with\n            hint=\"Write\"\n            disabled=false\n            @p-4\n        active border=primary\n";
+        let formatted = format_source(source).unwrap();
+        assert_eq!(
+            formatted,
+            "app Demo\nstate\n  draft = \"\"\nview\n  input \"Draft\" <-> draft hint=\"Write\" disabled=false @p-4\n    active border=primary\n"
+        );
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
+    }
+
+    #[test]
     fn formats_derived_values_and_handler_locals() {
         let source = "app Demo\nstate\n    draft = \"\"\nderived\n    normalized = trim(draft)\non submit\n    let title = normalized\n    draft = title\nview\n    text normalized\n";
         assert_eq!(
             format_source(source).unwrap(),
             "app Demo\nstate\n  draft = \"\"\nderived\n  normalized = trim(draft)\non submit\n  let title = normalized\n  draft = title\nview\n  text normalized\n"
+        );
+    }
+
+    #[test]
+    fn expands_long_node_metadata_into_with() {
+        let source = "  Sidebar #sidebar selected_page=selected_page home_favorite=home_favorite roadmap_favorite=roadmap_favorite launch_favorite=launch_favorite\n";
+        assert_eq!(
+            format_fragment(source),
+            "  Sidebar #sidebar\n    with\n      selected_page=selected_page\n      home_favorite=home_favorite\n      roadmap_favorite=roadmap_favorite\n      launch_favorite=launch_favorite\n"
         );
     }
 
@@ -109,5 +384,40 @@ mod tests {
             formatted,
             "app Demo\nextern crate::backend\n  fetch() -> str\ncomponent Search()\n  lifetime mounted\n  on search\n    run replace fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n"
         );
+    }
+
+    #[test]
+    fn keeps_table_columns_and_dragged_scroll_styles_as_leaves() {
+        let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  width_with_an_intentionally_very_long_but_valid_identifier_to_force_formatter_wrapping:f64 = 120.0
+view
+  col
+    scroll
+      col
+        text "Content"
+      dragged y-dragged=true
+        box bg=bg text=fg border=primary border-w=1.0 r=8.0 shadow=black/25 shadow-y=2.0 shadow-blur=4.0 px-snap=true
+    table item in []
+      col w=width_with_an_intentionally_very_long_but_valid_identifier_to_force_formatter_wrapping align-x=center align-y=center
+        header
+          text "Header"
+        cell
+          text "Cell"
+"#;
+        let formatted = format_source(source).unwrap();
+        assert!(formatted.contains("        box bg=bg text=fg border=primary"));
+        assert!(formatted.contains("      col w=width_with_an_intentionally"));
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
     }
 }

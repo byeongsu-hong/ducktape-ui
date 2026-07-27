@@ -83,7 +83,7 @@ pub(in crate::check) fn infer_components_group(
                 }
                 if !declared_slots
                     .iter()
-                    .any(|(declared, _)| *declared == component_slot.name)
+                    .any(|(declared, ..)| *declared == component_slot.name)
                 {
                     return Err(Error::new(
                         "E124",
@@ -107,9 +107,9 @@ pub(in crate::check) fn infer_components_group(
                     &mut child_ids,
                 )?;
             }
-            if let Some((missing, _)) = declared_slots
+            if let Some((missing, _, _)) = declared_slots
                 .iter()
-                .find(|(declared, _)| !supplied.contains(*declared))
+                .find(|(declared, optional, _)| !optional && !supplied.contains(*declared))
             {
                 return Err(Error::new(
                     "E124",

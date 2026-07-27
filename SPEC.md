@@ -613,6 +613,7 @@ node           = layout | text | input | button | checkbox | toggler
                | if_node | match_node | for_node
                | keyed_column | lazy_node | markdown_view | table_view
                | editor_view | box | overlay | rich_text | pane_grid
+node_metadata  = "with" INDENT (property | style_utility)+
 layout         = "col" id? column_property* styles? (INDENT node+)?
                | "row" id? flex_property* styles? (INDENT node+)?
                | "flex" id? css_flex_property* styles? (INDENT node+)?
@@ -3050,7 +3051,7 @@ lifecycle effect; handlers remain the only place that starts work. Components
 without local state or handlers remain compile-time view expansion rather than
 runtime component objects.
 
-A component may declare required slots. Bare `slot` is the conventional
+A component may declare required or optional slots. Bare `slot` is the conventional
 `children` slot and receives one structured child tree at its call site:
 
 ```ice
@@ -3146,15 +3147,47 @@ the parent call. Mixing a `Dialog.Header` child with an unrelated direct child
 is a compile-time error. Explicit `header:` blocks remain useful when the slot
 content should not have its own component styling or behavior.
 
-Every declared slot is required and accepts exactly one root. Wrap sibling
-nodes in `row`, `col`, `grid`, or `stack`. Unknown, missing, and duplicate slot
-names are compile-time errors. A component can forward a named slot through
-another component by placing `slot name` inside the corresponding `name:`
-block.
+Append `?` to a named slot to make it optional. A missing optional slot lowers
+to no child at all. `provided(Name)` is a checked compile-time boolean inside
+the component view, so wrappers can disappear with the slot:
+
+```ice
+if provided(Footer)
+  box pt=12.0
+    slot Footer?
+```
+
+Absence propagates through single-child wrappers until a multi-child layout
+can omit that subtree. An entirely absent app or test root becomes an empty
+column. Forwarding an optional slot preserves its `provided` status.
+
+Every supplied slot accepts exactly one root. Wrap sibling nodes in `row`,
+`col`, `grid`, or `stack`. Unknown, missing required, and duplicate slot names
+are compile-time errors. A component can forward a named slot through another
+component by placing `slot name` inside the corresponding `name:` block.
 
 A component without slots rejects child content. Slot content keeps the
 caller's state, loop bindings, handlers, and IDs while rendering under the
 component instance scope.
+
+Long widget and component metadata can move into a first-child `with` block.
+It accepts only the same checked properties and `@` utilities as the parent;
+actual children, slots, and status blocks remain siblings after it:
+
+```ice
+input "New task" #new-task <-> draft
+  with
+    hint="What needs doing?"
+    disabled=loading
+    w=fill
+    @control
+
+  active bg=surface border=border
+  focused border=primary
+```
+
+Only one `with` block is allowed and it must be the node's first metadata
+child. Formatter indentation preserves each property on its own source line.
 
 Components may expose one typed output. Route that output at every call site;
 inside the component view, `emit` forwards the value:

@@ -25,6 +25,8 @@ fn syntax_boundaries_ignore_escaped_quotes() {
         number: 1,
         indent: 0,
         text: call.clone(),
+        original_text: call.clone(),
+        metadata: Vec::new(),
         children: Vec::new(),
         namespace: None,
         symbols: std::rc::Rc::default(),

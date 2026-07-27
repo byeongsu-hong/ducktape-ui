@@ -18,6 +18,8 @@ struct Line {
     number: usize,
     indent: usize,
     text: String,
+    original_text: String,
+    metadata: Vec<Line>,
     children: Vec<Line>,
     namespace: Option<String>,
     symbols: Rc<RefCell<Vec<ParsedSymbol>>>,
@@ -36,6 +38,31 @@ impl Line {
         }
     }
 
+    fn origin_for(&self, source: &str) -> &Self {
+        if source.is_empty() || self.original_text.contains(source) {
+            self
+        } else {
+            self.metadata
+                .iter()
+                .find(|line| line.text.contains(source))
+                .unwrap_or(self)
+        }
+    }
+
+    fn diagnostic_origin(&self, message: &str) -> &Self {
+        self.metadata
+            .iter()
+            .find(|line| {
+                message.contains(&line.text)
+                    || line
+                        .text
+                        .trim_start_matches('@')
+                        .split_once('=')
+                        .is_some_and(|(name, _)| name.len() > 1 && message.contains(name))
+            })
+            .unwrap_or(self)
+    }
+
     fn record_symbol(&self, kind: SymbolKind, name: &str, definition: bool, source: &str) {
         self.record_scoped_symbol(kind, None, name, definition, source);
     }
@@ -51,35 +78,36 @@ impl Line {
         if !self.track_symbols {
             return;
         }
+        let line = self.origin_for(source);
         let source_name = name.rsplit("::").next().unwrap_or(name);
         let relative = source.find(source_name);
-        let line_start = self.text.as_ptr() as usize;
+        let line_start = line.text.as_ptr() as usize;
         let source_start = source.as_ptr() as usize;
         let direct = (source_start >= line_start
-            && source_start + source.len() <= line_start + self.text.len())
+            && source_start + source.len() <= line_start + line.text.len())
         .then(|| source_start - line_start);
         let used = |offset: usize| {
-            let column = self.indent + self.text[..offset].chars().count() + 1;
-            self.symbols.borrow().iter().any(|symbol| {
+            let column = line.indent + line.text[..offset].chars().count() + 1;
+            line.symbols.borrow().iter().any(|symbol| {
                 symbol
                     .range
                     .as_ref()
-                    .is_some_and(|range| range.line == self.number && range.start_column == column)
+                    .is_some_and(|range| range.line == line.number && range.start_column == column)
             })
         };
         let fallback = relative.and_then(|relative| {
-            let candidates = self
+            let candidates = line
                 .text
                 .match_indices(source)
                 .map(|(offset, _)| offset + relative)
                 .filter(|offset| {
-                    !used(*offset) && !self.text[*offset + source_name.len()..].starts_with('=')
+                    !used(*offset) && !line.text[*offset + source_name.len()..].starts_with('=')
                 })
                 .collect::<Vec<_>>();
             let assigned = candidates
                 .iter()
                 .copied()
-                .filter(|offset| self.text[..*offset].trim_end().ends_with('='))
+                .filter(|offset| line.text[..*offset].trim_end().ends_with('='))
                 .collect::<Vec<_>>();
             match (assigned.as_slice(), candidates.as_slice()) {
                 ([offset], _) | ([], [offset]) => Some(*offset),
@@ -91,10 +119,10 @@ impl Line {
             .filter(|offset| !used(*offset))
             .or(fallback)
             .map(|offset| {
-                let start_column = self.indent + self.text[..offset].chars().count() + 1;
+                let start_column = line.indent + line.text[..offset].chars().count() + 1;
                 SourceRange {
                     path: None,
-                    line: self.number,
+                    line: line.number,
                     start_column,
                     end_column: start_column + source_name.chars().count(),
                 }
@@ -231,6 +259,7 @@ fn parse_extern_call(
     code: &'static str,
     message: impl Into<String>,
 ) -> Result<ExternCall, Error> {
+    let line = line.origin_for(source);
     let (function, args) = parse_signature(source, line).map_err(|_| error(code, line, message))?;
     Ok(ExternCall {
         function,
@@ -825,7 +854,11 @@ use expression::*;
 use settings::*;
 use statement::*;
 use syntax::*;
+pub(crate) use syntax::{
+    split_top_marker as split_top_marker_for_format, split_words as split_words_for_format,
+};
 use testing::*;
+pub(crate) use view::composition::split_style_utilities_for_format;
 use view::*;
 
 #[cfg(test)]

@@ -574,15 +574,23 @@ mod tests {
         assert!(components.contains("text label size=8.0 @badge_label text-brand_fg"));
         assert!(components.contains("bg=success_bg border=success_line"));
         assert!(components.contains("w=30.0 h=30.0 align-x=center align-y=center bg=avatar_bg"));
-        assert!(components.contains("shadow=shadow_toast shadow-y=6.0 shadow-blur=18.0"));
+        assert!(
+            components
+                .contains("      shadow=shadow_toast\n      shadow-y=6.0\n      shadow-blur=18.0")
+        );
         assert_eq!(
             components
                 .matches("box w=6.0 h=6.0 bg=success_dot r=3.0")
                 .count(),
             2
         );
-        assert!(components.contains("shadow=shadow_modal shadow-y=24.0 shadow-blur=60.0"));
-        assert!(components.contains("w=fill h=fill p=22.0 align-x=center align-y=center"));
+        assert!(
+            components
+                .contains("      shadow=shadow_modal\n      shadow-y=24.0\n      shadow-blur=60.0")
+        );
+        assert!(components.contains(
+            "      w=fill\n      h=fill\n      p=22.0\n      align-x=center\n      align-y=center"
+        ));
         assert_eq!(
             components
                 .lines()
