@@ -271,8 +271,9 @@ pub const BRANDS: [Color; 3] = [hex(0xa05a3c), hex(0x3d63b8), hex(0x3f7d54)];
 impl Theme {
     /// Changes the sparse product brand without changing neutral actions or focus.
     pub fn with_brand(mut self, brand: Color) -> Self {
+        let brand = Color { a: 1.0, ..brand };
         let light_foreground = Color::WHITE;
-        let dark_foreground = hex(0x1b1a17);
+        let dark_foreground = Color::BLACK;
         let light_contrast = light_foreground.relative_contrast(brand);
         let dark_contrast = dark_foreground.relative_contrast(brand);
         let light_is_more_legible = light_contrast >= dark_contrast;
@@ -432,10 +433,19 @@ mod tests {
     #[test]
     fn runtime_brand_does_not_recolor_actions_or_focus() {
         for base in [LIGHT, DARK] {
-            for brand in BRANDS {
+            for brand in BRANDS
+                .into_iter()
+                .chain([hex(0x777777), Color::TRANSPARENT])
+            {
                 let alternate = base.with_brand(brand);
-                assert_eq!(alternate.palette.brand, brand);
-                assert!(alternate.palette.brand_foreground.relative_contrast(brand) >= 4.5);
+                assert_eq!(alternate.palette.brand, Color { a: 1.0, ..brand });
+                assert!(
+                    alternate
+                        .palette
+                        .brand_foreground
+                        .relative_contrast(alternate.palette.brand)
+                        >= 4.5
+                );
                 assert_eq!(alternate.palette.primary, base.palette.primary);
                 assert_eq!(alternate.palette.ring, base.palette.ring);
             }

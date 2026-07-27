@@ -19,6 +19,7 @@ test component_sidebar_contract
   target search_input = #sidebar/root/surface/content/music-search
   target selected_home = #sidebar/root/surface/content/home/root/selected-control
   target new_item = #sidebar/root/surface/content/new/root/control
+  target selected_new = #sidebar/root/surface/content/new/root/selected-control
   target mini_player = #sidebar/root/surface/content/mini-player
   target mini_title = #sidebar/root/surface/content/mini-player/mini-title
   target mini_cover = #sidebar/root/surface/content/mini-player/mini-cover/root/image
@@ -45,8 +46,12 @@ test component_sidebar_contract
   expect mini_cover.width ~= 42.0
   expect mini_title.font.family == family.named("Geist")
   expect missing profile
+  dispatch queue
   click new_item
   expect section == "New"
+  expect !queue_open
+  expect missing new_item
+  expect exists selected_new
   dispatch seek(57.0)
   dispatch toggle_playback
   click mini_player
@@ -347,6 +352,7 @@ test component_library_content_contract
   target artists_title = #library/root/content/artists-title/root/title
   target albums_title = #library/root/content/albums-title/root/title
   target songs_title = #library/root/content/songs-title/root/title
+  target library_song = #library/root/content/song(1)/root
   target search_title = #library/root/content/search-title/root/title
   expect root.width ~= 1000.0
   expect content.x ~= root.x
@@ -359,12 +365,14 @@ test component_library_content_contract
   expect exists radio_title
   dispatch navigate("Recently Added")
   expect exists recent_title
+  expect library_song.kind == "button"
   dispatch navigate("Artists")
   expect exists artists_title
   dispatch navigate("Albums")
   expect exists albums_title
   dispatch navigate("Songs")
   expect exists songs_title
+  expect library_song.kind == "button"
   dispatch navigate("Search")
   expect exists search_title
   expect text "Nothing here yet"
@@ -379,6 +387,8 @@ test component_library_status_contract
   expect text "Loading your library"
   expect text "Music is unavailable"
   expect text "Network disconnected"
+  dispatch sign_in
+  expect !signed_in
 
 test minimum_window_layout_contract
   preset test

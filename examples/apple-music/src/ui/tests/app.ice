@@ -69,6 +69,8 @@ test music_interactions
   target lyric_line = #lyrics-panel/root/surface/lines/line(3)/root/inactive
   target lyrics_close = #lyrics-panel/root/surface/header/close
   target queue_close = #queue-panel/root/surface/header/close
+  dispatch search
+  expect section == "Home"
   click search_input
   type "nova"
   expect search_input.value == "nova"
@@ -100,3 +102,6 @@ test music_interactions
   expect current_title == "Soft Weather"
   expect current_artist == "Cloud House"
   expect position ~= 0.0
+  dispatch play("Missing", "Unknown", cover_path(1))
+  dispatch next
+  expect error == "The current song is no longer in the mock catalog."
