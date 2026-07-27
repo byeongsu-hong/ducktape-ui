@@ -59,3 +59,21 @@ focused. Pull requests should describe user-visible behavior, list commands
 run, link relevant issues, and include screenshots for visual example changes.
 Update `SPEC.md`, `README.md`, and `COVERAGE.md` when public syntax, tooling, or
 support claims change.
+
+## Required Agent Delivery Workflow
+
+All repository changes must be made in a dedicated Git worktree on a non-default
+branch. Never edit the primary checkout or commit directly to `main`/`master`.
+Reuse a task worktree only when the new change belongs to the same review scope;
+otherwise create a new worktree and branch.
+
+For every completed change, run the relevant local checks, commit the focused
+diff, push the branch, and open a pull request. Review the complete PR diff and
+available CI/review results before merging; resolve every actionable finding and
+rerun affected checks.
+
+Merge without asking again only when confidence is high: the scope is fully
+understood, the diff is focused, required checks are green, no review findings
+remain unresolved, and the merge target and strategy are unambiguous. Otherwise
+leave the PR open and report the exact uncertainty or approval needed. Never
+bypass branch protection, required review, or failing checks.
