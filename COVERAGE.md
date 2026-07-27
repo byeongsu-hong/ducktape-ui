@@ -51,7 +51,7 @@ Component contracts in 1.64 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values
 cannot be defaulted.
-Required props may follow defaulted props because component calls are named.
+Required props must precede defaulted props.
 Parser, checker, formatter, and codegen tests cover omission, override, type and
 capture errors, and mutable-value rejection.
 

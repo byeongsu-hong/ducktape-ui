@@ -98,8 +98,10 @@ fn check(document: &mut Document) -> Result<(), Error> {
         }
     }
     for component in &document.components {
+        let mut saw_default = false;
         for param in &component.params {
             if let Some(default) = &param.default {
+                saw_default = true;
                 if param.bind {
                     return Err(Error::new(
                         "E103",
@@ -130,6 +132,15 @@ fn check(document: &mut Document) -> Result<(), Error> {
                 }
                 let actual = expr_type(default, &HashMap::new(), document, &component.span)?;
                 require_type(&actual, &param.ty, &component.span)?;
+            } else if saw_default {
+                return Err(Error::new(
+                    "E103",
+                    &component.span,
+                    format!(
+                        "required prop `{}` cannot follow a prop with a default",
+                        param.name
+                    ),
+                ));
             }
         }
         for state in &component.states {

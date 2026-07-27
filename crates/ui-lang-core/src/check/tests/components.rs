@@ -287,7 +287,7 @@ theme
   danger #ff0000
 state
   app_title = "Captured"
-component Panel(description:str="", elevated:bool=false, title:str)
+component Panel(title:str, description:str="", elevated:bool=false)
   col
     text title
     text description
@@ -342,6 +342,18 @@ view
         error
             .message
             .contains("bind prop `title` cannot declare a default")
+    );
+
+    let error = analyze(&source.replace(
+        "title:str, description:str=\"\"",
+        "description:str=\"\", title:str",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(
+        error
+            .message
+            .contains("required prop `title` cannot follow")
     );
 }
 

@@ -2901,8 +2901,7 @@ lifecycle hooks, and implicit prop capture stay at app level. Pass a prop or
 event value explicitly through the route when a local handler needs it.
 
 A prop may declare a default after its type. Calls may omit that named prop;
-required props may appear before or after defaulted props because calls are
-named:
+required props must precede defaulted props:
 
 ```ice
 component Panel(title:str, description:str="", elevated:bool=false)
