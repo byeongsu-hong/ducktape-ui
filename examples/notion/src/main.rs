@@ -76,9 +76,12 @@ mod tests {
         screen
             .find("Product strategy")
             .expect("editable page title");
-        screen
-            .find("Can we link the customer research notes here?")
-            .expect("inline comment thread");
+        assert!(
+            screen
+                .find("Can we link the customer research notes here?")
+                .is_err(),
+            "comments stay out of the writing surface until opened"
+        );
         assert!(screen.find("BLOCKS").is_err(), "editor chrome stays hidden");
 
         let snapshot = screen.snapshot(&app.__theme()).expect("render snapshot");
@@ -99,9 +102,11 @@ mod tests {
         }
         assert_eq!(app.selected_page, "launch");
 
-        let mut screen =
-            iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
-        screen.find("Finalize announcement").expect("launch block");
+        assert!(
+            app.launch_document
+                .markdown()
+                .contains("Finalize announcement")
+        );
     }
 
     #[test]
@@ -161,7 +166,7 @@ mod tests {
 
         let mut screen =
             iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
-        screen.click("↑").expect("send reply");
+        screen.click("Send").expect("send reply");
         for message in screen.into_messages() {
             let _ = app.__update(message);
         }
