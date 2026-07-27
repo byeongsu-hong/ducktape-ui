@@ -4,8 +4,12 @@ extern crate::mock_api
   Session(name:str)
   ApiError(message:str)
   sync cover_path(id:i64) -> str
+  sync playback_elapsed(progress:f64) -> str
+  sync playback_remaining(progress:f64) -> str
+  sync remember_volume(volume:f64, previous:f64) -> f64
+  sync toggle_mute(volume:f64, unmuted_volume:f64) -> f64
   load_home() -> HomeFeed ! ApiError
   authenticate() -> Session ! ApiError
   search_catalog(query:str) -> [Album] ! ApiError
   adjacent_track(current_title:str, step:i64) -> Album ! ApiError
-  shader liquid_glass(blur:f64, refraction:f64, tint:f64) -> unit
+  shader liquid_glass(layer:i64, blur:f64, refraction:f64, tint:f64, radius:f64) -> unit
