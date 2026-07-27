@@ -154,8 +154,18 @@ contract.
 ```bash
 cargo run -p iced-app
 cargo run -p apple-music-example
+cargo run -p notion-example
 cargo run -p showcase
 ```
+
+`notion-example` starts as a Markdown-first editor: one native document
+buffer with CommonMark and GFM source, document-wide selection and IME,
+formatting shortcuts, undo/redo, slash-inserted blocks, rich preview, and
+source-preserving block movement. Its page shell, comments, and workspace
+navigation demonstrate the later transition from a focused Markdown editor
+into a Notion-like product without interrupting the writing surface.
+
+![Markdown-first editor](examples/notion/screenshots/markdown-editor-human-tiny-skia.png)
 
 `apple-music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,

@@ -23,11 +23,12 @@ extern crate::editor
   BlockEditorEvent()
   sync block_editor_state(template:str) -> BlockEditorState
   sync block_editor_apply(state:BlockEditorState, event:BlockEditorEvent) -> BlockEditorState
-  sync block_editor_pending_focus(state:BlockEditorState) -> i64
+  sync block_editor_should_focus(state:BlockEditorState) -> bool
+  sync block_editor_should_focus_search(state:BlockEditorState) -> bool
   sync block_editor_clear_focus(state:BlockEditorState) -> BlockEditorState
   sync block_editor_toggle_comments(state:BlockEditorState) -> BlockEditorState
   sync block_editor_comments_open(state:BlockEditorState) -> bool
-  task block_editor_focus(block:i64) -> bool
+  task block_editor_focus(search:bool) -> bool
   component block_editor(state:&BlockEditorState) -> BlockEditorEvent
 
 theme
@@ -61,7 +62,8 @@ state
   invited_email = ""
   invited_access = ""
   link_copied = false
-  pending_focus = 0
+  pending_editor_focus = false
+  pending_editor_search_focus = false
   home_title = "Product strategy"
   roadmap_title = "Product roadmap"
   launch_title = "Launch plan"
@@ -90,7 +92,8 @@ preset test
     invited_email = ""
     invited_access = ""
     link_copied = false
-    pending_focus = 0
+    pending_editor_focus = false
+    pending_editor_search_focus = false
     home_title = "Product strategy"
     roadmap_title = "Product roadmap"
     launch_title = "Launch plan"
@@ -175,41 +178,47 @@ on copy_link(link)
 
 on home_editor_changed(event)
   home_document = block_editor_apply(home_document, event)
-  pending_focus = block_editor_pending_focus(home_document)
+  pending_editor_focus = block_editor_should_focus(home_document)
+  pending_editor_search_focus = block_editor_should_focus_search(home_document)
   home_document = block_editor_clear_focus(home_document)
-  return if pending_focus <= 0
-  task block_editor_focus(pending_focus) -> editor_focused _
+  return if !pending_editor_focus
+  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
 
 on roadmap_editor_changed(event)
   roadmap_document = block_editor_apply(roadmap_document, event)
-  pending_focus = block_editor_pending_focus(roadmap_document)
+  pending_editor_focus = block_editor_should_focus(roadmap_document)
+  pending_editor_search_focus = block_editor_should_focus_search(roadmap_document)
   roadmap_document = block_editor_clear_focus(roadmap_document)
-  return if pending_focus <= 0
-  task block_editor_focus(pending_focus) -> editor_focused _
+  return if !pending_editor_focus
+  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
 
 on launch_editor_changed(event)
   launch_document = block_editor_apply(launch_document, event)
-  pending_focus = block_editor_pending_focus(launch_document)
+  pending_editor_focus = block_editor_should_focus(launch_document)
+  pending_editor_search_focus = block_editor_should_focus_search(launch_document)
   launch_document = block_editor_clear_focus(launch_document)
-  return if pending_focus <= 0
-  task block_editor_focus(pending_focus) -> editor_focused _
+  return if !pending_editor_focus
+  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
 
 on meeting_editor_changed(event)
   meeting_document = block_editor_apply(meeting_document, event)
-  pending_focus = block_editor_pending_focus(meeting_document)
+  pending_editor_focus = block_editor_should_focus(meeting_document)
+  pending_editor_search_focus = block_editor_should_focus_search(meeting_document)
   meeting_document = block_editor_clear_focus(meeting_document)
-  return if pending_focus <= 0
-  task block_editor_focus(pending_focus) -> editor_focused _
+  return if !pending_editor_focus
+  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
 
 on untitled_editor_changed(event)
   untitled_document = block_editor_apply(untitled_document, event)
-  pending_focus = block_editor_pending_focus(untitled_document)
+  pending_editor_focus = block_editor_should_focus(untitled_document)
+  pending_editor_search_focus = block_editor_should_focus_search(untitled_document)
   untitled_document = block_editor_clear_focus(untitled_document)
-  return if pending_focus <= 0
-  task block_editor_focus(pending_focus) -> editor_focused _
+  return if !pending_editor_focus
+  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
 
 on editor_focused(_focused)
-  pending_focus = 0
+  pending_editor_focus = false
+  pending_editor_search_focus = false
 
 component PageItem(icon:str, title:str, page:str, selected:bool)
   col #root w=fill
@@ -467,7 +476,7 @@ test document_component
   expect title.font.family == family.named("Inter")
   expect title.font.weight == weight.bold()
   expect editor.visible
-  expect text "Build a calmer place to work." within editor
+  expect text "Write" within editor
   expect no text "BLOCKS" within editor
   expect no text "threads ·" within editor
   click title
@@ -562,11 +571,11 @@ test app_flow
   dispatch close_share
   click launch
   expect selected_page == "launch"
-  expect text "Finalize announcement"
+  expect text "Write"
   click new_page
   expect selected_page == "untitled"
   expect untitled_title == "Untitled"
-  expect text "Type '/' for commands"
+  expect text "Write"
 
 test minimum_window_layout
   preset test

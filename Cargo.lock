@@ -2518,6 +2518,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_test",
+ "pulldown-cmark",
  "ui-lang",
  "ui-lang-runtime",
 ]
