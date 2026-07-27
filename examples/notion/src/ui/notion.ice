@@ -1,8 +1,8 @@
 app Notion
   title "Notion"
   id "dev.ducktape.ice.notion"
-  font "../../../showcase/assets/fonts/Geist-Regular.ttf"
-  font "../../../showcase/assets/fonts/Geist-Bold.ttf"
+  font "../../assets/fonts/Inter-Regular.ttf"
+  font "../../assets/fonts/Inter-Bold.ttf"
   text-size 14
   antialiasing true
   window
@@ -10,7 +10,8 @@ app Notion
     min-size 860 600
     position centered
 
-font geist family="Geist" default=true
+font inter family="Inter" default=true
+font inter_bold family="Inter" weight=bold
 
 extern crate::helpers
   sync page_matches(query:str, title:str) -> bool
@@ -301,7 +302,7 @@ component Document(title:str, state:BlockEditorState, icon:str) -> BlockEditorEv
     col w=fill h=fill max-w=920.0 pt=26.0
       text icon #icon size=42.0 @text-fg
       box w=fill px=30.0
-        input "" #title label="Page title" <-> title hint="Untitled" w=fill p=0.0 text-size=36.0 font=geist
+        input "" #title label="Page title" <-> title hint="Untitled" w=fill p=0.0 text-size=36.0 font=inter_bold
           active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0 r=0.0
           hovered bg=transparent border=transparent value=fg placeholder=faint border-w=0.0
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
@@ -463,7 +464,8 @@ test document_component
   target editor = #document/root/editor
   expect root.width ~= 960.0
   expect title.value == "Product strategy"
-  expect title.font.family == family.named("Geist")
+  expect title.font.family == family.named("Inter")
+  expect title.font.weight == weight.bold()
   expect editor.visible
   expect text "Build a calmer place to work." within editor
   expect no text "BLOCKS" within editor

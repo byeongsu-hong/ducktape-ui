@@ -1,12 +1,30 @@
+use iced::advanced::Renderer as _;
+use iced::advanced::text::{Paragraph, Renderer as TextRenderer, Span};
+use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, clipboard, layout, overlay, renderer};
 use iced::widget::{
     Column, Stack, button, column, container, keyed_column, mouse_area, pin, responsive, row,
     scrollable, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Length, Shadow, Task, Theme, Vector, mouse};
+use iced::{
+    Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Shadow, Size, Task,
+    Theme, Vector, font, keyboard, mouse,
+};
+use std::ops::Range;
+use std::rc::Rc;
 use ui_lang_runtime::{Role, StableId, accessible, resize_handle};
 
 const CARD_WIDTH: f32 = 292.0;
 const BLOCK_DRAG_STEP: f32 = 34.0;
+const FOCUS_POSITION_STRIDE: u64 = 1_000_000;
+const INTER: Font = Font {
+    family: font::Family::Name("Inter"),
+    ..Font::DEFAULT
+};
+const INTER_BOLD: Font = Font {
+    weight: font::Weight::Bold,
+    ..INTER
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
@@ -55,6 +73,13 @@ impl BlockKind {
             _ => Self::Paragraph,
         }
     }
+
+    fn font(self) -> Font {
+        match self {
+            Self::HeadingOne | Self::HeadingTwo => INTER_BOLD,
+            _ => INTER,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +105,41 @@ struct CommentThread {
     resolved: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectionPoint {
+    block_id: u64,
+    offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CrossBlockSelection {
+    anchor: SelectionPoint,
+    focus: SelectionPoint,
+    dragging: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FocusRequest {
+    block_id: u64,
+    position: Option<usize>,
+}
+
+impl FocusRequest {
+    fn end(block_id: u64) -> Self {
+        Self {
+            block_id,
+            position: None,
+        }
+    }
+
+    fn at(block_id: u64, position: usize) -> Self {
+        Self {
+            block_id,
+            position: Some(position),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BlockEditorState {
     blocks: Vec<Block>,
@@ -89,7 +149,9 @@ pub struct BlockEditorState {
     hovered_block: Option<u64>,
     dragged_block: Option<u64>,
     block_drag_y: f32,
-    focus_request: Option<u64>,
+    focus_request: Option<FocusRequest>,
+    selection: Option<CrossBlockSelection>,
+    slash_selected: usize,
     page_hovered: bool,
     menu_for: Option<u64>,
     composer_for: Option<u64>,
@@ -128,6 +190,14 @@ pub enum BlockEditorEvent {
     ToggleComments,
     ToggleResolved,
     Scrolled(f32),
+    SelectionStarted(u64, usize),
+    SelectionExtended(u64, usize),
+    SelectionFinished,
+    SelectAll,
+    DeleteSelection,
+    ReplaceSelection(String),
+    SlashMoved(u64, i8),
+    DismissSlash(u64),
 }
 
 pub fn block_editor_state(template: String) -> BlockEditorState {
@@ -232,6 +302,8 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
         dragged_block: None,
         block_drag_y: 0.0,
         focus_request: None,
+        selection: None,
+        slash_selected: 0,
         page_hovered: false,
         menu_for: None,
         composer_for: None,
@@ -253,7 +325,11 @@ pub fn block_editor_apply(state: BlockEditorState, event: BlockEditorEvent) -> B
 }
 
 pub fn block_editor_pending_focus(state: BlockEditorState) -> i64 {
-    state.focus_request.map_or(0, |id| id as i64)
+    state.focus_request.map_or(0, |request| {
+        request.position.map_or(request.block_id, |position| {
+            request.block_id * FOCUS_POSITION_STRIDE + position as u64 + 1
+        }) as i64
+    })
 }
 
 pub fn block_editor_clear_focus(mut state: BlockEditorState) -> BlockEditorState {
@@ -274,42 +350,58 @@ pub fn block_editor_focus(block: i64) -> Task<bool> {
     let Ok(block) = u64::try_from(block) else {
         return Task::done(false);
     };
-    iced::widget::operation::focus(block_widget_id(block)).chain(Task::done(true))
+    let (block, position) = if block >= FOCUS_POSITION_STRIDE {
+        (
+            block / FOCUS_POSITION_STRIDE,
+            Some((block % FOCUS_POSITION_STRIDE).saturating_sub(1) as usize),
+        )
+    } else {
+        (block, None)
+    };
+    let id = block_widget_id(block);
+    let task = iced::widget::operation::focus(id.clone());
+    if let Some(position) = position {
+        task.chain(iced::widget::operation::move_cursor_to(id, position))
+            .chain(Task::done(true))
+    } else {
+        task.chain(Task::done(true))
+    }
 }
 
-fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorState, Option<u64>) {
+fn reduce(
+    mut state: BlockEditorState,
+    event: BlockEditorEvent,
+) -> (BlockEditorState, Option<FocusRequest>) {
     let mut focus = None;
     match event {
         BlockEditorEvent::Edit(id, value) => {
             if let Some(block) = state.block_mut(id) {
                 block.text = value;
             }
+            state.selection = None;
+            state.slash_selected = 0;
         }
         BlockEditorEvent::Hover(block) => state.hovered_block = block,
         BlockEditorEvent::AddAfter(id, kind) => {
             let id = state.insert_after(id, kind, "");
-            focus = Some(id);
+            focus = Some(FocusRequest::end(id));
+            state.selection = None;
         }
         BlockEditorEvent::Delete(id) => {
-            if state.blocks.len() > 1
-                && let Some(index) = state.index_of(id)
-            {
-                state.blocks.remove(index);
-                state.threads.retain(|thread| thread.block_id != id);
-                state.menu_for = None;
-                let next = index.saturating_sub(1).min(state.blocks.len() - 1);
-                focus = Some(state.blocks[next].id);
-            }
+            focus = state.remove_block(id).map(FocusRequest::end);
+            state.selection = None;
         }
         BlockEditorEvent::SetKind(id, kind) => {
             if let Some(block) = state.block_mut(id) {
                 block.kind = kind;
-                if block.text == "/" {
+                if block.text.starts_with('/') {
                     block.text.clear();
                 }
             }
             state.menu_for = None;
-            focus = Some(id);
+            state.selection = None;
+            state.slash_selected = 0;
+            focus = Some(FocusRequest::end(id));
         }
         BlockEditorEvent::ToggleTodo(id) => {
             if let Some(block) = state.block_mut(id) {
@@ -321,7 +413,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 && index > 0
             {
                 state.blocks.swap(index, index - 1);
-                focus = Some(id);
+                focus = Some(FocusRequest::end(id));
             }
         }
         BlockEditorEvent::MoveDown(id) => {
@@ -329,7 +421,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 && index + 1 < state.blocks.len()
             {
                 state.blocks.swap(index, index + 1);
-                focus = Some(id);
+                focus = Some(FocusRequest::end(id));
             }
         }
         BlockEditorEvent::BlockDragStarted(id) => {
@@ -415,7 +507,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 state.replying_to = None;
             }
         }
-        BlockEditorEvent::JumpToBlock(id) => focus = Some(id),
+        BlockEditorEvent::JumpToBlock(id) => focus = Some(FocusRequest::end(id)),
         BlockEditorEvent::Resolve(id) => {
             if let Some(thread) = state.thread_mut(id) {
                 thread.resolved = true;
@@ -429,6 +521,71 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
         BlockEditorEvent::ToggleComments => state.comments_open = !state.comments_open,
         BlockEditorEvent::ToggleResolved => state.show_resolved = !state.show_resolved,
         BlockEditorEvent::Scrolled(y) => state.scroll_y = y,
+        BlockEditorEvent::SelectionStarted(block_id, offset) => {
+            let point = SelectionPoint { block_id, offset };
+            state.selection = Some(CrossBlockSelection {
+                anchor: point,
+                focus: point,
+                dragging: true,
+            });
+        }
+        BlockEditorEvent::SelectionExtended(block_id, offset) => {
+            if let Some(selection) = &mut state.selection
+                && selection.dragging
+            {
+                selection.focus = SelectionPoint { block_id, offset };
+            }
+        }
+        BlockEditorEvent::SelectionFinished => {
+            if let Some(selection) = &mut state.selection {
+                selection.dragging = false;
+                if selection.anchor.block_id == selection.focus.block_id {
+                    state.selection = None;
+                }
+            }
+        }
+        BlockEditorEvent::SelectAll => {
+            if let (Some(first), Some(last)) = (state.blocks.first(), state.blocks.last()) {
+                state.selection = Some(CrossBlockSelection {
+                    anchor: SelectionPoint {
+                        block_id: first.id,
+                        offset: 0,
+                    },
+                    focus: SelectionPoint {
+                        block_id: last.id,
+                        offset: iced::widget::text_input::Value::new(&last.text).len(),
+                    },
+                    dragging: false,
+                });
+            }
+        }
+        BlockEditorEvent::DeleteSelection => {
+            focus = state.replace_selection("");
+        }
+        BlockEditorEvent::ReplaceSelection(value) => {
+            focus = state.replace_selection(&value);
+        }
+        BlockEditorEvent::SlashMoved(id, delta) => {
+            if let Some(block) = state.blocks.iter().find(|block| block.id == id) {
+                let count = slash_commands(&block.text).count();
+                if count > 0 {
+                    state.slash_selected = if delta.is_negative() {
+                        state.slash_selected.checked_sub(1).unwrap_or(count - 1)
+                    } else {
+                        (state.slash_selected + 1) % count
+                    };
+                }
+            }
+        }
+        BlockEditorEvent::DismissSlash(id) => {
+            if let Some(block) = state.block_mut(id)
+                && block.text.starts_with('/')
+            {
+                block.text.clear();
+            }
+            state.slash_selected = 0;
+            focus = Some(FocusRequest::end(id));
+        }
     }
 
     (state, focus)
@@ -463,6 +620,120 @@ impl BlockEditorState {
             },
         );
         id
+    }
+
+    fn remove_block(&mut self, id: u64) -> Option<u64> {
+        if self.blocks.len() <= 1 {
+            return None;
+        }
+        let index = self.index_of(id)?;
+        self.blocks.remove(index);
+        self.threads.retain(|thread| thread.block_id != id);
+        self.menu_for = None;
+        let next = index.saturating_sub(1).min(self.blocks.len() - 1);
+        Some(self.blocks[next].id)
+    }
+
+    fn ordered_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let selection = self.selection?;
+        let anchor_index = self.index_of(selection.anchor.block_id)?;
+        let focus_index = self.index_of(selection.focus.block_id)?;
+        let anchor = (
+            anchor_index,
+            selection
+                .anchor
+                .offset
+                .min(iced::widget::text_input::Value::new(&self.blocks[anchor_index].text).len()),
+        );
+        let focus = (
+            focus_index,
+            selection
+                .focus
+                .offset
+                .min(iced::widget::text_input::Value::new(&self.blocks[focus_index].text).len()),
+        );
+        Some(if anchor <= focus {
+            (anchor, focus)
+        } else {
+            (focus, anchor)
+        })
+    }
+
+    fn selection_range(&self, id: u64) -> Option<Range<usize>> {
+        let ((start_index, start), (end_index, end)) = self.ordered_selection()?;
+        let index = self.index_of(id)?;
+        if !(start_index..=end_index).contains(&index) {
+            return None;
+        }
+        let length = iced::widget::text_input::Value::new(&self.blocks[index].text).len();
+        Some(match (index == start_index, index == end_index) {
+            (true, true) => start..end,
+            (true, false) => start..length,
+            (false, true) => 0..end,
+            (false, false) => 0..length,
+        })
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        let ((start_index, start), (end_index, end)) = self.ordered_selection()?;
+        let mut selected = String::new();
+        for index in start_index..=end_index {
+            if index > start_index {
+                selected.push('\n');
+            }
+            let value = iced::widget::text_input::Value::new(&self.blocks[index].text);
+            let from = if index == start_index { start } else { 0 };
+            let to = if index == end_index { end } else { value.len() };
+            selected.push_str(&value.select(from, to).to_string());
+        }
+        Some(selected)
+    }
+
+    fn replace_selection(&mut self, replacement: &str) -> Option<FocusRequest> {
+        let ((start_index, start), (end_index, end)) = self.ordered_selection()?;
+        let first_id = self.blocks[start_index].id;
+        let first = iced::widget::text_input::Value::new(&self.blocks[start_index].text);
+        let last = iced::widget::text_input::Value::new(&self.blocks[end_index].text);
+        let prefix = first.until(start).to_string();
+        let suffix = last.select(end, last.len()).to_string();
+        let removed = if start_index < end_index {
+            self.blocks[start_index + 1..=end_index]
+                .iter()
+                .map(|block| block.id)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if start_index < end_index {
+            self.blocks.drain(start_index + 1..=end_index);
+        }
+        self.threads
+            .retain(|thread| !removed.contains(&thread.block_id));
+
+        let lines = replacement.split('\n').collect::<Vec<_>>();
+        self.blocks[start_index].text = format!("{prefix}{}", lines[0]);
+        let mut focus_id = first_id;
+        let mut focus_position = iced::widget::text_input::Value::new(&prefix).len()
+            + iced::widget::text_input::Value::new(lines[0]).len();
+
+        if lines.len() == 1 {
+            self.blocks[start_index].text.push_str(&suffix);
+        } else {
+            let mut after = first_id;
+            for (index, line) in lines.iter().enumerate().skip(1) {
+                let mut value = (*line).to_owned();
+                if index + 1 == lines.len() {
+                    focus_position = iced::widget::text_input::Value::new(line).len();
+                    value.push_str(&suffix);
+                }
+                let id = self.insert_after(after, BlockKind::Paragraph, &value);
+                after = id;
+                focus_id = id;
+            }
+        }
+
+        self.selection = None;
+        Some(FocusRequest::at(focus_id, focus_position))
     }
 
     fn block_y(&self, id: u64) -> f32 {
@@ -610,11 +881,12 @@ fn document(
     state: &BlockEditorState,
     reserve_comment_margin: bool,
 ) -> Element<'_, BlockEditorEvent> {
+    let selected_text = state.selected_text().map(Rc::<str>::from);
     let blocks = keyed_column(
         state
             .blocks
             .iter()
-            .map(|block| (block.id, block_view(state, block))),
+            .map(|block| (block.id, block_view(state, block, selected_text.clone()))),
     )
     .width(Length::Fill);
 
@@ -667,7 +939,11 @@ fn document(
         .into()
 }
 
-fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, BlockEditorEvent> {
+fn block_view<'a>(
+    state: &'a BlockEditorState,
+    block: &'a Block,
+    selected_text: Option<Rc<str>>,
+) -> Element<'a, BlockEditorEvent> {
     let id = block.id;
     let hovered = state.hovered_block == Some(id);
     let grip = resize_handle(
@@ -717,8 +993,23 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
             .on_submit(BlockEditorEvent::AddAfter(id, block.kind.after_enter()))
             .padding([5, 6])
             .size(block.kind.text_size())
+            .font(block.kind.font())
             .width(Length::Fill)
             .style(block_input_style);
+        let slash_choice = slash_commands(&block.text)
+            .nth(state.slash_selected)
+            .map(|command| command.kind);
+        let input = CrossBlockInput {
+            content: input,
+            block_id: id,
+            value: &block.text,
+            font: block.kind.font(),
+            size: block.kind.text_size(),
+            selection: state.selection_range(id),
+            selected_text,
+            selection_dragging: state.selection.is_some_and(|selection| selection.dragging),
+            slash_choice,
+        };
         let input = semantic_text_input(
             input,
             format!("notion-block-{id}-input"),
@@ -785,8 +1076,8 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
     ]
     .width(Length::Fill);
 
-    if block.text == "/" {
-        block_column = block_column.push(kind_menu(id));
+    if block.text.starts_with('/') {
+        block_column = block_column.push(kind_menu(id, &block.text, state.slash_selected));
     }
     if state.menu_for == Some(id) {
         block_column = block_column.push(block_menu(id));
@@ -805,35 +1096,159 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
     .into()
 }
 
-fn kind_menu(id: u64) -> Element<'static, BlockEditorEvent> {
+#[derive(Clone, Copy)]
+struct SlashCommand {
+    icon: &'static str,
+    label: &'static str,
+    description: &'static str,
+    keywords: &'static str,
+    kind: BlockKind,
+}
+
+const SLASH_COMMANDS: [SlashCommand; 7] = [
+    SlashCommand {
+        icon: "T",
+        label: "Text",
+        description: "Plain body text",
+        keywords: "paragraph body",
+        kind: BlockKind::Paragraph,
+    },
+    SlashCommand {
+        icon: "H1",
+        label: "Heading 1",
+        description: "Large section heading",
+        keywords: "title heading one",
+        kind: BlockKind::HeadingOne,
+    },
+    SlashCommand {
+        icon: "H2",
+        label: "Heading 2",
+        description: "Medium section heading",
+        keywords: "subtitle heading two",
+        kind: BlockKind::HeadingTwo,
+    },
+    SlashCommand {
+        icon: "☐",
+        label: "To-do",
+        description: "Track an actionable item",
+        keywords: "todo task checkbox",
+        kind: BlockKind::Todo,
+    },
+    SlashCommand {
+        icon: "•",
+        label: "Bulleted list",
+        description: "Create a simple list",
+        keywords: "bullet list unordered",
+        kind: BlockKind::Bullet,
+    },
+    SlashCommand {
+        icon: "❝",
+        label: "Quote",
+        description: "Capture a quotation",
+        keywords: "quote callout citation",
+        kind: BlockKind::Quote,
+    },
+    SlashCommand {
+        icon: "—",
+        label: "Divider",
+        description: "Separate sections visually",
+        keywords: "divider rule separator line",
+        kind: BlockKind::Divider,
+    },
+];
+
+fn slash_commands(text: &str) -> impl Iterator<Item = &'static SlashCommand> + '_ {
+    let query = text.strip_prefix('/').unwrap_or(text).trim().to_lowercase();
+    SLASH_COMMANDS.iter().filter(move |command| {
+        query.is_empty()
+            || command.label.to_lowercase().contains(&query)
+            || command.keywords.contains(&query)
+    })
+}
+
+fn kind_menu(id: u64, query: &str, selected: usize) -> Element<'static, BlockEditorEvent> {
+    let mut commands = Column::new().spacing(2);
+    for (index, command) in slash_commands(query).enumerate() {
+        commands = commands.push(command_button(id, command, index == selected));
+    }
+    if slash_commands(query).next().is_none() {
+        commands = commands.push(
+            column![
+                text("No matching block").size(13).font(INTER_BOLD),
+                text("Try text, heading, list, quote, or divider")
+                    .size(11)
+                    .color(MUTED),
+            ]
+            .spacing(3)
+            .padding([10, 8]),
+        );
+    }
+
     container(
-        column![
-            text("BASIC BLOCKS").size(10).color(MUTED),
-            row![
-                kind_button(id, "Text", BlockKind::Paragraph),
-                kind_button(id, "Heading 1", BlockKind::HeadingOne),
-                kind_button(id, "Heading 2", BlockKind::HeadingTwo),
-                kind_button(id, "To-do", BlockKind::Todo),
+        container(
+            column![
+                row![
+                    text("Turn into").size(12).font(INTER_BOLD),
+                    iced::widget::space().width(Length::Fill),
+                    text("↑↓ choose  ·  ↵ select  ·  esc close")
+                        .size(10)
+                        .color(MUTED),
+                ]
+                .align_y(iced::Alignment::Center),
+                commands,
             ]
-            .spacing(3),
-            row![
-                kind_button(id, "Bulleted list", BlockKind::Bullet),
-                kind_button(id, "Quote", BlockKind::Quote),
-                kind_button(id, "Divider", BlockKind::Divider),
-            ]
-            .spacing(3),
-        ]
-        .spacing(4),
+            .spacing(7),
+        )
+        .padding(8)
+        .width(360)
+        .style(|_| comment_surface(false, true)),
     )
-    .padding([8, 28])
-    .style(|_| comment_surface(false, false))
+    .padding([4, 28])
     .into()
+}
+
+fn command_button(
+    id: u64,
+    command: &'static SlashCommand,
+    selected: bool,
+) -> Element<'static, BlockEditorEvent> {
+    let event = BlockEditorEvent::SetKind(id, command.kind);
+    let content = row![
+        container(text(command.icon).size(13).font(INTER_BOLD))
+            .center_x(34)
+            .center_y(34)
+            .style(|_| soft_surface()),
+        column![
+            text(command.label).size(13).font(INTER_BOLD),
+            text(command.description).size(11).color(MUTED),
+        ]
+        .spacing(1),
+    ]
+    .spacing(9)
+    .align_y(iced::Alignment::Center);
+    semantic_button(
+        button(content)
+            .on_press(event.clone())
+            .padding([5, 7])
+            .width(Length::Fill)
+            .style(move |theme: &Theme, status| {
+                let mut style = button::text(theme, status);
+                if selected {
+                    style.background = Some(Background::Color(BLUE_SOFT));
+                }
+                style.border.radius = 6.0.into();
+                style
+            }),
+        format!("notion-block-{id}-slash-{}", command.label),
+        format!("{}: {}", command.label, command.description),
+        Some(event),
+    )
 }
 
 fn block_menu(id: u64) -> Element<'static, BlockEditorEvent> {
     container(
         column![
-            text("BLOCK ACTIONS").size(10).color(MUTED),
+            text("BLOCK ACTIONS").size(10).font(INTER_BOLD).color(MUTED),
             row![
                 kind_button(id, "Text", BlockKind::Paragraph),
                 kind_button(id, "Heading 1", BlockKind::HeadingOne),
@@ -964,7 +1379,7 @@ fn comments_panel(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     container(
         column![
             row![
-                text("Comments").size(16),
+                text("Comments").size(16).font(INTER_BOLD),
                 iced::widget::space().width(Length::Fill),
                 tool_button(
                     "notion-comments-filter",
@@ -1136,6 +1551,426 @@ fn thread_card<'a>(
         .into()
 }
 
+#[derive(Default)]
+struct CrossBlockInputState {
+    pressed: bool,
+}
+
+struct CrossBlockInput<'a> {
+    content: iced::widget::TextInput<'a, BlockEditorEvent>,
+    block_id: u64,
+    value: &'a str,
+    font: Font,
+    size: f32,
+    selection: Option<Range<usize>>,
+    selected_text: Option<Rc<str>>,
+    selection_dragging: bool,
+    slash_choice: Option<BlockKind>,
+}
+
+impl CrossBlockInput<'_> {
+    fn input_state(tree: &Tree) -> &text_input::State<<iced::Renderer as TextRenderer>::Paragraph> {
+        tree.children[0].state.downcast_ref()
+    }
+
+    fn paragraph(
+        &self,
+        text_bounds: iced::Rectangle,
+    ) -> <iced::Renderer as TextRenderer>::Paragraph {
+        <iced::Renderer as TextRenderer>::Paragraph::with_text(iced::advanced::text::Text {
+            content: self.value,
+            bounds: Size::new(f32::INFINITY, text_bounds.height),
+            size: Pixels(self.size),
+            line_height: iced::advanced::text::LineHeight::default(),
+            font: self.font,
+            align_x: iced::advanced::text::Alignment::Default,
+            align_y: iced::Alignment::Center.into(),
+            shaping: iced::advanced::text::Shaping::Advanced,
+            wrapping: iced::advanced::text::Wrapping::default(),
+        })
+    }
+
+    fn hit(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> Option<usize> {
+        let position = cursor.position()?;
+        if position.y < layout.bounds().y || position.y > layout.bounds().y + layout.bounds().height
+        {
+            return None;
+        }
+        let text_bounds = layout.children().next()?.bounds();
+        let paragraph = self.paragraph(text_bounds);
+        let x = (position.x - text_bounds.x).clamp(0.0, text_bounds.width);
+        let byte = paragraph
+            .hit_test(Point::new(x, text_bounds.height / 2.0))
+            .map(iced::advanced::text::Hit::cursor)
+            .unwrap_or_else(|| if x <= 0.0 { 0 } else { self.value.len() });
+        let byte = byte.min(self.value.len());
+        Some(iced::widget::text_input::Value::new(&self.value[..byte]).len())
+    }
+
+    fn intercept_keyboard(
+        &self,
+        tree: &Tree,
+        event: &Event,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, BlockEditorEvent>,
+    ) -> bool {
+        let Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            text,
+            physical_key,
+            modifiers,
+            ..
+        }) = event
+        else {
+            return false;
+        };
+        if !Self::input_state(tree).is_focused() {
+            return false;
+        }
+
+        if modifiers.command() {
+            match key.to_latin(*physical_key) {
+                Some('a') => {
+                    shell.publish(BlockEditorEvent::SelectAll);
+                    shell.capture_event();
+                    return true;
+                }
+                Some('c') if self.selected_text.is_some() => {
+                    clipboard.write(
+                        clipboard::Kind::Standard,
+                        self.selected_text.as_deref().unwrap_or_default().to_owned(),
+                    );
+                    shell.capture_event();
+                    return true;
+                }
+                Some('x') if self.selected_text.is_some() => {
+                    clipboard.write(
+                        clipboard::Kind::Standard,
+                        self.selected_text.as_deref().unwrap_or_default().to_owned(),
+                    );
+                    shell.publish(BlockEditorEvent::DeleteSelection);
+                    shell.capture_event();
+                    return true;
+                }
+                Some('v') if self.selected_text.is_some() => {
+                    let value = clipboard
+                        .read(clipboard::Kind::Standard)
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|character| !character.is_control() || *character == '\n')
+                        .collect();
+                    shell.publish(BlockEditorEvent::ReplaceSelection(value));
+                    shell.capture_event();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(kind) = self.slash_choice {
+            match key.as_ref() {
+                keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                    shell.publish(BlockEditorEvent::SlashMoved(self.block_id, -1));
+                    shell.capture_event();
+                    return true;
+                }
+                keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                    shell.publish(BlockEditorEvent::SlashMoved(self.block_id, 1));
+                    shell.capture_event();
+                    return true;
+                }
+                keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                    shell.publish(BlockEditorEvent::SetKind(self.block_id, kind));
+                    shell.capture_event();
+                    return true;
+                }
+                keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                    shell.publish(BlockEditorEvent::DismissSlash(self.block_id));
+                    shell.capture_event();
+                    return true;
+                }
+                _ => {}
+            }
+        } else if self.value.starts_with('/') {
+            match key.as_ref() {
+                keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                    shell.publish(BlockEditorEvent::DismissSlash(self.block_id));
+                    shell.capture_event();
+                    return true;
+                }
+                keyboard::Key::Named(
+                    keyboard::key::Named::Enter
+                    | keyboard::key::Named::ArrowUp
+                    | keyboard::key::Named::ArrowDown,
+                ) => {
+                    shell.capture_event();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        if self.selected_text.is_some() {
+            if matches!(
+                key.as_ref(),
+                keyboard::Key::Named(
+                    keyboard::key::Named::Backspace | keyboard::key::Named::Delete
+                )
+            ) {
+                shell.publish(BlockEditorEvent::DeleteSelection);
+                shell.capture_event();
+                return true;
+            }
+            if !modifiers.command()
+                && let Some(character) = text
+                    .as_deref()
+                    .and_then(|text| text.chars().find(|character| !character.is_control()))
+            {
+                shell.publish(BlockEditorEvent::ReplaceSelection(character.to_string()));
+                shell.capture_event();
+                return true;
+            }
+        }
+
+        if self.value.is_empty()
+            && matches!(
+                key.as_ref(),
+                keyboard::Key::Named(keyboard::key::Named::Backspace)
+            )
+        {
+            shell.publish(BlockEditorEvent::Delete(self.block_id));
+            shell.capture_event();
+            return true;
+        }
+
+        false
+    }
+}
+
+impl Widget<BlockEditorEvent, Theme, iced::Renderer> for CrossBlockInput<'_> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<CrossBlockInputState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(CrossBlockInputState::default())
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(
+            &self.content as &dyn Widget<BlockEditorEvent, Theme, iced::Renderer>,
+        )]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.children[0]
+            .diff(&self.content as &dyn Widget<BlockEditorEvent, Theme, iced::Renderer>);
+    }
+
+    fn size(&self) -> Size<Length> {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::size(&self.content)
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::size_hint(&self.content)
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::layout(
+            &mut self.content,
+            &mut tree.children[0],
+            renderer,
+            limits,
+        )
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::operate(
+            &mut self.content,
+            &mut tree.children[0],
+            layout,
+            renderer,
+            operation,
+        );
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, BlockEditorEvent>,
+        viewport: &iced::Rectangle,
+    ) {
+        if self.selected_text.is_some()
+            && Self::input_state(tree).is_focused()
+            && let Event::InputMethod(iced::advanced::input_method::Event::Commit(value)) = event
+        {
+            shell.publish(BlockEditorEvent::ReplaceSelection(value.clone()));
+            shell.capture_event();
+            return;
+        }
+        if self.intercept_keyboard(tree, event, clipboard, shell) {
+            return;
+        }
+
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::update(
+            &mut self.content,
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(layout.bounds()) =>
+            {
+                let value = iced::widget::text_input::Value::new(self.value);
+                let cursor = Self::input_state(tree).cursor();
+                let offset = match cursor.state(&value) {
+                    text_input::cursor::State::Index(index) => index,
+                    text_input::cursor::State::Selection { end, .. } => end,
+                };
+                tree.state.downcast_mut::<CrossBlockInputState>().pressed = true;
+                shell.publish(BlockEditorEvent::SelectionStarted(self.block_id, offset));
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if self.selection_dragging => {
+                if let Some(offset) = self.hit(layout, cursor) {
+                    shell.publish(BlockEditorEvent::SelectionExtended(self.block_id, offset));
+                    shell.request_redraw();
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let state = tree.state.downcast_mut::<CrossBlockInputState>();
+                if state.pressed {
+                    state.pressed = false;
+                    shell.publish(BlockEditorEvent::SelectionFinished);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        if let Some(range) = self.selection.clone() {
+            let text_bounds = layout.children().next().unwrap().bounds();
+            let value = iced::widget::text_input::Value::new(self.value);
+            let before = value.until(range.start).to_string();
+            let selected = value.select(range.start, range.end).to_string();
+            let after = value.select(range.end, value.len()).to_string();
+            let spans: [Span<'_, (), Font>; 3] =
+                [Span::new(&before), Span::new(&selected), Span::new(&after)];
+            let selected_paragraph = <iced::Renderer as TextRenderer>::Paragraph::with_spans(
+                iced::advanced::text::Text {
+                    content: spans.as_slice(),
+                    bounds: Size::new(f32::INFINITY, text_bounds.height),
+                    size: Pixels(self.size),
+                    line_height: iced::advanced::text::LineHeight::default(),
+                    font: self.font,
+                    align_x: iced::advanced::text::Alignment::Default,
+                    align_y: iced::Alignment::Center.into(),
+                    shaping: iced::advanced::text::Shaping::Advanced,
+                    wrapping: iced::advanced::text::Wrapping::default(),
+                },
+            );
+            let translation = text_bounds.position() - Point::ORIGIN;
+            for bounds in selected_paragraph.span_bounds(1) {
+                let bounds = bounds + translation;
+                if bounds.intersects(viewport) {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds,
+                            ..Default::default()
+                        },
+                        PRIMARY.scale_alpha(0.22),
+                    );
+                }
+            }
+        }
+
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::draw(
+            &self.content,
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::mouse_interaction(
+            &self.content,
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: Layout<'a>,
+        renderer: &iced::Renderer,
+        viewport: &iced::Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'a, BlockEditorEvent, Theme, iced::Renderer>> {
+        Widget::<BlockEditorEvent, Theme, iced::Renderer>::overlay(
+            &mut self.content,
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+impl<'a> From<CrossBlockInput<'a>> for Element<'a, BlockEditorEvent> {
+    fn from(input: CrossBlockInput<'a>) -> Self {
+        Self::new(input)
+    }
+}
+
 fn semantic_button<'a>(
     control: iced::widget::Button<'a, BlockEditorEvent>,
     key: impl Into<String>,
@@ -1152,7 +1987,7 @@ fn semantic_button<'a>(
 }
 
 fn semantic_text_input<'a>(
-    input: iced::widget::TextInput<'a, BlockEditorEvent>,
+    input: impl Into<Element<'a, BlockEditorEvent>>,
     key: impl Into<String>,
     label: impl Into<String>,
     value: impl Into<String>,
@@ -1278,6 +2113,21 @@ mod tests {
         reduce(state, event).0
     }
 
+    fn inter_settings() -> iced::Settings {
+        iced::Settings {
+            fonts: vec![
+                include_bytes!("../assets/fonts/Inter-Regular.ttf")
+                    .as_slice()
+                    .into(),
+                include_bytes!("../assets/fonts/Inter-Bold.ttf")
+                    .as_slice()
+                    .into(),
+            ],
+            default_font: INTER,
+            ..iced::Settings::default()
+        }
+    }
+
     fn accessibility_snapshot(
         state: &BlockEditorState,
         size: iced::Size,
@@ -1381,6 +2231,10 @@ mod tests {
         );
 
         let state = events.into_iter().fold(state, apply);
+        assert!(
+            state.selection.is_none(),
+            "a click must finish its selection"
+        );
         let mut screen = iced_test::Simulator::with_size(
             iced::Settings::default(),
             iced::Size::new(1000.0, 620.0),
@@ -1436,6 +2290,123 @@ mod tests {
         assert_eq!(
             block_editor_pending_focus(block_editor_clear_focus(state)),
             0
+        );
+    }
+
+    #[test]
+    fn empty_backspace_deletes_the_block_and_focuses_the_previous_end() {
+        let state = block_editor_state("untitled".into());
+        let state = apply(state, BlockEditorEvent::Edit(1, "Previous".into()));
+        let state = apply(state, BlockEditorEvent::AddAfter(1, BlockKind::Paragraph));
+        let mut screen = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(900.0, 400.0),
+            block_editor(&state),
+        );
+        screen.click("Type '/' for commands").expect("empty block");
+        screen.tap_key(keyboard::key::Named::Backspace);
+        let event = screen
+            .into_messages()
+            .find(|event| matches!(event, BlockEditorEvent::Delete(2)))
+            .expect("empty Backspace deletes the block");
+
+        let state = block_editor_apply(state, event);
+        assert_eq!(state.block_count(), 1);
+        assert_eq!(state.block_text(1), Some("Previous"));
+        assert_eq!(block_editor_pending_focus(state), 1);
+    }
+
+    #[test]
+    fn cross_block_selection_copies_deletes_and_pastes_as_blocks() {
+        let mut state = block_editor_state("untitled".into());
+        state = apply(state, BlockEditorEvent::Edit(1, "alpha".into()));
+        state = apply(state, BlockEditorEvent::AddAfter(1, BlockKind::Paragraph));
+        state = apply(state, BlockEditorEvent::Edit(2, "bravo".into()));
+        state = apply(state, BlockEditorEvent::AddAfter(2, BlockKind::Paragraph));
+        state = apply(state, BlockEditorEvent::Edit(3, "charlie".into()));
+        state = apply(state, BlockEditorEvent::SelectionStarted(1, 2));
+        state = apply(state, BlockEditorEvent::SelectionExtended(3, 3));
+        state = apply(state, BlockEditorEvent::SelectionFinished);
+        assert_eq!(state.selected_text().as_deref(), Some("pha\nbravo\ncha"));
+        state = apply(state, BlockEditorEvent::SelectionStarted(3, 3));
+        state = apply(state, BlockEditorEvent::SelectionExtended(1, 2));
+        state = apply(state, BlockEditorEvent::SelectionFinished);
+        assert_eq!(state.selected_text().as_deref(), Some("pha\nbravo\ncha"));
+        let mut screen = iced_test::Simulator::with_size(
+            inter_settings(),
+            iced::Size::new(900.0, 420.0),
+            block_editor(&state),
+        );
+        screen.click("alpha").expect("selection anchor");
+        screen.simulate([Event::InputMethod(
+            iced::advanced::input_method::Event::Commit("한".into()),
+        )]);
+        assert!(screen.into_messages().any(|event| matches!(
+            event,
+            BlockEditorEvent::ReplaceSelection(value) if value == "한"
+        )));
+        if let Ok(path) = std::env::var("NOTION_SELECTION_SNAPSHOT") {
+            let mut screen = iced_test::Simulator::with_size(
+                inter_settings(),
+                iced::Size::new(900.0, 420.0),
+                block_editor(&state),
+            );
+            let snapshot = screen.snapshot(&Theme::Light).expect("render snapshot");
+            assert!(snapshot.matches_image(path).expect("write snapshot"));
+        }
+
+        state = block_editor_apply(state, BlockEditorEvent::ReplaceSelection("X\nY".into()));
+        assert_eq!(state.block_count(), 2);
+        assert_eq!(state.block_text(1), Some("alX"));
+        assert_eq!(state.block_text(4), Some("Yrlie"));
+        assert_eq!(
+            block_editor_pending_focus(state),
+            (4 * FOCUS_POSITION_STRIDE + 2) as i64
+        );
+    }
+
+    #[test]
+    fn slash_menu_filters_commands_and_wraps_keyboard_selection() {
+        let commands = slash_commands("/head").collect::<Vec<_>>();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].kind, BlockKind::HeadingOne);
+        assert_eq!(commands[1].kind, BlockKind::HeadingTwo);
+
+        let state = apply(
+            block_editor_state("untitled".into()),
+            BlockEditorEvent::Edit(1, "/head".into()),
+        );
+        let state = apply(state, BlockEditorEvent::SlashMoved(1, -1));
+        assert_eq!(state.slash_selected, 1);
+        let state = apply(state, BlockEditorEvent::SetKind(1, commands[1].kind));
+        assert_eq!(state.blocks[0].kind, BlockKind::HeadingTwo);
+        assert_eq!(state.block_text(1), Some(""));
+    }
+
+    #[test]
+    fn slash_menu_renders_as_a_filtered_command_palette() {
+        let state = apply(
+            block_editor_state("untitled".into()),
+            BlockEditorEvent::Edit(1, "/head".into()),
+        );
+        let mut screen = iced_test::Simulator::with_size(
+            inter_settings(),
+            iced::Size::new(900.0, 520.0),
+            block_editor(&state),
+        );
+        screen.find("Turn into").expect("command palette heading");
+        screen.find("Heading 1").expect("first filtered command");
+        screen.find("Heading 2").expect("second filtered command");
+        assert!(screen.find("To-do").is_err());
+        if let Ok(path) = std::env::var("NOTION_SLASH_SNAPSHOT") {
+            let snapshot = screen.snapshot(&Theme::Light).expect("render snapshot");
+            assert!(snapshot.matches_image(path).expect("write snapshot"));
+        }
+        screen.click("Heading 2").expect("heading command");
+        assert!(
+            screen
+                .into_messages()
+                .any(|event| matches!(event, BlockEditorEvent::SetKind(1, BlockKind::HeadingTwo)))
         );
     }
 
