@@ -1667,6 +1667,17 @@ impl CrossBlockInput<'_> {
             }
         }
 
+        if self.selected_text.is_some()
+            && matches!(
+                key.as_ref(),
+                keyboard::Key::Named(keyboard::key::Named::Enter)
+            )
+        {
+            shell.publish(BlockEditorEvent::ReplaceSelection("\n".into()));
+            shell.capture_event();
+            return true;
+        }
+
         if let Some(kind) = self.slash_choice {
             match key.as_ref() {
                 keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
@@ -2332,6 +2343,17 @@ mod tests {
         state = apply(state, BlockEditorEvent::SelectionExtended(1, 2));
         state = apply(state, BlockEditorEvent::SelectionFinished);
         assert_eq!(state.selected_text().as_deref(), Some("pha\nbravo\ncha"));
+        let mut screen = iced_test::Simulator::with_size(
+            inter_settings(),
+            iced::Size::new(900.0, 420.0),
+            block_editor(&state),
+        );
+        screen.click("alpha").expect("selection anchor");
+        screen.tap_key(keyboard::key::Named::Enter);
+        assert!(screen.into_messages().any(|event| matches!(
+            event,
+            BlockEditorEvent::ReplaceSelection(value) if value == "\n"
+        )));
         let mut screen = iced_test::Simulator::with_size(
             inter_settings(),
             iced::Size::new(900.0, 420.0),
