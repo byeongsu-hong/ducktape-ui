@@ -1,4 +1,4 @@
-ui_lang::include_app!("src/ui/music.ice");
+ui_lang::include_app!("src/ui/app.ice");
 
 mod liquid_glass;
 mod mock_api;

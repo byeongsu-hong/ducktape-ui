@@ -87,7 +87,7 @@ examples/iced-app/src/ui/handlers/       state transitions and effects
 examples/iced-app/src/ui/component_state.ice  layout, paint, and interaction tests
 examples/iced-app/src/ui/showcase.ice    language widget surface
 examples/iced-app/src/ui/*.ice           focused native fixtures
-examples/apple-music/src/ui/music.ice    complete product-style application
+examples/apple-music/src/ui/app.ice      complete product-style source graph
 SPEC.md                                  implemented language revision
 COVERAGE.md                              exact Iced surface ledger
 ```
