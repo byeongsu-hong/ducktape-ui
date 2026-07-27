@@ -168,6 +168,41 @@ mod component_state {
 }
 
 #[cfg(test)]
+mod component_lifecycle {
+    ui_lang::include_app!("src/ui/component_lifecycle.ice");
+
+    #[test]
+    fn prunes_mounted_component_state_after_rendered_removal() {
+        let (mut app, _) = ComponentLifecycle::__boot();
+        let scope = "ComponentLifecycle/search";
+        let _ = app.__update(__ComponentLifecycleMessage::__SearchHandleLoad(
+            scope.into(),
+        ));
+        assert!(app.__ice_component_search.values().contains_key(scope));
+        let previous = app.__ice_component_search.values()[scope]
+            .__ice_replace_25
+            .as_ref()
+            .unwrap()
+            .clone();
+        assert!(!previous.is_aborted());
+        let _ = app.__update(__ComponentLifecycleMessage::__SearchHandleLoad(
+            scope.into(),
+        ));
+        assert!(previous.is_aborted());
+        assert_eq!(
+            app.__ice_component_search.values()[scope].__ice_latest_25,
+            2
+        );
+
+        let _ = app.__view();
+        assert!(app.__ice_component_search.values().contains_key(scope));
+        app.show = false;
+        let _ = app.__view();
+        assert!(app.__ice_component_search.values().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod test_mount_features {
     ui_lang::include_app!("src/ui/test_mount_features.ice");
 }

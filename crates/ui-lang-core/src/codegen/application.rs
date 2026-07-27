@@ -184,10 +184,14 @@ pub(in crate::codegen) fn generate_boot(
         .iter()
         .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
     {
+        let initial = match component.lifetime {
+            ComponentLifetime::Retained => "::std::collections::HashMap::new()",
+            ComponentLifetime::Mounted => "::ui_lang_runtime::MountedComponentState::default()",
+        };
         writeln!(
             out,
-            "{}: ::std::collections::HashMap::new(),",
-            component_state_field(&component.name)
+            "{}: {initial},",
+            component_state_field(&component.name),
         )
         .unwrap();
     }
@@ -436,12 +440,24 @@ pub(in crate::codegen) fn generate_update(
     }
     for component in &document.components {
         let field = component_state_field(&component.name);
-        for line in component_latest_lines(component) {
-            let latest = component_latest_field(line);
+        let values = match component.lifetime {
+            ComponentLifetime::Retained => format!("self.{field}"),
+            ComponentLifetime::Mounted => format!("self.{field}.values()"),
+        };
+        let entry = |scope: &str| match component.lifetime {
+            ComponentLifetime::Retained => {
+                format!("let __local = self.{field}.entry({scope}).or_default();")
+            }
+            ComponentLifetime::Mounted => format!(
+                "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).or_default();"
+            ),
+        };
+        for line in component_generation_lines(component) {
+            let generation = component_latest_field(line);
             let variant = component_latest_variant(&component.name, line);
             writeln!(
                 out,
-                "{message}::{variant}(__scope, __generation, __message) => {{ if self.{field}.get(&__scope).is_some_and(|__local| __local.{latest} == __generation) {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
+                "{message}::{variant}(__scope, __generation, __message) => {{ if {values}.get(&__scope).is_some_and(|__local| __local.{generation} == __generation) {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
             )
             .unwrap();
         }
@@ -457,13 +473,14 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
             let future = handler_future(handler);
             if future.is_some() {
-                writeln!(out, "let __route_scope = __scope.clone(); let __task = {{ let __local = self.{field}.entry(__scope.clone()).or_default();").unwrap();
-            } else {
                 writeln!(
                     out,
-                    "let __local = self.{field}.entry(__scope.clone()).or_default();"
+                    "let __route_scope = __scope.clone(); let __task = {{ {}",
+                    entry("__scope.clone()")
                 )
                 .unwrap();
+            } else {
+                writeln!(out, "{}", entry("__scope.clone()")).unwrap();
             }
             let mut env = HashMap::new();
             for state in &component.states {
@@ -510,16 +527,24 @@ pub(in crate::codegen) fn generate_update(
                 "__local",
                 future.is_none(),
             )?;
-            if let Some((latest, line)) = future {
+            if let Some((mode, line)) = future {
                 debug_assert!(has_task);
                 writeln!(out, "}};").unwrap();
-                if latest {
-                    let generation = component_latest_field(line);
-                    let latest_variant = component_latest_variant(&component.name, line);
-                    writeln!(out, "let __generation = {{ let __local = self.{field}.entry(__scope.clone()).or_default(); __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};").unwrap();
-                    writeln!(out, "__task.map(move |__message| {message}::{latest_variant}(__scope.clone(), __generation, ::std::boxed::Box::new(__message)))").unwrap();
-                } else {
-                    writeln!(out, "__task").unwrap();
+                match mode {
+                    FutureMode::Every => writeln!(out, "__task").unwrap(),
+                    FutureMode::Latest | FutureMode::Replace => {
+                        let generation = component_latest_field(line);
+                        let future_variant = component_latest_variant(&component.name, line);
+                        match component.lifetime {
+                            ComponentLifetime::Retained => writeln!(out, "let __generation = {{ {} __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};", entry("__scope.clone()")).unwrap(),
+                            ComponentLifetime::Mounted => writeln!(out, "let __generation = self.{field}.next_generation(); {{ {} __local.{generation} = __generation; }}", entry("__scope.clone()")).unwrap(),
+                        }
+                        if mode == FutureMode::Replace {
+                            let replace = component_replace_field(line);
+                            writeln!(out, "let (__task, __handle) = __task.abortable(); {{ {} if let ::std::option::Option::Some(__previous) = __local.{replace}.replace(__handle.abort_on_drop()) {{ __previous.abort(); }} }}", entry("__scope.clone()")).unwrap();
+                        }
+                        writeln!(out, "__task.map(move |__message| {message}::{future_variant}(__scope.clone(), __generation, ::std::boxed::Box::new(__message)))").unwrap();
+                    }
                 }
             } else if !has_task {
                 writeln!(out, "::iced::Task::none()").unwrap();
@@ -532,9 +557,10 @@ pub(in crate::codegen) fn generate_update(
             .filter(|state| state.ty == Type::Str)
         {
             let variant = component_binding_variant(&component.name, &state.name);
+            let entry = entry("__scope");
             writeln!(
                 out,
-                "{message}::{variant}(__scope, value) => {{ self.{field}.entry(__scope).or_default().{} = value; ::iced::Task::none() }},",
+                "{message}::{variant}(__scope, value) => {{ {entry} __local.{} = value; ::iced::Task::none() }},",
                 state.name
             )
             .unwrap();

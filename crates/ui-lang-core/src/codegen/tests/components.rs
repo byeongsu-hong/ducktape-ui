@@ -833,3 +833,42 @@ view
     assert!(!ordinary.contains("Latest14"));
     assert!(!ordinary.contains("wrapping_add(1)"));
 }
+
+#[test]
+fn lowers_mounted_components_and_replace_futures() {
+    let source = r#"app Search
+extern crate::backend
+  fetch(query:str) -> str
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component SearchBox()
+  lifetime mounted
+  state
+    query = ""
+  on search
+    run replace fetch(query) -> loaded _
+  on loaded(value)
+    query = value
+  button "Search" -> search
+on ignored
+view
+  col
+    if true
+      SearchBox #search
+"#;
+    let generated = compile(source, "search.ice").unwrap();
+    assert!(generated.contains("::ui_lang_runtime::MountedComponentState<__IceSearchBoxState>"));
+    assert!(generated.contains("__ice_replace_14: ::std::option::Option<::iced::task::Handle>"));
+    assert!(generated.contains("__ice_latest_14: u64"));
+    assert!(generated.contains(".next_generation()"));
+    assert!(generated.contains(".__ice_replace_14.replace(__handle.abort_on_drop())"));
+    assert!(generated.contains("__previous.abort()"));
+    assert!(generated.contains("let (__task, __handle) = __task.abortable()"));
+    assert!(generated.contains(".begin_render()"));
+    assert!(generated.contains(".mount("));
+    assert!(generated.contains(".finish_render(&__ice_root_scope)"));
+    assert!(generated.contains("SearchBoxLatest14"));
+}

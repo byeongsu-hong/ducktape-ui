@@ -21,12 +21,70 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::keyboard::{self, key};
 use iced::{Element, Event, Length, Padding, Rectangle, Size, Subscription, Task, Vector};
 use std::any::Any;
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 const ROOT_ID: NodeId = NodeId(0);
+
+/// Stores state for component scopes that only live while mounted.
+#[derive(Debug)]
+pub struct MountedComponentState<T> {
+    values: RefCell<HashMap<String, T>>,
+    active: RefCell<HashSet<String>>,
+    next_generation: Cell<u64>,
+}
+
+impl<T> Default for MountedComponentState<T> {
+    fn default() -> Self {
+        Self {
+            values: RefCell::new(HashMap::new()),
+            active: RefCell::new(HashSet::new()),
+            next_generation: Cell::new(0),
+        }
+    }
+}
+
+impl<T> MountedComponentState<T> {
+    /// Starts tracking scopes for one rendered root.
+    pub fn begin_render(&self) {
+        self.active.borrow_mut().clear();
+    }
+
+    /// Marks a component scope as present in the current render.
+    pub fn mount(&self, scope: String) {
+        self.active.borrow_mut().insert(scope);
+    }
+
+    /// Drops state for scopes under `root` that were not rendered.
+    pub fn finish_render(&self, root: &str) {
+        let active = self.active.borrow();
+        self.values.borrow_mut().retain(|scope, _| {
+            let suffix = scope.strip_prefix(root);
+            !suffix.is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+                || active.contains(scope)
+        });
+    }
+
+    /// Borrows all mounted scope values.
+    pub fn values(&self) -> Ref<'_, HashMap<String, T>> {
+        self.values.borrow()
+    }
+
+    /// Mutably borrows all mounted scope values.
+    pub fn values_mut(&self) -> RefMut<'_, HashMap<String, T>> {
+        self.values.borrow_mut()
+    }
+
+    /// Returns a render-lifetime-stable generation for async completion filters.
+    pub fn next_generation(&self) -> u64 {
+        let next = self.next_generation.get().wrapping_add(1);
+        self.next_generation.set(next);
+        next
+    }
+}
 
 /// A deterministic identity for one semantic node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1651,6 +1709,32 @@ mod tests {
         Last,
         Next,
         Previous,
+    }
+
+    #[test]
+    fn mounted_component_state_prunes_scopes_and_drops_abort_handles() {
+        let state = MountedComponentState::default();
+        assert_eq!(state.next_generation(), 1);
+        let (_, handle) = iced::Task::<()>::none().abortable();
+        let observer = handle.clone();
+        state
+            .values_mut()
+            .insert("app/search".into(), Some(handle.abort_on_drop()));
+        state.values_mut().insert("app/keep".into(), None);
+        state.values_mut().insert("other/search".into(), None);
+
+        state.begin_render();
+        state.mount("app/keep".into());
+        state.finish_render("app");
+
+        assert!(observer.is_aborted());
+        assert_eq!(state.values().len(), 2);
+        assert!(state.values().contains_key("app/keep"));
+        assert!(state.values().contains_key("other/search"));
+        state.begin_render();
+        state.finish_render("app");
+        assert_eq!(state.values().len(), 1);
+        assert_eq!(state.next_generation(), 2);
     }
 
     #[test]

@@ -91,7 +91,20 @@ pub(in crate::codegen) fn find_extern_function<'a>(
         .find(|item| item.name == name && item.kind == kind)
 }
 
-pub(in crate::codegen) fn component_latest_lines(
+pub(in crate::codegen) fn component_generation_lines(
+    component: &Component,
+) -> impl Iterator<Item = usize> + '_ {
+    component
+        .handlers
+        .iter()
+        .flat_map(|handler| &handler.statements)
+        .filter_map(|statement| match statement {
+            Statement::Run { mode, span, .. } if *mode != FutureMode::Every => Some(span.line),
+            _ => None,
+        })
+}
+
+pub(in crate::codegen) fn component_replace_lines(
     component: &Component,
 ) -> impl Iterator<Item = usize> + '_ {
     component
@@ -100,23 +113,25 @@ pub(in crate::codegen) fn component_latest_lines(
         .flat_map(|handler| &handler.statements)
         .filter_map(|statement| match statement {
             Statement::Run {
-                latest: true, span, ..
+                mode: FutureMode::Replace,
+                span,
+                ..
             } => Some(span.line),
             _ => None,
         })
 }
 
-pub(in crate::codegen) fn handler_future(handler: &Handler) -> Option<(bool, usize)> {
+pub(in crate::codegen) fn handler_future(handler: &Handler) -> Option<(FutureMode, usize)> {
     handler
         .statements
         .iter()
         .find_map(|statement| match statement {
             Statement::Run {
                 kind: EffectKind::Future,
-                latest,
+                mode,
                 span,
                 ..
-            } => Some((*latest, span.line)),
+            } => Some((*mode, span.line)),
             _ => None,
         })
 }
@@ -197,8 +212,16 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         for state in &component.states {
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
         }
-        for line in component_latest_lines(component) {
+        for line in component_generation_lines(component) {
             writeln!(out, "{}: u64,", component_latest_field(line)).unwrap();
+        }
+        for line in component_replace_lines(component) {
+            writeln!(
+                out,
+                "{}: ::std::option::Option<::iced::task::Handle>,",
+                component_replace_field(line)
+            )
+            .unwrap();
         }
         writeln!(
             out,
@@ -208,8 +231,16 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         for state in &component.states {
             writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
         }
-        for line in component_latest_lines(component) {
+        for line in component_generation_lines(component) {
             writeln!(out, "{}: 0,", component_latest_field(line)).unwrap();
+        }
+        for line in component_replace_lines(component) {
+            writeln!(
+                out,
+                "{}: ::std::option::Option::None,",
+                component_replace_field(line)
+            )
+            .unwrap();
         }
         writeln!(out, "}} }}\n}}").unwrap();
     }
@@ -280,20 +311,25 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
     }
-    // ponytail: scoped entries persist for the app lifetime; add active-tree pruning if
-    // unbounded dynamic component IDs become a measured source of map growth.
     for component in document
         .components
         .iter()
         .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
     {
-        writeln!(
-            out,
-            "pub(crate) {}: ::std::collections::HashMap<::std::string::String, {}>,",
-            component_state_field(&component.name),
-            component_state_type(&component.name)
-        )
-        .unwrap();
+        let field = component_state_field(&component.name);
+        let ty = component_state_type(&component.name);
+        match component.lifetime {
+            ComponentLifetime::Retained => writeln!(
+                out,
+                "pub(crate) {field}: ::std::collections::HashMap<::std::string::String, {ty}>,"
+            )
+            .unwrap(),
+            ComponentLifetime::Mounted => writeln!(
+                out,
+                "pub(crate) {field}: ::ui_lang_runtime::MountedComponentState<{ty}>,"
+            )
+            .unwrap(),
+        }
     }
     writeln!(out, "}}").unwrap();
     writeln!(
@@ -328,7 +364,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         }
     }
     for component in &document.components {
-        for line in component_latest_lines(component) {
+        for line in component_generation_lines(component) {
             writeln!(
                 out,
                 "{}(::std::string::String, u64, ::std::boxed::Box<{message}>),",

@@ -87,7 +87,10 @@ immutable and scoped to that handler invocation.
 Components may keep instance-scoped UI state and local handlers. A handler may
 end with `run` or a widget operation scoped to its own rendered subtree;
 `run latest` discards an older Future completion from the same component scope
-and call site, while ordinary `run` delivers every completion.
+and call site without aborting it. `run replace` aborts and replaces the prior
+Future at that scope and call site, while ordinary `run` delivers every
+completion. Component state is retained by default; `lifetime mounted` drops
+it and any replace-task handle when the instance leaves the rendered tree.
 Ordinary component props are read-only. Declare writable inputs with
 `component Field(bind value:str)` and pass a direct state explicitly as
 `Field value<->draft`; app state, component-local state, and another `bind`

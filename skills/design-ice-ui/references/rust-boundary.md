@@ -206,8 +206,10 @@ component Search()
     button "Search" -> search
 ```
 
-Ordinary `run` delivers every completion. `run latest` is component-local; do
-not invent request IDs in Ice when this exact latest-wins behavior suffices.
+Ordinary `run` delivers every completion. `run latest` is component-local and
+does not stop the stale Future; do not invent request IDs in Ice when filtering
+is sufficient. Use `run replace` at the same position when the stale Future
+must be aborted. App-global handlers instead use an explicit `abortable` handle.
 
 ## Native task adapters
 

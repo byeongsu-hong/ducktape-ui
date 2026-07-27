@@ -427,14 +427,16 @@ component_decl = "component" component_name "(" component_param_list? ")"
                  INDENT component_member+
 component_param_list = component_param ("," component_param)*
 component_param = ("bind")? name ":" type ("=" expr)?
-component_member = component_state | component_events | component_handler | node
+component_member = component_lifetime | component_state | component_events
+                 | component_handler | node
+component_lifetime = "lifetime" ("retained" | "mounted")
 component_state = "state" INDENT state_entry+
 component_events = "emits" INDENT component_event+
 component_event = name ("(" type_list? ")")?
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
-                    | "run" ("latest")? call "->" route ("|" route)?
+                    | "run" ("latest" | "replace")? call "->" route ("|" route)?
 
 handler_decl   = "on" name ("(" name_list? ")")?
                  INDENT statement*
@@ -2991,7 +2993,7 @@ Mutable component-only values such as `editor`,
 `markdown`, `combo`, `animation`, task handles, and debug spans cannot have
 defaults. A supplied argument always overrides the default.
 
-`run latest` gives local request/response interactions latest-wins behavior:
+`run latest` gives local request/response interactions latest-wins delivery:
 
 ```ice
 component Search()
@@ -3014,16 +3016,29 @@ component Search()
 
 Each start advances an internal generation for that component scope and source
 call site. A completion is routed only while its generation remains current;
-ordinary `run` performs no filtering and delivers every completion. Future
-values, request IDs, and generations are not part of the language surface.
+the older Future itself keeps running. `run replace` instead wraps the Future
+in Iced's native abortable task and aborts the previous handle for the same
+component scope and source call site before storing the replacement. It is not
+valid in an app-global handler because there is no component instance scope.
+Ordinary `run` performs no filtering and delivers every completion. Future
+values, request IDs, generations, and abort handles are not part of the
+language surface.
 
 Local state is keyed by the component's hierarchical instance scope, so two
 explicit component IDs own independent values. The declared initializer is
-used until the first local event materializes that instance. Entries persist
-for the app lifetime; repeated dynamic instances should therefore use stable
-IDs, and an unbounded stream of new IDs can grow the map. Components without
-local state or handlers remain compile-time view expansion rather than runtime
-component objects.
+used until the first local event materializes that instance. The default
+`lifetime retained` keeps entries for the app lifetime, including while an
+instance is absent from the current tree. Repeated dynamic retained instances
+should therefore use stable IDs.
+
+`lifetime mounted` marks the scopes present in each rendered root and removes
+entries that disappear from that root. Removing an entry drops its local state,
+latest-generation bookkeeping, and any `run replace` abort-on-drop handles.
+Daemon roots include their window ID, so rendering one window never prunes
+another window's scopes. There is no `on unmount` hook or other arbitrary
+lifecycle effect; handlers remain the only place that starts work. Components
+without local state or handlers remain compile-time view expansion rather than
+runtime component objects.
 
 A component may declare required slots. Bare `slot` is the conventional
 `children` slot and receives one structured child tree at its call site:
