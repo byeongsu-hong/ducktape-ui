@@ -24,6 +24,21 @@ fn main() -> iced::Result {
 mod tests {
     use super::{__NotionMessage, Notion, helpers};
 
+    fn notion_settings() -> iced::Settings {
+        iced::Settings {
+            fonts: vec![
+                include_bytes!("../assets/fonts/Inter-Regular.ttf")
+                    .as_slice()
+                    .into(),
+                include_bytes!("../assets/fonts/Inter-Bold.ttf")
+                    .as_slice()
+                    .into(),
+            ],
+            default_font: iced::Font::with_name("Inter"),
+            ..iced::Settings::default()
+        }
+    }
+
     #[test]
     fn navigation_keeps_a_retained_editor_per_page() {
         let (mut app, _) = Notion::__boot();
@@ -52,7 +67,7 @@ mod tests {
     fn editor_draws_at_its_default_viewport() {
         let (app, _) = Notion::__boot();
         let mut screen = iced_test::Simulator::with_size(
-            iced::Settings::default(),
+            notion_settings(),
             iced::Size::new(1280.0, 800.0),
             app.__view(),
         );
