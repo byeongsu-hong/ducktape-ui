@@ -12,7 +12,7 @@ preset test
 state
   draft = ""
   count = 0
-component Card(value:str)
+component Card(bind value:str)
   col #root
     input "Draft" #draft <-> value
 on increment
@@ -22,7 +22,7 @@ test render_contract
   viewport 320 240
   timeout 2s
   mount
-    Card value=draft #card
+    Card value<->draft #card
   target root = #card/root
   target draft_input = root/draft
   expect root.width ~= 240.0
@@ -36,7 +36,7 @@ test render_contract
   dispatch increment
   expect count == 1
 view
-  Card value=draft #card
+  Card value<->draft #card
 "#;
 
     let generated = compile(source, "contract.ice").unwrap();

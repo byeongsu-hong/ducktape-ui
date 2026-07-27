@@ -190,7 +190,11 @@ fn check(document: &mut Document) -> Result<(), Error> {
                 "panes must live in the app view because it owns persistent layout state",
             ));
         }
-        let mut env: HashMap<String, Type> = component.params.iter().cloned().collect();
+        let mut env: HashMap<String, Type> = component
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.ty.clone()))
+            .collect();
         env.extend(
             component
                 .states
@@ -266,7 +270,11 @@ fn check(document: &mut Document) -> Result<(), Error> {
         check_handler(handler, &states, document, &operation_ids, &pane_grids)?;
     }
     for component in &document.components {
-        let mut operation_env: HashMap<String, Type> = component.params.iter().cloned().collect();
+        let mut operation_env: HashMap<String, Type> = component
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.ty.clone()))
+            .collect();
         operation_env.extend(
             component
                 .states

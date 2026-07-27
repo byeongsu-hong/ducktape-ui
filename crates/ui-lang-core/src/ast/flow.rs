@@ -31,12 +31,19 @@ pub enum AnimationDuration {
 #[derive(Clone, Debug)]
 pub struct Component {
     pub name: String,
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<ComponentParam>,
     pub output: Type,
     pub states: Vec<State>,
     pub handlers: Vec<Handler>,
     pub root: ViewNode,
     pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComponentParam {
+    pub name: String,
+    pub ty: Type,
+    pub bind: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -424,6 +431,7 @@ pub struct Id {
 pub struct ComponentArg {
     pub name: String,
     pub value: Expr,
+    pub bind: bool,
 }
 
 #[derive(Clone, Debug)]

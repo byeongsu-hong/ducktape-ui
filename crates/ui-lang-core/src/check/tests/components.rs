@@ -448,7 +448,7 @@ view
 
     let component_source = source.replace(
             "view\n  lazy title as cached\n    col\n      text cached\n      text len(cached)",
-            "component Editor(value:str)\n  input \"Edit\" <-> value\nview\n  lazy title as cached\n    Editor value=cached",
+            "component Editor(bind value:str)\n  input \"Edit\" <-> value\nview\n  lazy title as cached\n    Editor value<->cached",
         );
     let error = analyze(&component_source).unwrap_err();
     assert_eq!(error.code, "E139");
@@ -594,25 +594,21 @@ state
   title = "Notes"
   locked = false
   language = "rs"
-component EditorPanel(content:editor, heading:str, readonly:bool, syntax:str)
+component EditorPanel(bind content:editor, bind heading:str, readonly:bool, syntax:str)
   col
     input "Title" <-> heading
     editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> command _
 on command(value)
 view
-  EditorPanel content=body heading=title readonly=locked syntax=language
+  EditorPanel content<->body heading<->title readonly=locked syntax=language
 "#;
     let document = analyze(source).unwrap();
     assert_eq!(document.handlers[0].params[0].ty.display(), "EditorCommand");
 
     let error =
-        analyze(&source.replace("content=body", "content=editor(\"scratch\")")).unwrap_err();
+        analyze(&source.replace("content<->body", "content<->editor(\"scratch\")")).unwrap_err();
     assert_eq!(error.code, "E139");
-    assert!(
-        error
-            .message
-            .contains("editor binding must resolve to an app state")
-    );
+    assert!(error.message.contains("direct writable state"));
 
     let error = analyze(&source.replace("editor_keys(readonly)", "missing(readonly)")).unwrap_err();
     assert_eq!(error.code, "E130");
@@ -627,6 +623,78 @@ view
         analyze(&source.replace("editor_surface(readonly)", "missing(readonly)")).unwrap_err();
     assert_eq!(error.code, "E130");
     assert!(error.message.contains("editor style"));
+}
+
+#[test]
+fn checks_explicit_component_bind_contracts() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Field(bind value:str)
+  input "Value" <-> value
+component Shell(bind value:str)
+  state
+    local = ""
+  col
+    Field value<->value
+    Field value<->local
+view
+  Shell value<->draft
+"#;
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace("Shell value<->draft", "Shell value=draft")).unwrap_err();
+    assert_eq!(error.code, "E123");
+    assert!(error.message.contains("requires `<->`"));
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("replace `value=...` with `value<->state`")
+    );
+
+    let error =
+        analyze(&source.replace("Shell value<->draft", "Shell value<->trim(draft)")).unwrap_err();
+    assert_eq!(error.code, "E139");
+    assert!(error.message.contains("direct writable state"));
+
+    let read_only_call = source
+        .replace(
+            "component Shell(bind value:str)",
+            "component Shell(value:str)",
+        )
+        .replace("Shell value<->draft", "Shell value=draft");
+    let error = analyze(&read_only_call).unwrap_err();
+    assert_eq!(error.code, "E139");
+    assert!(error.message.contains("read-only"));
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("declare it as `bind value:str`")
+    );
+
+    let read_only_operator = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Label(value:str)
+  text value
+view
+  Label value<->draft
+"#;
+    let error = analyze(read_only_operator).unwrap_err();
+    assert_eq!(error.code, "E123");
+    assert!(error.message.contains("read-only"));
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("replace `value<->...` with `value=...`")
+    );
 }
 
 #[test]

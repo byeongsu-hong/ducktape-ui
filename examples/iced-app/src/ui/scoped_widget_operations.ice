@@ -11,11 +11,11 @@ state
   column_index = 0
   value = ""
 
-component Field(value:str)
+component Field(bind value:str)
   input "Field" #field <-> value
 
-component Wrapper(value:str)
-  Field value=value #inner
+component Wrapper(bind value:str)
+  Field value<->value #inner
 
 component Frame()
   col
@@ -44,8 +44,8 @@ on snap_pane
 
 view
   col
-    Wrapper value=value #outer(selected)
-    Field value=value #default
+    Wrapper value<->value #outer(selected)
+    Field value<->value #default
     Frame #frame
       Frame #inner-frame
         input "Slotted" #slot-field <-> value

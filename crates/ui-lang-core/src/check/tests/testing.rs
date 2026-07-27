@@ -20,7 +20,7 @@ state
   draft = ""
   count = 0
 
-component Card(value:str)
+component Card(bind value:str)
   col #root
     input "Draft" #draft <-> value
     if value == "optional"
@@ -38,7 +38,7 @@ test render_contract
   viewport 320 240
   timeout 2s
   mount
-    Card value=draft #card
+    Card value<->draft #card
 
   target root = #card/root
   target draft_input = root/draft
@@ -78,7 +78,7 @@ test render_contract
   dispatch selected("next")
 
 view
-  Card value=draft #card
+  Card value<->draft #card
 "#;
 
 #[test]

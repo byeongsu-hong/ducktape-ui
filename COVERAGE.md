@@ -6,7 +6,7 @@ resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
 This is an implementation inventory, not a roadmap. A partial or missing row does
 not imply planned Ice syntax; uncommon behavior should use an existing typed
 Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-Language revision 1.63 and the workspace's pre-1.0 package version `0.1.0`
+Language revision 1.64 and the workspace's pre-1.0 package version `0.1.0`
 are intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
@@ -25,11 +25,14 @@ graph and fall back to disk when a buffer closes.
 Core view control includes checked `if`, `for`, and first-match `match` arms.
 Components may own ordinary cloneable state and local handlers, including
 Future externs; `run latest` filters stale completions by scope and call site.
+Writable component inputs are explicit `bind` props; calls use `<->` with a
+direct app state, component-local state, or forwarded bind prop. Ordinary props
+never carry write capability.
 Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
 interaction-specific delta.
 
-Top-level semantic style recipes are native Core declarations in 1.63. They
+Top-level semantic style recipes are native Core declarations in 1.64. They
 package checked utility tokens for one declared target (`col`, `row`, `flex`,
 `grid`, `stack`, `box`, `text`, `input`, or `button`), expand across imported
 source graphs, preserve later-utility precedence, and let direct typed node
@@ -43,7 +46,7 @@ participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
-First-class Ice tests are native in 1.63. Top-level `test` declarations reuse
+First-class Ice tests are native in 1.64. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. A persistent headless Iced cache drives click, hover,
 press/release, typing, keys, viewport changes, dispatch, update, and recursive
@@ -121,7 +124,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 1.63 has thirty-three checked Rust boundaries:
+Ice 1.64 has thirty-three checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |
@@ -201,8 +204,8 @@ public behavior has direct documented Ice syntax and tests.
 | `svg` | native | native path or UTF-8/raw byte memory source, all four iced length variants, fit, rotation, opacity, complete idle/hovered color style, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `table` | native | typed cloned rows, arbitrary header/cell subtrees, automatic row/column identity scopes, all table width/padding/separator setters and all column width/alignment setters |
 | `text` | native | direct checked ID on text and rich text; native string/numeric text plus structured rich spans; plain text supports mouse selection across wrapped lines with platform copy/select-all shortcuts; complete Text/Rich bounds, size, relative/absolute line height, font, alignment, wrapping and color, plus Text shaping and Rich str link events; every concrete Span field including solid/linear highlight background, border/per-corner radius/padding/underline/strike; typed theme-aware runtime callbacks cover the default Theme's advanced classes |
-| `text_editor` | native | app-owned direct or component-prop content, generated action application, every concrete builder setter, all five built-in themes, typed arbitrary native Highlighter adapters, complete native key bindings with custom routed payloads, every concrete Style field across all statuses, and typed Theme/Status callbacks covering advanced classes |
-| `text_input` | native | app-owned, component-prop, or component-local str binding, ID, every concrete builder setter, complete custom icon, every concrete Style field across active/hovered/focused/focused-hovered/disabled statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
+| `text_editor` | native | app-owned direct or explicit `bind` component-prop content, generated action application, every concrete builder setter, all five built-in themes, typed arbitrary native Highlighter adapters, complete native key bindings with custom routed payloads, every concrete Style field across all statuses, and typed Theme/Status callbacks covering advanced classes |
+| `text_input` | native | app-owned, explicit `bind` component-prop, or component-local str binding, ID, every concrete builder setter, complete custom icon, every concrete Style field across active/hovered/focused/focused-hovered/disabled statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `themer` | native | default/app/all 22 built-in and arbitrary typed `Theme: Base` subtrees; checked default text color and solid/linear background plus typed alternate-Theme text/background callbacks cover the complete public builder behavior |
 | `toggler` | native | direct checked ID; native label/value/disabled event, size/width/spacing, text typography/wrapping/alignment and complete font descriptors; every concrete Style field across active/hovered/disabled checked and unchecked statuses, plus typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `tooltip` | native | native two-child content, all positions, gap, padding, viewport snap, delay, nine container presets, every concrete container Style field, and checked `box-style` callbacks covering the default Theme's advanced classes |

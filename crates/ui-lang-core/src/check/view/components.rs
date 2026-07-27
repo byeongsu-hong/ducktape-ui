@@ -25,8 +25,7 @@ pub(in crate::check) fn infer_components_group(
             let mut supplied = HashSet::new();
             for arg in args {
                 let prop = &arg.name;
-                let Some((_, expected)) = component.params.iter().find(|(param, _)| param == prop)
-                else {
+                let Some(param) = component.params.iter().find(|param| param.name == *prop) else {
                     return Err(Error::new(
                         "E123",
                         span,
@@ -40,18 +39,32 @@ pub(in crate::check) fn infer_components_group(
                         format!("component `{name}` receives prop `{prop}` more than once"),
                     ));
                 }
+                if param.bind != arg.bind {
+                    let (message, hint) = if param.bind {
+                        (
+                            format!("component `{name}` bind prop `{prop}` requires `<->`"),
+                            format!("replace `{prop}=...` with `{prop}<->state`"),
+                        )
+                    } else {
+                        (
+                            format!("component `{name}` prop `{prop}` is read-only"),
+                            format!("replace `{prop}<->...` with `{prop}=...`"),
+                        )
+                    };
+                    return Err(Error::new("E123", span, message).hint(hint));
+                }
                 let actual = expr_type(&arg.value, env, document, span)?;
-                require_type(&actual, expected, span)?;
+                require_type(&actual, &param.ty, span)?;
             }
-            if let Some((missing, _)) = component
+            if let Some(missing) = component
                 .params
                 .iter()
-                .find(|(param, _)| !supplied.contains(param))
+                .find(|param| !supplied.contains(&param.name))
             {
                 return Err(Error::new(
                     "E123",
                     span,
-                    format!("component `{name}` is missing prop `{missing}`"),
+                    format!("component `{name}` is missing prop `{}`", missing.name),
                 ));
             }
             let declared_slots = slots(&component.root);

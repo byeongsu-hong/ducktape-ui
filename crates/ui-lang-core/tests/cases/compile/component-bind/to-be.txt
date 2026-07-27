@@ -1,0 +1,3 @@
+__BindDraft(::std::string::String)
+self.draft = value
+::iced::widget::text_input("", &self.draft)

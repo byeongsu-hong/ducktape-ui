@@ -306,7 +306,7 @@ component Topbar(current_title:str, current_icon:str)
       hovered bg=blue_soft
       pressed bg=selected
 
-component Document(title:str, state:BlockEditorState, icon:str) -> BlockEditorEvent
+component Document(bind title:str, state:BlockEditorState, icon:str) -> BlockEditorEvent
   box #root w=fill h=fill px=28.0 align-x=center
     col w=fill h=fill max-w=920.0 pt=26.0
       text icon #icon size=42.0 @text-fg
@@ -317,7 +317,7 @@ component Document(title:str, state:BlockEditorState, icon:str) -> BlockEditorEv
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
       extern block_editor(state) #editor -> emit _
 
-component SearchDialog(search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str)
+component SearchDialog(bind search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str)
   box #root w=520.0 p=12.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
     col w=fill gap=7.0
       row w=fill gap=8.0 align=center
@@ -346,7 +346,7 @@ component SearchDialog(search_query:str, selected_page:str, home_title:str, road
       if !page_matches(search_query, home_title) && !page_matches(search_query, roadmap_title) && !page_matches(search_query, launch_title) && !page_matches(search_query, meeting_title) && !page_matches(search_query, untitled_title)
         text "No pages found" size=13.0 @text-muted
 
-component ShareDialog(invite_email:str, invite_access_options:[str], invite_access_choice:str?, invited_email:str, invited_access:str, link_copied:bool, page_link:str)
+component ShareDialog(bind invite_email:str, invite_access_options:[str], invite_access_choice:str?, invited_email:str, invited_access:str, link_copied:bool, page_link:str)
   box #root w=470.0 p=18.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
     col w=fill gap=14.0
       row w=fill align=center
@@ -467,7 +467,7 @@ test document_component
   preset test
   viewport 960 650
   mount
-    Document title=home_title state=home_document icon="◆" #document -> home_editor_changed _
+    Document title<->home_title state=home_document icon="◆" #document -> home_editor_changed _
   target root = #document/root
   target title = #document/root/title
   target editor = #document/root/editor
@@ -489,7 +489,7 @@ test search_dialog_component
   preset test
   viewport 600 520
   mount
-    SearchDialog search_query=search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+    SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
   target root = #search-dialog/root
   target query = #search-dialog/root/query
   target roadmap = #search-dialog/root/roadmap-result/root/button
@@ -509,7 +509,7 @@ test share_dialog_component
   preset test
   viewport 560 420
   mount
-    ShareDialog invite_email=invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link("home") #share-dialog
+    ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link("home") #share-dialog
   target root = #share-dialog/root
   target email = #share-dialog/root/email
   target access = #share-dialog/root/access
@@ -655,7 +655,7 @@ view
                           if !home_favorite
                             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_home_favorite
                               text "☆" size=16.0 @text-muted
-                    Document title=home_title state=home_document icon="◆" #home-document -> home_editor_changed _
+                    Document title<->home_title state=home_document icon="◆" #home-document -> home_editor_changed _
                 "roadmap"
                   col #roadmap-page w=fill h=fill
                     Topbar current_title=roadmap_title current_icon="▦" #roadmap-topbar
@@ -670,7 +670,7 @@ view
                           if !roadmap_favorite
                             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_roadmap_favorite
                               text "☆" size=16.0 @text-muted
-                    Document title=roadmap_title state=roadmap_document icon="▦" #roadmap-document -> roadmap_editor_changed _
+                    Document title<->roadmap_title state=roadmap_document icon="▦" #roadmap-document -> roadmap_editor_changed _
                 "launch"
                   col #launch-page w=fill h=fill
                     Topbar current_title=launch_title current_icon="✓" #launch-topbar
@@ -685,7 +685,7 @@ view
                           if !launch_favorite
                             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_launch_favorite
                               text "☆" size=16.0 @text-muted
-                    Document title=launch_title state=launch_document icon="✓" #launch-document -> launch_editor_changed _
+                    Document title<->launch_title state=launch_document icon="✓" #launch-document -> launch_editor_changed _
                 "meeting"
                   col #meeting-page w=fill h=fill
                     Topbar current_title=meeting_title current_icon="▤" #meeting-topbar
@@ -700,7 +700,7 @@ view
                           if !meeting_favorite
                             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_meeting_favorite
                               text "☆" size=16.0 @text-muted
-                    Document title=meeting_title state=meeting_document icon="▤" #meeting-document -> meeting_editor_changed _
+                    Document title<->meeting_title state=meeting_document icon="▤" #meeting-document -> meeting_editor_changed _
                 "untitled"
                   col #untitled-page w=fill h=fill
                     Topbar current_title=untitled_title current_icon="□" #untitled-topbar
@@ -715,8 +715,8 @@ view
                           if !untitled_favorite
                             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_untitled_favorite
                               text "☆" size=16.0 @text-muted
-                    Document title=untitled_title state=untitled_document icon="□" #untitled-document -> untitled_editor_changed _
+                    Document title<->untitled_title state=untitled_document icon="□" #untitled-document -> untitled_editor_changed _
         layer
-          ShareDialog invite_email=invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link(selected_page) #share-dialog
+          ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link(selected_page) #share-dialog
     layer
-      SearchDialog search_query=search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+      SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog

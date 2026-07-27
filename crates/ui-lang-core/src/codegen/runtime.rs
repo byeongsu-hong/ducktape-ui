@@ -203,7 +203,7 @@ fn document_uses_widget_target(document: &Document) -> bool {
             .flat_map(|(_, locals, _)| locals)
             .any(|state| uses(&state.ty))
         || document.components.iter().any(|component| {
-            component.params.iter().any(|(_, ty)| uses(ty))
+            component.params.iter().any(|param| uses(&param.ty))
                 || uses(&component.output)
                 || component.states.iter().any(|state| uses(&state.ty))
                 || component

@@ -93,22 +93,22 @@ pub(in crate::codegen) fn render_content(
                 .find(|item| item.name == *name)
                 .ok_or_else(|| Error::new("E122", span, format!("unknown component `{name}`")))?;
             let mut component_env = HashMap::new();
-            for (param, ty) in &component.params {
+            for param in &component.params {
                 let arg = args
                     .iter()
-                    .find(|arg| &arg.name == param)
+                    .find(|arg| arg.name == param.name)
                     .expect("checker requires every component prop");
-                let state = match &arg.value {
-                    Expr::Path(path) if path.len() == 1 => {
+                let state = match (param.bind, &arg.value) {
+                    (true, Expr::Path(path)) if path.len() == 1 => {
                         env.get(&path[0]).and_then(|binding| binding.state.clone())
                     }
                     _ => None,
                 };
                 component_env.insert(
-                    param.clone(),
+                    param.name.clone(),
                     Binding {
                         code: expr_code(&arg.value, env, document, ValueMode::Borrowed)?,
-                        ty: ty.clone(),
+                        ty: param.ty.clone(),
                         local: false,
                         state,
                     },

@@ -30,7 +30,7 @@ component NavItem(icon:str, label:str, selected:bool)
         hovered bg=surface/58 text=fg
         pressed bg=accent text=primary
 
-component Sidebar(query:str, section:str, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
+component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
   stack #root w=232.0 h=fill
     shader liquid_glass(1, 24.0, 4.5, 0.58, 20.0) w=232.0 h=fill
     box #surface w=232.0 h=fill p=14.0 bg=glass/34 border=glass_edge/76 border-w=1.0 r=20.0 shadow=black/12 shadow-y=5.0 shadow-blur=18.0
