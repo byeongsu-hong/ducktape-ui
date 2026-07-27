@@ -476,7 +476,8 @@ test document_component
   expect title.font.family == family.named("Inter")
   expect title.font.weight == weight.bold()
   expect editor.visible
-  expect text "Write" within editor
+  expect text "Styles ▾" within editor
+  expect no text "Preview" within editor
   expect no text "BLOCKS" within editor
   expect no text "threads ·" within editor
   click title
@@ -571,11 +572,11 @@ test app_flow
   dispatch close_share
   click launch
   expect selected_page == "launch"
-  expect text "Write"
+  expect text "Styles ▾"
   click new_page
   expect selected_page == "untitled"
   expect untitled_title == "Untitled"
-  expect text "Write"
+  expect text "Styles ▾"
 
 test minimum_window_layout
   preset test

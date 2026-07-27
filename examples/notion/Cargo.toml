@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "highlighter", "markdown", "tiny-skia", "wgpu", "x11"] }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "wgpu", "x11"] }
 pulldown-cmark = "=0.12.2"
 ui-lang = { path = "../../crates/ui-lang" }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
