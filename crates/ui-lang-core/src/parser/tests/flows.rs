@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn parses_derived_values_and_handler_locals() {
+    let source = r#"app Demo
+state
+  draft = ""
+derived
+  normalized = trim(draft)
+  ready = !empty(normalized)
+on submit
+  let title = normalized
+  draft = title
+view
+  text normalized
+"#;
+    let document = parse(source).unwrap();
+    assert_eq!(document.derived.len(), 2);
+    assert!(matches!(
+        &document.handlers[0].statements[0],
+        Statement::Let { name, .. } if name == "title"
+    ));
+}
+
+#[test]
 fn parses_typed_task_streams() {
     let source = r#"app Streams
 extern crate::backend

@@ -3,10 +3,11 @@ on mount
   run list_tasks() -> loaded _ | failed _
 
 on submit
-  return if loading || empty(trim(draft))
+  let title = normalized_draft
+  return if !can_submit
   loading = true
   error = ""
-  run create_task(trim(draft)) -> created _ | failed _
+  run create_task(title) -> created _ | failed _
 
 on toggle(id, checked)
   return if loading

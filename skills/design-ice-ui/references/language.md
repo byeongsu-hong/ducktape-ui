@@ -2,7 +2,7 @@
 
 Use this reference for the source model, declarations, types, expressions,
 state, handlers, routes, and components. The repository implements language
-revision 1.63; package version `0.1.0` and Iced version `0.14.x` are separate
+revision 1.64; package version `0.1.0` and Iced version `0.14.x` are separate
 version axes.
 
 ## Contents
@@ -265,6 +265,18 @@ search_modes:combo[str] = ["List", "Board"]
 request:task-handle? = none
 ```
 
+Name repeated pure view or handler expressions with top-level read-only
+derived values:
+
+```ice
+derived
+  normalized_draft = trim(draft)
+  can_submit = !loading && !empty(normalized_draft)
+```
+
+Derived values may depend on app state and other derived values. They cannot be
+assigned or bound with `<->`; dependency cycles are errors.
+
 The expression language is deliberately closed:
 
 - literals: strings, booleans, `i64`, `f64`, `none`, homogeneous lists, and
@@ -308,9 +320,10 @@ Declare a handler with inferred payload parameters:
 
 ```ice
 on submit
-  return if loading || empty(trim(draft))
+  let title = trim(draft)
+  return if loading || empty(title)
   loading = true
-  run create_task(trim(draft)) -> created _ | failed _
+  run create_task(title) -> created _ | failed _
 
 on created(next)
   tasks = next
@@ -325,6 +338,8 @@ on failed(cause)
 Rules:
 
 - Assign only declared state with a matching checked type.
+- Use immutable `let name = expression` locals for repeated handler values;
+  locals cannot shadow state, derived values, parameters, or earlier locals.
 - Use `return if <bool>` as an early guard.
 - Put a task-producing statement last; it returns one Iced `Task`.
 - Route fallible externs to both success and failure handlers.

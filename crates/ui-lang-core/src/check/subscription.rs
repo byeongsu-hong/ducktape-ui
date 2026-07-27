@@ -296,16 +296,25 @@ pub(in crate::check) fn infer_runs(
     handler: &Handler,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
-    base_env: &HashMap<String, Type>,
+    value_env: &HashMap<String, Type>,
+    route_env: &HashMap<String, Type>,
 ) -> Result<(), Error> {
-    let mut unknown_env = base_env.clone();
+    let mut unknown_env = route_env.clone();
     unknown_env.extend(
         handler
             .params
             .iter()
             .map(|param| (param.name.clone(), Type::Unknown)),
     );
+    let mut local_env = value_env.clone();
+    local_env.extend(unknown_env.clone());
     for statement in &handler.statements {
+        if let Statement::Let { name, value, span } = statement {
+            let ty = expr_type(value, &local_env, document, span)?;
+            unknown_env.insert(name.clone(), ty);
+            local_env.extend(unknown_env.clone());
+            continue;
+        }
         let nested = match statement {
             Statement::TaskGroup { statements, .. } => Some(statements.clone()),
             Statement::Abortable { task, .. } => Some(vec![(**task).clone()]),
@@ -319,7 +328,8 @@ pub(in crate::check) fn infer_runs(
                 },
                 document,
                 signatures,
-                base_env,
+                &local_env,
+                route_env,
             )?;
             continue;
         }
@@ -456,7 +466,7 @@ pub(in crate::check) fn infer_runs(
             ..
         } = statement
         {
-            if component_context(base_env).is_some()
+            if component_context(route_env).is_some()
                 && let Some(route) = std::iter::once(success)
                     .chain(error.iter())
                     .find(|route| route.handler == "emit")

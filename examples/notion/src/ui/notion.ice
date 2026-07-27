@@ -164,8 +164,9 @@ on new_page
   untitled_document = block_editor_state("untitled")
 
 on send_invite
-  return if empty(trim(invite_email))
-  invited_email = trim(invite_email)
+  let email = trim(invite_email)
+  return if empty(email)
+  invited_email = email
   invited_access = selected_access(invite_access_choice)
   invite_email = ""
 
@@ -177,44 +178,54 @@ on copy_link(link)
   task clipboard write link
 
 on home_editor_changed(event)
-  home_document = block_editor_apply(home_document, event)
-  pending_editor_focus = block_editor_should_focus(home_document)
-  pending_editor_search_focus = block_editor_should_focus_search(home_document)
-  home_document = block_editor_clear_focus(home_document)
-  return if !pending_editor_focus
-  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
+  let next = block_editor_apply(home_document, event)
+  let focus_editor = block_editor_should_focus(next)
+  let focus_search = block_editor_should_focus_search(next)
+  pending_editor_focus = focus_editor
+  pending_editor_search_focus = focus_search
+  home_document = block_editor_clear_focus(next)
+  return if !focus_editor
+  task block_editor_focus(focus_search) -> editor_focused _
 
 on roadmap_editor_changed(event)
-  roadmap_document = block_editor_apply(roadmap_document, event)
-  pending_editor_focus = block_editor_should_focus(roadmap_document)
-  pending_editor_search_focus = block_editor_should_focus_search(roadmap_document)
-  roadmap_document = block_editor_clear_focus(roadmap_document)
-  return if !pending_editor_focus
-  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
+  let next = block_editor_apply(roadmap_document, event)
+  let focus_editor = block_editor_should_focus(next)
+  let focus_search = block_editor_should_focus_search(next)
+  pending_editor_focus = focus_editor
+  pending_editor_search_focus = focus_search
+  roadmap_document = block_editor_clear_focus(next)
+  return if !focus_editor
+  task block_editor_focus(focus_search) -> editor_focused _
 
 on launch_editor_changed(event)
-  launch_document = block_editor_apply(launch_document, event)
-  pending_editor_focus = block_editor_should_focus(launch_document)
-  pending_editor_search_focus = block_editor_should_focus_search(launch_document)
-  launch_document = block_editor_clear_focus(launch_document)
-  return if !pending_editor_focus
-  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
+  let next = block_editor_apply(launch_document, event)
+  let focus_editor = block_editor_should_focus(next)
+  let focus_search = block_editor_should_focus_search(next)
+  pending_editor_focus = focus_editor
+  pending_editor_search_focus = focus_search
+  launch_document = block_editor_clear_focus(next)
+  return if !focus_editor
+  task block_editor_focus(focus_search) -> editor_focused _
 
 on meeting_editor_changed(event)
-  meeting_document = block_editor_apply(meeting_document, event)
-  pending_editor_focus = block_editor_should_focus(meeting_document)
-  pending_editor_search_focus = block_editor_should_focus_search(meeting_document)
-  meeting_document = block_editor_clear_focus(meeting_document)
-  return if !pending_editor_focus
-  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
+  let next = block_editor_apply(meeting_document, event)
+  let focus_editor = block_editor_should_focus(next)
+  let focus_search = block_editor_should_focus_search(next)
+  pending_editor_focus = focus_editor
+  pending_editor_search_focus = focus_search
+  meeting_document = block_editor_clear_focus(next)
+  return if !focus_editor
+  task block_editor_focus(focus_search) -> editor_focused _
 
 on untitled_editor_changed(event)
-  untitled_document = block_editor_apply(untitled_document, event)
-  pending_editor_focus = block_editor_should_focus(untitled_document)
-  pending_editor_search_focus = block_editor_should_focus_search(untitled_document)
-  untitled_document = block_editor_clear_focus(untitled_document)
-  return if !pending_editor_focus
-  task block_editor_focus(pending_editor_search_focus) -> editor_focused _
+  let next = block_editor_apply(untitled_document, event)
+  let focus_editor = block_editor_should_focus(next)
+  let focus_search = block_editor_should_focus_search(next)
+  pending_editor_focus = focus_editor
+  pending_editor_search_focus = focus_search
+  untitled_document = block_editor_clear_focus(next)
+  return if !focus_editor
+  task block_editor_focus(focus_search) -> editor_focused _
 
 on editor_focused(_focused)
   pending_editor_focus = false

@@ -62,6 +62,11 @@ state
   encoded_image = encoded(bytes(50 36 0a 31 20 31 0a 32 35 35 0a ff 00 ff))
   memory_image = rgba(2, 2, bytes(ff 00 00 ff 00 ff 00 ff 00 00 ff ff ff ff ff ff))
 
+derived
+  normalized_draft = trim(draft)
+  can_submit = !loading && !empty(normalized_draft)
+  has_error = error != ""
+
 component TaskRow(task:Task, loading:bool)
   row #root p=16.0 align=center @w-full bg-surface border border-border rounded-lg
     checkbox task.title checked=task.done disabled=loading style=task_checkbox(loading) size=18.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=auto wrap=word-or-glyph font=default icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> toggle(task.id, _)
@@ -125,7 +130,7 @@ on panel_hidden
   observed_height = 0.0
 
 on copy_draft
-  return if empty(trim(draft))
+  return if empty(normalized_draft)
   task clipboard write draft
 
 on copied
@@ -428,13 +433,13 @@ view
         focused-hovered bg=surface border=primary border-w=2.0 r=8.0
         disabled bg=bg border=border border-w=1.0 r=10.0 icon=muted placeholder=muted value=muted selection=primary
         icon code="+" font=ui size=14.0 gap=6.0 side=left
-      button label="Copy draft" disabled=empty(trim(draft)) h=44.0 p=8.0 clip=true @bg-surface text-fg rounded-lg disabled:opacity-50 -> copy_draft
+      button label="Copy draft" disabled=empty(normalized_draft) h=44.0 p=8.0 clip=true @bg-surface text-fg rounded-lg disabled:opacity-50 -> copy_draft
         row gap=8.0 align=center
           text "Copy" size=14.0 @text-fg
           text "⌘C" size=12.0 @text-muted
-      button "Add" disabled=(loading || empty(trim(draft))) style=action_button(loading) @px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 pressed:bg-primary/70 disabled:opacity-50 -> submit
+      button "Add" disabled=!can_submit style=action_button(loading) @px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 pressed:bg-primary/70 disabled:opacity-50 -> submit
 
-    if error != ""
+    if has_error
       row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
         text error size=14.0 @text-white
         button "Retry" disabled=loading @px-4 py-2 bg-white text-danger rounded-md disabled:opacity-50 -> retry

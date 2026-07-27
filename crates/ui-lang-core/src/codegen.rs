@@ -73,6 +73,21 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
     }
 }
 
+fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> {
+    let env = state_env(document, "self");
+    for derived in &document.derived {
+        let value = expr_code(&derived.value, &env, document, ValueMode::Owned)?;
+        writeln!(
+            out,
+            "fn {}(&self) -> {} {{ {value} }}",
+            derived_method(&derived.name),
+            derived.ty.rust(&document.structs),
+        )
+        .unwrap();
+    }
+    Ok(())
+}
+
 pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String, Error> {
     let message = format!("__{}Message", document.app);
     let mut out = String::new();
@@ -332,6 +347,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_extern_probes(&mut out, document);
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "impl {} {{", document.app).unwrap();
+    generate_derived(&mut out, document)?;
     generate_named_windows(&mut out, document, source_path);
     let subscription = ".subscription(Self::__subscription)";
     let default_font = document

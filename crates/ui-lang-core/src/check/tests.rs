@@ -75,3 +75,91 @@ view
         );
     }
 }
+
+#[test]
+fn checks_derived_values_and_immutable_handler_locals() {
+    let source = r#"app Demo
+extern crate::backend
+  sync normalize(value:str) -> str
+  save(title:str) -> unit
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+  loading = false
+derived
+  normalized = trim(draft)
+  can_submit = !loading && !empty(normalized)
+on submit
+  let title = normalized
+  return if !can_submit
+  run save(title) -> saved
+on saved
+  draft = ""
+view
+  col
+    input "Draft" <-> draft
+    button "Save" disabled=!can_submit -> submit
+"#;
+    let document = analyze(source).unwrap();
+    assert_eq!(document.derived[0].ty, Type::Str);
+    assert_eq!(document.derived[1].ty, Type::Bool);
+
+    let forward = source.replace(
+        "normalized = trim(draft)\n  can_submit = !loading && !empty(normalized)",
+        "can_submit = !loading && !empty(normalized)\n  normalized = trim(draft)",
+    );
+    analyze(&forward).unwrap();
+
+    let cycle = source.replace(
+        "normalized = trim(draft)\n  can_submit = !loading && !empty(normalized)",
+        "normalized = can_submit\n  can_submit = normalized",
+    );
+    let error = analyze(&cycle).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(error.message.contains("dependency cycle"));
+
+    let impure = source.replace("normalized = trim(draft)", "normalized = normalize(draft)");
+    let error = analyze(&impure).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(error.message.contains("pure Ice expression"));
+
+    let shadow = source.replace("let title = normalized", "let draft = normalized");
+    let error = analyze(&shadow).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("shadows an existing value"));
+
+    let duplicate_local = source.replace(
+        "let title = normalized",
+        "let title = normalized\n  let title = normalized",
+    );
+    let error = analyze(&duplicate_local).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("shadows an existing value"));
+
+    let parameter_shadow = source
+        .replace("on submit\n", "on submit(value)\n")
+        .replace("let title = normalized", "let value = normalized")
+        .replace("-> submit\n", "-> submit(draft)\n");
+    let error = analyze(&parameter_shadow).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("shadows an existing value"));
+
+    let assignment = source.replace("draft = \"\"\nview", "can_submit = false\nview");
+    let error = analyze(&assignment).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("not writable state"));
+
+    let binding = source.replace("<-> draft", "<-> normalized");
+    let error = analyze(&binding).unwrap_err();
+    assert!(
+        error.message.contains("writable")
+            || error.message.contains("state binding")
+            || error.message.contains("app state"),
+        "{}",
+        error.message
+    );
+}

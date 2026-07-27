@@ -19,3 +19,8 @@ state
   snapshot_width = 0
   snapshot_height = 0
   snapshot_scale = 0.0
+
+derived
+  normalized_draft = trim(draft)
+  can_submit = !loading && !empty(normalized_draft)
+  has_error = error != ""

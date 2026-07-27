@@ -81,4 +81,13 @@ mod tests {
         );
         assert_eq!(format_source(&formatted).unwrap(), formatted);
     }
+
+    #[test]
+    fn formats_derived_values_and_handler_locals() {
+        let source = "app Demo\nstate\n    draft = \"\"\nderived\n    normalized = trim(draft)\non submit\n    let title = normalized\n    draft = title\nview\n    text normalized\n";
+        assert_eq!(
+            format_source(source).unwrap(),
+            "app Demo\nstate\n  draft = \"\"\nderived\n  normalized = trim(draft)\non submit\n  let title = normalized\n  draft = title\nview\n  text normalized\n"
+        );
+    }
 }

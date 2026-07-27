@@ -23,6 +23,12 @@ Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
 
 Core view control includes checked `if`, `for`, and first-match `match` arms.
+Top-level derived values are checked, cycle-free pure expressions over app
+state and other derived values; generated getters keep them read-only without a
+runtime reactive graph. Handler-local `let` values use the same closed typed
+expression language, are immutable and non-shadowing, and remain available to
+later assignments, guards, and the final task. Parser, checker, codegen, schema,
+README, and reference-app tests are direct evidence for both constructs.
 Components may own ordinary cloneable state and local handlers, including
 Future externs; `run latest` filters stale completions by scope and call site.
 Writable component inputs are explicit `bind` props; calls use `<->` with a

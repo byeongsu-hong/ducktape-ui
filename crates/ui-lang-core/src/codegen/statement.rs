@@ -9,6 +9,8 @@ pub(in crate::codegen) fn generate_statements(
     state: &str,
     return_task: bool,
 ) -> Result<bool, Error> {
+    let mut local_env = env.clone();
+    let env = &mut local_env;
     let mut has_task = false;
     let (task_prefix, task_suffix) = if return_task {
         ("return ", ";")
@@ -17,6 +19,20 @@ pub(in crate::codegen) fn generate_statements(
     };
     for statement in statements {
         match statement {
+            Statement::Let { name, value, .. } => {
+                let code = expr_code(value, env, document, ValueMode::Owned)?;
+                writeln!(out, "let {name} = {code};").unwrap();
+                let ty = expr_type(value, &env_types(env), document, &Span::line(1))?;
+                env.insert(
+                    name.clone(),
+                    Binding {
+                        code: name.clone(),
+                        ty,
+                        local: false,
+                        state: None,
+                    },
+                );
+            }
             Statement::Assign {
                 target, value, at, ..
             } => {
