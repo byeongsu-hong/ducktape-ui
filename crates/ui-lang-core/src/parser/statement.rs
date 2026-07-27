@@ -185,11 +185,16 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
                 .map(|source| (EffectKind::Stream, source))
         });
     if let Some((kind, run)) = effect {
-        let (latest, run) = if kind == EffectKind::Future {
+        let (mode, run) = if kind == EffectKind::Future {
             run.strip_prefix("latest ")
-                .map_or((false, run), |run| (true, run))
+                .map(|run| (FutureMode::Latest, run))
+                .or_else(|| {
+                    run.strip_prefix("replace ")
+                        .map(|run| (FutureMode::Replace, run))
+                })
+                .unwrap_or((FutureMode::Every, run))
         } else {
-            (false, run)
+            (FutureMode::Every, run)
         };
         let Some((call, routes)) = split_top_marker(run, "->") else {
             let keyword = match kind {
@@ -213,7 +218,7 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         };
         return Ok(Statement::Run {
             kind,
-            latest,
+            mode,
             function,
             args,
             success,

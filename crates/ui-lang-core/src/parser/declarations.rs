@@ -631,6 +631,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
     let mut roots = Vec::new();
     let mut state_block = false;
     let mut emits_block = false;
+    let mut lifetime = None;
     for child in &line.children {
         if child.text == "state" {
             if state_block {
@@ -677,6 +678,32 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
                     span: Span::line(event.number),
                 });
             }
+        } else if let Some(value) = child.text.strip_prefix("lifetime ") {
+            ensure_leaf(child)?;
+            if lifetime.is_some() {
+                return Err(error(
+                    "E040",
+                    child,
+                    "component has duplicate lifetime declarations",
+                ));
+            }
+            lifetime = Some(match value {
+                "retained" => ComponentLifetime::Retained,
+                "mounted" => ComponentLifetime::Mounted,
+                _ => {
+                    return Err(error(
+                        "E040",
+                        child,
+                        "component lifetime must be `retained` or `mounted`",
+                    ));
+                }
+            });
+        } else if child.text == "lifetime" {
+            return Err(error(
+                "E040",
+                child,
+                "component lifetime must be `retained` or `mounted`",
+            ));
         } else if let Some(header) = child.text.strip_prefix("on ") {
             handlers.push(parse_handler(header, child)?);
         } else {
@@ -707,6 +734,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
         params,
         output,
         events,
+        lifetime: lifetime.unwrap_or_default(),
         states,
         handlers,
         root,

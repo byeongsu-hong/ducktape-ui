@@ -148,6 +148,56 @@ fn parses_named_component_events_and_route_maps() {
 }
 
 #[test]
+fn parses_component_lifetime_and_replace_futures() {
+    let source = r#"app Demo
+extern crate::backend
+  fetch() -> str
+component Search()
+  lifetime mounted
+  on search
+    run replace fetch() -> loaded _
+  button "Search" -> search
+on loaded(value)
+view
+  Search
+"#;
+    let document = parse(source).unwrap();
+    assert_eq!(document.components[0].lifetime, ComponentLifetime::Mounted);
+    assert!(matches!(
+        document.components[0].handlers[0].statements[0],
+        Statement::Run {
+            mode: FutureMode::Replace,
+            ..
+        }
+    ));
+    assert_eq!(
+        parse(&source.replace("  lifetime mounted\n", ""))
+            .unwrap()
+            .components[0]
+            .lifetime,
+        ComponentLifetime::Retained
+    );
+    assert_eq!(
+        parse(&source.replace("lifetime mounted", "lifetime retained"))
+            .unwrap()
+            .components[0]
+            .lifetime,
+        ComponentLifetime::Retained
+    );
+
+    for (replacement, expected) in [
+        (
+            "  lifetime mounted\n  lifetime retained",
+            "duplicate lifetime",
+        ),
+        ("  lifetime transient", "must be `retained` or `mounted`"),
+    ] {
+        let error = parse(&source.replace("  lifetime mounted", replacement)).unwrap_err();
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
 fn parses_all_native_time_operations() {
     let source = example!("timer.ice");
     let document = parse(source).unwrap();

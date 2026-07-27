@@ -155,11 +155,16 @@ fn check(document: &mut Document) -> Result<(), Error> {
     }
     check_app_settings(document, &states)?;
     for handler in document.handlers.iter().chain(&preset_handlers) {
-        if let Some(span) = latest_run_span(&handler.statements) {
+        if let Some((mode, span)) = scoped_run(&handler.statements) {
+            let keyword = match mode {
+                FutureMode::Latest => "latest",
+                FutureMode::Replace => "replace",
+                FutureMode::Every => unreachable!(),
+            };
             return Err(Error::new(
                 "E140",
                 span,
-                "`run latest` is only valid in component handlers",
+                format!("`run {keyword}` is only valid in component handlers"),
             ));
         }
         check_structured_tasks(handler)?;
@@ -542,13 +547,11 @@ fn component_handler_key(component: &str, handler: &str) -> String {
     format!("{component}.{handler}")
 }
 
-fn latest_run_span(statements: &[Statement]) -> Option<&Span> {
+fn scoped_run(statements: &[Statement]) -> Option<(FutureMode, &Span)> {
     statements.iter().find_map(|statement| match statement {
-        Statement::Run {
-            latest: true, span, ..
-        } => Some(span),
-        Statement::TaskGroup { statements, .. } => latest_run_span(statements),
-        Statement::Abortable { task, .. } => latest_run_span(::std::slice::from_ref(task.as_ref())),
+        Statement::Run { mode, span, .. } if *mode != FutureMode::Every => Some((*mode, span)),
+        Statement::TaskGroup { statements, .. } => scoped_run(statements),
+        Statement::Abortable { task, .. } => scoped_run(::std::slice::from_ref(task.as_ref())),
         _ => None,
     })
 }

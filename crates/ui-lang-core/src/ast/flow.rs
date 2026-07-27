@@ -34,10 +34,18 @@ pub struct Component {
     pub params: Vec<ComponentParam>,
     pub output: Type,
     pub events: Vec<ComponentEvent>,
+    pub lifetime: ComponentLifetime,
     pub states: Vec<State>,
     pub handlers: Vec<Handler>,
     pub root: ViewNode,
     pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComponentLifetime {
+    #[default]
+    Retained,
+    Mounted,
 }
 
 #[derive(Clone, Debug)]
@@ -101,7 +109,7 @@ pub enum Statement {
     },
     Run {
         kind: EffectKind,
-        latest: bool,
+        mode: FutureMode,
         function: String,
         args: Vec<Expr>,
         success: Route,
@@ -170,6 +178,14 @@ pub enum Statement {
         route: Option<Route>,
         span: Span,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FutureMode {
+    #[default]
+    Every,
+    Latest,
+    Replace,
 }
 
 #[derive(Clone, Debug)]

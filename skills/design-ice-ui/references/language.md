@@ -375,6 +375,12 @@ Available effect families include:
 - native clipboard, font, system, widget, window, pane, image, time, and debug
   operations.
 
+Inside a component handler, `run latest` filters stale completion messages by
+instance scope and call site without stopping the old Future. Use `run replace`
+when the old Future must be aborted before its replacement starts. Both modes
+require component scope; app-global handlers use ordinary `run` or an explicit
+`abortable` state handle.
+
 Read [rust-boundary.md](rust-boundary.md) before adding one.
 
 ## Components and slots
@@ -409,8 +415,22 @@ component Counter(label:str)
     button "Increment" -> increment
 ```
 
-Use stable explicit IDs for repeated stateful instances. Local component state
-is keyed by hierarchical instance scope and persists for the app lifetime.
+Local component state is keyed by hierarchical instance scope. It persists for
+the app lifetime by default, so use stable explicit IDs for repeated retained
+instances. Choose mounted lifetime when disappearance should drop local state
+and abort replacement work:
+
+```ice
+component SearchDialog()
+  lifetime mounted
+  state
+    query = ""
+  on search
+    run replace fetch(query) -> loaded _ | failed _
+  input "Search" <-> query submit=search
+```
+
+There is no unmount handler or lifecycle effect.
 
 Declare one conventional child slot with bare `slot`:
 

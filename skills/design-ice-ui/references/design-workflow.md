@@ -140,7 +140,8 @@ For every effectful screen, cover:
 
 Use `return if` as a UI guard and `disabled=` for feedback, while retaining
 authoritative validation in Rust. Prevent stale local search or preview results
-with component `run latest` when that behavior is exactly latest-wins.
+with component `run latest` when completion filtering is enough, or `run
+replace` when the prior request must actually be aborted.
 
 Do not hide errors only in logs. Do not use color as the only state signal.
 

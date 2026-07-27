@@ -1,5 +1,5 @@
 use super::*;
-use crate::{EffectKind, Statement};
+use crate::{EffectKind, FutureMode, Statement};
 
 #[test]
 fn checks_named_component_event_routes_and_payloads() {
@@ -976,7 +976,7 @@ view
         document.components[0].handlers[0].statements[1],
         Statement::Run {
             kind: EffectKind::Future,
-            latest: true,
+            mode: FutureMode::Latest,
             ..
         }
     ));
@@ -985,6 +985,14 @@ view
         document.components[0].handlers[2].params[0].ty,
         Type::Named("AppError".into())
     );
+    let replaced = analyze(&source.replace("run latest", "run replace")).unwrap();
+    assert!(matches!(
+        replaced.components[0].handlers[0].statements[1],
+        Statement::Run {
+            mode: FutureMode::Replace,
+            ..
+        }
+    ));
     analyze(&source.replace("run latest", "run")).unwrap();
 
     let global = r#"app GlobalLatest
@@ -1004,6 +1012,10 @@ view
     let error = analyze(global).unwrap_err();
     assert_eq!(error.code, "E140");
     assert!(error.message.contains("only valid in component handlers"));
+
+    let error = analyze(&global.replace("run latest", "run replace")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("`run replace`"));
 }
 
 #[test]

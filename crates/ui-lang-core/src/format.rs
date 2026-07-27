@@ -100,4 +100,14 @@ mod tests {
             "app Demo\ncomponent Dialog()\n  emits\n    confirm\n    select(str, bool)\n  button \"Confirm\" -> emit confirm\non confirmed\non selected(value, active)\nview\n  Dialog\n    events\n      confirm -> confirmed\n      select -> selected _ _\n"
         );
     }
+
+    #[test]
+    fn formats_component_lifetime_and_replace() {
+        let source = "app Demo\nextern crate::backend\n    fetch() -> str\ncomponent Search()\n    lifetime mounted\n    on search\n        run replace fetch() -> loaded _\n    button \"Search\" -> search\non loaded(value)\nview\n    Search\n";
+        let formatted = format_source(source).unwrap();
+        assert_eq!(
+            formatted,
+            "app Demo\nextern crate::backend\n  fetch() -> str\ncomponent Search()\n  lifetime mounted\n  on search\n    run replace fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n"
+        );
+    }
 }

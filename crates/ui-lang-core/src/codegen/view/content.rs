@@ -170,12 +170,16 @@ pub(in crate::codegen) fn render_content(
             let scope_binding = component_scope_binding(name, span.line);
             if !component.states.is_empty() || !component.handlers.is_empty() {
                 let field = component_state_field(name);
+                let states = match component.lifetime {
+                    ComponentLifetime::Retained => format!("self.{field}"),
+                    ComponentLifetime::Mounted => format!("self.{field}.values()"),
+                };
                 for state in &component.states {
                     component_env.insert(
                         state.name.clone(),
                         Binding {
                             code: format!(
-                                "self.{field}.get(&{scope_binding}).map_or_else(|| {}, |__state| __state.{}.clone())",
+                                "{states}.get(&{scope_binding}).map_or_else(|| {}, |__state| __state.{}.clone())",
                                 initial_code(state, document),
                                 state.name
                             ),
@@ -240,7 +244,14 @@ pub(in crate::codegen) fn render_content(
             let rendered = if component.states.is_empty() && component.handlers.is_empty() {
                 rendered
             } else {
-                format!("{{ let {scope_binding} = {component_scope}; {rendered} }}")
+                let mount = (component.lifetime == ComponentLifetime::Mounted).then(|| {
+                    let field = component_state_field(name);
+                    format!("self.{field}.mount({scope_binding}.clone());")
+                });
+                format!(
+                    "{{ let {scope_binding} = {component_scope}; {} {rendered} }}",
+                    mount.as_deref().unwrap_or("")
+                )
             };
             Ok(format!(
                 "(|| {{ let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content }})()"

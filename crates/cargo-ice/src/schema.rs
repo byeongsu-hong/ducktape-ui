@@ -64,6 +64,11 @@ const COMPLETIONS: &[Completion] = &[
         "component call",
         "events\n  ${1:event} -> ${2:handler} $0",
     ),
+    Completion::new(
+        "lifetime",
+        "component declaration",
+        "lifetime ${1|retained,mounted|}",
+    ),
     Completion::new("slot", "declaration", "slot ${1:Name}"),
     Completion::new("on", "declaration", "on ${1:event}\n  $0"),
     Completion::new("let", "statement", "let ${1:name} = ${2:expression}"),
@@ -231,7 +236,7 @@ const COMPLETIONS: &[Completion] = &[
     Completion::new(
         "run",
         "effect",
-        "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
+        "run ${1|,latest ,replace |}${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
     ),
     Completion::new("<->", "operator", "<-> ${1:state}"),
     Completion::new("->", "operator", "-> ${1:handler}"),
@@ -563,10 +568,18 @@ fn construct_schema(item: &Completion) -> Value {
             child_shape(
                 1,
                 None,
-                "component-state|component-events|component-handler|view-root",
+                "component-lifetime|component-state|component-events|component-handler|view-root",
             ),
             no_binding(),
             json!({ "requiredWhen": "a default output type is declared", "payload": "default component output" }),
+            Vec::new(),
+        ),
+        "lifetime" => details(
+            &["component"],
+            "lifetime retained|mounted",
+            leaf(),
+            no_binding(),
+            no_route(),
             Vec::new(),
         ),
         "emits" => details(
@@ -1484,7 +1497,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "run" => details(
             &["handler-statement"],
-            "run <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+            "run [latest|replace] <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
             leaf(),
             no_binding(),
             json!({
@@ -1495,7 +1508,10 @@ fn construct_schema(item: &Completion) -> Value {
                     "payload": "extern error",
                     "requiredWhen": "extern declaration has `! <error-type>`",
                     "forbiddenWhen": "extern declaration has no error type"
-                }
+                },
+                "latest": "component scope and call-site generation filters stale completions without aborting work",
+                "replace": "component scope and call-site handle aborts prior work before replacement",
+                "scopedModes": "latest and replace are component-handler only"
             }),
             Vec::new(),
         ),
@@ -1821,6 +1837,11 @@ pub fn document() -> Value {
                 "closedComponents": true,
                 "defaultEventShorthand": "component Name(...) -> Type paired with call-site -> route",
             },
+            "componentLifecycle": {
+                "default": "retained",
+                "mounted": "state, latest generations, and replace handles are dropped when the scope leaves its rendered root",
+                "unmountEffects": false,
+            },
             "documentPrelude": {
                 "syntax": "app <Name>\ntheme\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
                 "requiredDeclarations": ["app", "theme", "view"],
@@ -1972,6 +1993,7 @@ mod tests {
             "component",
             "emits",
             "events",
+            "lifetime",
             "slot",
             "on",
             "let",

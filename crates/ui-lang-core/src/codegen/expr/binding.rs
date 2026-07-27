@@ -158,6 +158,10 @@ pub(in crate::codegen) fn component_latest_field(line: usize) -> String {
     format!("__ice_latest_{line}")
 }
 
+pub(in crate::codegen) fn component_replace_field(line: usize) -> String {
+    format!("__ice_replace_{line}")
+}
+
 pub(in crate::codegen) fn component_latest_variant(component: &str, line: usize) -> String {
     if simple_component(component)
         && !component.starts_with("Bind")
