@@ -539,7 +539,7 @@ pub(in crate::check) fn check_font(
 
 pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     let view_slots = slots(&document.view);
-    if let Some((_, span)) = view_slots.first() {
+    if let Some((_, _, span)) = view_slots.first() {
         return Err(Error::new(
             "E124",
             span,
@@ -548,7 +548,7 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     }
     for test in &document.tests {
         if let Some(mount) = &test.mount
-            && let Some((_, span)) = slots(mount).first()
+            && let Some((_, _, span)) = slots(mount).first()
         {
             return Err(Error::new(
                 "E124",
@@ -559,7 +559,7 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     }
     for component in &document.components {
         let mut names = HashSet::new();
-        for (name, span) in slots(&component.root) {
+        for (name, _, span) in slots(&component.root) {
             if !names.insert(name) {
                 return Err(Error::new(
                     "E124",
@@ -575,10 +575,14 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     Ok(())
 }
 
-pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, &Span)> {
-    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<(&'a str, &'a Span)>) {
+pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
+    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<(&'a str, bool, &'a Span)>) {
         match node {
-            ViewNode::Slot { name, span } => output.push((name, span)),
+            ViewNode::Slot {
+                name,
+                optional,
+                span,
+            } => output.push((name, *optional, span)),
             ViewNode::Layout { children, .. }
             | ViewNode::If { children, .. }
             | ViewNode::For { children, .. } => {

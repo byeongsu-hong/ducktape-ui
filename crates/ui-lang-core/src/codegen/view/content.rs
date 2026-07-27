@@ -159,6 +159,21 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
+            let component_slots = component_slot_context(slots, document, env, slot)?;
+            for component_slot in component_slots
+                .iter()
+                .flat_map(|slots| slots.entries.iter())
+            {
+                component_env.insert(
+                    format!("\0slot-provided:{}", component_slot.name),
+                    Binding {
+                        code: "true".into(),
+                        ty: Type::Bool,
+                        local: true,
+                        state: None,
+                    },
+                );
+            }
             let component_scope = id.as_ref().map_or_else(
                 || {
                     let scope = reconciliation_scope(scope, env);
@@ -217,17 +232,6 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let component_slots = (!slots.is_empty()).then(|| SlotContext {
-                entries: slots
-                    .iter()
-                    .map(|component_slot| SlotContent {
-                        name: component_slot.name.clone(),
-                        node: (*component_slot.content).clone(),
-                        env: env.clone(),
-                    })
-                    .collect(),
-                parent: slot.cloned().map(Box::new),
-            });
             let render_scope = if component.states.is_empty() && component.handlers.is_empty() {
                 component_scope.clone()
             } else {
@@ -257,7 +261,11 @@ pub(in crate::codegen) fn render_content(
                 "(|| {{ let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content }})()"
             ))
         }
-        ViewNode::Slot { name, span } => {
+        ViewNode::Slot {
+            name,
+            optional,
+            span,
+        } => {
             let slot = slot.ok_or_else(|| {
                 Error::new(
                     "E170",
@@ -269,13 +277,23 @@ pub(in crate::codegen) fn render_content(
                 .entries
                 .iter()
                 .find(|entry| entry.name == *name)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E170",
-                        span,
-                        format!("slot `{name}` reached codegen without component content"),
-                    )
-                })?;
+                .map_or_else(
+                    || {
+                        if *optional {
+                            Ok(None)
+                        } else {
+                            Err(Error::new(
+                                "E170",
+                                span,
+                                format!("slot `{name}` reached codegen without component content"),
+                            ))
+                        }
+                    },
+                    |content| Ok(Some(content)),
+                )?;
+            let Some(content) = content else {
+                return Ok(None);
+            };
             let mut content_env = content.env.clone();
             set_reconciliation_scope(&mut content_env, scope.to_owned());
             let rendered = render_node(

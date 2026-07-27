@@ -290,39 +290,89 @@ component Sidebar(selected_page:str, home_favorite:bool, roadmap_favorite:bool, 
         col #favorites w=fill gap=2.0
           text "Favorites" size=11.0 @text-faint
           if home_favorite
-            PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #favorite-home
+            PageItem #favorite-home
+              with
+                icon="◆"
+                title=home_title
+                page="home"
+                selected=(selected_page == "home")
               events
                 navigate -> emit navigate _
           if roadmap_favorite
-            PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #favorite-roadmap
+            PageItem #favorite-roadmap
+              with
+                icon="▦"
+                title=roadmap_title
+                page="roadmap"
+                selected=(selected_page == "roadmap")
               events
                 navigate -> emit navigate _
           if launch_favorite
-            PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #favorite-launch
+            PageItem #favorite-launch
+              with
+                icon="✓"
+                title=launch_title
+                page="launch"
+                selected=(selected_page == "launch")
               events
                 navigate -> emit navigate _
           if meeting_favorite
-            PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #favorite-meeting
+            PageItem #favorite-meeting
+              with
+                icon="▤"
+                title=meeting_title
+                page="meeting"
+                selected=(selected_page == "meeting")
               events
                 navigate -> emit navigate _
           if untitled_favorite
-            PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #favorite-untitled
+            PageItem #favorite-untitled
+              with
+                icon="□"
+                title=untitled_title
+                page="untitled"
+                selected=(selected_page == "untitled")
               events
                 navigate -> emit navigate _
       text "Private" size=11.0 @text-faint
-      PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #private-home
+      PageItem #private-home
+        with
+          icon="◆"
+          title=home_title
+          page="home"
+          selected=(selected_page == "home")
         events
           navigate -> emit navigate _
-      PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #roadmap
+      PageItem #roadmap
+        with
+          icon="▦"
+          title=roadmap_title
+          page="roadmap"
+          selected=(selected_page == "roadmap")
         events
           navigate -> emit navigate _
-      PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #launch
+      PageItem #launch
+        with
+          icon="✓"
+          title=launch_title
+          page="launch"
+          selected=(selected_page == "launch")
         events
           navigate -> emit navigate _
-      PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #meeting
+      PageItem #meeting
+        with
+          icon="▤"
+          title=meeting_title
+          page="meeting"
+          selected=(selected_page == "meeting")
         events
           navigate -> emit navigate _
-      PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #untitled
+      PageItem #untitled
+        with
+          icon="□"
+          title=untitled_title
+          page="untitled"
+          selected=(selected_page == "untitled")
         events
           navigate -> emit navigate _
       button #new-page label="New page" w=fill p=7.0 -> emit new_page
@@ -367,7 +417,14 @@ component Document(bind title:str, state:BlockEditorState, icon:str) -> BlockEdi
     col w=fill h=fill max-w=920.0 pt=26.0
       text icon #icon size=42.0 @text-fg
       box w=fill px=30.0
-        input "" #title label="Page title" <-> title hint="Untitled" w=fill p=0.0 text-size=36.0 font=inter_bold
+        input "" #title <-> title
+          with
+            label="Page title"
+            hint="Untitled"
+            w=fill
+            p=0.0
+            text-size=36.0
+            font=inter_bold
           active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0 r=0.0
           hovered bg=transparent border=transparent value=fg placeholder=faint border-w=0.0
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
@@ -377,11 +434,26 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
   emits
     close_search
     navigate(str)
-  box #root w=520.0 p=12.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
+  box #root
+    with
+      w=520.0
+      p=12.0
+      bg=surface
+      border=border
+      border-w=1.0
+      r=10.0
+      shadow=black/20
+      shadow-y=8.0
+      shadow-blur=24.0
     col w=fill gap=7.0
       row w=fill gap=8.0 align=center
         text "⌕" size=18.0 @text-muted
-        input "" #query label="Search pages" <-> search_query hint="Search Eddy's Notion" w=fill p=8.0
+        input "" #query <-> search_query
+          with
+            label="Search pages"
+            hint="Search Eddy's Notion"
+            w=fill
+            p=8.0
           active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
         button #close label="Close search" p=5.0 style=text -> emit close_search
@@ -393,23 +465,48 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
       if !empty(trim(search_query))
         text "BEST MATCHES" size=10.0 @text-faint font-bold
       if page_matches(search_query, home_title)
-        PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #home-result
+        PageItem #home-result
+          with
+            icon="◆"
+            title=home_title
+            page="home"
+            selected=(selected_page == "home")
           events
             navigate -> emit navigate _
       if page_matches(search_query, roadmap_title)
-        PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #roadmap-result
+        PageItem #roadmap-result
+          with
+            icon="▦"
+            title=roadmap_title
+            page="roadmap"
+            selected=(selected_page == "roadmap")
           events
             navigate -> emit navigate _
       if page_matches(search_query, launch_title)
-        PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #launch-result
+        PageItem #launch-result
+          with
+            icon="✓"
+            title=launch_title
+            page="launch"
+            selected=(selected_page == "launch")
           events
             navigate -> emit navigate _
       if page_matches(search_query, meeting_title)
-        PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #meeting-result
+        PageItem #meeting-result
+          with
+            icon="▤"
+            title=meeting_title
+            page="meeting"
+            selected=(selected_page == "meeting")
           events
             navigate -> emit navigate _
       if page_matches(search_query, untitled_title)
-        PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #untitled-result
+        PageItem #untitled-result
+          with
+            icon="□"
+            title=untitled_title
+            page="untitled"
+            selected=(selected_page == "untitled")
           events
             navigate -> emit navigate _
       if !page_matches(search_query, home_title) && !page_matches(search_query, roadmap_title) && !page_matches(search_query, launch_title) && !page_matches(search_query, meeting_title) && !page_matches(search_query, untitled_title)
@@ -421,7 +518,17 @@ component ShareDialog(bind invite_email:str, invite_access_options:[str], invite
     invite_access_changed(str)
     send_invite
     copy_link(str)
-  box #root w=470.0 p=18.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
+  box #root
+    with
+      w=470.0
+      p=18.0
+      bg=surface
+      border=border
+      border-w=1.0
+      r=10.0
+      shadow=black/20
+      shadow-y=8.0
+      shadow-blur=24.0
     col w=fill gap=14.0
       row w=fill align=center
         text "Share this page" w=fill size=17.0 @text-fg font-bold
@@ -431,7 +538,11 @@ component ShareDialog(bind invite_email:str, invite_access_options:[str], invite
         input "" #email label="Email address" <-> invite_email hint="Email or name" w=fill p=9.0
           active bg=surface border=border value=fg placeholder=faint selection=primary border-w=1.0 r=6.0
           focused border=primary border-w=1.0
-        pick invite_access_options invite_access_choice #access hint="Can edit" w=112.0 p=9.0 -> emit invite_access_changed _
+        pick invite_access_options invite_access_choice #access -> emit invite_access_changed _
+          with
+            hint="Can edit"
+            w=112.0
+            p=9.0
         button "Invite" #invite disabled=empty(trim(invite_email)) p=9.0 -> emit send_invite
           active bg=primary text=white r=6.0
           hovered bg=primary/85
@@ -479,7 +590,19 @@ test sidebar_component
   preset test
   viewport 300 640
   mount
-    Sidebar selected_page=selected_page home_favorite=true roadmap_favorite=false launch_favorite=false meeting_favorite=false untitled_favorite=false home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #sidebar
+    Sidebar #sidebar
+      with
+        selected_page=selected_page
+        home_favorite=true
+        roadmap_favorite=false
+        launch_favorite=false
+        meeting_favorite=false
+        untitled_favorite=false
+        home_title=home_title
+        roadmap_title=roadmap_title
+        launch_title=launch_title
+        meeting_title=meeting_title
+        untitled_title=untitled_title
       events
         toggle_sidebar -> toggle_sidebar
         open_search -> open_search
@@ -530,7 +653,11 @@ test topbar_component
       favorite_action:
         row
           if home_favorite
-            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_home_favorite
+            button #remove-favorite -> toggle_home_favorite
+              with
+                label="Remove from favorites"
+                p=6.0
+                style=text
               text "★" size=16.0 @text-fg
           if !home_favorite
             button #favorite label="Add to favorites" p=6.0 style=text -> toggle_home_favorite
@@ -575,7 +702,15 @@ test search_dialog_component
   preset test
   viewport 600 520
   mount
-    SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+    SearchDialog #search-dialog
+      with
+        search_query<->search_query
+        selected_page=selected_page
+        home_title=home_title
+        roadmap_title=roadmap_title
+        launch_title=launch_title
+        meeting_title=meeting_title
+        untitled_title=untitled_title
       events
         close_search -> close_search
         navigate -> navigate _
@@ -598,7 +733,15 @@ test share_dialog_component
   preset test
   viewport 560 420
   mount
-    ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link("home") #share-dialog
+    ShareDialog #share-dialog
+      with
+        invite_email<->invite_email
+        invite_access_options=invite_access_options
+        invite_access_choice=invite_access_choice
+        invited_email=invited_email
+        invited_access=invited_access
+        link_copied=link_copied
+        page_link=page_link("home")
       events
         close_share -> close_share
         invite_access_changed -> invite_access_changed _
@@ -724,14 +867,40 @@ test minimum_window_layout
   expect share_dialog.bottom <= app.bottom - 24.0
 
 view
-  overlay when=search_open dismiss=close_search backdrop=black/18 p=24.0 align-x=center align-y=start
+  overlay
+    with
+      when=search_open
+      dismiss=close_search
+      backdrop=black/18
+      p=24.0
+      align-x=center
+      align-y=start
     content
-      overlay when=share_open dismiss=close_share backdrop=black/18 p=24.0 align-x=center align-y=center
+      overlay
+        with
+          when=share_open
+          dismiss=close_share
+          backdrop=black/18
+          p=24.0
+          align-x=center
+          align-y=center
         content
           box #app w=fill h=fill bg=bg
             row #shell w=fill h=fill
               if sidebar_open
-                Sidebar selected_page=selected_page home_favorite=home_favorite roadmap_favorite=roadmap_favorite launch_favorite=launch_favorite meeting_favorite=meeting_favorite untitled_favorite=untitled_favorite home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #sidebar
+                Sidebar #sidebar
+                  with
+                    selected_page=selected_page
+                    home_favorite=home_favorite
+                    roadmap_favorite=roadmap_favorite
+                    launch_favorite=launch_favorite
+                    meeting_favorite=meeting_favorite
+                    untitled_favorite=untitled_favorite
+                    home_title=home_title
+                    roadmap_title=roadmap_title
+                    launch_title=launch_title
+                    meeting_title=meeting_title
+                    untitled_title=untitled_title
                   events
                     toggle_sidebar -> toggle_sidebar
                     open_search -> open_search
@@ -749,94 +918,190 @@ view
                       events
                         open_share -> open_share
                       comments:
-                        button #comments label="Open comments" p=6.0 style=text -> home_comments_toggled
+                        button #comments -> home_comments_toggled
+                          with
+                            label="Open comments"
+                            p=6.0
+                            style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
                         row
                           if home_favorite
-                            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_home_favorite
+                            button #remove-favorite -> toggle_home_favorite
+                              with
+                                label="Remove from favorites"
+                                p=6.0
+                                style=text
                               text "★" size=16.0 @text-fg
                           if !home_favorite
-                            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_home_favorite
+                            button #favorite -> toggle_home_favorite
+                              with
+                                label="Add to favorites"
+                                p=6.0
+                                style=text
                               text "☆" size=16.0 @text-muted
-                    Document title<->home_title state=home_document icon="◆" #home-document -> home_editor_changed _
+                    Document #home-document -> home_editor_changed _
+                      with
+                        title<->home_title
+                        state=home_document
+                        icon="◆"
                 "roadmap"
                   col #roadmap-page w=fill h=fill
                     Topbar current_title=roadmap_title current_icon="▦" #roadmap-topbar
                       events
                         open_share -> open_share
                       comments:
-                        button #comments label="Open comments" p=6.0 style=text -> roadmap_comments_toggled
+                        button #comments -> roadmap_comments_toggled
+                          with
+                            label="Open comments"
+                            p=6.0
+                            style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
                         row
                           if roadmap_favorite
-                            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_roadmap_favorite
+                            button #remove-favorite -> toggle_roadmap_favorite
+                              with
+                                label="Remove from favorites"
+                                p=6.0
+                                style=text
                               text "★" size=16.0 @text-fg
                           if !roadmap_favorite
-                            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_roadmap_favorite
+                            button #favorite -> toggle_roadmap_favorite
+                              with
+                                label="Add to favorites"
+                                p=6.0
+                                style=text
                               text "☆" size=16.0 @text-muted
-                    Document title<->roadmap_title state=roadmap_document icon="▦" #roadmap-document -> roadmap_editor_changed _
+                    Document #roadmap-document -> roadmap_editor_changed _
+                      with
+                        title<->roadmap_title
+                        state=roadmap_document
+                        icon="▦"
                 "launch"
                   col #launch-page w=fill h=fill
                     Topbar current_title=launch_title current_icon="✓" #launch-topbar
                       events
                         open_share -> open_share
                       comments:
-                        button #comments label="Open comments" p=6.0 style=text -> launch_comments_toggled
+                        button #comments -> launch_comments_toggled
+                          with
+                            label="Open comments"
+                            p=6.0
+                            style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
                         row
                           if launch_favorite
-                            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_launch_favorite
+                            button #remove-favorite -> toggle_launch_favorite
+                              with
+                                label="Remove from favorites"
+                                p=6.0
+                                style=text
                               text "★" size=16.0 @text-fg
                           if !launch_favorite
-                            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_launch_favorite
+                            button #favorite -> toggle_launch_favorite
+                              with
+                                label="Add to favorites"
+                                p=6.0
+                                style=text
                               text "☆" size=16.0 @text-muted
-                    Document title<->launch_title state=launch_document icon="✓" #launch-document -> launch_editor_changed _
+                    Document #launch-document -> launch_editor_changed _
+                      with
+                        title<->launch_title
+                        state=launch_document
+                        icon="✓"
                 "meeting"
                   col #meeting-page w=fill h=fill
                     Topbar current_title=meeting_title current_icon="▤" #meeting-topbar
                       events
                         open_share -> open_share
                       comments:
-                        button #comments label="Open comments" p=6.0 style=text -> meeting_comments_toggled
+                        button #comments -> meeting_comments_toggled
+                          with
+                            label="Open comments"
+                            p=6.0
+                            style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
                         row
                           if meeting_favorite
-                            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_meeting_favorite
+                            button #remove-favorite -> toggle_meeting_favorite
+                              with
+                                label="Remove from favorites"
+                                p=6.0
+                                style=text
                               text "★" size=16.0 @text-fg
                           if !meeting_favorite
-                            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_meeting_favorite
+                            button #favorite -> toggle_meeting_favorite
+                              with
+                                label="Add to favorites"
+                                p=6.0
+                                style=text
                               text "☆" size=16.0 @text-muted
-                    Document title<->meeting_title state=meeting_document icon="▤" #meeting-document -> meeting_editor_changed _
+                    Document #meeting-document -> meeting_editor_changed _
+                      with
+                        title<->meeting_title
+                        state=meeting_document
+                        icon="▤"
                 "untitled"
                   col #untitled-page w=fill h=fill
                     Topbar current_title=untitled_title current_icon="□" #untitled-topbar
                       events
                         open_share -> open_share
                       comments:
-                        button #comments label="Open comments" p=6.0 style=text -> untitled_comments_toggled
+                        button #comments -> untitled_comments_toggled
+                          with
+                            label="Open comments"
+                            p=6.0
+                            style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
                         row
                           if untitled_favorite
-                            button #remove-favorite label="Remove from favorites" p=6.0 style=text -> toggle_untitled_favorite
+                            button #remove-favorite -> toggle_untitled_favorite
+                              with
+                                label="Remove from favorites"
+                                p=6.0
+                                style=text
                               text "★" size=16.0 @text-fg
                           if !untitled_favorite
-                            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_untitled_favorite
+                            button #favorite -> toggle_untitled_favorite
+                              with
+                                label="Add to favorites"
+                                p=6.0
+                                style=text
                               text "☆" size=16.0 @text-muted
-                    Document title<->untitled_title state=untitled_document icon="□" #untitled-document -> untitled_editor_changed _
+                    Document #untitled-document -> untitled_editor_changed _
+                      with
+                        title<->untitled_title
+                        state=untitled_document
+                        icon="□"
         layer
-          ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link(selected_page) #share-dialog
+          ShareDialog #share-dialog
+            with
+              invite_email<->invite_email
+              invite_access_options=invite_access_options
+              invite_access_choice=invite_access_choice
+              invited_email=invited_email
+              invited_access=invited_access
+              link_copied=link_copied
+              page_link=page_link(selected_page)
             events
               close_share -> close_share
               invite_access_changed -> invite_access_changed _
               send_invite -> send_invite
               copy_link -> copy_link _
     layer
-      SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+      SearchDialog #search-dialog
+        with
+          search_query<->search_query
+          selected_page=selected_page
+          home_title=home_title
+          roadmap_title=roadmap_title
+          launch_title=launch_title
+          meeting_title=meeting_title
+          untitled_title=untitled_title
         events
           close_search -> close_search
           navigate -> navigate _

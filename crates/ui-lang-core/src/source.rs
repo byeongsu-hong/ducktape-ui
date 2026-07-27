@@ -606,6 +606,22 @@ mod tests {
     }
 
     #[test]
+    fn compiles_provided_for_an_aliased_optional_slot_component() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col\n    ui::Card\n    ui::Card\n      Footer:\n        text \"Footer\"\n",
+        );
+        fixture.write(
+            "ui.ice",
+            "component Card()\n  col\n    text \"Body\"\n    if provided(Footer)\n      slot Footer?\n",
+        );
+
+        let compiled = compile_file(fixture.path("app.ice")).unwrap();
+        assert!(compiled.rust.contains("Footer"));
+    }
+
+    #[test]
     fn rejects_host_independent_absolute_imports() {
         let error = parse_use(r#"use "C:/tmp/part.ice""#, Path::new("app.ice"), 1).unwrap_err();
 
@@ -901,6 +917,34 @@ mod tests {
             surface.references[0].path.as_deref(),
             Some(recipes.as_path())
         );
+    }
+
+    #[test]
+    fn preserves_with_metadata_source_lines_across_imports() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"recipes.ice\"\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n",
+        );
+        fixture.write("recipes.ice", "recipe panel for box\n  @p-4\n");
+        let part =
+            "component Card()\n  box\n    with\n      w=fill\n      @panel\n    text \"Card\"\n";
+        fixture.write("part.ice", part);
+
+        let checked = analyze_file_with_overlays(fixture.path("app.ice"), &HashMap::new()).unwrap();
+        let part_path = fixture.path("part.ice").canonicalize().unwrap();
+        let (panel, reference) = checked.symbol_at(Some(&part_path), 5, 8).unwrap();
+        assert_eq!(panel.kind, SymbolKind::Recipe);
+        assert_eq!(reference.line, 5);
+        assert_eq!(reference.start_column, 8);
+
+        let overlays = HashMap::from([(
+            part_path,
+            part.replace("      @panel", "      unknown=true\n      @panel"),
+        )]);
+        let error = analyze_file_with_overlays(fixture.path("app.ice"), &overlays).unwrap_err();
+        assert_eq!(error.line, 5);
+        assert!(error.path.as_deref().unwrap().ends_with("part.ice"));
     }
 
     #[test]

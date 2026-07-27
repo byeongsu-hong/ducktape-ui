@@ -610,6 +610,15 @@ fn render_flex_children(
                 ..
             } => {
                 let condition = expr_code(condition, env, document, ValueMode::Owned)?;
+                if condition == "false" {
+                    continue;
+                }
+                if condition == "true" {
+                    render_flex_children(
+                        out, children, document, message, env, scope, slot, min_cell,
+                    )?;
+                    continue;
+                }
                 write!(out, " if {condition} {{").unwrap();
                 render_flex_children(out, children, document, message, env, scope, slot, min_cell)?;
                 out.push_str(" }");
@@ -682,7 +691,11 @@ fn render_flex_children(
                 out.push_str(" }");
             }
             _ => {
-                let rendered = render_node(child, document, message, env, scope, slot)?;
+                let Some(rendered) =
+                    render_node_if_present(child, document, message, env, scope, slot)?
+                else {
+                    continue;
+                };
                 let item = if let Some(min_cell) = min_cell {
                     format!(
                         "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",

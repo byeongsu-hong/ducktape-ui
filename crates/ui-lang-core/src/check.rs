@@ -255,6 +255,11 @@ fn check(document: &mut Document) -> Result<(), Error> {
                 .iter()
                 .map(|state| (state.name.clone(), state.ty.clone())),
         );
+        env.extend(
+            slots(&component.root)
+                .into_iter()
+                .map(|(name, _, _)| (format!("\0slot-provided:{name}"), Type::Bool)),
+        );
         env.insert(component_context_key(&component.name), Type::Unit);
         env.insert(
             component_output_key(&component.name),

@@ -35,7 +35,12 @@ view
   row w=fill h=fill
     box w=left_width h=fill bg=surface p=12.0
       text "Sidebar" size=14.0 @text-fg
-    resize-handle drag=divider_dragged press=drag_started release=drag_ended cursor=resize-horizontal
+    resize-handle
+      with
+        drag=divider_dragged
+        press=drag_started
+        release=drag_ended
+        cursor=resize-horizontal
       box w=6.0 h=fill bg=border
         text ""
     box w=fill h=fill bg=bg p=12.0

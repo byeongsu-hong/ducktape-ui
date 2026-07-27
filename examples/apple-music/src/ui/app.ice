@@ -40,9 +40,27 @@ view
     content
       overlay when=queue_open dismiss=queue backdrop=black/18 p=12.0 align-x=end align-y=center
         content
-          box #app w=fill h=fill p=10.0 clip=true bg=linear(1.57, frame_start@0.0, frame_end@1.0) border=white/78 border-w=1.0 r=26.0
+          box #app
+            with
+              w=fill
+              h=fill
+              p=10.0
+              clip=true
+              bg=linear(1.57, frame_start@0.0, frame_end@1.0)
+              border=white/78
+              border-w=1.0
+              r=26.0
             flex #shell w=fill h=fill dir=row gap=10.0
-              Sidebar query<->query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
+              Sidebar #sidebar
+                with
+                  query<->query
+                  section=section
+                  signed_in=signed_in
+                  profile_name=profile_name
+                  loading=loading
+                  current_title=current_title
+                  current_artist=current_artist
+                  current_cover=current_cover
                 events
                   close_window -> close_window
                   minimize_window -> minimize_window
@@ -55,13 +73,33 @@ view
                   sign_out -> sign_out
               box #content flex=1.0,1.0,0.0 h=fill
                 col w=fill h=fill
-                  LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
+                  LibraryContent #library
+                    with
+                      section=section
+                      query=query
+                      loading=loading
+                      error=error
+                      top_picks=top_picks
+                      recently_played=recently_played
+                      search_results=search_results
+                      current_title=current_title
+                      current_artist=current_artist
+                      current_cover=current_cover
                     events
                       restart_current -> restart_current
                       queue -> queue
                       play -> play _ _ _
                   box #dock w=fill px=16.0 pb=16.0
-                    PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume lyrics_active=lyrics_open queue_active=queue_open #player
+                    PlayerBar #player
+                      with
+                        title=current_title
+                        artist=current_artist
+                        cover=current_cover
+                        active=playing
+                        playhead=position
+                        loudness=volume
+                        lyrics_active=lyrics_open
+                        queue_active=queue_open
                       events
                         shuffle -> shuffle
                         previous -> previous
@@ -73,12 +111,21 @@ view
                         lyrics -> lyrics
                         queue -> queue
         layer
-          QueuePanel albums=recently_played current_title=current_title current_artist=current_artist current_cover=current_cover #queue-panel
+          QueuePanel #queue-panel
+            with
+              albums=recently_played
+              current_title=current_title
+              current_artist=current_artist
+              current_cover=current_cover
             events
               queue -> queue
               play -> play _ _ _
     layer
-      LyricsPanel title=current_title artist=current_artist lines=lyrics_for(current_title, position) #lyrics-panel
+      LyricsPanel #lyrics-panel
+        with
+          title=current_title
+          artist=current_artist
+          lines=lyrics_for(current_title, position)
         events
           lyrics -> lyrics
           seek -> seek _

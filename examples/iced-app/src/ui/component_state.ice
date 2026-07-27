@@ -81,7 +81,18 @@ component RenderContract()
     count = 0
   on increment
     count = count + 1
-  box #root w=240.0 p=16.0 shadow=black/50 shadow-x=2.0 shadow-y=3.0 shadow-blur=4.0 @bg-bg border border-primary rounded-lg
+  box #root
+    with
+      w=240.0
+      p=16.0
+      shadow=black/50
+      shadow-x=2.0
+      shadow-y=3.0
+      shadow-blur=4.0
+      @bg-bg
+      @border
+      @border-primary
+      @rounded-lg
     col gap=12.0
       box #heading
         text "Render contract" size=18.0 @text-primary
@@ -178,7 +189,12 @@ component InteractionContract()
     toggler "Toggler" #toggler checked=toggled -> toggled_changed _
     slider level #slider min=0.0 max=100.0 step=1.0 w=200.0 h=24.0 -> level_changed _
     radio "Radio" #radio value=1 selected=(mode == 1) -> mode_changed _
-    pick choices choice #pick hint="Pick" w=fill open=pick_opened close=pick_closed -> choice_changed _
+    pick choices choice #pick -> choice_changed _
+      with
+        hint="Pick"
+        w=fill
+        open=pick_opened
+        close=pick_closed
     mouse press=mouse_pressed cursor=pointer
       box #mouse w=200.0 h=32.0 @bg-bg rounded-md
         text mouse_presses size=14.0 @text-fg

@@ -1,7 +1,12 @@
 component QueueRow(album:Album, selected:bool)
   emits
     play(str, str, str)
-  button label=album.title #root w=fill h=60.0 p=7.0 -> emit play album.title album.artist album.cover
+  button #root -> emit play album.title album.artist album.cover
+    with
+      label=album.title
+      w=fill
+      h=60.0
+      p=7.0
     row w=fill h=fill gap=10.0 align=center
       Cover source=album.cover size=44.0 radius=9.0 #cover
       col w=fill gap=2.0
@@ -21,7 +26,19 @@ component QueuePanel(albums:[Album], current_title:str, current_artist:str, curr
     play(str, str, str)
   stack #root w=354.0 h=fill
     shader liquid_glass(3, 26.0, 5.0, 0.62, 22.0) w=354.0 h=fill
-    box #surface w=354.0 h=fill p=18.0 bg=glass/42 border=white/82 border-w=1.0 r=22.0 shadow=black/28 shadow-x=-8.0 shadow-y=8.0 shadow-blur=24.0
+    box #surface
+      with
+        w=354.0
+        h=fill
+        p=18.0
+        bg=glass/42
+        border=white/82
+        border-w=1.0
+        r=22.0
+        shadow=black/28
+        shadow-x=-8.0
+        shadow-y=8.0
+        shadow-blur=24.0
       col w=fill h=fill gap=12.0
         flex #header w=fill dir=row justify=space-between items=center
           col gap=2.0
@@ -62,7 +79,19 @@ component LyricsPanel(title:str, artist:str, lines:[LyricLine])
     seek(f64)
   stack #root w=330.0 h=fill
     shader liquid_glass(4, 26.0, 5.0, 0.62, 22.0) w=330.0 h=fill
-    box #surface w=330.0 h=fill p=22.0 bg=glass/42 border=white/82 border-w=1.0 r=22.0 shadow=black/28 shadow-x=-8.0 shadow-y=8.0 shadow-blur=24.0
+    box #surface
+      with
+        w=330.0
+        h=fill
+        p=22.0
+        bg=glass/42
+        border=white/82
+        border-w=1.0
+        r=22.0
+        shadow=black/28
+        shadow-x=-8.0
+        shadow-y=8.0
+        shadow-blur=24.0
       col w=fill h=fill gap=18.0
         flex #header w=fill dir=row justify=space-between items=center
           col gap=3.0
@@ -94,7 +123,18 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
     queue
   stack #root w=fill h=98.0
     shader liquid_glass(2, 26.0, 6.0, 0.50, 24.0) w=fill h=98.0
-    box #surface w=fill h=98.0 p=12.0 bg=glass/38 border=white/82 border-w=1.0 r=24.0 shadow=black/22 shadow-y=7.0 shadow-blur=22.0
+    box #surface
+      with
+        w=fill
+        h=98.0
+        p=12.0
+        bg=glass/38
+        border=white/82
+        border-w=1.0
+        r=24.0
+        shadow=black/22
+        shadow-y=7.0
+        shadow-blur=22.0
       flex #layout w=fill h=fill dir=row gap=18.0 items=center
         box #metadata w=220.0 h=fill align-y=center
           row w=fill gap=11.0 align=center
@@ -139,7 +179,13 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
             if loudness <= 0.0
               button label="Unmute" #unmute p=7.0 style=text -> emit toggle_mute
                 VolumeIcon muted=true
-            slider loudness #volume min=0.0 max=100.0 step=1.0 w=102.0 h=12.0 -> emit volume_changed _
+            slider loudness #volume -> emit volume_changed _
+              with
+                min=0.0
+                max=100.0
+                step=1.0
+                w=102.0
+                h=12.0
               active rail-start=fg rail-end=player_track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=fg
               hovered handle=circle(4.0)
               dragged rail-start=primary handle=circle(5.0) handle-color=primary

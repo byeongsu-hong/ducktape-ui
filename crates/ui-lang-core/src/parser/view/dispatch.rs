@@ -1,6 +1,69 @@
 use super::*;
 
 pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
+    if line.children.iter().any(|child| child.text == "with") {
+        if matches!(
+            line.text.split_ascii_whitespace().next(),
+            Some("match" | "if" | "for")
+        ) {
+            return Err(error(
+                "E040",
+                line,
+                "with is metadata for a widget or component call",
+            ));
+        }
+        let Some(metadata) = line.children.first().filter(|child| child.text == "with") else {
+            return Err(error(
+                "E040",
+                line,
+                "with must be the first metadata child of a node",
+            ));
+        };
+        if metadata.children.is_empty() {
+            return Err(error("E040", metadata, "with cannot be empty"));
+        }
+        let mut options = Vec::new();
+        let mut utilities = Vec::new();
+        for item in &metadata.children {
+            ensure_leaf(item)?;
+            if let Some(styles) = item.text.strip_prefix('@') {
+                utilities.extend(
+                    styles
+                        .split_ascii_whitespace()
+                        .map(|style| style.trim_start_matches('@')),
+                );
+            } else {
+                options.push(item.text.as_str());
+            }
+        }
+        let (without_route, route) = split_top_marker(&line.text, "->")
+            .map_or((line.text.as_str(), None), |(node, route)| {
+                (node.trim(), Some(route.trim()))
+            });
+        let (core, existing_utilities) = split_style_utilities(without_route, line);
+        let mut expanded = line.clone();
+        expanded.metadata = metadata.children.clone();
+        expanded.text = core.to_owned();
+        for option in options {
+            expanded.text.push(' ');
+            expanded.text.push_str(option);
+        }
+        let all_utilities = existing_utilities
+            .iter()
+            .map(String::as_str)
+            .chain(utilities)
+            .collect::<Vec<_>>();
+        if !all_utilities.is_empty() {
+            expanded.text.push_str(" @");
+            expanded.text.push_str(&all_utilities.join(" "));
+        }
+        if let Some(route) = route {
+            expanded.text.push_str(" -> ");
+            expanded.text.push_str(route);
+        }
+        expanded.children = line.children[1..].to_vec();
+        return parse_view(&expanded);
+    }
     if let Some(value) = line.text.strip_prefix("match ") {
         if line.children.is_empty() {
             return Err(error("E060", line, "match requires at least one arm"));

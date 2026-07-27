@@ -429,6 +429,93 @@ view
 }
 
 #[test]
+fn omits_missing_optional_slots_without_a_placeholder() {
+    let source = r#"app Composition
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Card()
+  col
+    slot Body
+    if provided(Footer)
+      box
+        slot Footer?
+view
+  row
+    Card
+      Body:
+        text "Plain"
+    Card
+      Body:
+        text "Detailed"
+      Footer:
+        text "Footer"
+"#;
+    let generated = compile(source, "optional-slots.ice").unwrap();
+
+    assert!(!generated.contains("if false"));
+    assert!(!generated.contains("if true"));
+    assert!(generated.contains("Plain"));
+    assert!(generated.contains("Detailed"));
+    assert!(generated.contains("Footer"));
+}
+
+#[test]
+fn omits_optional_slots_through_single_child_wrappers_and_forwarding() {
+    let source = r#"app Composition
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Leaf()
+  box #optional-shell
+    slot Body?
+component Inner()
+  col
+    if provided(Footer)
+      box #forwarded-footer-shell
+        slot Footer?
+component Outer()
+  col
+    Leaf
+    Inner
+      Footer:
+        slot Footer?
+view
+  Outer
+"#;
+    let generated = compile(source, "optional-forwarding.ice").unwrap();
+    assert!(!generated.contains("optional-shell"));
+    assert!(!generated.contains("forwarded-footer-shell"));
+
+    let supplied = source.replace(
+        "view\n  Outer\n",
+        "view\n  Outer\n    Footer:\n      text \"Footer\"\n",
+    );
+    let generated = compile(&supplied, "optional-forwarding-supplied.ice").unwrap();
+    assert!(generated.contains("forwarded-footer-shell"));
+    assert!(generated.contains("Footer"));
+
+    let empty_root = source.replace("view\n  Outer\n", "view\n  Leaf\n");
+    let generated = compile(&empty_root, "optional-empty-root.ice").unwrap();
+    assert!(!generated.contains("optional-shell"));
+    assert!(generated.contains("::iced::widget::Column::new().into()"));
+}
+
+#[test]
 fn preserves_component_and_slot_stack_boundaries() {
     let source = r#"app Composition
 theme contract AppTheme
@@ -887,7 +974,8 @@ view
     let generated = compile(source, "defaults.ice").unwrap();
 
     assert!(generated.contains("(\"Untitled\".clone()).to_string()"));
-    assert!(generated.contains("if true"));
+    assert!(generated.contains("Selected"));
+    assert!(!generated.contains("if true"));
 }
 
 #[test]

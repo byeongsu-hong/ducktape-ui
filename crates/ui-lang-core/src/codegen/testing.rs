@@ -22,14 +22,15 @@ pub(in crate::codegen) fn generate_test_mounts(
                 },
             );
         }
-        let root = render_node(
+        let root = render_node_if_present(
             mount,
             document,
             message,
             &env,
             &rust_string(&document.app),
             None,
-        )?;
+        )?
+        .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
         let window_arg = if document.daemon {
             ", window: ::iced::window::Id"
         } else {

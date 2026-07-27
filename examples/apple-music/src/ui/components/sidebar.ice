@@ -49,7 +49,18 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
     sign_out
   stack #root w=232.0 h=fill
     shader liquid_glass(1, 24.0, 4.5, 0.58, 20.0) w=232.0 h=fill
-    box #surface w=232.0 h=fill p=14.0 bg=glass/34 border=glass_edge/76 border-w=1.0 r=20.0 shadow=black/12 shadow-y=5.0 shadow-blur=18.0
+    box #surface
+      with
+        w=232.0
+        h=fill
+        p=14.0
+        bg=glass/34
+        border=glass_edge/76
+        border-w=1.0
+        r=20.0
+        shadow=black/12
+        shadow-y=5.0
+        shadow-blur=18.0
       col #content w=fill h=fill gap=6.0
         row #header w=fill h=42.0 align=center
           TrafficLights #traffic-lights
@@ -62,7 +73,15 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
               col gap=0.0 align=end
                 text "Music" size=13.0 @text-fg font-bold
                 text "ICE PLAYER" size=10.0 @text-muted font-bold
-        input "" #music-search label="Search music" <-> query hint="Artists, albums, and songs" submit=emit(search) disabled=loading w=fill p=10.0 text-size=13.0
+        input "" #music-search <-> query
+          with
+            label="Search music"
+            hint="Artists, albums, and songs"
+            submit=emit(search)
+            disabled=loading
+            w=fill
+            p=10.0
+            text-size=13.0
           active bg=surface/66 border=white/78 value=fg placeholder=muted selection=primary border-w=1.0 r=11.0
           hovered bg=surface/80 border=white
           focused bg=surface/90 border=ring border-w=1.0
@@ -80,7 +99,11 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
             navigate -> emit navigate _
         Separator
         text "YOUR LIBRARY" #library-label size=10.0 @text-muted font-bold
-        NavItem icon="◷" label="Recently Added" selected=(section == "Recently Added") #recently-added
+        NavItem #recently-added
+          with
+            icon="◷"
+            label="Recently Added"
+            selected=(section == "Recently Added")
           events
             navigate -> emit navigate _
         NavItem icon="⌁" label="Artists" selected=(section == "Artists") #artists
@@ -106,7 +129,12 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
           hovered bg=surface/82 border=white
           pressed bg=accent text=primary
         if !signed_in
-          button "Sign in to Music" #sign-in w=fill p=9.0 disabled=loading @outline_action -> emit sign_in
+          button "Sign in to Music" #sign-in -> emit sign_in
+            with
+              w=fill
+              p=9.0
+              disabled=loading
+              @outline_action
         if signed_in
           button label=profile_name #profile w=fill p=7.0 -> emit sign_out
             row w=fill gap=9.0 align=center

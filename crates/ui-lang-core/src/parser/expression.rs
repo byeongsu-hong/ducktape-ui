@@ -128,6 +128,7 @@ pub(in crate::parser) fn parse_type(source: &str, line: &Line) -> Result<Type, E
 }
 
 pub(in crate::parser) fn parse_expr(source: &str, line: &Line) -> Result<Expr, Error> {
+    let line = line.origin_for(source);
     ExprParser::new(source, line)?.parse()
 }
 

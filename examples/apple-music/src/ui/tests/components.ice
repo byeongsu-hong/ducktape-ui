@@ -7,7 +7,16 @@ test component_sidebar_contract
   preset test
   viewport 420 760
   mount
-    Sidebar query<->query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
+    Sidebar #sidebar
+      with
+        query<->query
+        section=section
+        signed_in=signed_in
+        profile_name=profile_name
+        loading=loading
+        current_title=current_title
+        current_artist=current_artist
+        current_cover=current_cover
       events
         close_window -> close_window
         minimize_window -> minimize_window
@@ -84,9 +93,19 @@ test component_titles_and_hero_contract
   viewport 920 520
   mount
     col #stage w=fill h=fill p=20.0 gap=18.0
-      PageTitle eyebrow="FOR YOU" title="Listen now" description="A daily soundtrack tuned to your library." #page
+      PageTitle #page
+        with
+          eyebrow="FOR YOU"
+          title="Listen now"
+          description="A daily soundtrack tuned to your library."
       SectionTitle title="Top picks" detail="CURATED FOR YOU" #section
-      FeatureHero kicker="MADE FOR YOU" title=current_title artist=current_artist description="A luminous mix of electronic pop, soft-focus vocals, and late-night color." cover=current_cover #hero
+      FeatureHero #hero
+        with
+          kicker="MADE FOR YOU"
+          title=current_title
+          artist=current_artist
+          description="A luminous mix of electronic pop, soft-focus vocals, and late-night color."
+          cover=current_cover
         events
           restart_current -> restart_current
           queue -> queue
@@ -256,7 +275,16 @@ test component_player_and_queue_contract
   viewport 1200 800
   mount
     col #stage w=fill h=fill p=12.0 gap=12.0
-      PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume lyrics_active=lyrics_open queue_active=queue_open #player
+      PlayerBar #player
+        with
+          title=current_title
+          artist=current_artist
+          cover=current_cover
+          active=playing
+          playhead=position
+          loudness=volume
+          lyrics_active=lyrics_open
+          queue_active=queue_open
         events
           shuffle -> shuffle
           previous -> previous
@@ -268,7 +296,12 @@ test component_player_and_queue_contract
           lyrics -> lyrics
           queue -> queue
       row #lower w=fill h=fill gap=12.0
-        QueuePanel albums=recently_played current_title=current_title current_artist=current_artist current_cover=current_cover #queue-panel
+        QueuePanel #queue-panel
+          with
+            albums=recently_played
+            current_title=current_title
+            current_artist=current_artist
+            current_cover=current_cover
           events
             queue -> queue
             play -> play _ _ _
@@ -361,7 +394,11 @@ test component_lyrics_contract
   preset test
   viewport 420 760
   mount
-    LyricsPanel title=current_title artist=current_artist lines=lyrics_for(current_title, position) #lyrics-panel
+    LyricsPanel #lyrics-panel
+      with
+        title=current_title
+        artist=current_artist
+        lines=lyrics_for(current_title, position)
       events
         lyrics -> lyrics
         seek -> seek _
@@ -393,7 +430,18 @@ test component_library_content_contract
   preset test
   viewport 1000 820
   mount
-    LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
+    LibraryContent #library
+      with
+        section=section
+        query=query
+        loading=loading
+        error=error
+        top_picks=top_picks
+        recently_played=recently_played
+        search_results=search_results
+        current_title=current_title
+        current_artist=current_artist
+        current_cover=current_cover
       events
         restart_current -> restart_current
         queue -> queue
@@ -436,7 +484,18 @@ test component_library_status_contract
   preset component_error
   viewport 1000 760
   mount
-    LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
+    LibraryContent #library
+      with
+        section=section
+        query=query
+        loading=loading
+        error=error
+        top_picks=top_picks
+        recently_played=recently_played
+        search_results=search_results
+        current_title=current_title
+        current_artist=current_artist
+        current_cover=current_cover
       events
         restart_current -> restart_current
         queue -> queue
