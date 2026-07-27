@@ -94,6 +94,22 @@ fn rejects_lowercase_component_declarations() {
 }
 
 #[test]
+fn parses_explicit_component_bind_props() {
+    let document = parse(
+        "app Demo\nstate\n  draft = \"\"\ncomponent Field(bind value:str, label:str)\n  text label\nview\n  Field value<->draft label=\"Name\"\n",
+    )
+    .unwrap();
+
+    assert!(document.components[0].params[0].bind);
+    assert!(!document.components[0].params[1].bind);
+    let ViewNode::Component { args, .. } = &document.view else {
+        panic!("expected component call");
+    };
+    assert!(args[0].bind);
+    assert!(!args[1].bind);
+}
+
+#[test]
 fn parses_the_full_i64_literal_range() {
     let document = parse(
         "app Demo\nstate\n  lowest = -9223372036854775808\n  highest = 9223372036854775807\nview\n  text \"ok\"\n",

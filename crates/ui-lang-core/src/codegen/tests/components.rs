@@ -620,13 +620,13 @@ state
   title = "Notes"
   locked = false
   language = "rs"
-component EditorPanel(content:editor, heading:str, readonly:bool, syntax:str)
+component EditorPanel(bind content:editor, bind heading:str, readonly:bool, syntax:str)
   col
     input "Title" <-> heading
     editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> command _
 on command(value)
 view
-  EditorPanel content=body heading=title readonly=locked syntax=language
+  EditorPanel content<->body heading<->title readonly=locked syntax=language
 "#;
     let generated = compile(source, "notes.ice").unwrap();
     assert!(generated.contains("__BindTitle(::std::string::String)"));
@@ -644,6 +644,33 @@ view
     assert!(generated.contains("crate::backend::editor_surface(__theme, __status, self.locked)"));
     assert!(generated.contains("self.title = value"));
     assert!(generated.contains("self.body.perform(action)"));
+}
+
+#[test]
+fn lowers_bind_prop_forwarding_to_its_writable_origin() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Field(bind value:str)
+  input "Value" <-> value
+component Shell(bind value:str)
+  state
+    local = ""
+  col
+    Field value<->value
+    Field value<->local
+view
+  Shell value<->draft
+"#;
+    let generated = compile(source, "bind.ice").unwrap();
+
+    assert!(generated.contains("__BindDraft(::std::string::String)"));
+    assert!(generated.contains("__ShellBindLocal(::std::string::String, ::std::string::String)"));
 }
 
 #[test]

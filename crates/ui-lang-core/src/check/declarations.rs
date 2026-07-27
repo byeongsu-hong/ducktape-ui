@@ -52,9 +52,9 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         check(&state.ty, &state.span)?;
     }
     for component in &document.components {
-        for (_, ty) in &component.params {
-            reject_debug_span(ty, &component.span)?;
-            check(ty, &component.span)?;
+        for param in &component.params {
+            reject_debug_span(&param.ty, &component.span)?;
+            check(&param.ty, &component.span)?;
         }
         reject_debug_span(&component.output, &component.span)?;
         check(&component.output, &component.span)?;
@@ -268,12 +268,12 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
             ));
         }
         let mut params = HashSet::new();
-        for (param, _) in &component.params {
-            if !params.insert(param) {
+        for param in &component.params {
+            if !params.insert(&param.name) {
                 return Err(Error::new(
                     "E100",
                     &component.span,
-                    format!("duplicate component prop `{param}`"),
+                    format!("duplicate component prop `{}`", param.name),
                 ));
             }
         }

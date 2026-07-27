@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone)]
+enum ControlledBinding {
+    App(String),
+    Writable,
+    ReadOnly(Type),
+}
+
 pub(crate) fn controlled_state_bindings(
     document: &Document,
     editors: bool,
@@ -8,7 +15,7 @@ pub(crate) fn controlled_state_bindings(
         node: &ViewNode,
         document: &Document,
         editors: bool,
-        env: &HashMap<String, Option<String>>,
+        env: &HashMap<String, ControlledBinding>,
         components: &mut HashSet<String>,
         output: &mut Vec<String>,
     ) -> Result<(), Error> {
@@ -20,17 +27,28 @@ pub(crate) fn controlled_state_bindings(
             _ => None,
         };
         if let Some((binding, widget, span)) = binding {
-            let state = env.get(binding).ok_or_else(|| {
-                Error::new(
-                    "E139",
-                    span,
-                    format!("{widget} binding must resolve to an app state"),
-                )
-            })?;
-            if let Some(state) = state
-                && !output.contains(state)
-            {
-                output.push(state.clone());
+            match env.get(binding) {
+                Some(ControlledBinding::App(state)) => {
+                    if !output.contains(state) {
+                        output.push(state.clone());
+                    }
+                }
+                Some(ControlledBinding::Writable) => {}
+                Some(ControlledBinding::ReadOnly(ty)) => {
+                    return Err(Error::new(
+                        "E139",
+                        span,
+                        format!("component prop `{binding}` is read-only and cannot be bound"),
+                    )
+                    .hint(format!("declare it as `bind {binding}:{}`", ty.display())));
+                }
+                None => {
+                    return Err(Error::new(
+                        "E139",
+                        span,
+                        format!("{widget} binding must resolve to writable state"),
+                    ));
+                }
             }
             return Ok(());
         }
@@ -140,23 +158,68 @@ pub(crate) fn controlled_state_bindings(
                     .find(|item| item.name == *name)
                     .expect("checker validates component names");
                 let mut component_env = HashMap::new();
-                for (param, _) in &component.params {
+                for param in &component.params {
                     let arg = args
                         .iter()
-                        .find(|arg| &arg.name == param)
+                        .find(|arg| arg.name == param.name)
                         .expect("checker validates named component arguments");
-                    if let Expr::Path(path) = &arg.value
-                        && path.len() == 1
-                        && let Some(state) = env.get(&path[0])
-                    {
-                        component_env.insert(param.clone(), state.clone());
+                    if !param.bind {
+                        component_env.insert(
+                            param.name.clone(),
+                            ControlledBinding::ReadOnly(param.ty.clone()),
+                        );
+                        continue;
                     }
+                    let Expr::Path(path) = &arg.value else {
+                        return Err(Error::new(
+                            "E139",
+                            span,
+                            format!(
+                                "component `{name}` bind prop `{}` requires a direct writable state",
+                                param.name
+                            ),
+                        )
+                        .hint(format!("pass `{}<->state`", param.name)));
+                    };
+                    let [binding] = path.as_slice() else {
+                        return Err(Error::new(
+                            "E139",
+                            span,
+                            format!(
+                                "component `{name}` bind prop `{}` requires a direct writable state",
+                                param.name
+                            ),
+                        )
+                        .hint(format!("pass `{}<->state`", param.name)));
+                    };
+                    let source = env.get(binding).ok_or_else(|| {
+                        Error::new(
+                            "E139",
+                            span,
+                            format!(
+                                "component `{name}` bind prop `{}` requires a direct writable state",
+                                param.name
+                            ),
+                        )
+                        .hint("pass app state, component state, or another bind prop")
+                    })?;
+                    if let ControlledBinding::ReadOnly(ty) = source {
+                        return Err(Error::new(
+                            "E139",
+                            span,
+                            format!(
+                                "component prop `{binding}` is read-only and cannot be forwarded"
+                            ),
+                        )
+                        .hint(format!("declare it as `bind {binding}:{}`", ty.display())));
+                    }
+                    component_env.insert(param.name.clone(), source.clone());
                 }
                 component_env.extend(
                     component
                         .states
                         .iter()
-                        .map(|state| (state.name.clone(), None)),
+                        .map(|state| (state.name.clone(), ControlledBinding::Writable)),
                 );
                 collect(
                     &component.root,
@@ -192,7 +255,12 @@ pub(crate) fn controlled_state_bindings(
     let env = document
         .states
         .iter()
-        .map(|state| (state.name.clone(), Some(state.name.clone())))
+        .map(|state| {
+            (
+                state.name.clone(),
+                ControlledBinding::App(state.name.clone()),
+            )
+        })
         .collect();
     let mut output = Vec::new();
     collect(
@@ -206,6 +274,36 @@ pub(crate) fn controlled_state_bindings(
     for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
         collect(
             mount,
+            document,
+            editors,
+            &env,
+            &mut HashSet::new(),
+            &mut output,
+        )?;
+    }
+    for component in &document.components {
+        let env = component
+            .params
+            .iter()
+            .map(|param| {
+                (
+                    param.name.clone(),
+                    if param.bind {
+                        ControlledBinding::Writable
+                    } else {
+                        ControlledBinding::ReadOnly(param.ty.clone())
+                    },
+                )
+            })
+            .chain(
+                component
+                    .states
+                    .iter()
+                    .map(|state| (state.name.clone(), ControlledBinding::Writable)),
+            )
+            .collect();
+        collect(
+            &component.root,
             document,
             editors,
             &env,

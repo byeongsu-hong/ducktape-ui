@@ -541,10 +541,18 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
                 return Err(error(
                     "E043",
                     line,
-                    "component parameters require `name:type`",
+                    "component parameters require `[bind] name:type`",
                 ));
             };
-            params.push((identifier(name.trim(), line)?, parse_type(ty.trim(), line)?));
+            let name = name.trim();
+            let (bind, name) = name
+                .strip_prefix("bind ")
+                .map_or((false, name), |name| (true, name.trim_start()));
+            params.push(ComponentParam {
+                name: identifier(name, line)?,
+                ty: parse_type(ty.trim(), line)?,
+                bind,
+            });
         }
     }
     let mut states = Vec::new();

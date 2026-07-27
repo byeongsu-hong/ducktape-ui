@@ -495,8 +495,11 @@ fn collect_widget_ids(
                 if inspect_all && !component_scopes.contains(&component_scope) {
                     component_scopes.push(component_scope.clone());
                 }
-                let mut component_env: HashMap<String, Type> =
-                    component.params.iter().cloned().collect();
+                let mut component_env: HashMap<String, Type> = component
+                    .params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.ty.clone()))
+                    .collect();
                 component_env.extend(
                     component
                         .states

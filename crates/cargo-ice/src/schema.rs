@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const LANGUAGE_REVISION: &str = "1.63";
+pub const LANGUAGE_REVISION: &str = "1.64";
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
 pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
@@ -514,7 +514,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "component" => details(
             &["document"],
-            "component <Name>(<prop>:<type>, ...)",
+            "component <Name>([bind] <prop>:<type>, ...)",
             child_shape(1, None, "component-state|component-handler|view-root"),
             no_binding(),
             no_route(),
@@ -1695,6 +1695,20 @@ pub fn document() -> Value {
         "core": {
             "frozenAt": LANGUAGE_REVISION,
             "generative": true,
+            "componentProps": {
+                "read": {
+                    "declaration": "<name>:<type>",
+                    "argument": "<name>=<expression>",
+                    "writable": false,
+                },
+                "bind": {
+                    "declaration": "bind <name>:<type>",
+                    "argument": "<name><-><state>",
+                    "writable": true,
+                    "sources": ["app state", "component-local state", "another bind prop"],
+                    "directPathOnly": true,
+                },
+            },
             "documentPrelude": {
                 "syntax": "app <Name>\ntheme\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
                 "requiredDeclarations": ["app", "theme", "view"],
@@ -1897,6 +1911,7 @@ mod tests {
         let expected = CORE_CONTRACT.iter().copied().collect::<BTreeSet<_>>();
 
         assert_eq!(schema["core"]["generative"], true);
+        assert_eq!(schema["core"]["componentProps"]["bind"]["writable"], true);
         assert_eq!(actual, expected);
         for construct in constructs {
             assert!(!construct["contexts"].as_array().unwrap().is_empty());

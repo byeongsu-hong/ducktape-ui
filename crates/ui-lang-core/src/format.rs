@@ -61,4 +61,13 @@ mod tests {
         );
         assert_eq!(format_source(&formatted).unwrap(), formatted);
     }
+
+    #[test]
+    fn preserves_explicit_component_bind_syntax() {
+        let source = "app Demo\nstate\n    draft = \"\"\ncomponent Field(bind value:str)\n    input \"Value\" <-> value\nview\n    Field value<->draft\n";
+        assert_eq!(
+            format_source(source).unwrap(),
+            "app Demo\nstate\n  draft = \"\"\ncomponent Field(bind value:str)\n  input \"Value\" <-> value\nview\n  Field value<->draft\n"
+        );
+    }
 }

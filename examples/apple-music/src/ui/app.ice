@@ -42,7 +42,7 @@ view
         content
           box #app w=fill h=fill p=10.0 clip=true bg=linear(1.57, frame_start@0.0, frame_end@1.0) border=white/78 border-w=1.0 r=26.0
             flex #shell w=fill h=fill dir=row gap=10.0
-              Sidebar query=query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
+              Sidebar query<->query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
               box #content flex=1.0,1.0,0.0 h=fill
                 col w=fill h=fill
                   LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library

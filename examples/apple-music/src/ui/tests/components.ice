@@ -7,7 +7,7 @@ test component_sidebar_contract
   preset test
   viewport 420 760
   mount
-    Sidebar query=query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
+    Sidebar query<->query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
   target root = #sidebar/root
   target surface = #sidebar/root/surface
   target content = #sidebar/root/surface/content

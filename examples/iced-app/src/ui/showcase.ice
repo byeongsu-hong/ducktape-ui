@@ -66,7 +66,7 @@ component TaskRow(task:Task, loading:bool)
   row #root p=16.0 align=center @w-full bg-surface border border-border rounded-lg
     checkbox task.title checked=task.done disabled=loading style=task_checkbox(loading) size=18.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=auto wrap=word-or-glyph font=default icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> toggle(task.id, _)
 
-component EditorPanel(content:editor, heading:str, busy:bool)
+component EditorPanel(bind content:editor, bind heading:str, busy:bool)
   col gap=8.0
     input "Editor heading" <-> heading hint="Editor heading" disabled=busy
     editor #notes <-> content hint="Write notes" w=640.0 h=120.0 min-h=80.0 max-h=240.0 size=14.0 line-h=1.3 p=8.0 wrap=word font=ui highlighter=editor_highlight("fn") key-binding=editor_keys(busy) style=editor_surface(busy) disabled=busy -> editor_command _
@@ -492,7 +492,7 @@ view
         row gap=8.0 align=center
           button "Append Markdown image" -> extend_markdown
           text len(help_images) size=12.0 @text-muted
-        EditorPanel content=notes heading=editor_title busy=loading
+        EditorPanel content<->notes heading<->editor_title busy=loading
         row gap=8.0 align=center
           button "Read notes" -> read_notes
           button "Clear notes" -> clear_notes

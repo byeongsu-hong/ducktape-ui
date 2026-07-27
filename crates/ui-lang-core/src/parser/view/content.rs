@@ -14,12 +14,20 @@ pub(in crate::parser) fn parse_component_call(
             parse_unique_id(part, &mut id, line, "E040", "component call")?;
             continue;
         }
-        let Some((prop, value)) = split_top_once(part, '=') else {
-            return Err(error("E040", line, "component props use `name=value`"));
-        };
+        let (prop, value, bind) = split_top_marker(part, "<->")
+            .map(|(prop, value)| (prop, value, true))
+            .or_else(|| split_top_once(part, '=').map(|(prop, value)| (prop, value, false)))
+            .ok_or_else(|| {
+                error(
+                    "E040",
+                    line,
+                    "component props use `name=value` or `name<->state`",
+                )
+            })?;
         args.push(ComponentArg {
             name: identifier(prop.trim(), line)?,
             value: parse_expr(strip_wrapping_parens(value.trim()), line)?,
+            bind,
         });
     }
     Ok((name, args, id))

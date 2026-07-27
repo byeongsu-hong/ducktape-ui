@@ -1,4 +1,4 @@
-# Ice Language Specification 1.63
+# Ice Language Specification 1.64
 
 Status: implemented reference slice
 
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 1.63 syntax.
+marked “planned” is a design constraint, not accepted 1.64 syntax.
 
 ## 1. Design contract
 
@@ -50,7 +50,7 @@ async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 1.63, with one canonical spelling for each construct. Spellings
+for revision 1.64, with one canonical spelling for each construct. Spellings
 removed in this revision are syntax errors and the formatter never translates
 old vocabulary. Future additions or changes require an explicit language
 design and a new revision; future removals require deprecation and migration.
@@ -61,7 +61,7 @@ are the extended surface. It is not a parity roadmap and must not grow only
 because iced exposes another public type or method.
 
 Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 1.63. The workspace packages are
+document specifies language revision 1.64. The workspace packages are
 pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
 resolved iced/iced_widget versions are a third, independent backend baseline.
 
@@ -168,7 +168,7 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
   line. Indentation may only return to an existing level.
 - Empty lines are ignored by the parser and normalized by the formatter.
 - A line whose first non-space characters are `//` is a comment. Inline and
-  block comments are not part of 1.63.
+  block comments are not part of 1.64.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
   or `__`, and `_`, `none`, and Rust keywords are reserved.
 - Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
@@ -1233,7 +1233,7 @@ codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 1.63.
+compile time. Encoded icon formats remain outside 1.64.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -1781,7 +1781,7 @@ extern crate::backend
   editor-highlighter editor_highlight(token:str)
   editor-style editor_surface(readonly:bool)
 
-component EditorPanel(content:editor, readonly:bool)
+component EditorPanel(bind content:editor, readonly:bool)
   editor <-> content highlighter=editor_highlight("fn") key-binding=editor_keys(readonly) style=editor_surface(readonly) -> editor_command _
 ```
 
@@ -1793,8 +1793,10 @@ convertible to the same default `Element`, so Rust can call `highlight_with`
 with any `Highlighter`, settings, highlight type, and format function.
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
-inside a pure component may bind an `editor` or `str` prop when every call
-passes a direct app state; the checker rejects computed temporary bindings.
+inside a component may bind only a prop declared with `bind`. Every call passes
+it explicitly with `content<->state`; the state must be a direct app state,
+component-local state, or another `bind` prop. Ordinary `name:type` props are
+read-only, and computed temporary bindings are rejected.
 `key-binding=` and the editor's outer `->` route must appear together; an
 editor without a custom binding has neither.
 
@@ -1891,7 +1893,7 @@ crate::backend::create_task
 Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
 `A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
 messages must satisfy the traits required by generated iced code, notably
-`Clone` for 1.63 message payloads. Generated app and message debug output is
+`Clone` for 1.64 message payloads. Generated app and message debug output is
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
@@ -2947,6 +2949,23 @@ Panel title="Tasks" #tasks-panel
 
 A component call uses checked named props in any order, as above. Unknown,
 missing, duplicate, and incorrectly typed props are compile-time errors.
+Ordinary props are read-only. A component that writes through a prop declares
+that capability with `bind`, and every caller uses `<->` explicitly:
+
+```ice
+component Field(bind value:str, label:str)
+  col
+    text label
+    input "Value" <-> value
+
+Field value<->draft label="Title"
+```
+
+A bind argument must be a direct app state, component-local state, or another
+bind prop. `value=draft`, `value<->trim(draft)`, binding an ordinary prop inside
+a component, and forwarding an ordinary prop are compile-time errors. This is
+the only way component parameters carry writable state; ordinary `=` arguments
+never forward a state binding.
 
 For React-like compound structure, name the slots in the component and fill
 them with readable `name:` blocks at the call site:
@@ -4234,7 +4253,7 @@ hidden `step` helper adds Ice source context to panics from generated statement
 evaluation. Generated Ice tests need no Rust wrapper, registration, or
 application-level dependency on the internal simulator crate.
 
-Revision 1.63 deliberately has no DOM, CSS selector engine, computed-style
+Revision 1.64 deliberately has no DOM, CSS selector engine, computed-style
 object, synthetic component bounds, component-local-state access, test mock
 DSL, virtual time, pixel-snapshot syntax, or multi-window orchestration. The
 removed external ICE test format is not accepted and has no compatibility
@@ -4405,7 +4424,7 @@ The implemented families are:
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 1.63 does not claim that remapping. Generated first-class test
+extern line; 1.64 does not claim that remapping. Generated first-class test
 failures already retain their original root or imported Ice path and line.
 
 ## 12. Cargo commands
@@ -4467,7 +4486,7 @@ above.
 
 ## 13. Current coverage and escape hatches
 
-The 1.63 native backend covers both windowed applications and windowless
+The 1.64 native backend covers both windowed applications and windowless
 daemons alongside CRUD/settings-style screens, selection, media, hover
 overlays, declarative canvas geometry, and pointer events. Borrowed custom
 widgets and an application-wide renderer type remain the escape hatch for

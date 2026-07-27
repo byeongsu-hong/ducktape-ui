@@ -58,7 +58,7 @@ The punctuation has one job each:
 - indentation is the tree;
 - `@` starts checked semantic color, font-emphasis, and design-token utilities;
 - `#name` is a scoped component/widget identity;
-- `<->` is a two-way local state binding;
+- `<->` is a two-way state or explicit `bind` component-prop binding;
 - `->` routes a widget or async result to a handler;
 - `_` is the payload supplied by that route.
 
@@ -66,6 +66,10 @@ Components may keep instance-scoped UI state and local handlers. A handler may
 end with `run` or a widget operation scoped to its own rendered subtree;
 `run latest` discards an older Future completion from the same component scope
 and call site, while ordinary `run` delivers every completion.
+Ordinary component props are read-only. Declare writable inputs with
+`component Field(bind value:str)` and pass a direct state explicitly as
+`Field value<->draft`; app state, component-local state, and another `bind`
+prop are the only accepted sources.
 `match` selects the first matching view arm, with `_` as an optional final
 fallback:
 
@@ -368,7 +372,7 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 1.63 is an executable language revision, not an attempt to replace iced.
+Ice 1.64 is an executable language revision, not an attempt to replace iced.
 Its stable authoring Core is app/state/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, typed Rust effects, and first-class headless tests over generated
@@ -378,7 +382,7 @@ while typed
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 1.63; the workspace packages currently use pre-1.0
+specification is revision 1.64; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.
