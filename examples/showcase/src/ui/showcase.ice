@@ -18,6 +18,7 @@ use "adapters.ice"
 
 state
   email = ""
+  project_slug = ""
   clicks = 0
   accepted = false
   notifications = true
@@ -56,6 +57,7 @@ state
 preset test
   state
     email = ""
+    project_slug = ""
     clicks = 0
     accepted = false
     notifications = true
@@ -212,10 +214,14 @@ test app_behavior
   viewport 1120 820
   target primary = #buttons/root/primary
   target email_input = #fields/root/work-email
+  target project_input = #fields/root/project-url/project-slug
   expect text "ducktape-ui"
   expect clicks == 0
   click primary
   expect clicks == 1
+  click project_input
+  type "catalog"
+  expect project_input.value == "catalog"
   click email_input
   type "tester@example"
   expect email_input.value == "tester@example"
@@ -228,12 +234,43 @@ test app_behavior
   dispatch density_changed("compact")
   expect density == "compact"
 
+test catalog_layout
+  preset test
+  viewport 1120 820
+  target app = #app
+  target page = #page
+  target grid = #catalog-grid
+  target buttons = #buttons/root
+  target badges = #badges/root
+  target fields = #fields/root
+  expect app.width ~= 1120.0
+  expect app.height ~= 820.0
+  expect page.x ~= app.x
+  expect page.width ~= app.width
+  expect grid.x ~= page.x + 32.0
+  expect grid.width ~= page.width - 64.0
+  expect buttons.y ~= badges.y
+  expect badges.x ~= buttons.right + 20.0
+  expect fields.x ~= buttons.x
+  expect fields.y > buttons.bottom
+  resize 720 560
+  expect app.width ~= 720.0
+  expect app.height ~= 560.0
+  expect page.x ~= app.x
+  expect page.width ~= app.width
+  expect grid.x ~= page.x + 32.0
+  expect grid.width ~= page.width - 64.0
+  expect badges.x ~= buttons.x
+  expect badges.y > buttons.bottom
+  expect fields.x ~= buttons.x
+  expect fields.y > badges.bottom
+
 view
   overlay when=dialog_open dismiss=close_dialog backdrop=black/45 p=24.0 align-x=center align-y=center
     content
-      box w=fill h=fill bg=bg
-        scroll dir=vertical w=fill h=fill
-          col @page
+      box #app w=fill h=fill bg=bg
+        scroll #catalog-scroll dir=vertical w=fill h=fill
+          col #page @page
             row w=fill align=center
               PageHeader title="ducktape-ui" description="Default iced components, composed and checked by Ice."
               space w=fill h=1.0
@@ -241,7 +278,7 @@ view
 
             Alert title="Ice is the source of truth" description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
-            grid gap=20.0 min-cell=500.0 @w-full
+            grid #catalog-grid gap=20.0 min-cell=500.0 @w-full
               Panel title="Buttons" description="Clear defaults with native focus and disabled behavior." #buttons
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
@@ -256,7 +293,7 @@ view
                     text clicks size=13.0 @font-bold text-primary
                     Badge.Secondary label="events"
 
-              Panel title="Badges & keyboard" description="Compact status and shortcut primitives."
+              Panel title="Badges & keyboard" description="Compact status and shortcut primitives." #badges
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
                     Badge label="Default"
@@ -281,6 +318,13 @@ view
                   if email != ""
                     text email size=12.0 @text-muted
                     Alert.Success title="Controlled input" description="The value is owned by Ice application state."
+                  InputGroup #project-url
+                    row w=fill gap=4.0 align=center
+                      text "https://ducktape.dev/" size=12.0 @text-muted
+                      input "" #project-slug label="Project slug" <-> project_slug hint="ui-lang" w=fill p=6.0
+                        active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+                        hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
+                        focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
 
               Panel title="Selection" description="Controlled values stay in the Ice state block."
                 col w=fill gap=14.0
