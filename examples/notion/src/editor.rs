@@ -1,11 +1,15 @@
-use iced::advanced::text::{Highlighter, highlighter};
+use iced::advanced::Renderer as _;
+use iced::advanced::text::{Paragraph, Renderer as TextRenderer, Span};
+use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::widget::{
-    Column, button, column, container, markdown, row, scrollable, text, text_editor, text_input,
+    Column, button, column, container, row, scrollable, text, text_editor, text_input,
 };
 use iced::{
-    Background, Border, Color, Element, Font, Length, Shadow, Task, Theme, Vector, font, keyboard,
+    Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Task,
+    Theme, Vector, font, keyboard,
 };
-use pulldown_cmark::{Event as MarkdownEvent, Options, Parser};
+use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
 use ui_lang_runtime::{Role, StableId, accessible};
 
@@ -20,13 +24,6 @@ const INTER_BOLD: Font = Font {
     weight: font::Weight::Bold,
     ..INTER
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditorMode {
-    Write,
-    Split,
-    Preview,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkdownFormat {
@@ -77,13 +74,11 @@ struct CommentThread {
 #[derive(Debug)]
 pub struct BlockEditorState {
     content: text_editor::Content,
-    preview: markdown::Content,
-    mode: EditorMode,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    editor_active: bool,
     focus_requested: bool,
     search_focus_requested: bool,
-    slash_selected: usize,
     formats_open: bool,
     search_open: bool,
     search_query: String,
@@ -106,13 +101,11 @@ impl Clone for BlockEditorState {
         content.move_to(self.content.cursor());
         Self {
             content,
-            preview: markdown::Content::parse(&source),
-            mode: self.mode,
             undo: self.undo.clone(),
             redo: self.redo.clone(),
+            editor_active: self.editor_active,
             focus_requested: self.focus_requested,
             search_focus_requested: self.search_focus_requested,
-            slash_selected: self.slash_selected,
             formats_open: self.formats_open,
             search_open: self.search_open,
             search_query: self.search_query.clone(),
@@ -133,16 +126,14 @@ impl Clone for BlockEditorState {
 #[derive(Debug, Clone)]
 pub enum BlockEditorEvent {
     Edit(text_editor::Action),
+    Select(usize, Option<usize>),
     Format(MarkdownFormat),
     Undo,
     Redo,
-    SetMode(EditorMode),
     MoveBlock(i8),
     SmartEnter(bool),
+    SmartBackspace,
     Indent(bool),
-    SlashMoved(i8),
-    ApplySlash(MarkdownFormat),
-    DismissSlash,
     ToggleFormats,
     ToggleSearch,
     SearchChanged(String),
@@ -181,13 +172,11 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
 
     BlockEditorState {
         content: text_editor::Content::with_text(source),
-        preview: markdown::Content::parse(source),
-        mode: EditorMode::Write,
         undo: Vec::new(),
         redo: Vec::new(),
+        editor_active: false,
         focus_requested: false,
         search_focus_requested: false,
-        slash_selected: 0,
         formats_open: false,
         search_open: false,
         search_query: String::new(),
@@ -293,35 +282,30 @@ pub fn block_editor_apply(
 ) -> BlockEditorState {
     match event {
         BlockEditorEvent::Edit(action) => state.perform(action),
-        BlockEditorEvent::Format(format) => state.format(format, false),
+        BlockEditorEvent::Select(caret, anchor) => {
+            let source = state.source();
+            state.content.move_to(text_editor::Cursor {
+                position: byte_to_position(&source, caret),
+                selection: anchor.map(|anchor| byte_to_position(&source, anchor)),
+            });
+            state.editor_active = true;
+            state.focus_requested = true;
+        }
+        BlockEditorEvent::Format(format) => state.format(format),
         BlockEditorEvent::Undo => state.undo(),
         BlockEditorEvent::Redo => state.redo(),
-        BlockEditorEvent::SetMode(mode) => {
-            state.mode = mode;
-            state.focus_requested = mode != EditorMode::Preview;
-        }
         BlockEditorEvent::MoveBlock(direction) => state.move_block(direction),
         BlockEditorEvent::SmartEnter(hard_break) => state.smart_enter(hard_break),
+        BlockEditorEvent::SmartBackspace => state.smart_backspace(),
         BlockEditorEvent::Indent(outdent) => state.perform(text_editor::Action::Edit(if outdent {
             text_editor::Edit::Unindent
         } else {
             text_editor::Edit::Indent
         })),
-        BlockEditorEvent::SlashMoved(direction) => {
-            let count = state.slash_commands().count();
-            if count > 0 {
-                state.slash_selected = if direction.is_negative() {
-                    state.slash_selected.checked_sub(1).unwrap_or(count - 1)
-                } else {
-                    (state.slash_selected + 1) % count
-                };
-            }
-        }
-        BlockEditorEvent::ApplySlash(format) => state.format(format, true),
-        BlockEditorEvent::DismissSlash => state.dismiss_slash(),
         BlockEditorEvent::ToggleFormats => state.formats_open = !state.formats_open,
         BlockEditorEvent::ToggleSearch => {
             state.search_open = !state.search_open;
+            state.editor_active = !state.search_open;
             state.search_match = 0;
             state.search_focus_requested = state.search_open;
             state.focus_requested = !state.search_open;
@@ -453,21 +437,18 @@ impl BlockEditorState {
     fn restore(&mut self, snapshot: Snapshot) {
         self.content = text_editor::Content::with_text(&snapshot.source);
         self.content.move_to(snapshot.cursor);
-        self.preview = markdown::Content::parse(&snapshot.source);
-        self.slash_selected = 0;
         self.focus_requested = true;
     }
 
     fn perform(&mut self, action: text_editor::Action) {
+        self.editor_active = true;
         let before = action.is_edit().then(|| self.snapshot());
         let previous = before.as_ref().map(|snapshot| snapshot.source.as_str());
         self.content.perform(action);
         let source = self.source();
         if previous.is_some_and(|previous| previous != source) {
             self.remember(before.expect("editing actions capture history"));
-            self.preview = markdown::Content::parse(&source);
         }
-        self.slash_selected = 0;
     }
 
     fn undo(&mut self) {
@@ -521,6 +502,24 @@ impl BlockEditorState {
         let insertion = format!("\n{next_prefix}");
         next.insert_str(selection.start, &insertion);
         self.replace_source(next, selection.start + insertion.len(), None, true);
+    }
+
+    fn smart_backspace(&mut self) {
+        let source = self.source();
+        let selection = self.selection_bytes();
+        if !selection.is_empty() || selection.start == 0 {
+            self.perform(text_editor::Action::Edit(text_editor::Edit::Backspace));
+            return;
+        }
+        let line = selected_line_range(&source, selection.clone());
+        if !source[line.clone()].is_empty() {
+            self.perform(text_editor::Action::Edit(text_editor::Edit::Backspace));
+            return;
+        }
+        let start = line.start.saturating_sub(1);
+        let mut next = source;
+        next.replace_range(start..line.start, "");
+        self.replace_source(next, start, None, true);
     }
 
     fn search_matches(&self) -> Vec<Range<usize>> {
@@ -613,8 +612,6 @@ impl BlockEditorState {
         };
         self.content = text_editor::Content::with_text(&source);
         self.content.move_to(cursor);
-        self.preview = markdown::Content::parse(&source);
-        self.slash_selected = 0;
         self.focus_requested = true;
     }
 
@@ -640,12 +637,8 @@ impl BlockEditorState {
         selected_line_range(&source, selection)
     }
 
-    fn format(&mut self, format: MarkdownFormat, slash: bool) {
+    fn format(&mut self, format: MarkdownFormat) {
         self.formats_open = false;
-        if slash {
-            self.replace_slash(format);
-            return;
-        }
         match format {
             MarkdownFormat::Bold => self.wrap_inline("**", "**", "bold text"),
             MarkdownFormat::Italic => self.wrap_inline("*", "*", "italic text"),
@@ -765,51 +758,6 @@ impl BlockEditorState {
             .map(|selection| range.start + selection.end)
             .unwrap_or(range.start + replacement.len());
         self.replace_source(next, caret, selection, true);
-    }
-
-    fn replace_slash(&mut self, format: MarkdownFormat) {
-        let source = self.source();
-        let range = self.current_line_range();
-        let (replacement, select) = block_template(format, "");
-        let mut next = source;
-        next.replace_range(range.clone(), &replacement);
-        let selection = select
-            .as_ref()
-            .map(|selection| range.start + selection.start);
-        let caret = select
-            .map(|selection| range.start + selection.end)
-            .unwrap_or(range.start + replacement.len());
-        self.replace_source(next, caret, selection, true);
-    }
-
-    fn dismiss_slash(&mut self) {
-        if self.slash_query().is_some() {
-            let source = self.source();
-            let range = self.current_line_range();
-            let mut next = source;
-            next.replace_range(range.clone(), "");
-            self.replace_source(next, range.start, None, true);
-        }
-    }
-
-    fn slash_query(&self) -> Option<String> {
-        let source = self.source();
-        let range = self.current_line_range();
-        source[range]
-            .trim()
-            .strip_prefix('/')
-            .map(|query| query.to_lowercase())
-    }
-
-    fn slash_commands(&self) -> impl Iterator<Item = &'static SlashCommand> + '_ {
-        let query = self.slash_query();
-        SLASH_COMMANDS.iter().filter(move |command| {
-            query.as_ref().is_some_and(|query| {
-                query.is_empty()
-                    || command.label.to_lowercase().contains(query)
-                    || command.keywords.contains(query)
-            })
-        })
     }
 
     fn current_block(&self) -> usize {
@@ -1180,143 +1128,776 @@ fn block_template(format: MarkdownFormat, selected: &str) -> (String, Option<Ran
     }
 }
 
-#[derive(Clone, Copy)]
-struct SlashCommand {
-    icon: &'static str,
-    label: &'static str,
-    description: &'static str,
-    keywords: &'static str,
-    format: MarkdownFormat,
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderStyle {
+    size: f32,
+    font: Font,
+    color: Color,
+    background: Option<Color>,
+    underline: bool,
+    strikethrough: bool,
 }
 
-const SLASH_COMMANDS: [SlashCommand; 18] = [
-    SlashCommand {
-        icon: "T",
-        label: "Text",
-        description: "Plain paragraph",
-        keywords: "paragraph body",
-        format: MarkdownFormat::Paragraph,
-    },
-    SlashCommand {
-        icon: "H1",
-        label: "Heading 1",
-        description: "Page section title",
-        keywords: "title heading one",
-        format: MarkdownFormat::Heading(1),
-    },
-    SlashCommand {
-        icon: "H2",
-        label: "Heading 2",
-        description: "Section heading",
-        keywords: "subtitle heading two",
-        format: MarkdownFormat::Heading(2),
-    },
-    SlashCommand {
-        icon: "H3",
-        label: "Heading 3",
-        description: "Subsection heading",
-        keywords: "heading three",
-        format: MarkdownFormat::Heading(3),
-    },
-    SlashCommand {
-        icon: "•",
-        label: "Bulleted list",
-        description: "Unordered list item",
-        keywords: "bullet list unordered",
-        format: MarkdownFormat::Bullet,
-    },
-    SlashCommand {
-        icon: "1.",
-        label: "Numbered list",
-        description: "Ordered list item",
-        keywords: "number ordered list",
-        format: MarkdownFormat::Ordered,
-    },
-    SlashCommand {
-        icon: "☐",
-        label: "Task",
-        description: "GFM task item",
-        keywords: "todo checkbox task",
-        format: MarkdownFormat::Task,
-    },
-    SlashCommand {
-        icon: "❝",
-        label: "Quote",
-        description: "Block quotation",
-        keywords: "quote citation",
-        format: MarkdownFormat::Quote,
-    },
-    SlashCommand {
-        icon: "</>",
-        label: "Code block",
-        description: "Fenced source code",
-        keywords: "code fence syntax",
-        format: MarkdownFormat::CodeBlock,
-    },
-    SlashCommand {
-        icon: "▦",
-        label: "Table",
-        description: "GFM table",
-        keywords: "table grid columns",
-        format: MarkdownFormat::Table,
-    },
-    SlashCommand {
-        icon: "—",
-        label: "Divider",
-        description: "Thematic break",
-        keywords: "rule separator line",
-        format: MarkdownFormat::Divider,
-    },
-    SlashCommand {
-        icon: "!",
-        label: "Callout",
-        description: "GFM note alert",
-        keywords: "alert note tip warning",
-        format: MarkdownFormat::Callout,
-    },
-    SlashCommand {
-        icon: "¹",
-        label: "Footnote",
-        description: "Reference and definition",
-        keywords: "footnote reference",
-        format: MarkdownFormat::Footnote,
-    },
-    SlashCommand {
-        icon: "∑",
-        label: "Math",
-        description: "Display math block",
-        keywords: "math latex equation",
-        format: MarkdownFormat::Math,
-    },
-    SlashCommand {
-        icon: ":",
-        label: "Definition",
-        description: "Definition list",
-        keywords: "definition term list",
-        format: MarkdownFormat::Definition,
-    },
-    SlashCommand {
-        icon: "Y",
-        label: "Frontmatter",
-        description: "YAML metadata",
-        keywords: "yaml metadata frontmatter",
-        format: MarkdownFormat::Frontmatter,
-    },
-    SlashCommand {
-        icon: "<>",
-        label: "HTML",
-        description: "Raw HTML block",
-        keywords: "html details",
-        format: MarkdownFormat::Html,
-    },
-    SlashCommand {
-        icon: "▧",
-        label: "Image",
-        description: "Image with alt text",
-        keywords: "image picture media",
-        format: MarkdownFormat::Image,
-    },
-];
+impl RenderStyle {
+    fn body() -> Self {
+        Self {
+            size: 16.0,
+            font: INTER,
+            color: FG,
+            background: None,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    fn syntax() -> Self {
+        Self {
+            color: FAINT,
+            ..Self::body()
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RenderRun {
+    range: Range<usize>,
+    style: RenderStyle,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedMarkdown {
+    text: String,
+    runs: Vec<RenderRun>,
+    visual_to_source: Vec<usize>,
+}
+
+impl RenderedMarkdown {
+    fn new(source_start: usize) -> Self {
+        Self {
+            text: String::new(),
+            runs: Vec::new(),
+            visual_to_source: vec![source_start],
+        }
+    }
+
+    fn push(&mut self, value: &str, source: &str, range: Range<usize>, style: RenderStyle) {
+        if value.is_empty() {
+            return;
+        }
+        let visual_start = self.text.len();
+        self.text.push_str(value);
+        let exact = source
+            .get(range.clone())
+            .and_then(|slice| slice.find(value).map(|offset| range.start + offset));
+        for byte in 1..=value.len() {
+            self.visual_to_source.push(exact.map_or_else(
+                || {
+                    if byte == value.len() {
+                        range.end
+                    } else {
+                        range.start
+                    }
+                },
+                |start| start + byte,
+            ));
+        }
+        let visual_end = self.text.len();
+        if let Some(last) = self.runs.last_mut()
+            && last.range.end == visual_start
+            && last.style == style
+        {
+            last.range.end = visual_end;
+        } else {
+            self.runs.push(RenderRun {
+                range: visual_start..visual_end,
+                style,
+            });
+        }
+    }
+
+    fn push_synthetic(&mut self, value: &str, source: usize, style: RenderStyle) {
+        self.push(value, "", source..source, style);
+    }
+
+    fn source_to_visual(&self, source: usize) -> usize {
+        self.text
+            .char_indices()
+            .map(|(visual, _)| visual)
+            .chain(std::iter::once(self.text.len()))
+            .min_by_key(|visual| self.visual_to_source[*visual].abs_diff(source))
+            .unwrap_or(0)
+    }
+
+    fn source_at(&self, mut visual: usize) -> usize {
+        visual = visual.min(self.text.len());
+        while visual > 0 && !self.text.is_char_boundary(visual) {
+            visual -= 1;
+        }
+        self.visual_to_source[visual]
+    }
+
+    fn spans(&self, selection: Range<usize>) -> Vec<Span<'static, (), Font>> {
+        let mut spans = Vec::new();
+        for run in &self.runs {
+            let mut cuts = vec![run.range.start, run.range.end];
+            if run.range.contains(&selection.start) {
+                cuts.push(selection.start);
+            }
+            if run.range.contains(&selection.end) {
+                cuts.push(selection.end);
+            }
+            cuts.sort_unstable();
+            cuts.dedup();
+            for range in cuts.windows(2).map(|cut| cut[0]..cut[1]) {
+                if range.is_empty() {
+                    continue;
+                }
+                let style = run.style;
+                let mut span = Span::new(self.text[range.clone()].to_owned())
+                    .size(style.size)
+                    .font(style.font)
+                    .color(style.color)
+                    .underline(style.underline)
+                    .strikethrough(style.strikethrough);
+                if range.start < selection.end && selection.start < range.end {
+                    span = span.background(SELECTION);
+                } else if let Some(background) = style.background {
+                    span = span.background(background);
+                }
+                spans.push(span);
+            }
+        }
+        spans
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct StyleContext {
+    heading: Option<HeadingLevel>,
+    strong: usize,
+    emphasis: usize,
+    strikethrough: usize,
+    code: usize,
+    link: usize,
+    quote: usize,
+}
+
+impl StyleContext {
+    fn style(self) -> RenderStyle {
+        let mut style = RenderStyle::body();
+        if let Some(level) = self.heading {
+            style.size = heading_size(level);
+            style.font.weight = font::Weight::Bold;
+        }
+        if self.strong > 0 {
+            style.font.weight = font::Weight::Bold;
+        }
+        if self.emphasis > 0 || self.quote > 0 {
+            style.font.style = font::Style::Italic;
+        }
+        if self.strikethrough > 0 {
+            style.strikethrough = true;
+        }
+        if self.code > 0 {
+            style.font = Font::MONOSPACE;
+            style.color = CODE;
+            style.background = Some(CODE_SOFT);
+        } else if self.link > 0 {
+            style.color = PRIMARY;
+            style.underline = true;
+        } else if self.quote > 0 {
+            style.color = MUTED;
+        }
+        style
+    }
+
+    fn start(&mut self, tag: &Tag<'_>) {
+        match tag {
+            Tag::Heading { level, .. } => self.heading = Some(*level),
+            Tag::Strong => self.strong += 1,
+            Tag::Emphasis => self.emphasis += 1,
+            Tag::Strikethrough => self.strikethrough += 1,
+            Tag::CodeBlock(_) => self.code += 1,
+            Tag::Link { .. } => self.link += 1,
+            Tag::BlockQuote(_) => self.quote += 1,
+            _ => {}
+        }
+    }
+
+    fn end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Heading(_) => self.heading = None,
+            TagEnd::Strong => self.strong = self.strong.saturating_sub(1),
+            TagEnd::Emphasis => self.emphasis = self.emphasis.saturating_sub(1),
+            TagEnd::Strikethrough => self.strikethrough = self.strikethrough.saturating_sub(1),
+            TagEnd::CodeBlock => self.code = self.code.saturating_sub(1),
+            TagEnd::Link => self.link = self.link.saturating_sub(1),
+            TagEnd::BlockQuote(_) => self.quote = self.quote.saturating_sub(1),
+            _ => {}
+        }
+    }
+}
+
+fn heading_size(level: HeadingLevel) -> f32 {
+    match level {
+        HeadingLevel::H1 => 31.0,
+        HeadingLevel::H2 => 25.0,
+        HeadingLevel::H3 => 21.0,
+        HeadingLevel::H4 => 18.0,
+        HeadingLevel::H5 => 17.0,
+        HeadingLevel::H6 => 16.0,
+    }
+}
+
+fn event_text_range(source: &str, range: Range<usize>, text: &str) -> Range<usize> {
+    source
+        .get(range.clone())
+        .and_then(|slice| slice.find(text).map(|offset| range.start + offset))
+        .map_or(range, |start| start..start + text.len())
+}
+
+fn push_pending_list(rendered: &mut RenderedMarkdown, pending: &mut Option<(String, usize)>) {
+    if let Some((prefix, source)) = pending.take() {
+        rendered.push_synthetic(&prefix, source, RenderStyle::syntax());
+    }
+}
+
+fn render_semantic_block(rendered: &mut RenderedMarkdown, source: &str, block: Range<usize>) {
+    let markdown = &source[block.clone()];
+    let mut context = StyleContext::default();
+    let mut lists = Vec::<Option<u64>>::new();
+    let mut pending_list = None;
+    let mut table_cell = 0usize;
+
+    for (event, local) in Parser::new_ext(markdown, markdown_options()).into_offset_iter() {
+        let range = block.start + local.start..block.start + local.end;
+        match event {
+            MarkdownEvent::Start(tag) => {
+                match &tag {
+                    Tag::List(start) => lists.push(*start),
+                    Tag::Item => {
+                        let prefix = match lists.last_mut() {
+                            Some(Some(number)) => {
+                                let prefix = format!("{number}. ");
+                                *number += 1;
+                                prefix
+                            }
+                            _ => "•  ".to_owned(),
+                        };
+                        pending_list = Some((prefix, range.start));
+                    }
+                    Tag::BlockQuote(_) => {
+                        push_pending_list(rendered, &mut pending_list);
+                        rendered.push_synthetic("▎  ", range.start, RenderStyle::syntax());
+                    }
+                    Tag::Image { .. } => {
+                        push_pending_list(rendered, &mut pending_list);
+                        rendered.push_synthetic("▧  ", range.start, RenderStyle::syntax());
+                    }
+                    Tag::FootnoteDefinition(label) => {
+                        push_pending_list(rendered, &mut pending_list);
+                        rendered.push_synthetic(
+                            &format!("{label}  "),
+                            range.start,
+                            RenderStyle::syntax(),
+                        );
+                    }
+                    Tag::DefinitionListDefinition => {
+                        rendered.push_synthetic("  —  ", range.start, RenderStyle::syntax());
+                    }
+                    Tag::TableHead | Tag::TableRow => table_cell = 0,
+                    Tag::TableCell if table_cell > 0 => {
+                        rendered.push_synthetic("    ", range.start, RenderStyle::syntax());
+                        table_cell += 1;
+                    }
+                    Tag::TableCell => table_cell = 1,
+                    _ => {}
+                }
+                context.start(&tag);
+            }
+            MarkdownEvent::End(tag) => {
+                match tag {
+                    TagEnd::Item => {
+                        push_pending_list(rendered, &mut pending_list);
+                        rendered.push_synthetic("\n", range.end, RenderStyle::body());
+                    }
+                    TagEnd::List(_) => {
+                        lists.pop();
+                    }
+                    TagEnd::TableHead | TagEnd::TableRow => {
+                        rendered.push_synthetic("\n", range.end, RenderStyle::body());
+                    }
+                    _ => {}
+                }
+                context.end(tag);
+            }
+            MarkdownEvent::Text(value) => {
+                push_pending_list(rendered, &mut pending_list);
+                let range = event_text_range(source, range, &value);
+                rendered.push(&value, source, range, context.style());
+            }
+            MarkdownEvent::Code(value) => {
+                push_pending_list(rendered, &mut pending_list);
+                let range = event_text_range(source, range, &value);
+                let mut style = context.style();
+                style.font = Font::MONOSPACE;
+                style.color = CODE;
+                style.background = Some(CODE_SOFT);
+                rendered.push(&value, source, range, style);
+            }
+            MarkdownEvent::InlineMath(value) | MarkdownEvent::DisplayMath(value) => {
+                push_pending_list(rendered, &mut pending_list);
+                let range = event_text_range(source, range, &value);
+                let mut style = context.style();
+                style.font = Font::MONOSPACE;
+                style.color = CODE;
+                rendered.push(&value, source, range, style);
+            }
+            MarkdownEvent::Html(value) | MarkdownEvent::InlineHtml(value) => {
+                push_pending_list(rendered, &mut pending_list);
+                let mut style = context.style();
+                style.font = Font::MONOSPACE;
+                style.color = MUTED;
+                rendered.push(&value, source, range, style);
+            }
+            MarkdownEvent::FootnoteReference(value) => {
+                push_pending_list(rendered, &mut pending_list);
+                let label = format!("{value}¹");
+                let mut style = context.style();
+                style.color = PRIMARY;
+                rendered.push(&label, source, range, style);
+            }
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                rendered.push("\n", source, range, context.style());
+            }
+            MarkdownEvent::Rule => {
+                rendered.push_synthetic("────────────────────", range.start, RenderStyle::syntax());
+            }
+            MarkdownEvent::TaskListMarker(checked) => {
+                pending_list = None;
+                rendered.push_synthetic(
+                    if checked { "☑  " } else { "☐  " },
+                    range.start,
+                    RenderStyle::syntax(),
+                );
+            }
+        }
+    }
+    push_pending_list(rendered, &mut pending_list);
+}
+
+fn render_raw_block(rendered: &mut RenderedMarkdown, source: &str, block: Range<usize>) {
+    let markdown = &source[block.clone()];
+    let mut context = StyleContext::default();
+    let mut styled = Vec::<(Range<usize>, RenderStyle)>::new();
+    for (event, local) in Parser::new_ext(markdown, markdown_options()).into_offset_iter() {
+        let range = block.start + local.start..block.start + local.end;
+        match event {
+            MarkdownEvent::Start(tag) => context.start(&tag),
+            MarkdownEvent::End(tag) => context.end(tag),
+            MarkdownEvent::Text(value) => {
+                styled.push((event_text_range(source, range, &value), context.style()))
+            }
+            MarkdownEvent::Code(value)
+            | MarkdownEvent::InlineMath(value)
+            | MarkdownEvent::DisplayMath(value) => {
+                let mut style = context.style();
+                style.font = Font::MONOSPACE;
+                style.color = CODE;
+                style.background = Some(CODE_SOFT);
+                styled.push((event_text_range(source, range, &value), style));
+            }
+            MarkdownEvent::Html(_) | MarkdownEvent::InlineHtml(_) => {
+                let mut style = context.style();
+                style.font = Font::MONOSPACE;
+                style.color = MUTED;
+                styled.push((range, style));
+            }
+            MarkdownEvent::FootnoteReference(_) => {
+                let mut style = context.style();
+                style.color = PRIMARY;
+                styled.push((range, style));
+            }
+            MarkdownEvent::SoftBreak
+            | MarkdownEvent::HardBreak
+            | MarkdownEvent::Rule
+            | MarkdownEvent::TaskListMarker(_) => {}
+        }
+    }
+    styled.sort_by_key(|(range, _)| range.start);
+    let mut cursor = block.start;
+    for (range, style) in styled {
+        let range = range.start.max(cursor)..range.end.min(block.end);
+        if cursor < range.start {
+            rendered.push(
+                &source[cursor..range.start],
+                source,
+                cursor..range.start,
+                RenderStyle::syntax(),
+            );
+        }
+        if range.start < range.end {
+            rendered.push(&source[range.clone()], source, range.clone(), style);
+            cursor = range.end;
+        }
+    }
+    if cursor < block.end {
+        rendered.push(
+            &source[cursor..block.end],
+            source,
+            cursor..block.end,
+            RenderStyle::syntax(),
+        );
+    }
+}
+
+fn render_markdown(
+    source: &str,
+    caret: usize,
+    selection: Range<usize>,
+    active: bool,
+) -> RenderedMarkdown {
+    let mut rendered = RenderedMarkdown::new(0);
+    if source.is_empty() {
+        rendered.push_synthetic(
+            "Start writing…",
+            0,
+            RenderStyle {
+                color: FAINT,
+                ..RenderStyle::body()
+            },
+        );
+        return rendered;
+    }
+
+    let blocks = block_ranges(source);
+    let active_block = (active && selection.is_empty())
+        .then(|| {
+            blocks
+                .iter()
+                .position(|range| range.contains(&caret) || caret == range.end)
+        })
+        .flatten();
+    let mut previous_end = 0;
+    for (index, block) in blocks.into_iter().enumerate() {
+        if !rendered.text.is_empty() {
+            rendered.push(
+                "\n\n",
+                source,
+                previous_end..block.start,
+                RenderStyle::body(),
+            );
+        }
+        if active_block == Some(index) {
+            render_raw_block(&mut rendered, source, block.clone());
+        } else {
+            render_semantic_block(&mut rendered, source, block.clone());
+        }
+        previous_end = block.end;
+    }
+    rendered
+}
+
+#[derive(Default)]
+struct BearEditorState {
+    paragraph: <iced::Renderer as TextRenderer>::Paragraph,
+    dragging: bool,
+    anchor: usize,
+    modifiers: keyboard::Modifiers,
+}
+
+struct BearEditor<'a> {
+    input: Element<'a, BlockEditorEvent>,
+    rendered: RenderedMarkdown,
+    spans: Vec<Span<'static, (), Font>>,
+    caret: usize,
+    anchor: Option<usize>,
+    active: bool,
+}
+
+impl BearEditor<'_> {
+    fn hit(&self, state: &BearEditorState, layout: Layout<'_>, cursor: mouse::Cursor) -> usize {
+        let bounds = layout.bounds();
+        let Some(position) = cursor.position() else {
+            return self.caret;
+        };
+        let point = Point::new(
+            (position.x - bounds.x - 24.0).clamp(0.0, (bounds.width - 48.0).max(0.0)),
+            (position.y - bounds.y - 20.0).clamp(0.0, (bounds.height - 40.0).max(0.0)),
+        );
+        let visual = state.paragraph.hit_test(point).map_or_else(
+            || {
+                if point.y <= 0.0 {
+                    0
+                } else {
+                    self.rendered.text.len()
+                }
+            },
+            iced::advanced::text::Hit::cursor,
+        );
+        self.rendered.source_at(visual)
+    }
+}
+
+impl Widget<BlockEditorEvent, Theme, iced::Renderer> for BearEditor<'_> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<BearEditorState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(BearEditorState::default())
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.input)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.children[0].diff(&self.input);
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Shrink)
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let width = limits.max().width.max(48.0);
+        let text_bounds = Size::new((width - 48.0).max(1.0), f32::INFINITY);
+        let state = tree.state.downcast_mut::<BearEditorState>();
+        state.paragraph =
+            <iced::Renderer as TextRenderer>::Paragraph::with_spans(iced::advanced::text::Text {
+                content: self.spans.as_slice(),
+                bounds: text_bounds,
+                size: Pixels(16.0),
+                line_height: iced::advanced::text::LineHeight::Relative(1.55),
+                font: INTER,
+                align_x: iced::advanced::text::Alignment::Default,
+                align_y: iced::Alignment::Start.into(),
+                shaping: iced::advanced::text::Shaping::Advanced,
+                wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
+            });
+        let intrinsic = Size::new(width, state.paragraph.min_height().max(28.0) + 40.0);
+        let size = limits.resolve(Length::Fill, Length::Shrink, intrinsic);
+        state.paragraph.resize(Size::new(
+            (size.width - 48.0).max(1.0),
+            (size.height - 40.0).max(1.0),
+        ));
+
+        let child_limits = layout::Limits::new(Size::ZERO, Size::new(size.width, 1.0))
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0));
+        let child =
+            self.input
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, &child_limits);
+        layout::Node::with_children(size, vec![child])
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        if let Some(child) = layout.children().next() {
+            self.input
+                .as_widget_mut()
+                .operate(&mut tree.children[0], child, renderer, operation);
+        }
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, BlockEditorEvent>,
+        viewport: &Rectangle,
+    ) {
+        let state = tree.state.downcast_mut::<BearEditorState>();
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(layout.bounds()) =>
+            {
+                let source = self.hit(state, layout, cursor);
+                state.anchor = if state.modifiers.shift() {
+                    self.anchor.unwrap_or(self.caret)
+                } else {
+                    source
+                };
+                state.dragging = true;
+                shell.publish(BlockEditorEvent::Select(
+                    source,
+                    state.modifiers.shift().then_some(state.anchor),
+                ));
+                shell.capture_event();
+                return;
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
+                let source = self.hit(state, layout, cursor);
+                shell.publish(BlockEditorEvent::Select(source, Some(state.anchor)));
+                shell.capture_event();
+                return;
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
+                state.dragging = false;
+                shell.capture_event();
+                return;
+            }
+            _ => {}
+        }
+
+        if let Some(child) = layout.children().next() {
+            self.input.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                child,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        defaults: &renderer::Style,
+        layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        if !bounds.intersects(viewport) {
+            return;
+        }
+        let state = tree.state.downcast_ref::<BearEditorState>();
+        let origin = bounds.position() + Vector::new(24.0, 20.0);
+
+        for (index, span) in self.spans.iter().enumerate() {
+            let regions = state.paragraph.span_bounds(index);
+            if let Some(highlight) = span.highlight {
+                for region in &regions {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: *region + (origin - Point::ORIGIN),
+                            border: highlight.border,
+                            ..renderer::Quad::default()
+                        },
+                        highlight.background,
+                    );
+                }
+            }
+        }
+        renderer.fill_paragraph(&state.paragraph, origin, defaults.text_color, *viewport);
+
+        for (index, span) in self.spans.iter().enumerate() {
+            if !span.underline && !span.strikethrough {
+                continue;
+            }
+            let color = span.color.unwrap_or(defaults.text_color);
+            let size = span.size.unwrap_or(Pixels(16.0)).0;
+            for region in state.paragraph.span_bounds(index) {
+                let y = if span.strikethrough {
+                    region.y + region.height / 2.0
+                } else {
+                    region.y + region.height - size * 0.12
+                };
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle::new(
+                            Point::new(origin.x + region.x, origin.y + y),
+                            Size::new(region.width, 1.0),
+                        ),
+                        ..renderer::Quad::default()
+                    },
+                    color,
+                );
+            }
+        }
+
+        if self.active && self.anchor.is_none() {
+            let visual = self.rendered.source_to_visual(self.caret);
+            let prefix = &self.rendered.text[..visual];
+            let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+            let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
+            let column = text_input::Value::new(&prefix[line_start..]).len();
+            if let Some(position) = state.paragraph.grapheme_position(line, column) {
+                let height = self
+                    .rendered
+                    .runs
+                    .iter()
+                    .find(|run| run.range.contains(&visual))
+                    .map_or(22.0, |run| run.style.size * 1.28);
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle::new(
+                            Point::new(origin.x + position.x, origin.y + position.y),
+                            Size::new(1.5, height),
+                        ),
+                        ..renderer::Quad::default()
+                    },
+                    PRIMARY,
+                );
+            }
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Text
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: Layout<'a>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'a, BlockEditorEvent, Theme, iced::Renderer>> {
+        let child = layout.children().next()?;
+        self.input.as_widget_mut().overlay(
+            &mut tree.children[0],
+            child,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+impl<'a> From<BearEditor<'a>> for Element<'a, BlockEditorEvent> {
+    fn from(editor: BearEditor<'a>) -> Self {
+        Self::new(editor)
+    }
+}
 
 pub fn block_editor(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     iced::widget::responsive(move |size| editor_for_size(state, size.width)).into()
@@ -1334,53 +1915,28 @@ fn editor_for_size(state: &BlockEditorState, width: f32) -> Element<'_, BlockEdi
     document
 }
 
-fn document(state: &BlockEditorState, width: f32) -> Element<'_, BlockEditorEvent> {
+fn document(state: &BlockEditorState, _width: f32) -> Element<'_, BlockEditorEvent> {
     let toolbar = toolbar(state);
     let search = state.search_open.then(|| search_bar(state));
-    let slash = slash_menu(state);
-    let body: Element<'_, _> = match state.mode {
-        EditorMode::Write => source_editor(state),
-        EditorMode::Preview => preview(state),
-        EditorMode::Split if width >= 680.0 => row![
-            container(source_editor(state)).width(Length::FillPortion(1)),
-            container(preview(state))
-                .width(Length::FillPortion(1))
-                .style(|_| container::Style::default().border(Border {
-                    color: BORDER,
-                    width: 0.0,
-                    radius: 0.0.into(),
-                }))
-        ]
-        .spacing(12)
-        .height(Length::Fill)
-        .into(),
-        EditorMode::Split => source_editor(state),
-    };
     let source = state.source();
     let words = source.split_whitespace().count();
-    let blocks = block_ranges(&source).len();
+    let blocks = state.block_count();
     let status = row![
-        text(format!(
-            "{words} words · {blocks} blocks · {} characters",
-            source.chars().count()
-        ))
-        .size(10)
-        .color(MUTED),
+        text(format!("{words} words · {blocks} blocks"))
+            .size(10)
+            .color(MUTED),
         iced::widget::space().width(Length::Fill),
-        text("CommonMark + GFM").size(10).color(FAINT),
+        text("Markdown").size(10).color(FAINT),
     ];
 
     let mut editor = column![toolbar].spacing(6).width(Length::Fill);
     if let Some(search) = search {
         editor = editor.push(search);
     }
-    if let Some(slash) = slash {
-        editor = editor.push(slash);
-    }
     if state.composer_for.is_some() {
         editor = editor.push(comment_composer(state));
     }
-    editor = editor.push(body).push(status);
+    editor = editor.push(source_editor(state)).push(status);
 
     container(editor)
         .padding([8, 10])
@@ -1390,151 +1946,104 @@ fn document(state: &BlockEditorState, width: f32) -> Element<'_, BlockEditorEven
 }
 
 fn source_editor(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
-    let slash_choice = state
-        .slash_commands()
-        .nth(state.slash_selected)
-        .map(|command| command.format);
+    let source = state.source();
+    let (caret, anchor) = state.cursor_bytes();
+    let selection = anchor
+        .map(|anchor| anchor.min(caret)..anchor.max(caret))
+        .unwrap_or(caret..caret);
+    let rendered = render_markdown(&source, caret, selection.clone(), state.editor_active);
+    let visual_selection =
+        rendered.source_to_visual(selection.start)..rendered.source_to_visual(selection.end);
+    let spans = rendered.spans(visual_selection);
     let search_open = state.search_open;
-    let editor = text_editor(&state.content)
+    let cursor = state.content.cursor();
+    let empty_line = anchor.is_none()
+        && cursor.position.line > 0
+        && cursor.position.column == 0
+        && state
+            .content
+            .line(cursor.position.line)
+            .is_some_and(|line| line.text.is_empty());
+    let input = text_editor(&state.content)
         .id(iced::widget::Id::new(EDITOR_ID))
-        .placeholder("Write Markdown, or type / for blocks…")
         .on_action(BlockEditorEvent::Edit)
-        .key_binding(move |event| markdown_binding(event, slash_choice, search_open))
+        .key_binding(move |event| markdown_binding(event, search_open, empty_line))
         .font(INTER)
-        .size(15)
-        .line_height(iced::advanced::text::LineHeight::Relative(1.65))
-        .padding([14, 16])
-        .height(Length::Fill)
-        .highlight_with::<MarkdownHighlighter>((), markdown_highlight)
-        .style(editor_style);
-    accessible(
-        editor,
+        .size(16)
+        .padding(0)
+        .height(1)
+        .style(hidden_editor_style);
+    let input = accessible(
+        input,
         StableId::new("notion-markdown-document"),
         Role::TextInput,
     )
     .logical_id("notion-markdown-document")
     .focus_id(iced::widget::Id::new(EDITOR_ID))
     .label("Markdown document")
-    .value(state.source())
+    .value(source)
+    .into();
+    let editor = BearEditor {
+        input,
+        rendered,
+        spans,
+        caret,
+        anchor,
+        active: state.editor_active && !state.search_open,
+    };
+
+    scrollable(
+        container(Element::from(editor))
+            .max_width(840)
+            .center_x(Length::Fill),
+    )
+    .height(Length::Fill)
     .into()
 }
-
-fn preview(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
-    let mut settings = markdown::Settings::with_text_size(
-        16,
-        markdown::Style {
-            font: INTER,
-            inline_code_highlight: iced::advanced::text::Highlight {
-                background: SIDEBAR.into(),
-                border: Border {
-                    color: BORDER,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-            },
-            inline_code_padding: iced::Padding::from([1, 3]),
-            inline_code_color: FG,
-            inline_code_font: Font::MONOSPACE,
-            code_block_font: Font::MONOSPACE,
-            link_color: PRIMARY,
-        },
-    );
-    settings.h1_size = 30.into();
-    settings.h2_size = 24.into();
-    settings.h3_size = 20.into();
-    settings.spacing = 12.into();
-    let content = if state.preview.items().is_empty() {
-        container(
-            column![
-                text("Nothing to preview").size(18).font(INTER_BOLD),
-                text("Switch to Write and start with Markdown or / commands.")
-                    .size(13)
-                    .color(MUTED),
-            ]
-            .spacing(5),
-        )
-        .padding(20)
-        .into()
-    } else {
-        markdown::view(state.preview.items(), settings).map(BlockEditorEvent::OpenLink)
-    };
-    scrollable(container(content).padding([18, 20]).width(Length::Fill))
-        .height(Length::Fill)
-        .into()
-}
-
 fn toolbar(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     let current = state.current_block();
     let mut controls = column![
         row![
-            text("MARKDOWN").size(10).font(INTER_BOLD).color(MUTED),
-            mode_button("Write", EditorMode::Write, state.mode),
-            mode_button("Preview", EditorMode::Preview, state.mode),
-            mode_button("Split", EditorMode::Split, state.mode),
-            iced::widget::space().width(Length::Fill),
             tool_button(
-                "Find",
-                "Find and replace (Ctrl+F)",
-                BlockEditorEvent::ToggleSearch,
-                true
+                "Styles ▾",
+                "Text and block styles",
+                BlockEditorEvent::ToggleFormats,
+                true,
             ),
-            tool_button(
-                "Undo",
-                "Undo (Ctrl+Z)",
-                BlockEditorEvent::Undo,
-                !state.undo.is_empty()
-            ),
-            tool_button(
-                "Redo",
-                "Redo (Ctrl+Shift+Z)",
-                BlockEditorEvent::Redo,
-                !state.redo.is_empty()
-            ),
-            tool_button(
-                "Block ↑",
-                "Move current block up",
-                BlockEditorEvent::MoveBlock(-1),
-                current > 1
-            ),
-            tool_button(
-                "Block ↓",
-                "Move current block down",
-                BlockEditorEvent::MoveBlock(1),
-                current < state.block_count()
-            ),
-            tool_button(
-                "Comment",
-                "Comment on current block",
-                BlockEditorEvent::OpenCommentComposer(current),
-                true
-            ),
-        ]
-        .spacing(3)
-        .align_y(iced::Alignment::Center),
-        row![
-            format_button("Text", "Paragraph", MarkdownFormat::Paragraph),
-            format_button("H1", "Heading 1", MarkdownFormat::Heading(1)),
-            format_button("H2", "Heading 2", MarkdownFormat::Heading(2)),
             format_button("B", "Bold (Ctrl+B)", MarkdownFormat::Bold),
             format_button("I", "Italic (Ctrl+I)", MarkdownFormat::Italic),
             format_button("S", "Strikethrough", MarkdownFormat::Strikethrough),
             format_button("Code", "Inline code", MarkdownFormat::InlineCode),
             format_button("Link", "Link (Ctrl+K)", MarkdownFormat::Link),
-            format_button("Bullet", "Bulleted list", MarkdownFormat::Bullet),
-            format_button("Number", "Numbered list", MarkdownFormat::Ordered),
-            format_button("Task", "Task list", MarkdownFormat::Task),
-            format_button("Quote", "Quote", MarkdownFormat::Quote),
+            iced::widget::space().width(Length::Fill),
             tool_button(
-                "More ▾",
-                "More Markdown blocks",
-                BlockEditorEvent::ToggleFormats,
+                "Find",
+                "Find and replace (Ctrl+F)",
+                BlockEditorEvent::ToggleSearch,
+                true,
+            ),
+            tool_button(
+                "Undo",
+                "Undo (Ctrl+Z)",
+                BlockEditorEvent::Undo,
+                !state.undo.is_empty(),
+            ),
+            tool_button(
+                "Redo",
+                "Redo (Ctrl+Shift+Z)",
+                BlockEditorEvent::Redo,
+                !state.redo.is_empty(),
+            ),
+            tool_button(
+                "Comment",
+                "Comment on current block",
+                BlockEditorEvent::OpenCommentComposer(current),
                 true,
             ),
         ]
-        .spacing(2)
+        .spacing(3)
         .align_y(iced::Alignment::Center),
-    ]
-    .spacing(5);
+    ];
     if state.formats_open {
         controls = controls.push(more_formats());
     }
@@ -1551,7 +2060,6 @@ fn toolbar(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
         })
         .into()
 }
-
 fn search_bar(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     let matches = state.search_matches();
     let count = matches.len();
@@ -1626,25 +2134,35 @@ fn more_formats() -> Element<'static, BlockEditorEvent> {
     container(
         column![
             row![
+                format_button("Text", "Paragraph", MarkdownFormat::Paragraph),
+                format_button("H1", "Heading 1", MarkdownFormat::Heading(1)),
+                format_button("H2", "Heading 2", MarkdownFormat::Heading(2)),
                 format_button("H3", "Heading 3", MarkdownFormat::Heading(3)),
                 format_button("H4", "Heading 4", MarkdownFormat::Heading(4)),
                 format_button("H5", "Heading 5", MarkdownFormat::Heading(5)),
                 format_button("H6", "Heading 6", MarkdownFormat::Heading(6)),
-                format_button("Code block", "Fenced code block", MarkdownFormat::CodeBlock,),
-                format_button("Table", "GFM table", MarkdownFormat::Table),
-                format_button("Image", "Image with alt text", MarkdownFormat::Image),
-                format_button("Divider", "Thematic break", MarkdownFormat::Divider),
-                format_button("Callout", "GFM callout", MarkdownFormat::Callout),
             ]
             .spacing(2),
             row![
+                format_button("Bullet", "Bulleted list", MarkdownFormat::Bullet),
+                format_button("Number", "Numbered list", MarkdownFormat::Ordered),
+                format_button("Task", "Task list", MarkdownFormat::Task),
+                format_button("Quote", "Quote", MarkdownFormat::Quote),
+                format_button("Code block", "Fenced code block", MarkdownFormat::CodeBlock),
+                format_button("Table", "GFM table", MarkdownFormat::Table),
+                format_button("Divider", "Thematic break", MarkdownFormat::Divider),
+            ]
+            .spacing(2),
+            row![
+                format_button("Callout", "GFM callout", MarkdownFormat::Callout),
+                format_button("Image", "Image with alt text", MarkdownFormat::Image),
                 format_button("Footnote", "Footnote", MarkdownFormat::Footnote),
                 format_button("Math", "Display math", MarkdownFormat::Math),
-                format_button("Definition", "Definition list", MarkdownFormat::Definition,),
+                format_button("Definition", "Definition list", MarkdownFormat::Definition),
                 format_button(
                     "Frontmatter",
                     "YAML frontmatter",
-                    MarkdownFormat::Frontmatter,
+                    MarkdownFormat::Frontmatter
                 ),
                 format_button("HTML", "Raw HTML block", MarkdownFormat::Html),
             ]
@@ -1655,98 +2173,11 @@ fn more_formats() -> Element<'static, BlockEditorEvent> {
     .padding([4, 0])
     .into()
 }
-
-fn slash_menu(state: &BlockEditorState) -> Option<Element<'_, BlockEditorEvent>> {
-    state.slash_query()?;
-    let commands = state.slash_commands().collect::<Vec<_>>();
-    let mut list = Column::new().spacing(2);
-    for (index, command) in commands.iter().enumerate() {
-        let event = BlockEditorEvent::ApplySlash(command.format);
-        let selected = index == state.slash_selected;
-        list = list.push(semantic_button(
-            button(
-                row![
-                    container(text(command.icon).size(12).font(INTER_BOLD))
-                        .center_x(34)
-                        .center_y(30)
-                        .style(|_| soft_surface()),
-                    column![
-                        text(command.label).size(12).font(INTER_BOLD),
-                        text(command.description).size(10).color(MUTED),
-                    ]
-                    .spacing(1),
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-            )
-            .on_press(event.clone())
-            .padding([3, 5])
-            .width(Length::Fill)
-            .style(move |theme: &Theme, status| {
-                let mut style = button::text(theme, status);
-                if selected {
-                    style.background = Some(Background::Color(BLUE_SOFT));
-                }
-                style.border.radius = 5.0.into();
-                style
-            }),
-            format!("notion-slash-{}", command.label),
-            format!("{}: {}", command.label, command.description),
-            Some(event),
-        ));
-    }
-    if commands.is_empty() {
-        list = list.push(text("No matching Markdown block").size(12).color(MUTED));
-    }
-    Some(
-        container(
-            column![
-                row![
-                    text("Markdown blocks").size(11).font(INTER_BOLD),
-                    iced::widget::space().width(Length::Fill),
-                    text("↑↓ choose · ↵ insert · esc close")
-                        .size(9)
-                        .color(FAINT),
-                ],
-                scrollable(list).height(Length::Fixed(250.0)),
-            ]
-            .spacing(6),
-        )
-        .padding(8)
-        .width(390)
-        .style(|_| floating_surface())
-        .into(),
-    )
-}
-
 fn markdown_binding(
     event: text_editor::KeyPress,
-    slash_choice: Option<MarkdownFormat>,
     search_open: bool,
+    empty_line: bool,
 ) -> Option<text_editor::Binding<BlockEditorEvent>> {
-    if let Some(format) = slash_choice {
-        match event.key.as_ref() {
-            keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                return Some(text_editor::Binding::Custom(BlockEditorEvent::SlashMoved(
-                    -1,
-                )));
-            }
-            keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                return Some(text_editor::Binding::Custom(BlockEditorEvent::SlashMoved(
-                    1,
-                )));
-            }
-            keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                return Some(text_editor::Binding::Custom(BlockEditorEvent::ApplySlash(
-                    format,
-                )));
-            }
-            keyboard::Key::Named(keyboard::key::Named::Escape) => {
-                return Some(text_editor::Binding::Custom(BlockEditorEvent::DismissSlash));
-            }
-            _ => {}
-        }
-    }
     match event.key.as_ref() {
         keyboard::Key::Named(keyboard::key::Named::Enter) => {
             return Some(text_editor::Binding::Custom(BlockEditorEvent::SmartEnter(
@@ -1757,6 +2188,11 @@ fn markdown_binding(
             return Some(text_editor::Binding::Custom(BlockEditorEvent::Indent(
                 event.modifiers.shift(),
             )));
+        }
+        keyboard::Key::Named(keyboard::key::Named::Backspace) if empty_line => {
+            return Some(text_editor::Binding::Custom(
+                BlockEditorEvent::SmartBackspace,
+            ));
         }
         keyboard::Key::Named(keyboard::key::Named::Escape) if search_open => {
             return Some(text_editor::Binding::Custom(BlockEditorEvent::ToggleSearch));
@@ -1790,106 +2226,6 @@ fn markdown_binding(
         }
     }
     text_editor::Binding::from_key_press(event)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MarkdownHighlight {
-    Heading,
-    Syntax,
-    Quote,
-    Code,
-    Link,
-}
-
-#[derive(Debug, Default)]
-struct MarkdownHighlighter {
-    current_line: usize,
-}
-
-impl Highlighter for MarkdownHighlighter {
-    type Settings = ();
-    type Highlight = MarkdownHighlight;
-    type Iterator<'a> = std::vec::IntoIter<(Range<usize>, MarkdownHighlight)>;
-
-    fn new(_: &Self::Settings) -> Self {
-        Self::default()
-    }
-
-    fn update(&mut self, _: &Self::Settings) {}
-
-    fn change_line(&mut self, line: usize) {
-        self.current_line = line;
-    }
-
-    fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
-        self.current_line += 1;
-        if line.starts_with('#') {
-            return vec![(0..line.len(), MarkdownHighlight::Heading)].into_iter();
-        }
-        if line.starts_with("    ") || line.starts_with("```") {
-            return vec![(0..line.len(), MarkdownHighlight::Code)].into_iter();
-        }
-        if line.starts_with('>') {
-            return vec![(0..line.len(), MarkdownHighlight::Quote)].into_iter();
-        }
-        let mut highlights = Vec::new();
-        if let Some(index) = line.find("http://").or_else(|| line.find("https://")) {
-            let end = line[index..]
-                .find(|character: char| character.is_whitespace() || matches!(character, ')' | '>'))
-                .map_or(line.len(), |length| index + length);
-            highlights.push((index..end, MarkdownHighlight::Link));
-        }
-        let bytes = line.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() {
-            if b"*~`[]()!_|".contains(&bytes[index]) {
-                let start = index;
-                index += 1;
-                while index < bytes.len() && b"*~`[]()!_|".contains(&bytes[index]) {
-                    index += 1;
-                }
-                if !highlights.iter().any(|(range, _)| range.contains(&start)) {
-                    highlights.push((start..index, MarkdownHighlight::Syntax));
-                }
-            } else {
-                index += 1;
-            }
-        }
-        highlights.sort_by_key(|(range, _)| range.start);
-        highlights.into_iter()
-    }
-
-    fn current_line(&self) -> usize {
-        self.current_line
-    }
-}
-
-fn markdown_highlight(highlight: &MarkdownHighlight, _theme: &Theme) -> highlighter::Format<Font> {
-    match highlight {
-        MarkdownHighlight::Heading => highlighter::Format {
-            color: Some(FG),
-            font: Some(INTER_BOLD),
-        },
-        MarkdownHighlight::Syntax => highlighter::Format {
-            color: Some(FAINT),
-            font: Some(INTER),
-        },
-        MarkdownHighlight::Quote => highlighter::Format {
-            color: Some(MUTED),
-            font: Some(Font {
-                style: font::Style::Italic,
-                ..INTER
-            }),
-        },
-        MarkdownHighlight::Code => highlighter::Format {
-            color: Some(CODE),
-            font: Some(Font::MONOSPACE),
-        },
-        MarkdownHighlight::Link => highlighter::Format {
-            color: Some(PRIMARY),
-            font: Some(INTER),
-        },
-    }
 }
 
 fn comment_composer(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
@@ -2078,31 +2414,6 @@ fn thread_card<'a>(
     .into()
 }
 
-fn mode_button(
-    label: &'static str,
-    mode: EditorMode,
-    current: EditorMode,
-) -> Element<'static, BlockEditorEvent> {
-    let event = BlockEditorEvent::SetMode(mode);
-    semantic_button(
-        button(text(label).size(11))
-            .on_press(event.clone())
-            .padding([5, 8])
-            .style(move |theme: &Theme, status| {
-                let mut style = button::text(theme, status);
-                if mode == current {
-                    style.background = Some(Background::Color(BLUE_SOFT));
-                    style.text_color = PRIMARY;
-                }
-                style.border.radius = 5.0.into();
-                style
-            }),
-        format!("notion-mode-{label}"),
-        format!("{label} Markdown"),
-        Some(event),
-    )
-}
-
 fn format_button(
     visible: &'static str,
     label: &'static str,
@@ -2146,21 +2457,13 @@ fn semantic_button<'a>(
         .into()
 }
 
-fn editor_style(_: &Theme, status: text_editor::Status) -> text_editor::Style {
+fn hidden_editor_style(_: &Theme, _: text_editor::Status) -> text_editor::Style {
     text_editor::Style {
-        background: Background::Color(Color::WHITE),
-        border: Border {
-            color: if matches!(status, text_editor::Status::Focused { .. }) {
-                PRIMARY
-            } else {
-                BORDER
-            },
-            width: 1.0,
-            radius: 7.0.into(),
-        },
-        placeholder: FAINT,
-        value: FG,
-        selection: Color::from_rgb8(194, 218, 247),
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border::default(),
+        placeholder: Color::TRANSPARENT,
+        value: Color::TRANSPARENT,
+        selection: Color::TRANSPARENT,
     }
 }
 
@@ -2172,23 +2475,6 @@ fn soft_surface() -> container::Style {
             width: 1.0,
             radius: 6.0.into(),
         })
-}
-
-fn floating_surface() -> container::Style {
-    container::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        border: Border {
-            color: BORDER,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.1),
-            offset: Vector::new(0.0, 3.0),
-            blur_radius: 12.0,
-        },
-        ..container::Style::default()
-    }
 }
 
 fn comment_surface(resolved: bool) -> container::Style {
@@ -2207,8 +2493,9 @@ const FAINT: Color = Color::from_rgb8(155, 154, 151);
 const BORDER: Color = Color::from_rgb8(233, 233, 231);
 const SIDEBAR: Color = Color::from_rgb8(247, 247, 245);
 const PRIMARY: Color = Color::from_rgb8(47, 128, 237);
-const BLUE_SOFT: Color = Color::from_rgb8(234, 243, 251);
 const CODE: Color = Color::from_rgb8(130, 80, 170);
+const CODE_SOFT: Color = Color::from_rgb8(247, 242, 250);
+const SELECTION: Color = Color::from_rgba8(47, 128, 237, 0.2);
 
 #[cfg(test)]
 mod tests {
@@ -2261,15 +2548,33 @@ mod tests {
     }
 
     #[test]
-    fn slash_menu_covers_extended_markdown_and_inserts_a_table() {
-        let mut state = block_editor_state("untitled".into());
-        state.replace_source("/tab".into(), 4, None, false);
-        let commands = state.slash_commands().collect::<Vec<_>>();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].format, MarkdownFormat::Table);
-        state = apply(state, BlockEditorEvent::ApplySlash(MarkdownFormat::Table));
-        assert!(state.markdown().contains("| Column 1 | Column 2 |"));
-        assert!(state.markdown().contains("| :--- | ---: |"));
+    fn bear_render_hides_markers_styles_text_and_reveals_only_the_active_block() {
+        let source = "# Heading\n\nBody with **bold**, *italic*, ~~strike~~, `code`, and [link](https://example.com).";
+        let rendered = render_markdown(source, 0, 0..0, false);
+        assert!(rendered.text.contains("Heading"));
+        assert!(
+            rendered
+                .text
+                .contains("Body with bold, italic, strike, code, and link.")
+        );
+        assert!(!rendered.text.contains("**"));
+        assert!(!rendered.text.contains("https://"));
+        assert!(rendered.runs.iter().any(|run| run.style.size == 31.0));
+        assert!(rendered.runs.iter().any(|run| run.style.strikethrough));
+        assert!(
+            rendered
+                .runs
+                .iter()
+                .any(|run| run.style.font == Font::MONOSPACE)
+        );
+
+        let caret = source.find("bold").expect("bold source");
+        let active = render_markdown(source, caret, caret..caret, true);
+        assert!(active.text.starts_with("Heading\n\n"));
+        assert!(active.text.contains("**bold**"));
+        assert!(!active.text.starts_with("# "));
+        let visual = active.source_to_visual(caret);
+        assert_eq!(active.source_at(visual), caret);
     }
 
     #[test]
@@ -2314,6 +2619,18 @@ mod tests {
     }
 
     #[test]
+    fn backspace_on_an_empty_line_removes_it_and_moves_to_the_previous_end() {
+        let mut state = block_editor_state("untitled".into());
+        state.replace_source("Previous\n\nNext".into(), 9, None, false);
+        state = apply(state, BlockEditorEvent::SmartBackspace);
+        assert_eq!(state.markdown(), "Previous\nNext");
+        assert_eq!(
+            state.content.cursor().position,
+            text_editor::Position { line: 0, column: 8 }
+        );
+    }
+
+    #[test]
     fn tab_indents_and_outdents_a_cross_line_selection() {
         let mut state = block_editor_state("untitled".into());
         state.replace_source("one\ntwo".into(), 0, None, false);
@@ -2341,24 +2658,24 @@ mod tests {
     }
 
     #[test]
-    fn rendered_editor_exposes_write_preview_and_markdown_tools() {
+    fn rendered_editor_is_one_inline_surface_with_organized_markdown_tools() {
         let state = block_editor_state("home".into());
         let mut screen = iced_test::Simulator::with_size(
             iced::Settings::default(),
             iced::Size::new(920.0, 620.0),
             block_editor(&state),
         );
-        screen.find("Write").expect("write mode");
-        screen.find("Preview").expect("preview mode");
+        assert!(screen.find("Write").is_err());
+        assert!(screen.find("Preview").is_err());
         screen.find("Find").expect("find and replace action");
-        screen.find("More ▾").expect("organized extended formats");
+        screen.find("Styles ▾").expect("organized format menu");
         assert!(
             screen
                 .find("Can we link the customer research notes here?")
                 .is_err(),
             "comments do not interrupt writing"
         );
-        screen.click("More ▾").expect("extended format menu");
+        screen.click("Styles ▾").expect("format menu");
         screen.click("Find").expect("find and replace action");
         let state = screen.into_messages().fold(state, apply);
         let mut screen = iced_test::Simulator::with_size(
@@ -2370,18 +2687,28 @@ mod tests {
         screen.find("Footnote").expect("footnote action");
         screen.find("Find…").expect("find input");
         screen.find("Replace with…").expect("replace input");
-        screen.click("Preview").expect("preview control");
-        let state = screen.into_messages().fold(state, apply);
-        assert_eq!(state.mode, EditorMode::Preview);
+        screen
+            .snapshot(&Theme::Light)
+            .expect("inline Markdown editor");
+    }
+
+    #[test]
+    fn clicking_rendered_text_places_the_source_cursor_and_requests_native_focus() {
+        let state = block_editor_state("home".into());
         let mut screen = iced_test::Simulator::with_size(
             iced::Settings::default(),
             iced::Size::new(920.0, 620.0),
             block_editor(&state),
         );
-        assert!(!state.preview.items().is_empty());
-        screen
-            .snapshot(&Theme::Light)
-            .expect("rendered Markdown preview");
+        screen.point_at(Point::new(220.0, 115.0));
+        screen.simulate(iced_test::simulator::click());
+        let event = screen
+            .into_messages()
+            .find(|event| matches!(event, BlockEditorEvent::Select(_, _)))
+            .expect("the rendered document owns hit testing");
+        let state = apply(state, event);
+        assert!(state.editor_active);
+        assert!(block_editor_should_focus(state));
     }
 
     #[test]
