@@ -128,6 +128,26 @@ view
 }
 
 #[test]
+fn parses_named_component_events_and_route_maps() {
+    let document = parse(
+        "app Demo\ncomponent Menu()\n  emits\n    close\n    select(str, bool)\n  button \"Close\" -> emit close\non closed\non selected(value, active)\nview\n  Menu\n    events\n      close -> closed\n      select -> selected _ _\n",
+    )
+    .unwrap();
+    assert_eq!(document.components[0].events[0].name, "close");
+    assert!(document.components[0].events[0].payloads.is_empty());
+    assert_eq!(
+        document.components[0].events[1].payloads,
+        [Type::Str, Type::Bool]
+    );
+    let ViewNode::Component { events, .. } = &document.view else {
+        panic!("expected component call");
+    };
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].name, "select");
+    assert_eq!(events[1].route.args.len(), 2);
+}
+
+#[test]
 fn parses_all_native_time_operations() {
     let source = example!("timer.ice");
     let document = parse(source).unwrap();

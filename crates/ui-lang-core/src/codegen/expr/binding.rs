@@ -39,6 +39,7 @@ pub(in crate::codegen) enum ValueMode {
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";
 const COMPONENT_OUTPUT_PREFIX: &str = "\0component-output:";
+const COMPONENT_EVENT_PREFIX: &str = "\0component-event:";
 
 pub(in crate::codegen) fn component_context_key(component: &str) -> String {
     format!("{COMPONENT_CONTEXT_PREFIX}{component}")
@@ -60,6 +61,18 @@ pub(in crate::codegen) fn component_output_key(component: &str) -> String {
 pub(in crate::codegen) fn component_output(env: &HashMap<String, Binding>) -> Option<&Binding> {
     env.iter()
         .find_map(|(name, binding)| name.starts_with(COMPONENT_OUTPUT_PREFIX).then_some(binding))
+}
+
+pub(in crate::codegen) fn component_event_key(component: &str, event: &str) -> String {
+    format!("{COMPONENT_EVENT_PREFIX}{component}:{event}")
+}
+
+pub(in crate::codegen) fn component_event<'a>(
+    env: &'a HashMap<String, Binding>,
+    component: &str,
+    event: &str,
+) -> Option<&'a Binding> {
+    env.get(&component_event_key(component, event))
 }
 
 pub(in crate::codegen) fn component_state_field(component: &str) -> String {

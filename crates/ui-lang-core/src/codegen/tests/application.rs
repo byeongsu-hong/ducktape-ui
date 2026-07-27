@@ -629,12 +629,18 @@ on open
 on quit
   exit
 component AgentWindow(id:window-id)
+  emits
+    open
+    quit
   col
     text label(id)
-    button "Open" -> open
-    button "Quit" -> quit
+    button "Open" -> emit open
+    button "Quit" -> emit quit
 view
   AgentWindow id=window
+    events
+      open -> open
+      quit -> quit
 "#;
     let generated = compile(source, "agent.ice").unwrap();
     assert!(generated.contains("::iced::daemon(Self::__boot, Self::__update, Self::__view)"));

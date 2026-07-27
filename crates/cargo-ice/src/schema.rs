@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const LANGUAGE_REVISION: &str = "1.64";
+pub const LANGUAGE_REVISION: &str = "1.70";
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
 pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
@@ -48,6 +48,16 @@ const COMPLETIONS: &[Completion] = &[
         "component",
         "declaration",
         "component ${1:Name}(${2})\n  $0",
+    ),
+    Completion::new(
+        "emits",
+        "component declaration",
+        "emits\n  ${1:event}(${2:type})",
+    ),
+    Completion::new(
+        "events",
+        "component call",
+        "events\n  ${1:event} -> ${2:handler} $0",
     ),
     Completion::new("slot", "declaration", "slot ${1:Name}"),
     Completion::new("on", "declaration", "on ${1:event}\n  $0"),
@@ -528,10 +538,30 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "component" => details(
             &["document"],
-            "component <Name>([bind] <prop>:<type>[=<default-expression>], ...)",
-            child_shape(1, None, "component-state|component-handler|view-root"),
+            "component <Name>([bind] <prop>:<type>[=<default-expression>], ...) [-> <default-output-type>]",
+            child_shape(
+                1,
+                None,
+                "component-state|component-events|component-handler|view-root",
+            ),
+            no_binding(),
+            json!({ "requiredWhen": "a default output type is declared", "payload": "default component output" }),
+            Vec::new(),
+        ),
+        "emits" => details(
+            &["component"],
+            "emits\n  <event>[(<payload-type>, ...)]",
+            child_shape(1, None, "named-event-signature"),
             no_binding(),
             no_route(),
+            Vec::new(),
+        ),
+        "events" => details(
+            &["component-call"],
+            "events\n  <event> -> <handler> [<argument>|_ ...]",
+            child_shape(1, None, "named-event-route"),
+            no_binding(),
+            json!({ "required": true, "payload": "declared ordered event payloads", "scope": "component caller" }),
             Vec::new(),
         ),
         "slot" => details(
@@ -1731,6 +1761,13 @@ pub fn document() -> Value {
                     "directPathOnly": true,
                 },
             },
+            "componentEvents": {
+                "declaration": "emits block with unique zero-or-more typed ordered payloads",
+                "emission": "emit <event> [<value>|_ ...] inside the component view",
+                "routing": "events block with exactly one caller-scoped route per declared event",
+                "closedComponents": true,
+                "defaultEventShorthand": "component Name(...) -> Type paired with call-site -> route",
+            },
             "documentPrelude": {
                 "syntax": "app <Name>\ntheme\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
                 "requiredDeclarations": ["app", "theme", "view"],
@@ -1864,6 +1901,8 @@ mod tests {
             "state",
             "derived",
             "component",
+            "emits",
+            "events",
             "slot",
             "on",
             "let",

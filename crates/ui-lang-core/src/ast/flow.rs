@@ -33,6 +33,7 @@ pub struct Component {
     pub name: String,
     pub params: Vec<ComponentParam>,
     pub output: Type,
+    pub events: Vec<ComponentEvent>,
     pub states: Vec<State>,
     pub handlers: Vec<Handler>,
     pub root: ViewNode,
@@ -45,6 +46,13 @@ pub struct ComponentParam {
     pub ty: Type,
     pub bind: bool,
     pub default: Option<Expr>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComponentEvent {
+    pub name: String,
+    pub payloads: Vec<Type>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -444,5 +452,12 @@ pub struct ComponentArg {
 pub struct ComponentSlot {
     pub name: String,
     pub content: Box<ViewNode>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComponentEventRoute {
+    pub name: String,
+    pub route: Route,
     pub span: Span,
 }

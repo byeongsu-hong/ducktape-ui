@@ -530,18 +530,18 @@ mod tests {
     #[test]
     fn retains_checked_component_and_handler_locations_across_imports() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  Card\n    events\n      click -> clicked\n";
         fixture.write("app.ice", root);
         fixture.write(
             "part.ice",
-            "component Card()\n  button \"Go\" -> clicked\non clicked\n",
+            "component Card()\n  emits\n    click\n  button \"Go\" -> emit click\n",
         );
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
         let part = fixture.path("part.ice").canonicalize().unwrap();
-        let (component, _) = checked.symbol_at(Some(&app), 9, 3).unwrap();
-        let (handler, _) = checked.symbol_at(Some(&part), 2, 20).unwrap();
+        let (component, _) = checked.symbol_at(Some(&app), 10, 3).unwrap();
+        let (handler, _) = checked.symbol_at(Some(&app), 12, 16).unwrap();
 
         assert_eq!(component.name, "Card");
         assert_eq!(component.definition.path.as_deref(), Some(part.as_path()));
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(component.references.len(), 1);
         assert!(component.renameable);
         assert_eq!(handler.name, "clicked");
-        assert_eq!(handler.definition.line, 3);
+        assert_eq!(handler.definition.line, 8);
         assert_eq!(handler.references.len(), 1);
         assert!(handler.renameable);
     }
@@ -690,27 +690,17 @@ mod tests {
     }
 
     #[test]
-    fn retains_global_handler_routes_from_component_handlers() {
+    fn rejects_global_handler_routes_from_component_handlers() {
         let fixture = Fixture::new();
         let root = "app Demo\nextern crate::backend\n  fetch() -> str\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Search()\n  on search\n    run fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n";
         fixture.write("app.ice", root);
 
-        let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
-        let app = fixture.path("app.ice").canonicalize().unwrap();
-        let route = root.lines().nth(10).unwrap();
-        let route_column = route.rfind("loaded").unwrap() + 1;
-        let (loaded, reference) = checked.symbol_at(Some(&app), 11, route_column).unwrap();
-
-        assert_eq!(loaded.name, "loaded");
-        assert_eq!(
-            loaded.references.as_slice(),
-            std::slice::from_ref(reference)
-        );
+        let error = analyze_file_with_source(fixture.path("app.ice"), root).unwrap_err();
+        assert_eq!(error.code, "E132");
         assert!(
-            !checked
-                .symbols()
-                .iter()
-                .any(|symbol| symbol.name == "search")
+            error
+                .message
+                .contains("cannot reference app handler `loaded`")
         );
     }
 

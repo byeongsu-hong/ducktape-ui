@@ -90,4 +90,14 @@ mod tests {
             "app Demo\nstate\n  draft = \"\"\nderived\n  normalized = trim(draft)\non submit\n  let title = normalized\n  draft = title\nview\n  text normalized\n"
         );
     }
+
+    #[test]
+    fn formats_named_component_event_blocks() {
+        let source = "app Demo\ncomponent Dialog()\n    emits\n        confirm\n        select(str, bool)\n    button \"Confirm\" -> emit confirm\non confirmed\non selected(value, active)\nview\n    Dialog\n        events\n            confirm -> confirmed\n            select -> selected _ _\n";
+        let formatted = format_source(source).unwrap();
+        assert_eq!(
+            formatted,
+            "app Demo\ncomponent Dialog()\n  emits\n    confirm\n    select(str, bool)\n  button \"Confirm\" -> emit confirm\non confirmed\non selected(value, active)\nview\n  Dialog\n    events\n      confirm -> confirmed\n      select -> selected _ _\n"
+        );
+    }
 }

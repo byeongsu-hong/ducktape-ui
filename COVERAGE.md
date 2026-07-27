@@ -6,7 +6,7 @@ resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
 This is an implementation inventory, not a roadmap. A partial or missing row does
 not imply planned Ice syntax; uncommon behavior should use an existing typed
 Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-Language revision 1.64 and the workspace's pre-1.0 package version `0.1.0`
+Language revision 1.70 and the workspace's pre-1.0 package version `0.1.0`
 are intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
@@ -34,11 +34,15 @@ Future externs; `run latest` filters stale completions by scope and call site.
 Writable component inputs are explicit `bind` props; calls use `<->` with a
 direct app state, component-local state, or forwarded bind prop. Ordinary props
 never carry write capability.
+Components expose closed checked contracts: named events carry zero or more
+ordered typed payloads, every call site routes each event in caller scope, and
+direct app-handler references from component bodies are rejected. The single
+typed `->` output remains the default-event shorthand.
 Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
 interaction-specific delta.
 
-Top-level semantic style recipes are native Core declarations in 1.64. They
+Top-level semantic style recipes are native Core declarations in 1.70. They
 package checked utility tokens for one declared target (`col`, `row`, `flex`,
 `grid`, `stack`, `box`, `text`, `input`, or `button`), optionally specialize
 one same-target base, expand base-first across imported source graphs, preserve
@@ -53,7 +57,7 @@ participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
-Component contracts in 1.64 support checked prop defaults. Missing named
+Component contracts in 1.70 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values
 cannot be defaulted.
@@ -61,7 +65,7 @@ Required props must precede defaulted props.
 Parser, checker, formatter, and codegen tests cover omission, override, type and
 capture errors, and mutable-value rejection.
 
-First-class Ice tests are native in 1.64. Top-level `test` declarations reuse
+First-class Ice tests are native in 1.70. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. A persistent headless Iced cache drives click, hover,
 press/release, typing, keys, viewport changes, dispatch, update, and recursive
@@ -139,7 +143,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 1.64 has thirty-three checked Rust boundaries:
+Ice 1.70 has thirty-three checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |

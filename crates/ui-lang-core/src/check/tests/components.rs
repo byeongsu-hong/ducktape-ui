@@ -2,6 +2,91 @@ use super::*;
 use crate::{EffectKind, Statement};
 
 #[test]
+fn checks_named_component_event_routes_and_payloads() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  page = "home"
+component Choice(page:str)
+  emits
+    confirm
+    select(str)
+    favorite(str, bool)
+  col
+    button "Confirm" -> emit confirm
+    button "Select" -> emit select "roadmap"
+    checkbox "Favorite" checked=false -> emit favorite page _
+on confirmed
+on selected(page)
+on favorite_changed(page, next)
+view
+  Choice page=page
+    events
+      confirm -> confirmed
+      select -> selected _
+      favorite -> favorite_changed _ _
+"#;
+    let document = analyze(source).unwrap();
+    assert_eq!(
+        document.components[0].events[0].payloads,
+        Vec::<Type>::new()
+    );
+    assert_eq!(document.handlers[1].params[0].ty, Type::Str);
+    assert_eq!(document.handlers[2].params[0].ty, Type::Str);
+    assert_eq!(document.handlers[2].params[1].ty, Type::Bool);
+
+    for (replacement, expected) in [
+        ("", "requires a route for event `favorite`"),
+        (
+            "      favorite -> favorite_changed _ _\n      missing -> confirmed\n",
+            "does not declare event `missing`",
+        ),
+        (
+            "      favorite -> favorite_changed _ _\n      favorite -> favorite_changed _ _\n",
+            "more than once",
+        ),
+    ] {
+        let changed = source.replace("      favorite -> favorite_changed _ _\n", replacement);
+        let error = analyze(&changed).unwrap_err();
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
+fn component_event_routes_use_caller_scope_and_components_are_closed() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  page = "home"
+component Favorite()
+  emits
+    changed(bool)
+  checkbox "Favorite" checked=false -> emit changed _
+on changed(page, next)
+view
+  Favorite
+    events
+      changed -> changed(page, _)
+"#;
+    let document = analyze(source).unwrap();
+    assert_eq!(document.handlers[0].params[0].ty, Type::Str);
+    assert_eq!(document.handlers[0].params[1].ty, Type::Bool);
+
+    let closed = source.replace("-> emit changed _", "-> changed _");
+    let error = analyze(&closed).unwrap_err();
+    assert_eq!(error.code, "E132");
+    assert!(error.message.contains("cannot reference app handler"));
+}
+
+#[test]
 fn requires_component_output_routes_and_matching_emit_values() {
     let missing_route = analyze(
         r#"app Demo
@@ -675,12 +760,16 @@ state
   locked = false
   language = "rs"
 component EditorPanel(bind content:editor, bind heading:str, readonly:bool, syntax:str)
+  emits
+    command(EditorCommand)
   col
     input "Title" <-> heading
-    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> command _
+    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit command _
 on command(value)
 view
   EditorPanel content<->body heading<->title readonly=locked syntax=language
+    events
+      command -> command _
 "#;
     let document = analyze(source).unwrap();
     assert_eq!(document.handlers[0].params[0].ty.display(), "EditorCommand");

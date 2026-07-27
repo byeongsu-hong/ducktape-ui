@@ -8,6 +8,16 @@ test component_sidebar_contract
   viewport 420 760
   mount
     Sidebar query<->query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
+      events
+        close_window -> close_window
+        minimize_window -> minimize_window
+        toggle_maximize_window -> toggle_maximize_window
+        drag_window -> drag_window
+        search -> search
+        navigate -> navigate _
+        restart_current -> restart_current
+        sign_in -> sign_in
+        sign_out -> sign_out
   target root = #sidebar/root
   target surface = #sidebar/root/surface
   target content = #sidebar/root/surface/content
@@ -77,6 +87,9 @@ test component_titles_and_hero_contract
       PageTitle eyebrow="FOR YOU" title="Listen now" description="A daily soundtrack tuned to your library." #page
       SectionTitle title="Top picks" detail="CURATED FOR YOU" #section
       FeatureHero kicker="MADE FOR YOU" title=current_title artist=current_artist description="A luminous mix of electronic pop, soft-focus vocals, and late-night color." cover=current_cover #hero
+        events
+          restart_current -> restart_current
+          queue -> queue
   target stage = #stage
   target page = #stage/page/root
   target eyebrow = #stage/page/root/eyebrow
@@ -128,13 +141,25 @@ test component_card_contracts
             col #album(album.id) w=fill gap=16.0
               row gap=16.0
                 FeaturedCard album=album #featured(album.id)
+                  events
+                    play -> play _ _ _
                 RecentCard album=album #recent(album.id)
+                  events
+                    play -> play _ _ _
               row gap=16.0
                 StationCard album=album #station(album.id)
+                  events
+                    play -> play _ _ _
                 ArtistRow album=album #artist(album.id)
+                  events
+                    play -> play _ _ _
               row gap=16.0
                 SongRow album=album #song(album.id)
+                  events
+                    play -> play _ _ _
                 QueueRow album=album selected=false #queue(album.id)
+                  events
+                    play -> play _ _ _
   target featured = #stage/content/album(1)/featured(1)/root/control
   target featured_title = #stage/content/album(1)/featured(1)/root/control/title
   target recent = #stage/content/album(1)/recent(1)/root
@@ -187,10 +212,20 @@ test component_collection_contracts
     scroll #stage w=fill h=fill bar=hidden
       col #content w=fill p=20.0 gap=16.0
         AlbumStrip albums=top_picks featured=true #featured-strip
+          events
+            play -> play _ _ _
         AlbumStrip albums=top_picks featured=false #recent-strip
+          events
+            play -> play _ _ _
         AlbumGrid albums=top_picks #album-grid
+          events
+            play -> play _ _ _
         StationStrip albums=top_picks #station-strip
+          events
+            play -> play _ _ _
         ArtistGrid albums=top_picks #artist-grid
+          events
+            play -> play _ _ _
   target stage = #stage
   target content = #stage/content
   target featured_strip = #stage/content/featured-strip/root
@@ -222,8 +257,21 @@ test component_player_and_queue_contract
   mount
     col #stage w=fill h=fill p=12.0 gap=12.0
       PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume lyrics_active=lyrics_open queue_active=queue_open #player
+        events
+          shuffle -> shuffle
+          previous -> previous
+          toggle_playback -> toggle_playback
+          next -> next
+          seek -> seek _
+          toggle_mute -> toggle_mute
+          volume_changed -> volume_changed _
+          lyrics -> lyrics
+          queue -> queue
       row #lower w=fill h=fill gap=12.0
         QueuePanel albums=recently_played current_title=current_title current_artist=current_artist current_cover=current_cover #queue-panel
+          events
+            queue -> queue
+            play -> play _ _ _
         box w=fill h=fill bg=bg r=22.0
           text "Queue detail surface" @text-muted
   target player = #stage/player/root
@@ -314,6 +362,9 @@ test component_lyrics_contract
   viewport 420 760
   mount
     LyricsPanel title=current_title artist=current_artist lines=lyrics_for(current_title, position) #lyrics-panel
+      events
+        lyrics -> lyrics
+        seek -> seek _
   target root = #lyrics-panel/root
   target surface = #lyrics-panel/root/surface
   target title = #lyrics-panel/root/surface/header/title
@@ -343,6 +394,10 @@ test component_library_content_contract
   viewport 1000 820
   mount
     LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
+      events
+        restart_current -> restart_current
+        queue -> queue
+        play -> play _ _ _
   target root = #library/root
   target content = #library/root/content
   target home_title = #library/root/content/home-title/root/title
@@ -382,6 +437,10 @@ test component_library_status_contract
   viewport 1000 760
   mount
     LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
+      events
+        restart_current -> restart_current
+        queue -> queue
+        play -> play _ _ _
   target root = #library/root
   expect root.visible
   expect text "Loading your library"

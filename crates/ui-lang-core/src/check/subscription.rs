@@ -673,15 +673,115 @@ pub(in crate::check) fn infer_route(
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
+    infer_route_with_payloads(
+        route,
+        RoutePayloads::Single(payload.as_ref()),
+        env,
+        document,
+        signatures,
+    )
+}
+
+pub(in crate::check) fn infer_component_event_route(
+    route: &Route,
+    payloads: &[Type],
+    env: &HashMap<String, Type>,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+) -> Result<(), Error> {
+    infer_route_with_payloads(
+        route,
+        RoutePayloads::Ordered(payloads),
+        env,
+        document,
+        signatures,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum RoutePayloads<'a> {
+    Single(Option<&'a Type>),
+    Ordered(&'a [Type]),
+}
+
+impl RoutePayloads<'_> {
+    fn get(self, index: usize, span: &Span) -> Result<Type, Error> {
+        match self {
+            Self::Single(payload) => payload.cloned(),
+            Self::Ordered(payloads) => payloads.get(index).cloned(),
+        }
+        .ok_or_else(|| Error::new("E134", span, "this route has no `_` payload"))
+    }
+}
+
+fn infer_route_with_payloads(
+    route: &Route,
+    payloads: RoutePayloads<'_>,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+) -> Result<(), Error> {
     if route.handler == "emit"
         && let Some(output) = component_output(env)
     {
         let component_name = component_context(env).expect("component output has a context");
+        let component = document
+            .components
+            .iter()
+            .find(|component| component.name == component_name)
+            .expect("component context names a declared component");
+        let named = route.args.split_first().and_then(|(name, args)| {
+            let RouteArg::Expr(Expr::Path(path)) = name else {
+                return None;
+            };
+            let [name] = path.as_slice() else {
+                return None;
+            };
+            component
+                .events
+                .iter()
+                .find(|event| event.name == *name)
+                .map(|event| (event, args))
+        });
+        if let Some((event, args)) = named {
+            if args.len() != event.payloads.len() {
+                return Err(Error::new(
+                    "E133",
+                    &route.span,
+                    format!(
+                        "component event `{}` expects {} values, got {}",
+                        event.name,
+                        event.payloads.len(),
+                        args.len()
+                    ),
+                ));
+            }
+            let mut payload_index = 0;
+            for (arg, expected) in args.iter().zip(&event.payloads) {
+                let actual = match arg {
+                    RouteArg::Payload => {
+                        let actual = payloads.get(payload_index, &route.span)?;
+                        payload_index += 1;
+                        actual
+                    }
+                    RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
+                };
+                require_type(&actual, expected, &route.span)?;
+            }
+            return Ok(());
+        }
         if *output == Type::Unit {
+            let candidate = route.args.first().and_then(|arg| match arg {
+                RouteArg::Expr(Expr::Path(path)) if path.len() == 1 => Some(path[0].as_str()),
+                _ => None,
+            });
             return Err(Error::new(
                 "E135",
                 &route.span,
-                format!("component `{component_name}` does not declare an output"),
+                candidate.map_or_else(
+                    || format!("component `{component_name}` does not declare an output"),
+                    |name| format!("component `{component_name}` does not declare event `{name}`"),
+                ),
             ));
         }
         let [arg] = route.args.as_slice() else {
@@ -692,8 +792,7 @@ pub(in crate::check) fn infer_route(
             ));
         };
         let actual = match arg {
-            RouteArg::Payload => payload
-                .ok_or_else(|| Error::new("E134", &route.span, "this route has no `_` payload"))?,
+            RouteArg::Payload => payloads.get(0, &route.span)?,
             RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
         };
         return require_type(&actual, output, &route.span);
@@ -712,10 +811,23 @@ pub(in crate::check) fn infer_route(
             "`mount` is initialization-only and cannot receive events",
         ));
     }
-    let key = component_context(env)
+    let local_key = component_context(env)
         .map(|component| component_handler_key(component, &route.handler))
-        .filter(|key| signatures.contains_key(key))
-        .unwrap_or_else(|| route.handler.clone());
+        .filter(|key| signatures.contains_key(key));
+    if let Some(component) = component_context(env)
+        && local_key.is_none()
+    {
+        return Err(Error::new(
+            "E132",
+            &route.span,
+            format!(
+                "component `{component}` cannot reference app handler `{}`",
+                route.handler
+            ),
+        )
+        .hint("declare a component event and route it at the call site"));
+    }
+    let key = local_key.unwrap_or_else(|| route.handler.clone());
     let signature = signatures.get_mut(&key).ok_or_else(|| {
         Error::new(
             "E132",
@@ -735,11 +847,14 @@ pub(in crate::check) fn infer_route(
             ),
         ));
     }
+    let mut payload_index = 0;
     for (slot, arg) in signature.iter_mut().zip(&route.args) {
         let ty = match arg {
-            RouteArg::Payload => payload
-                .clone()
-                .ok_or_else(|| Error::new("E134", &route.span, "this route has no `_` payload"))?,
+            RouteArg::Payload => {
+                let ty = payloads.get(payload_index, &route.span)?;
+                payload_index += 1;
+                ty
+            }
             RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
         };
         if contains_debug_span(&ty) {
@@ -771,6 +886,15 @@ pub(in crate::check) fn infer_ordered_payload_route(
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     label: &str,
 ) -> Result<(), Error> {
+    if route.handler == "emit"
+        && component_output(env).is_some()
+        && route
+            .args
+            .first()
+            .is_some_and(|arg| matches!(arg, RouteArg::Expr(Expr::Path(path)) if path.len() == 1))
+    {
+        return infer_component_event_route(route, payloads, env, document, signatures);
+    }
     if route.args.len() != payloads.len()
         || route
             .args

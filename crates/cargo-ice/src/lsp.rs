@@ -1653,14 +1653,24 @@ mod tests {
                 "end": { "line": 7, "character": 13 },
             })
         );
-        let component = response(&messages, 3)["result"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["label"] == "component")
-            .unwrap();
+        let completions = response(&messages, 3)["result"].as_array().unwrap();
+        let completion = |label| {
+            completions
+                .iter()
+                .find(|item| item["label"] == label)
+                .unwrap_or_else(|| panic!("missing `{label}` completion"))
+        };
+        let component = completion("component");
         assert_eq!(component["insertText"], "component ${1:Name}(${2})\n  $0");
         assert_eq!(component["insertTextFormat"], 2);
+        assert_eq!(
+            completion("emits")["insertText"],
+            "emits\n  ${1:event}(${2:type})"
+        );
+        assert_eq!(
+            completion("events")["insertText"],
+            "events\n  ${1:event} -> ${2:handler} $0"
+        );
     }
 
     #[test]
@@ -1859,9 +1869,9 @@ mod tests {
     #[test]
     fn defines_and_safely_renames_checked_symbols_across_imports() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
-        let other = "app Other\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
-        let part = "component Card()\n  button \"😀\" -> clicked\ncomponent Panel()\n  text \"Other\"\non clicked\non mount\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
+        let other = "app Other\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
+        let part = "component Card()\n  emits\n    click\n  button \"😀\" -> emit click\ncomponent Panel()\n  text \"Other\"\non clicked\non mount\n";
         fixture.write("app.ice", root);
         fixture.write("other.ice", other);
         fixture.write("part.ice", part);
@@ -1892,7 +1902,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 1, "character": 20 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 } },
             }),
             json!({
                 "jsonrpc": "2.0",
@@ -1910,7 +1920,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 6,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 1, "character": 20 }, "newName": "activated" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 }, "newName": "activated" },
             }),
             json!({
                 "jsonrpc": "2.0",
@@ -1928,19 +1938,19 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 9,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 1, "character": 20 }, "newName": "mount" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 }, "newName": "mount" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 10,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 5, "character": 4 } },
+                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 7, "character": 4 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 11,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 5, "character": 4 }, "newName": "launched" },
+                "params": { "textDocument": { "uri": part_uri }, "position": { "line": 7, "character": 4 }, "newName": "launched" },
             }),
             json!({
                 "jsonrpc": "2.0",
@@ -1965,8 +1975,8 @@ mod tests {
         assert_eq!(
             response(&messages, 3)["result"]["range"],
             json!({
-                "start": { "line": 1, "character": 17 },
-                "end": { "line": 1, "character": 24 },
+                "start": { "line": 10, "character": 15 },
+                "end": { "line": 10, "character": 22 },
             })
         );
         assert_eq!(
@@ -1996,7 +2006,21 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            2
+            1
+        );
+        assert_eq!(
+            response(&messages, 6)["result"]["changes"][&root_uri]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            response(&messages, 6)["result"]["changes"][&other_uri]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
         assert_eq!(response(&messages, 7)["error"]["code"], -32602);
         assert_eq!(response(&messages, 8)["error"]["code"], -32602);

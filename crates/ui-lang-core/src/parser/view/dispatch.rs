@@ -239,7 +239,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 ));
             }
             let (name, args, id) = parse_component_call(&parts, line)?;
-            let slots = parse_component_slots(&name, line)?;
+            let (slots, events) = parse_component_children(&name, line)?;
             let route = route_source
                 .map(|route| parse_route(route.trim(), line))
                 .transpose()?;
@@ -248,6 +248,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 args,
                 id,
                 slots,
+                events,
                 route,
                 span,
             })

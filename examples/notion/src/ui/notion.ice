@@ -232,9 +232,11 @@ on editor_focused(_focused)
   pending_editor_search_focus = false
 
 component PageItem(icon:str, title:str, page:str, selected:bool)
+  emits
+    navigate(str)
   col #root w=fill
     if selected
-      button #selected-button label=title w=fill p=6.0 -> navigate(trim(page))
+      button #selected-button label=title w=fill p=6.0 -> emit(navigate, trim(page))
         row w=fill gap=8.0 align=center
           text icon w=18.0 size=15.0 align-x=center @text-fg
           text title w=fill size=13.0 wrap=none @text-fg
@@ -242,7 +244,7 @@ component PageItem(icon:str, title:str, page:str, selected:bool)
         hovered bg=selected
         pressed bg=hover
     if !selected
-      button #button label=title w=fill p=6.0 -> navigate(trim(page))
+      button #button label=title w=fill p=6.0 -> emit(navigate, trim(page))
         row w=fill gap=8.0 align=center
           text icon w=18.0 size=15.0 align-x=center @text-muted
           text title w=fill size=13.0 wrap=none @text-muted
@@ -251,15 +253,20 @@ component PageItem(icon:str, title:str, page:str, selected:bool)
         pressed bg=selected text=fg
 
 component Sidebar(selected_page:str, home_favorite:bool, roadmap_favorite:bool, launch_favorite:bool, meeting_favorite:bool, untitled_favorite:bool, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str)
+  emits
+    toggle_sidebar
+    open_search
+    navigate(str)
+    new_page
   box #root w=244.0 h=fill bg=sidebar border=border border-w=1.0
     col w=fill h=fill p=8.0 gap=2.0
       row #workspace w=fill h=38.0 p=5.0 gap=8.0 align=center
         box w=24.0 h=24.0 align-x=center align-y=center bg=fg r=5.0
           text "E" size=12.0 @text-white font-bold
         text "Eddy's Notion" w=fill size=14.0 @text-fg font-bold
-        button #collapse label="Collapse sidebar" p=4.0 style=text -> toggle_sidebar
+        button #collapse label="Collapse sidebar" p=4.0 style=text -> emit toggle_sidebar
           text "«" size=16.0 @text-muted
-      button #search label="Search" w=fill p=7.0 -> open_search
+      button #search label="Search" w=fill p=7.0 -> emit open_search
         row w=fill gap=10.0 align=center
           text "⌕" w=18.0 size=17.0 align-x=center @text-muted
           text "Search" w=fill size=13.0 @text-muted
@@ -271,21 +278,41 @@ component Sidebar(selected_page:str, home_favorite:bool, roadmap_favorite:bool, 
           text "Favorites" size=11.0 @text-faint
           if home_favorite
             PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #favorite-home
+              events
+                navigate -> emit navigate _
           if roadmap_favorite
             PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #favorite-roadmap
+              events
+                navigate -> emit navigate _
           if launch_favorite
             PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #favorite-launch
+              events
+                navigate -> emit navigate _
           if meeting_favorite
             PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #favorite-meeting
+              events
+                navigate -> emit navigate _
           if untitled_favorite
             PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #favorite-untitled
+              events
+                navigate -> emit navigate _
       text "Private" size=11.0 @text-faint
       PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #private-home
+        events
+          navigate -> emit navigate _
       PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #roadmap
+        events
+          navigate -> emit navigate _
       PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #launch
+        events
+          navigate -> emit navigate _
       PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #meeting
+        events
+          navigate -> emit navigate _
       PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #untitled
-      button #new-page label="New page" w=fill p=7.0 -> new_page
+        events
+          navigate -> emit navigate _
+      button #new-page label="New page" w=fill p=7.0 -> emit new_page
         row w=fill gap=10.0 align=center
           text "+" w=18.0 size=17.0 align-x=center @text-muted
           text "New page" size=13.0 @text-muted
@@ -295,23 +322,28 @@ component Sidebar(selected_page:str, home_favorite:bool, roadmap_favorite:bool, 
       space w=fill h=fill
 
 component MiniSidebar()
+  emits
+    toggle_sidebar
+    open_search
   box #root w=44.0 h=fill bg=sidebar border=border border-w=1.0 align-x=center
     col w=fill h=fill p=7.0 align=center
-      button #expand label="Expand sidebar" p=6.0 style=text -> toggle_sidebar
+      button #expand label="Expand sidebar" p=6.0 style=text -> emit toggle_sidebar
         text "»" size=17.0 @text-muted
-      button #search label="Search" p=6.0 style=text -> open_search
+      button #search label="Search" p=6.0 style=text -> emit open_search
         text "⌕" size=17.0 @text-muted
       space w=fill h=fill
       box w=26.0 h=26.0 align-x=center align-y=center bg=fg r=5.0
         text "E" size=12.0 @text-white font-bold
 
 component Topbar(current_title:str, current_icon:str)
+  emits
+    open_share
   row #root w=fill h=46.0 px=12.0 gap=5.0 align=center
     text current_icon size=13.0 @text-muted
     text current_title w=fill size=12.0 @text-fg
     slot comments
     slot favorite_action
-    button #share label="Share" p=6.0 -> open_share
+    button #share label="Share" p=6.0 -> emit open_share
       text "Share" size=12.0 @text-primary
       active bg=transparent text=primary r=5.0
       hovered bg=blue_soft
@@ -329,6 +361,9 @@ component Document(bind title:str, state:BlockEditorState, icon:str) -> BlockEdi
       extern block_editor(state) #editor -> emit _
 
 component SearchDialog(bind search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str)
+  emits
+    close_search
+    navigate(str)
   box #root w=520.0 p=12.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
     col w=fill gap=7.0
       row w=fill gap=8.0 align=center
@@ -336,7 +371,7 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
         input "" #query label="Search pages" <-> search_query hint="Search Eddy's Notion" w=fill p=8.0
           active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
-        button #close label="Close search" p=5.0 style=text -> close_search
+        button #close label="Close search" p=5.0 style=text -> emit close_search
           text "esc" size=10.0 @text-faint
       box w=fill h=1.0 bg=border
         text ""
@@ -346,30 +381,45 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
         text "BEST MATCHES" size=10.0 @text-faint font-bold
       if page_matches(search_query, home_title)
         PageItem icon="◆" title=home_title page="home" selected=(selected_page == "home") #home-result
+          events
+            navigate -> emit navigate _
       if page_matches(search_query, roadmap_title)
         PageItem icon="▦" title=roadmap_title page="roadmap" selected=(selected_page == "roadmap") #roadmap-result
+          events
+            navigate -> emit navigate _
       if page_matches(search_query, launch_title)
         PageItem icon="✓" title=launch_title page="launch" selected=(selected_page == "launch") #launch-result
+          events
+            navigate -> emit navigate _
       if page_matches(search_query, meeting_title)
         PageItem icon="▤" title=meeting_title page="meeting" selected=(selected_page == "meeting") #meeting-result
+          events
+            navigate -> emit navigate _
       if page_matches(search_query, untitled_title)
         PageItem icon="□" title=untitled_title page="untitled" selected=(selected_page == "untitled") #untitled-result
+          events
+            navigate -> emit navigate _
       if !page_matches(search_query, home_title) && !page_matches(search_query, roadmap_title) && !page_matches(search_query, launch_title) && !page_matches(search_query, meeting_title) && !page_matches(search_query, untitled_title)
         text "No pages found" size=13.0 @text-muted
 
 component ShareDialog(bind invite_email:str, invite_access_options:[str], invite_access_choice:str?, invited_email:str, invited_access:str, link_copied:bool, page_link:str)
+  emits
+    close_share
+    invite_access_changed(str)
+    send_invite
+    copy_link(str)
   box #root w=470.0 p=18.0 bg=surface border=border border-w=1.0 r=10.0 shadow=black/20 shadow-y=8.0 shadow-blur=24.0
     col w=fill gap=14.0
       row w=fill align=center
         text "Share this page" w=fill size=17.0 @text-fg font-bold
-        button #close label="Close share dialog" p=5.0 style=text -> close_share
+        button #close label="Close share dialog" p=5.0 style=text -> emit close_share
           text "×" size=18.0 @text-muted
       row w=fill gap=8.0
         input "" #email label="Email address" <-> invite_email hint="Email or name" w=fill p=9.0
           active bg=surface border=border value=fg placeholder=faint selection=primary border-w=1.0 r=6.0
           focused border=primary border-w=1.0
-        pick invite_access_options invite_access_choice #access hint="Can edit" w=112.0 p=9.0 -> invite_access_changed _
-        button "Invite" #invite disabled=empty(trim(invite_email)) p=9.0 -> send_invite
+        pick invite_access_options invite_access_choice #access hint="Can edit" w=112.0 p=9.0 -> emit invite_access_changed _
+        button "Invite" #invite disabled=empty(trim(invite_email)) p=9.0 -> emit send_invite
           active bg=primary text=white r=6.0
           hovered bg=primary/85
           disabled bg=hover text=faint
@@ -390,10 +440,10 @@ component ShareDialog(bind invite_email:str, invite_access_options:[str], invite
           text "General access" size=13.0 @text-fg font-bold
           text "Only people invited" size=11.0 @text-muted
         if link_copied
-          button "Copied" #copied-link p=7.0 -> copy_link(page_link)
+          button "Copied" #copied-link p=7.0 -> emit copy_link page_link
             active bg=hover text=muted r=5.0
         if !link_copied
-          button "Copy link" #copy-link p=7.0 -> copy_link(page_link)
+          button "Copy link" #copy-link p=7.0 -> emit copy_link page_link
             active bg=surface text=fg border=border border-w=1.0 r=5.0
             hovered bg=hover
 
@@ -402,6 +452,8 @@ test page_item_component
   viewport 300 90
   mount
     PageItem icon="▦" title=roadmap_title page="roadmap" selected=false #item
+      events
+        navigate -> navigate _
   target root = #item/root
   target button = #item/root/button
   expect root.width ~= 300.0
@@ -415,6 +467,11 @@ test sidebar_component
   viewport 300 640
   mount
     Sidebar selected_page=selected_page home_favorite=true roadmap_favorite=false launch_favorite=false meeting_favorite=false untitled_favorite=false home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #sidebar
+      events
+        toggle_sidebar -> toggle_sidebar
+        open_search -> open_search
+        navigate -> navigate _
+        new_page -> new_page
   target root = #sidebar/root
   target collapse = #sidebar/root/workspace/collapse
   target search = #sidebar/root/search
@@ -435,6 +492,9 @@ test mini_sidebar_component
   viewport 100 320
   mount
     MiniSidebar #mini
+      events
+        toggle_sidebar -> toggle_sidebar
+        open_search -> open_search
   target root = #mini/root
   target expand = #mini/root/expand
   target search = #mini/root/search
@@ -449,6 +509,8 @@ test topbar_component
   viewport 640 80
   mount
     Topbar current_title=home_title current_icon="◆" #topbar
+      events
+        open_share -> open_share
       comments:
         button #comments label="Open comments" p=6.0 style=text -> home_comments_toggled
           text "☵" size=15.0 @text-muted
@@ -501,6 +563,9 @@ test search_dialog_component
   viewport 600 520
   mount
     SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+      events
+        close_search -> close_search
+        navigate -> navigate _
   target root = #search-dialog/root
   target query = #search-dialog/root/query
   target roadmap = #search-dialog/root/roadmap-result/root/button
@@ -521,6 +586,11 @@ test share_dialog_component
   viewport 560 420
   mount
     ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link("home") #share-dialog
+      events
+        close_share -> close_share
+        invite_access_changed -> invite_access_changed _
+        send_invite -> send_invite
+        copy_link -> copy_link _
   target root = #share-dialog/root
   target email = #share-dialog/root/email
   target access = #share-dialog/root/access
@@ -649,12 +719,22 @@ view
             row #shell w=fill h=fill
               if sidebar_open
                 Sidebar selected_page=selected_page home_favorite=home_favorite roadmap_favorite=roadmap_favorite launch_favorite=launch_favorite meeting_favorite=meeting_favorite untitled_favorite=untitled_favorite home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #sidebar
+                  events
+                    toggle_sidebar -> toggle_sidebar
+                    open_search -> open_search
+                    navigate -> navigate _
+                    new_page -> new_page
               if !sidebar_open
                 MiniSidebar #mini-sidebar
+                  events
+                    toggle_sidebar -> toggle_sidebar
+                    open_search -> open_search
               match selected_page
                 "home"
                   col #home-page w=fill h=fill
                     Topbar current_title=home_title current_icon="◆" #home-topbar
+                      events
+                        open_share -> open_share
                       comments:
                         button #comments label="Open comments" p=6.0 style=text -> home_comments_toggled
                           text "☵" size=15.0 @text-muted
@@ -670,6 +750,8 @@ view
                 "roadmap"
                   col #roadmap-page w=fill h=fill
                     Topbar current_title=roadmap_title current_icon="▦" #roadmap-topbar
+                      events
+                        open_share -> open_share
                       comments:
                         button #comments label="Open comments" p=6.0 style=text -> roadmap_comments_toggled
                           text "☵" size=15.0 @text-muted
@@ -685,6 +767,8 @@ view
                 "launch"
                   col #launch-page w=fill h=fill
                     Topbar current_title=launch_title current_icon="✓" #launch-topbar
+                      events
+                        open_share -> open_share
                       comments:
                         button #comments label="Open comments" p=6.0 style=text -> launch_comments_toggled
                           text "☵" size=15.0 @text-muted
@@ -700,6 +784,8 @@ view
                 "meeting"
                   col #meeting-page w=fill h=fill
                     Topbar current_title=meeting_title current_icon="▤" #meeting-topbar
+                      events
+                        open_share -> open_share
                       comments:
                         button #comments label="Open comments" p=6.0 style=text -> meeting_comments_toggled
                           text "☵" size=15.0 @text-muted
@@ -715,6 +801,8 @@ view
                 "untitled"
                   col #untitled-page w=fill h=fill
                     Topbar current_title=untitled_title current_icon="□" #untitled-topbar
+                      events
+                        open_share -> open_share
                       comments:
                         button #comments label="Open comments" p=6.0 style=text -> untitled_comments_toggled
                           text "☵" size=15.0 @text-muted
@@ -729,5 +817,13 @@ view
                     Document title<->untitled_title state=untitled_document icon="□" #untitled-document -> untitled_editor_changed _
         layer
           ShareDialog invite_email<->invite_email invite_access_options=invite_access_options invite_access_choice=invite_access_choice invited_email=invited_email invited_access=invited_access link_copied=link_copied page_link=page_link(selected_page) #share-dialog
+            events
+              close_share -> close_share
+              invite_access_changed -> invite_access_changed _
+              send_invite -> send_invite
+              copy_link -> copy_link _
     layer
       SearchDialog search_query<->search_query selected_page=selected_page home_title=home_title roadmap_title=roadmap_title launch_title=launch_title meeting_title=meeting_title untitled_title=untitled_title #search-dialog
+        events
+          close_search -> close_search
+          navigate -> navigate _

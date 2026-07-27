@@ -85,6 +85,30 @@ declare defaults, and defaults cannot capture state or other parameters.
 `match` selects the first matching view arm, with `_` as an optional final
 fallback:
 
+Reusable components are closed over app handlers. Declare named events in the
+component contract and route every event in the caller's scope:
+
+```ice
+component ConfirmDialog(title:str)
+  emits
+    confirm
+    cancel
+  col
+    text title
+    row
+      button "Cancel" -> emit cancel
+      button "Confirm" -> emit confirm
+
+ConfirmDialog title="Delete page?"
+  events
+    confirm -> delete_page
+    cancel -> close_dialog
+```
+
+Events may carry ordered typed payloads. The existing
+`component Toggle(...) -> bool` plus call-site `-> changed _` form is the
+intentional shorthand for one default event.
+
 ```ice
 component Counter()
   state
@@ -387,7 +411,7 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 1.64 is an executable language revision, not an attempt to replace iced.
+Ice 1.70 is an executable language revision, not an attempt to replace iced.
 Its stable authoring Core is app/state/derived/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, typed Rust effects, and first-class headless tests over generated
@@ -397,7 +421,7 @@ while typed
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 1.64; the workspace packages currently use pre-1.0
+specification is revision 1.70; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.

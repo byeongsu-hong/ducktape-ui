@@ -58,6 +58,12 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         }
         reject_debug_span(&component.output, &component.span)?;
         check(&component.output, &component.span)?;
+        for event in &component.events {
+            for payload in &event.payloads {
+                reject_debug_span(payload, &event.span)?;
+                check(payload, &event.span)?;
+            }
+        }
         for state in &component.states {
             if !component_value_is_cloneable(&state.ty) {
                 return Err(Error::new(
@@ -320,6 +326,16 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
                     "E100",
                     &handler.span,
                     format!("duplicate component handler `{}`", handler.name),
+                ));
+            }
+        }
+        let mut events = HashSet::new();
+        for event in &component.events {
+            if !events.insert(&event.name) {
+                return Err(Error::new(
+                    "E100",
+                    &event.span,
+                    format!("duplicate component event `{}`", event.name),
                 ));
             }
         }
