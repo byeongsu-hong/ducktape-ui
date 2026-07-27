@@ -11,7 +11,10 @@ pub enum AvatarSize {
     Large,
 }
 
-/// A circular frame for caller-owned content, including images when enabled by the app.
+/// A circular human-avatar frame for caller-owned content.
+///
+/// The shared Ice `Avatar.Agent` component is the exact 30px, 8px-radius agent
+/// treatment; the native API stays focused on image-capable human avatars.
 pub fn avatar<'a, Message>(
     content: impl Into<Element<'a, Message>>,
     size: AvatarSize,
@@ -42,7 +45,7 @@ where
     avatar(
         text(label)
             .size(metrics.text)
-            .color(theme.palette.foreground),
+            .color(theme.palette.avatar_foreground),
         size,
         theme,
     )
@@ -50,12 +53,11 @@ where
 
 pub fn style(theme: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(Background::Color(theme.palette.muted)),
-        text_color: Some(theme.palette.foreground),
+        background: Some(Background::Color(theme.palette.avatar)),
+        text_color: Some(theme.palette.avatar_foreground),
         border: Border {
-            color: theme.palette.border,
-            width: 1.0,
             radius: 999.0.into(),
+            ..Border::default()
         },
         ..Default::default()
     }
@@ -70,16 +72,16 @@ struct Metrics {
 fn metrics(size: AvatarSize, theme: &Theme) -> Metrics {
     match size {
         AvatarSize::Small => Metrics {
-            diameter: 32.0,
-            text: theme.typography.xs,
+            diameter: 24.0,
+            text: theme.typography.field_label,
         },
         AvatarSize::Default => Metrics {
-            diameter: 40.0,
-            text: theme.typography.sm,
+            diameter: 30.0,
+            text: theme.typography.meta,
         },
         AvatarSize::Large => Metrics {
-            diameter: 48.0,
-            text: theme.typography.base,
+            diameter: 40.0,
+            text: theme.typography.caption,
         },
     }
 }
@@ -97,5 +99,7 @@ mod tests {
 
         assert!(small.diameter < default.diameter && default.diameter < large.diameter);
         assert!(small.text < default.text && default.text < large.text);
+        assert_eq!(default.diameter, 30.0);
+        assert_eq!(default.text, LIGHT.typography.meta);
     }
 }

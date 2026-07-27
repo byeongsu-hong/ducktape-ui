@@ -10,9 +10,10 @@ pub(in crate::codegen) struct Style {
     pub(in crate::codegen) items_center: bool,
     pub(in crate::codegen) self_center: bool,
     pub(in crate::codegen) clip: bool,
-    pub(in crate::codegen) text_size: Option<u16>,
+    pub(in crate::codegen) text_size: Option<f32>,
     pub(in crate::codegen) text_line_height: Option<f32>,
-    pub(in crate::codegen) bold: bool,
+    pub(in crate::codegen) font_monospace: bool,
+    pub(in crate::codegen) font_weight: Option<StyleFontWeight>,
     pub(in crate::codegen) text_color: Option<String>,
     pub(in crate::codegen) background: Option<String>,
     pub(in crate::codegen) hover_background: Option<String>,
@@ -22,6 +23,23 @@ pub(in crate::codegen) struct Style {
     pub(in crate::codegen) border_width: u16,
     pub(in crate::codegen) radius: u16,
     pub(in crate::codegen) disabled_opacity: Option<f32>,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::codegen) enum StyleFontWeight {
+    Medium,
+    Semibold,
+    Bold,
+}
+
+impl StyleFontWeight {
+    pub(in crate::codegen) fn code(self) -> &'static str {
+        match self {
+            Self::Medium => "Medium",
+            Self::Semibold => "Semibold",
+            Self::Bold => "Bold",
+        }
+    }
 }
 
 impl Style {
@@ -62,23 +80,32 @@ impl Style {
                 "items-center" => style.items_center = true,
                 "self-center" => style.self_center = true,
                 "overflow-hidden" => style.clip = true,
-                "text-xs" => style.text_size = Some(12),
-                "text-sm" => style.text_size = Some(14),
-                "text-base" => style.text_size = Some(16),
-                "text-lg" => style.text_size = Some(18),
-                "text-xl" => style.text_size = Some(20),
-                "text-2xl" => style.text_size = Some(24),
+                "text-xs" => style.text_size = Some(12.0),
+                "text-sm" => style.text_size = Some(14.0),
+                "text-base" => style.text_size = Some(16.0),
+                "text-lg" => style.text_size = Some(18.0),
+                "text-xl" => style.text_size = Some(20.0),
+                "text-2xl" => style.text_size = Some(24.0),
                 "leading-tight" => style.text_line_height = Some(1.2),
                 "leading-snug" => style.text_line_height = Some(1.35),
                 "leading-normal" => style.text_line_height = Some(1.5),
                 "leading-relaxed" => style.text_line_height = Some(1.65),
-                "font-bold" => style.bold = true,
+                "font-mono" => style.font_monospace = true,
+                "font-medium" => style.font_weight = Some(StyleFontWeight::Medium),
+                "font-semibold" => style.font_weight = Some(StyleFontWeight::Semibold),
+                "font-bold" => style.font_weight = Some(StyleFontWeight::Bold),
                 "border" => style.border_width = 1,
                 "border-2" => style.border_width = 2,
                 "rounded-sm" => style.radius = 2,
                 "rounded" | "rounded-md" => style.radius = 6,
                 "rounded-lg" => style.radius = 10,
                 "rounded-full" => style.radius = 999,
+                _ if utility.starts_with("text-") && exact_text_size(&utility[5..]).is_some() => {
+                    style.text_size = exact_text_size(&utility[5..]);
+                }
+                _ if utility.starts_with("rounded-") => {
+                    style.radius = exact_radius(&utility[8..]).unwrap_or_default()
+                }
                 _ if utility.starts_with("gap-") => style.gap = spacing(&utility[4..]),
                 _ if utility.starts_with("p-") => {
                     if let Some(value) = spacing(&utility[2..]) {
@@ -423,7 +450,25 @@ pub(in crate::codegen) fn color_code(value: &str, opacity: Option<u8>) -> String
 }
 
 pub(in crate::codegen) fn spacing(value: &str) -> Option<u16> {
-    value.parse::<u16>().ok().map(|value| value * 4)
+    exact_pixels(value).or_else(|| {
+        value
+            .parse::<u16>()
+            .ok()
+            .and_then(|value| value.checked_mul(4))
+    })
+}
+
+fn exact_pixels(value: &str) -> Option<u16> {
+    value.strip_suffix("px")?.parse().ok()
+}
+
+fn exact_text_size(value: &str) -> Option<f32> {
+    let value = value.strip_suffix("px")?.parse::<f32>().ok()?;
+    (value.is_finite() && value > 0.0).then_some(value)
+}
+
+fn exact_radius(value: &str) -> Option<u16> {
+    exact_pixels(value).filter(|value| *value > 0)
 }
 
 pub(in crate::codegen) fn rust_string(value: &str) -> String {

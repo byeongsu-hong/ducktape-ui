@@ -828,7 +828,7 @@ where
         items.push(
             container(
                 text(label)
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .line_height(LineHeight::Absolute(Pixels(16.0))),
             )
             .width(Length::Fill)
@@ -1046,8 +1046,8 @@ pub fn panel_style(theme: &Theme, variant: SidebarVariant) -> iced::widget::cont
             width: if floating { 1.0 } else { 0.0 },
             radius: match variant {
                 SidebarVariant::Sidebar => 0.0,
-                SidebarVariant::Floating => theme.radius.lg,
-                SidebarVariant::Inset => theme.radius.md,
+                SidebarVariant::Floating => theme.radius.card,
+                SidebarVariant::Inset => theme.radius.button,
             }
             .into(),
         },
@@ -1106,14 +1106,14 @@ pub fn menu_button_style(
             foreground
         }),
         border: Border {
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.row.into(),
             ..Default::default()
         },
         shadow: Shadow::default(),
         focus_ring: Border {
             color: theme.palette.ring,
             width: if disabled { 0.0 } else { 2.0 },
-            radius: (theme.radius.sm + 2.0).into(),
+            radius: (theme.radius.row + 2.0).into(),
         },
         focus_offset: 0.0,
     }
@@ -1135,14 +1135,14 @@ fn compact_control_style(theme: &Theme, status: focus_control::Status) -> focus_
             theme.palette.foreground
         }),
         border: Border {
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.row.into(),
             ..Default::default()
         },
         shadow: Shadow::default(),
         focus_ring: Border {
             color: theme.palette.ring,
             width: if disabled { 0.0 } else { 2.0 },
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.row.into(),
         },
         focus_offset: 0.0,
     }
@@ -1359,7 +1359,7 @@ mod tests {
         assert_eq!(floating.border.width, 1.0);
         assert!(floating.shadow.color.a > 0.0);
         assert_eq!(inset.background, Some(Background::Color(DARK.palette.card)));
-        assert_eq!(inset.border.radius, DARK.radius.md.into());
+        assert_eq!(inset.border.radius, DARK.radius.button.into());
     }
 
     #[test]

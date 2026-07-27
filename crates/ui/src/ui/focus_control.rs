@@ -44,7 +44,7 @@ pub fn style(theme: &UiTheme, _status: Status) -> Style {
         focus_ring: Border {
             color: theme.palette.ring,
             width: 2.0,
-            radius: (theme.radius.md + 4.0).into(),
+            radius: (theme.radius.button + 4.0).into(),
         },
         focus_offset: 2.0,
     }

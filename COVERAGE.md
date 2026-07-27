@@ -33,8 +33,10 @@ Top-level semantic style recipes are native Core declarations in 1.63. They
 package checked utility tokens for one declared target (`col`, `row`, `flex`,
 `grid`, `stack`, `box`, `text`, `input`, or `button`), expand across imported
 source graphs, preserve later-utility precedence, and let direct typed node
-properties override recipe defaults. Every recipe is checked at declaration
-time, including unused imported recipes. Parser, checker, and codegen tests
+properties override recipe defaults. Scaled utilities and exact-pixel spacing,
+radius, and decimal text sizes share that checked lowering path. Every recipe
+is checked at declaration time, including unused imported recipes. Parser,
+checker, and codegen tests
 cover expansion, typed overrides, typography, invalid bodies, duplicate
 declarations, and target mismatch. Recipe definitions and references also
 participate in cross-file LSP definition and safe rename. The workspace-local

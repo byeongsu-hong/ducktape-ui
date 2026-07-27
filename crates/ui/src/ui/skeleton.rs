@@ -16,7 +16,7 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(Background::Color(theme.palette.muted)),
         border: Border {
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -35,6 +35,6 @@ mod tests {
             style.background,
             Some(Background::Color(DARK.palette.muted))
         );
-        assert_eq!(style.border.radius, DARK.radius.md.into());
+        assert_eq!(style.border.radius, DARK.radius.button.into());
     }
 }

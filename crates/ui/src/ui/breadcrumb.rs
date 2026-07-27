@@ -62,7 +62,7 @@ where
     Message: 'a,
 {
     text("›")
-        .size(theme.typography.sm)
+        .size(theme.typography.machine)
         .color(theme.palette.muted_foreground)
         .into()
 }

@@ -87,6 +87,11 @@ component Counter()
 Native interaction styles inherit their `active` fields, so hovered, pressed,
 focused, opened, dragged, and disabled blocks only declare their differences.
 
+Semantic recipes can use the fixed four-pixel spacing scale or exact logical
+pixels. Exact utilities carry a `px` suffix, for example `px-16px`,
+`py-11px`, `rounded-9px`, and `text-13.5px`; the checker rejects fractional
+spacing/radius values and non-positive or non-finite text sizes.
+
 `box` and `flex` provide a checked CSS-like flexbox. `flex` supports reverse
 directions, wrapping, `justify`, `items`, `content`, and axis-specific gaps.
 Direct `box` children support order, grow, shrink, basis,

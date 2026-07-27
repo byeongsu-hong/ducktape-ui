@@ -755,7 +755,7 @@ where
     Message: Clone + 'a,
 {
     let title = text(entry.data.title())
-        .size(theme.typography.base)
+        .size(theme.typography.list)
         .line_height(1.3)
         .font(Font {
             weight: Weight::Medium,
@@ -766,20 +766,27 @@ where
     if let Some(description) = entry.data.description_text() {
         surface = surface.description(
             text(description)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .line_height(1.4)
                 .color(secondary_text_color(theme, entry.data.toast_variant())),
         );
     }
     if let (Some(action), Some(label)) = (controls.action, entry.data.action_label()) {
-        surface =
-            surface.action(action.content(text(label).size(theme.typography.xs).line_height(1.0)));
+        surface = surface.action(
+            action.content(
+                text(label)
+                    .size(theme.typography.meta_compact)
+                    .line_height(1.0),
+            ),
+        );
     }
     surface
         .dismiss(
-            controls
-                .dismiss
-                .content(text("Dismiss").size(theme.typography.xs).line_height(1.0)),
+            controls.dismiss.content(
+                text("Dismiss")
+                    .size(theme.typography.meta_compact)
+                    .line_height(1.0),
+            ),
         )
         .into()
 }
@@ -956,24 +963,29 @@ fn control_style(
                 Color::TRANSPARENT
             },
             width: if outlined { 1.0 } else { 0.0 },
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.row.into(),
         },
         shadow: Shadow::default(),
         focus_ring: Border {
             color: theme.palette.ring,
             width: 2.0,
-            radius: (theme.radius.sm + 2.0).into(),
+            radius: (theme.radius.row + 2.0).into(),
         },
         focus_offset: 1.0,
     }
 }
 
 fn secondary_text_color(theme: &Theme, variant: ToastVariant) -> Color {
-    let background = match super::toast::style(theme, variant).background {
+    let appearance = super::toast::style(theme, variant);
+    let background = match appearance.background {
         Some(Background::Color(color)) => color,
         _ => theme.palette.background,
     };
-    mix(theme.palette.foreground, background, 0.24)
+    mix(
+        appearance.text_color.unwrap_or(theme.palette.foreground),
+        background,
+        0.24,
+    )
 }
 
 #[cfg(test)]

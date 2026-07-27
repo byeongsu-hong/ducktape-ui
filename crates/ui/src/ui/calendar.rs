@@ -904,14 +904,14 @@ pub fn day_style(theme: &Theme, state: DayVisualState, status: Status) -> FocusS
             radius: if state.range_middle && !endpoint {
                 0.0.into()
             } else {
-                theme.radius.md.into()
+                theme.radius.button.into()
             },
         },
         shadow: Shadow::default(),
         focus_ring: Border {
             color: theme.palette.ring,
             width: 2.0,
-            radius: (theme.radius.md + 2.0).into(),
+            radius: (theme.radius.button + 2.0).into(),
         },
         focus_offset: 1.0,
     };
@@ -1108,12 +1108,12 @@ where
         });
         let previous_content = self.previous_content.take().unwrap_or_else(|| {
             text(self.labels.previous.clone())
-                .size(self.theme.typography.sm)
+                .size(self.theme.typography.caption)
                 .into()
         });
         let next_content = self.next_content.take().unwrap_or_else(|| {
             text(self.labels.next.clone())
-                .size(self.theme.typography.sm)
+                .size(self.theme.typography.caption)
                 .into()
         });
         let previous = Button::new(previous_content, &self.theme)
@@ -1170,7 +1170,7 @@ where
                     self.labels.months[usize::from(self.state.month.number() - 1)],
                     self.state.month.year()
                 ))
-                .size(self.theme.typography.sm)
+                .size(self.theme.typography.caption)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(self.theme.palette.foreground),
             )
@@ -1206,7 +1206,7 @@ where
             parts.push(
                 container(
                     text(self.labels.months[usize::from(self.state.month.number() - 1)].clone())
-                        .size(self.theme.typography.sm),
+                        .size(self.theme.typography.caption),
                 )
                 .width(104)
                 .height(DAY_CELL_SIZE)
@@ -1234,7 +1234,7 @@ where
             );
         } else {
             parts.push(
-                container(text(self.state.month.year()).size(self.theme.typography.sm))
+                container(text(self.state.month.year()).size(self.theme.typography.caption))
                     .width(80)
                     .height(DAY_CELL_SIZE)
                     .align_x(Horizontal::Center)
@@ -1387,7 +1387,7 @@ where
         );
         let content = container(
             text(date.day().to_string())
-                .size(self.theme.typography.sm)
+                .size(self.theme.typography.caption)
                 .line_height(LineHeight::Absolute(Pixels(16.0))),
         )
         .width(DAY_CELL_SIZE)
@@ -1435,7 +1435,7 @@ where
 {
     container(
         text(label)
-            .size(theme.typography.xs)
+            .size(theme.typography.meta_compact)
             .line_height(LineHeight::Absolute(Pixels(14.0)))
             .color(theme.palette.muted_foreground),
     )
@@ -1451,7 +1451,7 @@ where
 {
     container(
         text(label)
-            .size(theme.typography.xs)
+            .size(theme.typography.meta_compact)
             .line_height(LineHeight::Absolute(Pixels(14.0)))
             .color(alpha(theme.palette.muted_foreground, 0.8)),
     )

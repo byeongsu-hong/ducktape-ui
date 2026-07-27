@@ -191,13 +191,14 @@ pub(in crate::codegen) fn render_content(
                 &render_scope,
                 component_slots.as_ref(),
             )?;
-            Ok(
-                if component.states.is_empty() && component.handlers.is_empty() {
-                    rendered
-                } else {
-                    format!("{{ let {scope_binding} = {component_scope}; {rendered} }}")
-                },
-            )
+            let rendered = if component.states.is_empty() && component.handlers.is_empty() {
+                rendered
+            } else {
+                format!("{{ let {scope_binding} = {component_scope}; {rendered} }}")
+            };
+            Ok(format!(
+                "(|| {{ let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content }})()"
+            ))
         }
         ViewNode::Slot { name, span } => {
             let slot = slot.ok_or_else(|| {
@@ -220,14 +221,17 @@ pub(in crate::codegen) fn render_content(
                 })?;
             let mut content_env = content.env.clone();
             set_reconciliation_scope(&mut content_env, scope.to_owned());
-            render_node(
+            let rendered = render_node(
                 &content.node,
                 document,
                 message,
                 &content_env,
                 scope,
                 slot.parent.as_deref(),
-            )
+            )?;
+            Ok(format!(
+                "(|| {{ let __slot_content: __IceElement<'_, {message}> = {rendered}; __slot_content }})()"
+            ))
         }
         ViewNode::ExternComponent {
             function,

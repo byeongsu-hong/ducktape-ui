@@ -5,7 +5,7 @@
 //! Iced does not expose popover accessibility roles; this component therefore
 //! implements the interaction and focus contract without claiming fake roles.
 
-use super::theme::{Theme as UiTheme, alpha};
+use super::theme::Theme as UiTheme;
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
 };
@@ -990,7 +990,7 @@ pub(crate) fn draw_focus_ring(
             border: Border {
                 color: theme.palette.ring,
                 width: 2.0,
-                radius: (theme.radius.md + 4.0).into(),
+                radius: (theme.radius.button + 4.0).into(),
             },
             ..renderer::Quad::default()
         },
@@ -1029,29 +1029,20 @@ where
 }
 
 pub(crate) fn panel_style(theme: &UiTheme, kind: PanelKind) -> container::Style {
-    let dark = luminance(theme.palette.background) < 0.25;
     let (background, foreground, border, radius, shadow) = match kind {
         PanelKind::Tooltip => (
             theme.palette.primary,
             theme.palette.primary_foreground,
             Color::TRANSPARENT,
-            theme.radius.sm,
-            Shadow {
-                color: alpha(Color::BLACK, if dark { 0.42 } else { 0.16 }),
-                offset: Vector::new(0.0, 2.0),
-                blur_radius: 6.0,
-            },
+            theme.radius.row,
+            Shadow::default(),
         ),
         PanelKind::Popover => (
             theme.palette.popover,
             theme.palette.popover_foreground,
             theme.palette.border,
-            theme.radius.lg,
-            Shadow {
-                color: alpha(Color::BLACK, if dark { 0.48 } else { 0.14 }),
-                offset: Vector::new(0.0, 4.0),
-                blur_radius: 12.0,
-            },
+            theme.radius.card,
+            theme.elevation.popover,
         ),
     };
 
@@ -1066,10 +1057,6 @@ pub(crate) fn panel_style(theme: &UiTheme, kind: PanelKind) -> container::Style 
         shadow,
         ..container::Style::default()
     }
-}
-
-fn luminance(color: Color) -> f32 {
-    0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
 }
 
 pub(crate) struct FloatingContent<'a, 'b, Message> {
@@ -1656,7 +1643,7 @@ mod tests {
     }
 
     #[test]
-    fn panel_styles_keep_semantic_contrast_and_dark_shadow_weight() {
+    fn panel_styles_keep_semantic_contrast_and_canonical_elevation() {
         let light = panel_style(&LIGHT, PanelKind::Popover);
         let dark = panel_style(&DARK, PanelKind::Popover);
         let tooltip = panel_style(&LIGHT, PanelKind::Tooltip);
@@ -1672,7 +1659,9 @@ mod tests {
             Some(Background::Color(LIGHT.palette.primary))
         );
         assert_eq!(tooltip.text_color, Some(LIGHT.palette.primary_foreground));
-        assert!(dark.shadow.color.a > light.shadow.color.a);
+        assert_eq!(light.shadow, LIGHT.elevation.popover);
+        assert_eq!(dark.shadow, DARK.elevation.popover);
+        assert_eq!(tooltip.shadow, Shadow::default());
         assert_eq!(light.border.width, 1.0);
         assert_eq!(tooltip.border.width, 0.0);
         assert!(contrast_ratio(LIGHT.palette.popover, LIGHT.palette.popover_foreground,) > 4.5);

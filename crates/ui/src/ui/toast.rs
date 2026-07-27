@@ -1,7 +1,7 @@
-use super::theme::{Theme, alpha, mix};
+use super::theme::{Theme, mix};
 use iced::alignment::Horizontal;
 use iced::widget::{Column, Container, Row, container};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Vector};
+use iced::{Alignment, Background, Border, Color, Element, Length};
 use std::time::Duration;
 
 pub const DEFAULT_DURATION: Duration = Duration::from_secs(5);
@@ -113,7 +113,7 @@ impl ToastData {
     }
 }
 
-/// A compositional legacy toast surface.
+/// A compositional toast surface.
 ///
 /// The caller owns open state and supplies controls as elements. Keep the
 /// title visible: iced 0.14 has no live-region role to announce hidden text.
@@ -207,7 +207,7 @@ where
 
         container(content)
             .width(self.width)
-            .padding([12, 16])
+            .padding([10, 14])
             .style(move |_iced_theme| style(&theme, variant))
     }
 }
@@ -224,7 +224,11 @@ where
 pub fn style(theme: &Theme, variant: ToastVariant) -> iced::widget::container::Style {
     let palette = theme.palette;
     let (background, foreground, border) = match variant {
-        ToastVariant::Default => (palette.card, palette.card_foreground, palette.input),
+        ToastVariant::Default => (
+            palette.toast_background,
+            palette.toast_foreground,
+            Color::TRANSPARENT,
+        ),
         ToastVariant::Success => semantic_tint(theme, palette.success),
         ToastVariant::Info => semantic_tint(theme, palette.ring),
         ToastVariant::Warning => semantic_tint(theme, palette.warning),
@@ -238,13 +242,9 @@ pub fn style(theme: &Theme, variant: ToastVariant) -> iced::widget::container::S
         border: Border {
             color: border,
             width: 1.0,
-            radius: theme.radius.lg.into(),
+            radius: 10.0.into(),
         },
-        shadow: Shadow {
-            color: alpha(Color::BLACK, 0.18),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 14.0,
-        },
+        shadow: theme.elevation.toast,
         ..Default::default()
     }
 }

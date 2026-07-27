@@ -268,7 +268,7 @@ where
             };
             let label = container(
                 text(selected_label.unwrap_or(self.placeholder))
-                    .size(self.theme.typography.sm)
+                    .size(self.theme.typography.caption)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(foreground),
             )
@@ -277,7 +277,7 @@ where
             .align_y(Vertical::Center);
             let chevron = container(
                 text("⌄")
-                    .size(self.theme.typography.base)
+                    .size(self.theme.typography.list)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(alpha(foreground, 0.8)),
             )
@@ -411,7 +411,7 @@ pub fn select_trigger_style(
                 theme.palette.input
             },
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }

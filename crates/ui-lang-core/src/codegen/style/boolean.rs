@@ -64,24 +64,8 @@ pub(in crate::codegen) fn append_text_options(
         )
         .unwrap();
     }
-    if let Some(font) = &options.font {
-        let font = font_preset_code(font, document)?;
-        if style.bold {
-            write!(
-                code,
-                ".font(::iced::Font {{ weight: ::iced::font::Weight::Bold, ..{font} }})"
-            )
-            .unwrap();
-        } else {
-            write!(code, ".font({font})").unwrap();
-        }
-    } else if style.bold {
-        let font = app_default_font_code(document);
-        write!(
-            code,
-            ".font(::iced::Font {{ weight: ::iced::font::Weight::Bold, ..{font} }})"
-        )
-        .unwrap();
+    if let Some(font) = styled_font_code(options.font.as_ref(), style, document)? {
+        write!(code, ".font({font})").unwrap();
     }
     if let Some(style) = &options.custom_style {
         let custom =

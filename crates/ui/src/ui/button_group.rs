@@ -37,7 +37,7 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.input,
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }
@@ -72,7 +72,7 @@ mod tests {
 
             assert_eq!(style.border.color, theme.palette.input);
             assert_eq!(style.border.width, 1.0);
-            assert_eq!(style.border.radius, theme.radius.md.into());
+            assert_eq!(style.border.radius, theme.radius.button.into());
             assert!(
                 style
                     .border

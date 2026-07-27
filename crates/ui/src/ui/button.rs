@@ -1,9 +1,10 @@
 use super::focus_control::FocusControl;
 use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
+use iced::font::Weight;
 use iced::widget::text::IntoFragment;
 use iced::widget::{button as iced_button, container, text};
-use iced::{Background, Border, Color, Element, Length, Padding};
+use iced::{Background, Border, Color, Element, Font, Length, Padding};
 
 type StyleFn<'a> = Box<dyn Fn(&iced::Theme, iced_button::Status) -> iced_button::Style + 'a>;
 
@@ -49,7 +50,13 @@ pub fn button<'a, Message>(label: impl IntoFragment<'a>, theme: &Theme) -> Butto
 where
     Message: Clone + 'a,
 {
-    Button::new(text(label).size(theme.typography.sm), theme)
+    Button::new(
+        text(label).size(theme.typography.caption).font(Font {
+            weight: Weight::Semibold,
+            ..Font::DEFAULT
+        }),
+        theme,
+    )
 }
 
 impl<'a, Message> Button<'a, Message>
@@ -131,14 +138,9 @@ where
     }
 
     pub fn into_widget(self) -> Element<'a, Message> {
-        let (vertical, horizontal, height) = match self.size {
-            ButtonSize::Small => (6.0, 12.0, 32.0),
-            ButtonSize::Default => (8.0, 16.0, 36.0),
-            ButtonSize::Large => (10.0, 24.0, 40.0),
-            ButtonSize::Icon => (8.0, 8.0, 36.0),
-        };
+        let geometry = geometry(self.variant, self.size);
         let width = if self.size == ButtonSize::Icon {
-            Length::Fixed(height)
+            Length::Fixed(30.0)
         } else {
             self.width
         };
@@ -156,13 +158,15 @@ where
         let variant = self.variant;
         let on_press = (!self.disabled).then_some(self.on_press).flatten();
         let widget = iced_button(content)
-            .padding(
-                self.padding
-                    .unwrap_or_else(|| [vertical, horizontal].into()),
-            )
+            .padding(self.padding.unwrap_or(geometry.padding))
             .width(width)
-            .height(self.height.unwrap_or_else(|| height.into()))
             .on_press_maybe(on_press.clone());
+        let height = self.height.or(geometry.height.map(Length::Fixed));
+        let widget = if let Some(height) = height {
+            widget.height(height)
+        } else {
+            widget
+        };
         let widget = match self.style {
             Some(custom) => widget.style(custom),
             None => widget.style(move |_iced_theme, status| style(&theme, variant, status)),
@@ -172,6 +176,30 @@ where
             Some(message) => FocusControl::anonymous(widget, message, &theme).into(),
             None => widget.into(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ButtonGeometry {
+    padding: Padding,
+    height: Option<f32>,
+}
+
+fn geometry(variant: ButtonVariant, size: ButtonSize) -> ButtonGeometry {
+    let (vertical, horizontal, height) = match size {
+        ButtonSize::Small => (6.0, 12.0, Some(32.0)),
+        ButtonSize::Large => (10.0, 24.0, Some(40.0)),
+        ButtonSize::Icon => (0.0, 0.0, Some(30.0)),
+        ButtonSize::Default => match variant {
+            ButtonVariant::Default | ButtonVariant::Destructive => (11.0, 16.0, None),
+            ButtonVariant::Secondary => (10.0, 16.0, None),
+            ButtonVariant::Outline | ButtonVariant::Ghost => (7.0, 12.0, None),
+            ButtonVariant::Link => (0.0, 0.0, None),
+        },
+    };
+    ButtonGeometry {
+        padding: [vertical, horizontal].into(),
+        height,
     }
 }
 
@@ -206,12 +234,17 @@ pub fn style(
         ButtonVariant::Secondary => (
             Some(palette.secondary),
             palette.secondary_foreground,
-            palette.secondary,
-            0.0,
+            palette.control_line,
+            1.0,
         ),
-        ButtonVariant::Outline => (None, palette.foreground, palette.input, 1.0),
+        ButtonVariant::Outline => (
+            Some(palette.card),
+            palette.accent_foreground,
+            palette.border,
+            1.0,
+        ),
         ButtonVariant::Ghost => (None, palette.foreground, Color::TRANSPARENT, 0.0),
-        ButtonVariant::Link => (None, palette.primary, Color::TRANSPARENT, 0.0),
+        ButtonVariant::Link => (None, palette.brand, Color::TRANSPARENT, 0.0),
     };
 
     match status {
@@ -254,7 +287,11 @@ pub fn style(
                 border_color
             },
             width: border_width,
-            radius: theme.radius.md.into(),
+            radius: if matches!(variant, ButtonVariant::Outline | ButtonVariant::Ghost) {
+                8.0.into()
+            } else {
+                theme.radius.button.into()
+            },
         },
         ..iced_button::Style::default()
     }
@@ -300,6 +337,30 @@ mod tests {
     }
 
     #[test]
+    fn default_variants_match_canonical_button_geometry() {
+        for (variant, vertical, horizontal) in [
+            (ButtonVariant::Default, 11.0, 16.0),
+            (ButtonVariant::Destructive, 11.0, 16.0),
+            (ButtonVariant::Secondary, 10.0, 16.0),
+            (ButtonVariant::Outline, 7.0, 12.0),
+        ] {
+            assert_eq!(
+                geometry(variant, ButtonSize::Default),
+                ButtonGeometry {
+                    padding: [vertical, horizontal].into(),
+                    height: None,
+                }
+            );
+        }
+        assert_eq!(
+            style(&LIGHT, ButtonVariant::Outline, iced_button::Status::Active)
+                .border
+                .radius,
+            8.0.into()
+        );
+    }
+
+    #[test]
     fn interactive_buttons_join_keyboard_focus_order() {
         let button: Element<'_, ()> = button("Save", &LIGHT).on_press(()).into_widget();
         let tree = widget::Tree::new(button.as_widget());
@@ -335,5 +396,12 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn link_buttons_use_the_sparse_brand_action_color() {
+        let link = style(&LIGHT, ButtonVariant::Link, iced_button::Status::Active);
+
+        assert_eq!(link.text_color, LIGHT.palette.brand);
     }
 }

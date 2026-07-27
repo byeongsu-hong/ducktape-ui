@@ -730,7 +730,7 @@ where
     };
     let leading: Element<'a, Message> = container(
         text(indicator)
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
     .width(16)
@@ -739,7 +739,7 @@ where
     .into();
     let label: Element<'a, Message> = container(
         text(item.label.clone())
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
     .width(Length::Fill)
@@ -749,7 +749,7 @@ where
     let trailing: Element<'a, Message> = if let Some(shortcut) = &item.shortcut {
         container(
             text(shortcut.clone())
-                .size(theme.typography.xs)
+                .size(theme.typography.meta_compact)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(muted),
         )
@@ -759,7 +759,7 @@ where
     } else if let Some(arrow) = arrow {
         container(
             text(arrow)
-                .size(theme.typography.base)
+                .size(theme.typography.list)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(muted),
         )
@@ -863,7 +863,7 @@ where
     };
     container(
         text(label.to_owned())
-            .size(theme.typography.xs)
+            .size(theme.typography.meta_compact)
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
     .width(Length::Fill)
@@ -916,13 +916,13 @@ pub fn menu_item_style(theme: &Theme, selected: bool, status: Status) -> focus_c
         theme.palette.popover_foreground
     });
     style.border = Border {
-        radius: theme.radius.sm.into(),
+        radius: theme.radius.row.into(),
         ..Border::default()
     };
     style.focus_ring = Border {
         color: theme.palette.ring,
         width: 1.0,
-        radius: theme.radius.sm.into(),
+        radius: theme.radius.row.into(),
     };
     style.focus_offset = 0.0;
     style

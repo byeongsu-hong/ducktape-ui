@@ -328,6 +328,29 @@ view
 }
 
 #[test]
+fn preserves_component_and_slot_stack_boundaries() {
+    let source = r#"app Composition
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Frame()
+  col
+    slot
+view
+  Frame
+    text "Content"
+"#;
+    let generated = compile(source, "composition.ice").unwrap();
+
+    assert!(generated.contains("(|| { let __component_content: __IceElement<'_,"));
+    assert!(generated.contains("; __component_content })()"));
+    assert!(generated.contains("(|| { let __slot_content: __IceElement<'_,"));
+    assert!(generated.contains("; __slot_content })()"));
+}
+
+#[test]
 fn lowers_compound_components_into_named_slots() {
     let source = r#"app Composition
 theme

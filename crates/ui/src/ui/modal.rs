@@ -154,11 +154,11 @@ where
     })
 }
 
-/// Backdrop treatment tuned independently for light and dark canvases.
+/// Canonical `.34` modal scrim, strengthened only for a dark canvas.
 pub fn backdrop_color(theme: &Theme) -> Color {
     let background = theme.palette.background;
     let light = background.r + background.g + background.b > 1.5;
-    alpha(Color::BLACK, if light { 0.52 } else { 0.68 })
+    alpha(Color::BLACK, if light { 0.34 } else { 0.52 })
 }
 
 struct Modal<'a, Message> {
@@ -757,9 +757,9 @@ mod tests {
     }
 
     #[test]
-    fn dark_canvas_gets_the_stronger_backdrop() {
-        assert_eq!(backdrop_color(&LIGHT).a, 0.52);
-        assert_eq!(backdrop_color(&DARK).a, 0.68);
+    fn light_canvas_uses_the_canonical_scrim_and_dark_is_stronger() {
+        assert_eq!(backdrop_color(&LIGHT).a, 0.34);
+        assert_eq!(backdrop_color(&DARK).a, 0.52);
     }
 
     #[test]

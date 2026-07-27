@@ -10,6 +10,9 @@ homepage = "https://github.com/byeongsu-hong/ducktape-ui-lang"
 
 [features]
 default = []
+x11 = ["iced/x11", "thread-pool"]
+wayland = ["iced/wayland", "thread-pool"]
+thread-pool = ["iced/thread-pool"]
 full = [
     "accordion",
     "alert",
@@ -154,7 +157,10 @@ sheet = ["modal", "direction", "theme"]
 drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
-iced = { version = "=0.14.0", features = ["advanced"], optional = true }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
+
+[dev-dependencies]
+iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }
 
 [lints]
 workspace = true

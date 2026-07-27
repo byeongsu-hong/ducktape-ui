@@ -706,7 +706,7 @@ where
     let foreground = theme.palette.foreground;
     let label = container(
         text(label)
-            .size(theme.typography.sm)
+            .size(theme.typography.caption)
             .line_height(LineHeight::Absolute(Pixels(16.0)))
             .color(foreground),
     )
@@ -725,7 +725,7 @@ where
         };
         container(
             text(glyph)
-                .size(theme.typography.base)
+                .size(theme.typography.list)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(alpha(foreground, 0.72)),
         )
@@ -896,9 +896,9 @@ pub fn navigation_menu_trigger_style(
     } else {
         theme.palette.foreground
     });
-    style.border.radius = theme.radius.md.into();
+    style.border.radius = theme.radius.button.into();
     style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.md.into();
+    style.focus_ring.radius = theme.radius.button.into();
     style.focus_offset = 1.0;
     style
 }
@@ -931,13 +931,13 @@ where
         Column::new()
             .push(
                 text(title.into())
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(theme.palette.foreground),
             )
             .push(
                 text(description.into())
-                    .size(theme.typography.sm)
+                    .size(theme.typography.caption)
                     .line_height(LineHeight::Absolute(Pixels(18.0)))
                     .color(theme.palette.muted_foreground),
             )
@@ -968,9 +968,9 @@ pub fn navigation_menu_list_link_style(theme: &Theme, status: Status) -> focus_c
     } else {
         theme.palette.foreground
     });
-    style.border.radius = theme.radius.sm.into();
+    style.border.radius = theme.radius.row.into();
     style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.sm.into();
+    style.focus_ring.radius = theme.radius.row.into();
     style.focus_offset = 1.0;
     style
 }

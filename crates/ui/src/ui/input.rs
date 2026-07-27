@@ -28,7 +28,7 @@ where
     let theme = *theme;
     text_input(placeholder, value)
         .padding([8, 12])
-        .size(theme.typography.sm)
+        .size(theme.typography.body)
         .style(move |_iced_theme, status| style(&theme, variant, status))
 }
 
@@ -73,7 +73,7 @@ pub fn style(
         border: Border {
             color: border,
             width,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         icon: palette.muted_foreground,
         placeholder,
