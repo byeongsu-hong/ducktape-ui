@@ -75,6 +75,14 @@ participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
+The LSP contract is covered by focused protocol tests for cursor-scoped
+completion, checked component and extern signatures, base-first recipe hover,
+and direct workspace-edit code actions for bindings, named events, handlers,
+fallible routes, accessibility labels, repeated-utility recipe extraction,
+closed-component event routing, exhaustive typed-match arms, unambiguous import
+qualification, and multiline metadata. Completion and component hover retain
+optional-slot and theme-contract context.
+
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values
