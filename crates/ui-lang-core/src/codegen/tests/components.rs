@@ -1095,6 +1095,6 @@ view
     assert!(generated.contains("let (__task, __handle) = __task.abortable()"));
     assert!(generated.contains(".begin_render()"));
     assert!(generated.contains(".mount("));
-    assert!(generated.contains(".finish_render(&__ice_root_scope)"));
+    assert!(generated.contains(".finish_render(__ice_root_scope_ref)"));
     assert!(generated.contains("SearchBoxLatest19"));
 }

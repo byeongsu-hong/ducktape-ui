@@ -194,9 +194,18 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     .unwrap();
 
     for item in &document.enums {
+        let derives = if item
+            .variants
+            .iter()
+            .all(|variant| variant.payload.is_none())
+        {
+            "Debug, Clone, Copy, PartialEq, Eq"
+        } else {
+            "Clone"
+        };
         writeln!(
             out,
-            "#[derive(Clone)]\npub(crate) enum {} {{",
+            "#[derive({derives})]\npub(crate) enum {} {{",
             generated_named_rust(&item.name)
         )
         .unwrap();

@@ -321,7 +321,9 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     }
     let name = line.qualify(&identifier(name, line)?);
     line.record_symbol(SymbolKind::Recipe, &name, true, source);
-    let base = base.map(|base| identifier(base, line)).transpose()?;
+    let base = base
+        .map(|base| identifier(base, line).map(|base| line.qualify(&base)))
+        .transpose()?;
     if let Some(base) = &base {
         line.record_symbol(SymbolKind::Recipe, base, false, source);
     }

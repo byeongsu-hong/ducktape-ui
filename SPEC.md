@@ -1855,7 +1855,7 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
-| declared UI enum `Name` | generated cloneable Rust enum `Name` |
+| declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq`, payload enums are `Clone` |
 | `combo[T]` | `iced::widget::combo_box::State<T>` |
 | `animation[bool]` | `iced::Animation<bool>` |
 | `animation[f64]` | `iced::Animation<f32>`; expressions convert at the Ice numeric boundary |
@@ -2957,7 +2957,9 @@ match request
 UI enums are top-level, non-generic, and non-recursive. A variant has zero or
 one payload, and payload types must be ordinary cloneable Ice data. Enums have
 no methods or struct literals. Constructors use `Enum.variant` for an empty
-variant and `Enum.variant(value)` for a payload variant.
+variant and `Enum.variant(value)` for a payload variant. Fieldless enums support
+`==` and `!=`. Payload-carrying enums do not support comparison and must be
+inspected with exhaustive `match`.
 
 ### Components
 
@@ -4516,8 +4518,9 @@ view
     button "Save" @primary_action -> save
 ```
 
-Recipe names are graph-global and must be unique. A recipe may contain one or
-more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
+Recipe names must be unique within their checked namespace. An aliased recipe
+resolves an unqualified `extends` base relative to that namespace. A recipe may
+contain one or more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
 `stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
 spans. A recipe may extend at most one recipe with the same target. Missing
 bases, target mismatches, and inheritance cycles are `E046`; multiple bases and

@@ -1972,12 +1972,21 @@ pub(crate) fn expr_type(
                 | BinaryOp::LtEq
                 | BinaryOp::Gt
                 | BinaryOp::GtEq => {
-                    if contains_ui_enum(&left, document) || contains_ui_enum(&right, document) {
-                        return Err(Error::new(
-                            "E153",
-                            span,
-                            "UI enum values use exhaustive match instead of comparison",
-                        ));
+                    let compares_fieldless_enum = matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                        && left == right
+                        && matches!(&left, Type::Named(name) if document.enums.iter().any(|item| {
+                            item.name == *name
+                                && item.variants.iter().all(|variant| variant.payload.is_none())
+                        }));
+                    if (contains_ui_enum(&left, document) || contains_ui_enum(&right, document))
+                        && !compares_fieldless_enum
+                    {
+                        let message = if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) {
+                            "payload-carrying UI enum values use exhaustive match instead of comparison"
+                        } else {
+                            "UI enum ordering is undefined; use exhaustive match"
+                        };
+                        return Err(Error::new("E153", span, message));
                     }
                     if contains_task_handle(&left) || contains_task_handle(&right) {
                         return Err(Error::new(

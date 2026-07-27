@@ -16,12 +16,18 @@ palette app for AppTheme
 enum RequestState
   idle
   ready([str])
+enum Tab
+  preview
+  code
 state
   choice:str? = some("selected")
   outcome:result[str,str] = err("failed")
   request:RequestState = RequestState.ready(["one"])
+  tab:Tab = Tab.preview
 view
   col
+    if tab == Tab.preview
+      text "preview"
     match choice
       some(value)
         text value
@@ -41,6 +47,9 @@ view
 
     let generated = compile(source, "sum_types.ice").unwrap();
     assert!(generated.contains("pub(crate) enum RequestState"));
+    assert!(
+        generated.contains("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum Tab")
+    );
     assert!(generated.contains("Idle,"));
     assert!(generated.contains("Ready(::std::vec::Vec<::std::string::String>)"));
     assert!(generated.contains("RequestState::Ready(::std::vec!"));
