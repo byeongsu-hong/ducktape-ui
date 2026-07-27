@@ -357,6 +357,8 @@ view
       pressed bg=primary text=white r=10.0
       disabled bg=bg text=fg r=10.0
     button "+" w=28.0 h=28.0 -> pressed
+    button label="Icon" w=36.0 h=36.0 -> pressed
+      text "●"
 "#;
     let generated = compile(source, "actions.ice").unwrap();
     assert!(generated.contains("let __button_content: __IceElement"));
@@ -376,8 +378,13 @@ view
     assert!(generated.contains("button::Status::Disabled =>"));
     assert!(generated.contains("::iced::gradient::Linear::new(1.57 as f32)"));
     assert!(generated.contains(
-        "::iced::widget::container(::iced::widget::text(\"+\")).width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center).height(::iced::Fill).align_y(::iced::alignment::Vertical::Center).into()"
+        "let __button_inner: __IceElement<'_, __ActionsMessage> = ::iced::widget::text(\"+\").into();"
     ));
+    let centered_fixed_content = ".width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center).height(::iced::Fill).align_y(::iced::alignment::Vertical::Center).into()";
+    assert_eq!(generated.matches(centered_fixed_content).count(), 2);
+    let centered_fixed_height =
+        ".height(::iced::Fill).align_y(::iced::alignment::Vertical::Center).into()";
+    assert_eq!(generated.matches(centered_fixed_height).count(), 3);
     assert!(generated.contains("__style.shadow.offset.x = (-1.0) as f32"));
     assert!(generated.contains("__style.snap = true"));
     for preset in [
