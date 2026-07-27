@@ -17,7 +17,7 @@ test render_contract
       input "Draft" #draft <-> draft
 
   target root = #render
-  target draft = #render/draft
+  target draft = root/draft
 
   expect root.width ~= 240.0
   expect root.visible
@@ -52,6 +52,15 @@ fn parses_complete_first_class_test_declarations() {
     assert_eq!(test.timeout_ms, Some(2_000));
     assert!(test.mount.is_some());
     assert_eq!(test.targets.len(), 2);
+    assert_eq!(
+        test.targets[1]
+            .target
+            .segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        ["render", "draft"]
+    );
     assert_eq!(test.steps.len(), 18);
     assert!(matches!(
         test.steps[0].kind,
@@ -89,6 +98,10 @@ fn rejects_invalid_test_declaration_shapes() {
             "test demo\n  expect true\n  target root = #root\n",
             "must precede",
         ),
+        (
+            "test demo\n  target child = missing/child\n",
+            "earlier target alias",
+        ),
     ] {
         let source = format!("app Demo\n{body}view\n  text \"ok\"\n");
         let failure = parse(&source).unwrap_err();
@@ -98,15 +111,16 @@ fn rejects_invalid_test_declaration_shapes() {
 }
 
 #[test]
-fn records_aliases_only_inside_dynamic_test_target_keys() {
+fn records_relative_and_dynamic_test_target_alias_references() {
     let source = r#"app Demo
 view
   col #root
     text "Key" #key
     text "Item" #item("Key")
 test dynamic_targets
-  target key = #root/key
-  target item = #root/item(key.value)
+  target root = #root
+  target key = root/key
+  target item = root/item(key.value)
   expect exists #root/item(key.value)
   expect text "Item" within #root/item(key.value)
   click #root/item(key.value)
@@ -127,6 +141,17 @@ test dynamic_targets
         key.iter()
             .filter_map(|symbol| (!symbol.definition).then_some(symbol.range.as_ref()?.line))
             .collect::<Vec<_>>(),
-        [8, 9, 10, 11]
+        [9, 10, 11, 12]
     );
+
+    let root = symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.kind == SymbolKind::TestTarget
+                && symbol.scope.as_deref() == Some("dynamic_targets")
+                && symbol.name == "root"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(root.iter().filter(|symbol| symbol.definition).count(), 1);
+    assert_eq!(root.iter().filter(|symbol| !symbol.definition).count(), 2);
 }

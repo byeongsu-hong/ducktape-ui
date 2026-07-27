@@ -191,10 +191,12 @@ test counter_contract
 Tests use the same checked components, handlers, presets, expressions, and Rust
 extern boundary as production code. IDs select rendered widgets after real
 Iced layout. A component call ID is a scope rather than a synthetic layout box,
-so a test selects an identified descendant such as `#counter/root`. Geometry
-assertions use logical-pixel bounds; paint assertions inspect unambiguous
-tiny-skia quad or text commands for backgrounds, borders, radii, shadows,
-colors, fonts, sizes, and line heights without comparing screenshots.
+so a test selects an identified descendant such as `#counter/root`. Target
+aliases may reuse an earlier target as a path prefix, while `#` paths remain
+absolute. Geometry assertions use logical-pixel bounds; paint assertions
+inspect unambiguous tiny-skia quad or text commands for backgrounds, borders,
+radii, shadows, colors, fonts, sizes, and line heights without comparing
+screenshots.
 
 Interactions replay emitted messages through generated update code and drain
 real tasks recursively before the next statement. Checked `sync` and task

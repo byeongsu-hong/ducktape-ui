@@ -24,7 +24,7 @@ test render_contract
   mount
     Card value=draft #card
   target root = #card/root
-  target draft_input = #card/root/draft
+  target draft_input = root/draft
   expect root.width ~= 240.0
   expect root.background == background.color(color.rgb8(17, 17, 17))
   expect exists draft_input

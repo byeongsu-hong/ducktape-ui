@@ -112,8 +112,7 @@ pub(in crate::parser) fn parse_test_decl(source: &str, line: &Line) -> Result<Te
                 alias_source,
             );
             let target_source = target.trim();
-            let target = parse_widget_target(target_source, child)?;
-            record_test_target_alias_references(target_source, child, &name, &targets)?;
+            let target = parse_test_target_decl(target_source, child, &name, &targets)?;
             targets.push(TestTargetDecl {
                 name: alias,
                 target,
@@ -158,6 +157,50 @@ fn parse_viewport_dimension(source: &str, line: &Line) -> Result<f64, Error> {
                 "viewport dimensions must be positive finite numbers in the f32 range",
             )
         })
+}
+
+fn parse_test_target_decl(
+    source: &str,
+    line: &Line,
+    scope: &str,
+    targets: &[TestTargetDecl],
+) -> Result<WidgetTarget, Error> {
+    if source.starts_with('#') {
+        let target = parse_widget_target(source, line)?;
+        record_test_target_alias_references(source, line, scope, targets)?;
+        return Ok(target);
+    }
+
+    let Some((base_source, descendant_source)) = split_top_once(source, '/') else {
+        return Err(error(
+            TEST_ERROR,
+            line,
+            "target aliases use `target name = #scoped/id` or `target name = base/descendant`",
+        ));
+    };
+    let base_source = base_source.trim();
+    let base = identifier(base_source, line)?;
+    let Some(target) = targets.iter().find(|target| target.name == base) else {
+        return Err(error(
+            TEST_ERROR,
+            line,
+            format!("relative target base `{base}` must name an earlier target alias"),
+        ));
+    };
+    line.record_scoped_symbol(
+        SymbolKind::TestTarget,
+        Some(scope),
+        &base,
+        false,
+        base_source,
+    );
+
+    let descendant_source = descendant_source.trim();
+    let descendant = parse_widget_target(&format!("#{descendant_source}"), line)?;
+    record_test_target_alias_references(descendant_source, line, scope, targets)?;
+    let mut segments = target.target.segments.clone();
+    segments.extend(descendant.segments);
+    Ok(WidgetTarget { segments })
 }
 
 fn parse_test_step(

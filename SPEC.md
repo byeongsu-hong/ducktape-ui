@@ -560,7 +560,9 @@ test_configuration
                | "viewport" number number
                | "timeout" positive_integer ("ms" | "s")
                | "mount" INDENT node
-target_decl    = "target" name "=" widget_target
+target_decl    = "target" name "=" (widget_target | relative_test_target)
+relative_test_target = name "/" widget_target_segment
+                       ("/" "#"? widget_target_segment)*
 test_target    = name | widget_target
 test_step      = "click" test_target
                | "hover" test_target
@@ -4095,9 +4097,12 @@ are unique across the production view and every test mount in one source graph.
 
 ### Targets and rendered identity
 
-`target name = #scope/id` gives a checked selector path a local alias. Actions
-and presence/text assertions accept either the alias or a direct `#` path.
-Expressions use the alias as a typed test target, for example
+`target name = #scope/id` gives a checked selector path a local alias. A later
+declaration may reuse that path as a prefix, for example
+`target title = card/title`; the base must be an earlier alias and the result is
+the same checked selector as the expanded absolute path. `#` paths always stay
+absolute. Actions and presence/text assertions accept either an alias or a
+direct `#` path. Expressions use the alias as a typed test target, for example
 `expect card.width == 240.0`. An alias stores its selector, not a candidate or
 old bounds: each use resolves against the current rendered tree after the most
 recent update. A dynamic selector key may reference an earlier target alias;
