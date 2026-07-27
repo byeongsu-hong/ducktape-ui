@@ -12,23 +12,59 @@ pub(crate) fn split_style_utilities(source: &str) -> (&str, Vec<String>) {
     )
 }
 
-pub(in crate::parser) fn parse_component_slots(
+pub(in crate::parser) fn parse_component_children(
     component: &str,
     line: &Line,
-) -> Result<Vec<ComponentSlot>, Error> {
-    if line.children.is_empty() {
-        return Ok(Vec::new());
+) -> Result<(Vec<ComponentSlot>, Vec<ComponentEventRoute>), Error> {
+    let mut event_blocks = line.children.iter().filter(|child| child.text == "events");
+    let events = event_blocks.next();
+    if event_blocks.next().is_some() {
+        return Err(error(
+            "E040",
+            line,
+            "component call has duplicate events blocks",
+        ));
     }
-    let named = line.children.iter().any(|child| child.text.ends_with(':'));
+    let event_routes = events
+        .map(|events| {
+            events
+                .children
+                .iter()
+                .map(|event| {
+                    ensure_leaf(event)?;
+                    let Some((name, route)) = split_top_marker(&event.text, "->") else {
+                        return Err(error(
+                            "E040",
+                            event,
+                            "component event routes use `name -> handler`",
+                        ));
+                    };
+                    Ok(ComponentEventRoute {
+                        name: identifier(name.trim(), event)?,
+                        route: parse_route(route.trim(), event)?,
+                        span: Span::line(event.number),
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let children = line
+        .children
+        .iter()
+        .filter(|child| child.text != "events")
+        .collect::<Vec<_>>();
+    if children.is_empty() {
+        return Ok((Vec::new(), event_routes));
+    }
+    let named = children.iter().any(|child| child.text.ends_with(':'));
     if !named {
-        let compound = line
-            .children
+        let compound = children
             .iter()
             .map(|child| compound_slot_name(component, child))
             .collect::<Vec<_>>();
         if compound.iter().all(Option::is_some) {
-            return line
-                .children
+            let slots = children
                 .iter()
                 .zip(compound)
                 .map(|(child, name)| {
@@ -38,7 +74,8 @@ pub(in crate::parser) fn parse_component_slots(
                         span: Span::line(child.number),
                     })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, Error>>()?;
+            return Ok((slots, event_routes));
         }
         if compound.iter().any(Option::is_some) {
             return Err(error(
@@ -50,7 +87,7 @@ pub(in crate::parser) fn parse_component_slots(
                 "use only `{component}.Name` children, or wrap direct children in one layout"
             )));
         }
-        return match line.children.as_slice() {
+        let slots = match children.as_slice() {
             [content] => Ok(vec![ComponentSlot {
                 name: "children".into(),
                 content: Box::new(parse_view(content)?),
@@ -62,10 +99,11 @@ pub(in crate::parser) fn parse_component_slots(
                 "component children need one root or named `slot:` blocks",
             )
             .hint("wrap siblings in row or col, or write `header:` and `body:` blocks")),
-        };
+        }?;
+        return Ok((slots, event_routes));
     }
 
-    line.children
+    let slots = children
         .iter()
         .map(|section| {
             let Some(name) = section.text.strip_suffix(':') else {
@@ -88,7 +126,8 @@ pub(in crate::parser) fn parse_component_slots(
                 span: Span::line(section.number),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok((slots, event_routes))
 }
 
 pub(in crate::parser) fn compound_slot_name(component: &str, line: &Line) -> Option<String> {

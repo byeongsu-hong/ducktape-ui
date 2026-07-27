@@ -32,6 +32,9 @@ pub(in crate::codegen) fn route_code(
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {
+    if let Some(code) = named_component_emission_code(route, &[payload], false, env, document) {
+        return code;
+    }
     if route.handler == "emit"
         && let Some(output) = component_output(env)
     {
@@ -73,6 +76,9 @@ pub(in crate::codegen) fn ordered_route_code(
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {
+    if let Some(code) = named_component_emission_code(route, payloads, true, env, document) {
+        return code;
+    }
     if route.handler == "emit" && component_output(env).is_some() {
         return route_code(route, payloads[0], env, document, message);
     }
@@ -97,6 +103,50 @@ pub(in crate::codegen) fn ordered_route_code(
         args.insert(0, format!("({}).clone()", context.code));
     }
     Ok(format!("{message}::{variant}({})", args.join(", ")))
+}
+
+fn named_component_emission_code(
+    route: &Route,
+    payloads: &[&str],
+    ordered: bool,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+) -> Option<Result<String, Error>> {
+    if route.handler != "emit" {
+        return None;
+    }
+    let (component, _) = component_context(env)?;
+    let (name, args) = route.args.split_first()?;
+    let RouteArg::Expr(Expr::Path(path)) = name else {
+        return None;
+    };
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    if !document
+        .components
+        .iter()
+        .find(|item| item.name == component)?
+        .events
+        .iter()
+        .any(|event| event.name == *name)
+    {
+        return None;
+    }
+    let callback = component_event(env, component, name).expect("checker requires event route");
+    let mut payload_index = 0;
+    let values = args
+        .iter()
+        .map(|arg| match arg {
+            RouteArg::Payload => {
+                let index = if ordered { payload_index } else { 0 };
+                payload_index += 1;
+                Ok(payloads[index].to_owned())
+            }
+            RouteArg::Expr(expr) => expr_code(expr, env, document, ValueMode::Owned),
+        })
+        .collect::<Result<Vec<_>, Error>>();
+    Some(values.map(|values| format!("({})({})", callback.code, values.join(", "))))
 }
 
 fn local_route<'a>(

@@ -564,9 +564,11 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
         }
     }
     let mut states = Vec::new();
+    let mut events = Vec::new();
     let mut handlers = Vec::new();
     let mut roots = Vec::new();
     let mut state_block = false;
+    let mut emits_block = false;
     for child in &line.children {
         if child.text == "state" {
             if state_block {
@@ -583,6 +585,36 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
                     .map(parse_state)
                     .collect::<Result<Vec<_>, _>>()?,
             );
+        } else if child.text == "emits" {
+            if emits_block {
+                return Err(error("E040", child, "component has duplicate emits blocks"));
+            }
+            if child.children.is_empty() {
+                return Err(error("E040", child, "component emits cannot be empty"));
+            }
+            emits_block = true;
+            for event in &child.children {
+                ensure_leaf(event)?;
+                let (name, payloads) = if event.text.contains('(') {
+                    let (name, payloads) = parse_signature(&event.text, event)?;
+                    let payloads = if payloads.trim().is_empty() {
+                        Vec::new()
+                    } else {
+                        split_top(&payloads, ',')
+                            .into_iter()
+                            .map(|payload| parse_type(payload.trim(), event))
+                            .collect::<Result<Vec<_>, _>>()?
+                    };
+                    (name, payloads)
+                } else {
+                    (identifier(&event.text, event)?, Vec::new())
+                };
+                events.push(ComponentEvent {
+                    name,
+                    payloads,
+                    span: Span::line(event.number),
+                });
+            }
         } else if let Some(header) = child.text.strip_prefix("on ") {
             handlers.push(parse_handler(header, child)?);
         } else {
@@ -612,6 +644,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
         name,
         params,
         output,
+        events,
         states,
         handlers,
         root,

@@ -1,4 +1,4 @@
-# Ice Language Specification 1.64
+# Ice Language Specification 1.70
 
 Status: implemented reference slice
 
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 1.64 syntax.
+marked “planned” is a design constraint, not accepted 1.70 syntax.
 
 ## 1. Design contract
 
@@ -50,7 +50,7 @@ extern calls, and basic async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 1.64, with one canonical spelling for each construct. Spellings
+for revision 1.70, with one canonical spelling for each construct. Spellings
 removed in this revision are syntax errors and the formatter never translates
 old vocabulary. Future additions or changes require an explicit language
 design and a new revision; future removals require deprecation and migration.
@@ -61,7 +61,7 @@ are the extended surface. It is not a parity roadmap and must not grow only
 because iced exposes another public type or method.
 
 Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 1.64. The workspace packages are
+document specifies language revision 1.70. The workspace packages are
 pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
 resolved iced/iced_widget versions are a third, independent backend baseline.
 
@@ -168,7 +168,7 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
   line. Indentation may only return to an existing level.
 - Empty lines are ignored by the parser and normalized by the formatter.
 - A line whose first non-space characters are `//` is a comment. Inline and
-  block comments are not part of 1.64.
+  block comments are not part of 1.70.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
   or `__`, and `_`, `none`, and Rust keywords are reserved.
 - Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
@@ -416,9 +416,11 @@ component_decl = "component" component_name "(" component_param_list? ")"
                  ("->" type)?
                  INDENT component_member+
 component_param_list = component_param ("," component_param)*
-component_param = name ":" type ("=" expr)?
-component_member = component_state | component_handler | node
+component_param = ("bind")? name ":" type ("=" expr)?
+component_member = component_state | component_events | component_handler | node
 component_state = "state" INDENT state_entry+
+component_events = "emits" INDENT component_event+
+component_event = name ("(" type_list? ")")?
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
@@ -1117,9 +1119,11 @@ built_in_iced_theme
                | "moonfly" | "nightfly" | "oxocarbon" | "ferra"
 theme_property = "fg=" color_ref | "bg=" background_value
 component_name = PascalName ("." PascalName)*
-component_call = component_name component_item*
-                 (INDENT (node | named_slot+ | component_call+))?
+component_call = component_name component_item* ("->" route)?
+                 (INDENT (component_route_block | node | named_slot+ | component_call+))?
 component_item = named_prop | id
+component_route_block = "events" INDENT component_route+
+component_route = name "->" route
 named_prop     = name "=" expr
 named_slot     = name ":" INDENT node
 slot           = "slot" name?
@@ -1239,7 +1243,7 @@ codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 1.64.
+compile time. Encoded icon formats remain outside 1.70.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -1899,7 +1903,7 @@ crate::backend::create_task
 Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
 `A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
 messages must satisfy the traits required by generated iced code, notably
-`Clone` for 1.64 message payloads. Generated app and message debug output is
+`Clone` for 1.70 message payloads. Generated app and message debug output is
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
@@ -3095,6 +3099,33 @@ Toggle checked=checked -> changed _
 A non-`unit` component requires a route, while a `unit` component rejects one.
 `emit` accepts exactly one value matching the declared output and may be used
 to forward nested component or extern-component output.
+
+Components may instead expose multiple named events with zero or more ordered
+typed payloads. Every declared event has exactly one route at each call site;
+missing, unknown, and duplicate routes are errors. Event routes are checked in
+the caller's scope, while emission is only valid inside the declaring
+component view:
+
+```ice
+component PageItem(page:str)
+  emits
+    select(str)
+    favorite(str, bool)
+  col
+    button "Open" -> emit select page
+    checkbox "Favorite" checked=false -> emit favorite page _
+
+PageItem page="roadmap"
+  events
+    select -> navigate _
+    favorite -> favorite_changed _ _
+```
+
+A component route resolves only local component handlers and declared event
+emissions. Direct references to app-global handlers are errors, so reusable
+component dependencies remain explicit. The `component ... -> Type` and
+call-site `-> route` pair remains the canonical default-event shorthand and may
+coexist with named events.
 
 ### Extern components and subscriptions
 
@@ -4298,7 +4329,7 @@ hidden `step` helper adds Ice source context to panics from generated statement
 evaluation. Generated Ice tests need no Rust wrapper, registration, or
 application-level dependency on the internal simulator crate.
 
-Revision 1.64 deliberately has no DOM, CSS selector engine, computed-style
+Revision 1.70 deliberately has no DOM, CSS selector engine, computed-style
 object, synthetic component bounds, component-local-state access, test mock
 DSL, virtual time, pixel-snapshot syntax, or multi-window orchestration. The
 removed external ICE test format is not accepted and has no compatibility
@@ -4475,7 +4506,7 @@ The implemented families are:
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 1.64 does not claim that remapping. Generated first-class test
+extern line; 1.70 does not claim that remapping. Generated first-class test
 failures already retain their original root or imported Ice path and line.
 
 ## 12. Cargo commands
@@ -4537,7 +4568,7 @@ above.
 
 ## 13. Current coverage and escape hatches
 
-The 1.64 native backend covers both windowed applications and windowless
+The 1.70 native backend covers both windowed applications and windowless
 daemons alongside CRUD/settings-style screens, selection, media, hover
 overlays, declarative canvas geometry, and pointer events. Borrowed custom
 widgets and an application-wide renderer type remain the escape hatch for

@@ -53,6 +53,39 @@ view
 }
 
 #[test]
+fn lowers_named_component_events_through_caller_routes() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  page = "home"
+component Actions(page:str)
+  emits
+    cancel
+    favorite(str, bool)
+  col
+    button "Cancel" -> emit cancel
+    checkbox "Favorite" checked=false -> emit favorite page _
+on canceled
+on favorite_changed(page, next)
+view
+  Actions page=page
+    events
+      cancel -> canceled
+      favorite -> favorite_changed _ _
+"#;
+    let generated = compile(source, "events.ice").unwrap();
+    assert!(generated.contains("move || __DemoMessage::Canceled"));
+    assert!(generated.contains(
+        "move |__event_0, __event_1| __DemoMessage::FavoriteChanged(__event_0, __event_1)"
+    ));
+    assert!(generated.contains(")(self.page.clone(), __value)"));
+}
+
+#[test]
 fn lowers_single_ordered_payloads_through_component_outputs() {
     let source = r#"app Demo
 theme
@@ -621,12 +654,16 @@ state
   locked = false
   language = "rs"
 component EditorPanel(bind content:editor, bind heading:str, readonly:bool, syntax:str)
+  emits
+    command(EditorCommand)
   col
     input "Title" <-> heading
-    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> command _
+    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit command _
 on command(value)
 view
   EditorPanel content<->body heading<->title readonly=locked syntax=language
+    events
+      command -> command _
 "#;
     let generated = compile(source, "notes.ice").unwrap();
     assert!(generated.contains("__BindTitle(::std::string::String)"));
@@ -635,7 +672,7 @@ view
     assert!(generated.contains("text_editor(&self.body)"));
     assert!(generated.contains("crate::backend::editor_keys(__key_press, self.locked)"));
     assert!(generated.contains("__ice_map_editor_binding"));
-    assert!(generated.contains("__NotesMessage::Command(__value)"));
+    assert!(generated.contains("__NotesMessage::Command(__event_0)"));
     assert!(generated.contains("crate::backend::editor_highlight("));
     assert!(generated.contains(", self.language.clone())"));
     assert!(generated.contains("fn __ui_lang_check_editor_binding_editor_keys"));

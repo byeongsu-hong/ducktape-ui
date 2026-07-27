@@ -13,6 +13,7 @@ pub(in crate::check) fn infer_components_group(
             args,
             id,
             slots: supplied_slots,
+            events: supplied_events,
             route,
             span,
         } => {
@@ -114,6 +115,54 @@ pub(in crate::check) fn infer_components_group(
                     "E124",
                     span,
                     format!("component `{name}` requires slot `{missing}`"),
+                ));
+            }
+            let mut routed = HashSet::new();
+            for supplied in supplied_events {
+                if !routed.insert(supplied.name.as_str()) {
+                    return Err(Error::new(
+                        "E127",
+                        &supplied.span,
+                        format!(
+                            "component `{name}` receives event route `{}` more than once",
+                            supplied.name
+                        ),
+                    ));
+                }
+                let event = component
+                    .events
+                    .iter()
+                    .find(|event| event.name == supplied.name)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E127",
+                            &supplied.span,
+                            format!(
+                                "component `{name}` does not declare event `{}`",
+                                supplied.name
+                            ),
+                        )
+                    })?;
+                infer_component_event_route(
+                    &supplied.route,
+                    &event.payloads,
+                    env,
+                    document,
+                    signatures,
+                )?;
+            }
+            if let Some(missing) = component
+                .events
+                .iter()
+                .find(|event| !routed.contains(event.name.as_str()))
+            {
+                return Err(Error::new(
+                    "E127",
+                    span,
+                    format!(
+                        "component `{name}` requires a route for event `{}`",
+                        missing.name
+                    ),
                 ));
             }
             match (&component.output, route) {

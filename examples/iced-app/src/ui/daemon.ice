@@ -28,9 +28,13 @@ on quit
   exit
 
 component AgentWindow(id:window-id)
+  emits
+    quit
   col gap=16.0 p=24.0
     text daemon_title(id) size=20.0 @font-bold
-    button "Quit" style=danger -> quit
+    button "Quit" style=danger -> emit quit
 
 view
   AgentWindow id=window
+    events
+      quit -> quit

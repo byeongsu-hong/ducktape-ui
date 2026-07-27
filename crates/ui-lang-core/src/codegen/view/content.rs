@@ -84,6 +84,7 @@ pub(in crate::codegen) fn render_content(
             args,
             id,
             slots,
+            events,
             route,
             span,
         } => {
@@ -132,6 +133,32 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
+            for event in &component.events {
+                let supplied = events
+                    .iter()
+                    .find(|supplied| supplied.name == event.name)
+                    .expect("checker requires every component event route");
+                let payloads = (0..event.payloads.len())
+                    .map(|index| format!("__event_{index}"))
+                    .collect::<Vec<_>>();
+                let payload_refs = payloads.iter().map(String::as_str).collect::<Vec<_>>();
+                component_env.insert(
+                    component_event_key(name, &event.name),
+                    Binding {
+                        code: ordered_route_callback_code(
+                            &supplied.route,
+                            &payloads.join(", "),
+                            &payload_refs,
+                            env,
+                            document,
+                            message,
+                        )?,
+                        ty: Type::Unit,
+                        local: true,
+                        state: None,
+                    },
+                );
+            }
             let component_scope = id.as_ref().map_or_else(
                 || {
                     let scope = reconciliation_scope(scope, env);
@@ -166,6 +193,20 @@ pub(in crate::codegen) fn render_content(
                     component_context_key(name),
                     Binding {
                         code: scope_binding.clone(),
+                        ty: Type::Unit,
+                        local: true,
+                        state: None,
+                    },
+                );
+            }
+            if !component.events.is_empty()
+                && component.states.is_empty()
+                && component.handlers.is_empty()
+            {
+                component_env.insert(
+                    component_context_key(name),
+                    Binding {
+                        code: component_scope.clone(),
                         ty: Type::Unit,
                         local: true,
                         state: None,

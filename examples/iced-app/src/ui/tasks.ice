@@ -120,6 +120,8 @@ view
               scroll #task-list dir=vertical w=fill h=fill
                 keyed task in tasks by=task.id w=fill gap=8.0
                   TaskRow task=task loading=loading
+                    events
+                      toggle -> toggle _ _
             pane details border-w=1.0 r=10.0 @bg-surface border-border
               title p=12.0 always-controls border-w=1.0 @bg-bg border-border
                 text "Details" size=18.0 @font-bold text-fg

@@ -68,13 +68,17 @@ derived
   has_error = error != ""
 
 component TaskRow(task:Task, loading:bool)
+  emits
+    toggle(i64, bool)
   row #root p=16.0 align=center @w-full bg-surface border border-border rounded-lg
-    checkbox task.title checked=task.done disabled=loading style=task_checkbox(loading) size=18.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=auto wrap=word-or-glyph font=default icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> toggle(task.id, _)
+    checkbox task.title checked=task.done disabled=loading style=task_checkbox(loading) size=18.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=auto wrap=word-or-glyph font=default icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> emit toggle task.id _
 
 component EditorPanel(bind content:editor, bind heading:str, busy:bool)
+  emits
+    editor_command(EditorCommand)
   col gap=8.0
     input "Editor heading" <-> heading hint="Editor heading" disabled=busy
-    editor #notes <-> content hint="Write notes" w=640.0 h=120.0 min-h=80.0 max-h=240.0 size=14.0 line-h=1.3 p=8.0 wrap=word font=ui highlighter=editor_highlight("fn") key-binding=editor_keys(busy) style=editor_surface(busy) disabled=busy -> editor_command _
+    editor #notes <-> content hint="Write notes" w=640.0 h=120.0 min-h=80.0 max-h=240.0 size=14.0 line-h=1.3 p=8.0 wrap=word font=ui highlighter=editor_highlight("fn") key-binding=editor_keys(busy) style=editor_surface(busy) disabled=busy -> emit editor_command _
       active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
       hovered bg=surface border=fg placeholder=muted value=fg selection=primary
       focused bg=surface border=primary border-w=2.0 r=8.0
@@ -498,6 +502,8 @@ view
           button "Append Markdown image" -> extend_markdown
           text len(help_images) size=12.0 @text-muted
         EditorPanel content<->notes heading<->editor_title busy=loading
+          events
+            editor_command -> editor_command _
         row gap=8.0 align=center
           button "Read notes" -> read_notes
           button "Clear notes" -> clear_notes
@@ -604,6 +610,8 @@ view
           if task_pane_maximized
             text "Maximized task pane" size=14.0 @text-fg
           TaskRow task=pane_task loading=loading
+            events
+              toggle -> toggle _ _
       pane mode_pane in display_modes by=mode_pane
         title
           text mode_pane size=14.0 @text-fg
@@ -614,6 +622,8 @@ view
     scroll #task-list dir=vertical w=fill h=fill bar=visible bar-w=8.0 bar-m=2.0 scroller-w=6.0 bar-gap=2.0 anchor-y=start auto=true viewport=task_list_scrolled style=task_scroll(loading)
       keyed task in tasks by=task.id w=fill h=shrink gap=8.0 p=4.0 pl=8.0 max-w=720.0 align=center
         TaskRow task=task loading=loading
+          events
+            toggle -> toggle _ _
       active y-disabled=false
         box bg=bg text=fg border=border border-w=1.0 r=8.0 shadow=black/25 shadow-y=2.0 shadow-blur=4.0 px-snap=true
         x-rail bg=surface border=border border-w=1.0 r=4.0
