@@ -7,11 +7,6 @@ fn parses_compact_app() {
     assert!(!document.daemon);
     assert_eq!(document.structs.len(), 1);
     assert_eq!(document.handlers.len(), 3);
-    assert_eq!(document.qr_codes.len(), 1);
-    assert_eq!(
-        document.qr_codes[0].data,
-        QrPayload::Text("https://example.com/ice docs".into())
-    );
 }
 
 #[test]

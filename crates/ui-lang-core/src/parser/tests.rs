@@ -225,8 +225,6 @@ theme contract AppTheme
 palette app for AppTheme
   bg #000000
 
-qr docs "https://example.com/ice docs" correction=high version=normal(4)
-
 state
   items:[Item] = []
   query = ""

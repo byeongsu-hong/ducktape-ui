@@ -421,52 +421,54 @@ pub(in crate::check) fn repeated_pane_grid_span(node: &ViewNode) -> Option<&Span
     }
 }
 
-pub(in crate::check) fn check_qr_data(document: &Document) -> Result<(), Error> {
-    for qr in &document.qr_codes {
-        let valid = match qr.version {
-            None | Some(QrVersion::Normal(1..=40)) | Some(QrVersion::Micro(1..=4)) => true,
-            Some(QrVersion::Normal(_) | QrVersion::Micro(_)) => false,
-        };
-        if !valid {
-            return Err(Error::new(
-                "E136",
-                &qr.span,
-                "qr version must be normal(1..40) or micro(1..4)",
-            ));
+/// Encodes a literal QR payload at compile time, so a payload that cannot fit
+/// the requested version and error correction fails the build instead of the
+/// frame. A payload minted at runtime cannot be encoded here; the widget
+/// renders nothing when it turns out not to fit.
+pub(in crate::check) fn check_qr_payload(
+    payload: &Expr,
+    correction: Option<QrCorrection>,
+    version: Option<QrVersion>,
+    span: &Span,
+) -> Result<(), Error> {
+    let valid = match version {
+        None | Some(QrVersion::Normal(1..=40)) | Some(QrVersion::Micro(1..=4)) => true,
+        Some(QrVersion::Normal(_) | QrVersion::Micro(_)) => false,
+    };
+    if !valid {
+        return Err(Error::new(
+            "E136",
+            span,
+            "qr version must be normal(1..40) or micro(1..4)",
+        ));
+    }
+    let data = match payload {
+        Expr::Str(value) => value.as_bytes(),
+        Expr::Bytes(value) => value.as_slice(),
+        _ => return Ok(()),
+    };
+    let level = match correction.unwrap_or(QrCorrection::Medium) {
+        QrCorrection::Low => qrcode::EcLevel::L,
+        QrCorrection::Medium => qrcode::EcLevel::M,
+        QrCorrection::Quartile => qrcode::EcLevel::Q,
+        QrCorrection::High => qrcode::EcLevel::H,
+    };
+    let encoded = match version {
+        Some(QrVersion::Normal(version)) => {
+            qrcode::QrCode::with_version(data, qrcode::Version::Normal(i16::from(version)), level)
         }
-        let data = match &qr.data {
-            QrPayload::Text(value) => value.as_bytes(),
-            QrPayload::Bytes(value) => value.as_slice(),
-        };
-        let correction = match qr.correction.unwrap_or(QrCorrection::Medium) {
-            QrCorrection::Low => qrcode::EcLevel::L,
-            QrCorrection::Medium => qrcode::EcLevel::M,
-            QrCorrection::Quartile => qrcode::EcLevel::Q,
-            QrCorrection::High => qrcode::EcLevel::H,
-        };
-        let encoded = match qr.version {
-            Some(QrVersion::Normal(version)) => qrcode::QrCode::with_version(
-                data,
-                qrcode::Version::Normal(i16::from(version)),
-                correction,
-            ),
-            Some(QrVersion::Micro(version)) => qrcode::QrCode::with_version(
-                data,
-                qrcode::Version::Micro(i16::from(version)),
-                correction,
-            ),
-            None if qr.correction.is_some() => {
-                qrcode::QrCode::with_error_correction_level(data, correction)
-            }
-            None => qrcode::QrCode::new(data),
-        };
-        if let Err(error) = encoded {
-            return Err(Error::new(
-                "E136",
-                &qr.span,
-                format!("cannot encode qr data `{}`: {error}", qr.name),
-            ));
+        Some(QrVersion::Micro(version)) => {
+            qrcode::QrCode::with_version(data, qrcode::Version::Micro(i16::from(version)), level)
         }
+        None if correction.is_some() => qrcode::QrCode::with_error_correction_level(data, level),
+        None => qrcode::QrCode::new(data),
+    };
+    if let Err(error) = encoded {
+        return Err(Error::new(
+            "E136",
+            span,
+            format!("cannot encode qr payload: {error}"),
+        ));
     }
     Ok(())
 }

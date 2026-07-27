@@ -418,14 +418,89 @@ view
 }
 
 #[test]
-fn names_missing_qr_data() {
-    let source = SOURCE.replace(
-        "qr docs \"https://example.com/ice docs\" correction=high version=normal(4)",
-        "qr",
+fn parses_text_tracking_and_dashed_borders() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+palette app for AppTheme
+  bg #000000
+view
+  col
+    text "SECTION" size=12.0 tracking=1.2
+    box border=fg border-w=1.0 border-dash=(4.0, 3.0)
+      text "Draft"
+"#;
+    let document = parse(source).unwrap();
+    let ViewNode::Layout { children, .. } = &document.view else {
+        panic!("expected a layout");
+    };
+    let ViewNode::Text { options, .. } = &children[0] else {
+        panic!("expected a text");
+    };
+    assert_eq!(options.tracking, Some(1.2));
+    let ViewNode::Container { options, .. } = &children[1] else {
+        panic!("expected a box");
+    };
+    assert!(
+        matches!(options.border_dash.as_slice(), [Expr::F64(on), Expr::F64(off)] if *on == 4.0 && *off == 3.0)
     );
-    let error = parse(&source).unwrap_err();
+
+    // Tracking decides the lowering, so it cannot be deferred to runtime.
+    for value in ["tracking=(size)", "tracking=-1.0", "tracking=2"] {
+        let error = parse(&source.replace("tracking=1.2", value)).unwrap_err();
+        assert_eq!(error.code, "E063", "{value}");
+        assert!(
+            error.message.contains("non-negative number literal"),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn parses_qr_payload_expressions() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+palette app for AppTheme
+  bg #000000
+state
+  invite = "https://example.com/invite"
+view
+  col
+    qr invite #live correction=high version=normal(4) cell-size=4.0
+    qr "https://example.com/static"
+    qr bytes(00 ff a4)
+"#;
+    let document = parse(source).unwrap();
+    let ViewNode::Layout { children, .. } = &document.view else {
+        panic!("expected a layout");
+    };
+    let ViewNode::QrCode {
+        payload,
+        correction,
+        version,
+        ..
+    } = &children[0]
+    else {
+        panic!("expected a qr code");
+    };
+    assert!(matches!(payload, Expr::Path(path) if path == &["invite"]));
+    assert_eq!(*correction, Some(QrCorrection::High));
+    assert_eq!(*version, Some(QrVersion::Normal(4)));
+    assert!(
+        matches!(&children[1], ViewNode::QrCode { payload: Expr::Str(value), .. } if value == "https://example.com/static")
+    );
+    assert!(
+        matches!(&children[2], ViewNode::QrCode { payload: Expr::Bytes(value), .. } if value == &[0x00, 0xff, 0xa4])
+    );
+}
+
+#[test]
+fn names_missing_qr_payload() {
+    let source = "app Demo\ntheme contract AppTheme\n  bg\npalette app for AppTheme\n  bg #000000\nview\n  qr\n";
+    let error = parse(source).unwrap_err();
     assert_eq!(error.code, "E093");
-    assert!(error.message.contains("needs a name"));
+    assert!(error.message.contains("payload"));
 }
 
 #[test]
@@ -617,7 +692,6 @@ extern crate::backend
   component native() -> unit
   themer themed() -> unit
   shader shaded() -> unit
-qr code "https://example.com"
 state
   amount = 50.0
   docs:markdown = "# Docs"
@@ -626,7 +700,7 @@ view
   col
     progress amount #progress
     rule horizontal #rule
-    qr code #qr
+    qr "https://example.com" #qr
     space #space w=10.0 h=10.0
     markdown docs #markdown -> open_link _
     extern native() #extern

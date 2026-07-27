@@ -43,6 +43,8 @@ pub struct ContainerOptions {
     pub clip: Option<Expr>,
     pub custom_style: Option<ExternCall>,
     pub style: ContainerStyleOptions,
+    /// The on/off pattern of a dashed border, empty when the border is solid.
+    pub border_dash: Vec<Expr>,
     pub flex_item: FlexItemOptions,
 }
 

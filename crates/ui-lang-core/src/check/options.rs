@@ -17,11 +17,6 @@ pub(in crate::check) fn check_lazy_subtree(
             span,
             "combo cannot live in lazy because iced combo box borrows search state",
         )),
-        ViewNode::QrCode { span, .. } => Err(Error::new(
-            "E139",
-            span,
-            "named QR data cannot live in lazy because iced QR code borrows app state",
-        )),
         ViewNode::Markdown { span, .. } => Err(Error::new(
             "E139",
             span,
@@ -845,6 +840,66 @@ pub(in crate::check) fn check_slider_styles(
                 "slider handle radius requires `handle=rect(N)` in the same status",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Guards the one border property iced cannot express: `iced::Border` has a
+/// colour, a width and a radius but no dash pattern, so `border-dash=` lowers
+/// to a canvas stroke drawn over the surface. That stroke needs a colour of its
+/// own, and only the typed `border=` names one the lowering can read.
+pub(in crate::check) fn check_border_dash(
+    options: &ContainerOptions,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+) -> Result<(), Error> {
+    if options.border_dash.is_empty() {
+        return Ok(());
+    }
+    if options.style.border_color.is_none() {
+        return Err(Error::new("E176", span, "a dashed border needs `border=`")
+            .hint("`border-dash=` strokes the border color; name it with `border=<theme color>`"));
+    }
+    for segment in &options.border_dash {
+        require_nonnegative_f64(segment, env, document, "border dash segment", span)?;
+    }
+    Ok(())
+}
+
+/// Guards the one text property iced cannot express: `tracking=` lowers to one
+/// text widget per grapheme inside a spaced row, which discards shaping and
+/// kerning and cannot wrap or justify. Everything this can prove unsafe is
+/// rejected here; the rest is a documented contract on the author.
+pub(in crate::check) fn check_text_tracking(
+    options: &TextOptions,
+    value: &Expr,
+    span: &Span,
+) -> Result<(), Error> {
+    if options.tracking.is_none() {
+        return Ok(());
+    }
+    if options.wrapping.is_some() {
+        return Err(Error::new("E174", span, "text tracking cannot wrap")
+            .hint("a tracked text is a row of graphemes; drop `wrap=` or `tracking=`"));
+    }
+    if options.custom_style.is_some() {
+        return Err(
+            Error::new("E174", span, "text tracking cannot carry `style=`").hint(
+                "a tracked text repeats its style closure per grapheme; use `@` color utilities",
+            ),
+        );
+    }
+    if options.align_x == Some(TextAlignment::Justified) {
+        return Err(Error::new("E174", span, "text tracking cannot justify")
+            .hint("a tracked text has no line to justify; use align-x=left, center, or right"));
+    }
+    let Expr::Str(literal) = value else {
+        return Ok(());
+    };
+    if !literal.is_ascii() {
+        return Err(Error::new("E175", span, "text tracking needs latin text")
+            .hint("tracking splits text into graphemes, which breaks shaping outside latin runs"));
     }
     Ok(())
 }

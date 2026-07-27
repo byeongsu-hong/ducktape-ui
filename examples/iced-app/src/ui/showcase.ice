@@ -7,8 +7,6 @@ use "extern/showcase.ice"
 use "theme.ice"
 use "handlers/task_crud.ice"
 
-qr project_code "https://github.com/byeongsu-hong/ducktape-ui-lang" correction=high version=normal(8)
-
 state
   tasks:[Task] = []
   draft = ""
@@ -630,12 +628,38 @@ view
             wrap=word
             @font-bold
             @text-fg
-        theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)
-          qr project_code
+        text "TRACKED LABEL"
+          with
+            size=12.0
+            tracking=1.2
+            align-x=left
+            w=fill
+            @text-muted
+        box
+          with
+            p=12.0
+            w=fill
+            border=border
+            border-w=1.0
+            border-dash=(4.0, 3.0)
+            r=8.0
+          text "Nothing final here yet"
             with
+              size=12.0
+              @text-muted
+        theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)
+          qr "https://github.com/byeongsu-hong/ducktape-ui-lang"
+            with
+              correction=high
+              version=normal(8)
               size=112.0
               cell=fg
               bg=surface
+        qr draft
+          with
+            cell-size=3.0
+            cell=fg
+            bg=surface
         toggler "Notifications" -> notifications_changed _
           with
             checked=notifications

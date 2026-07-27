@@ -185,6 +185,7 @@ pub struct TextOptions {
     pub align_y: Option<VerticalAlignment>,
     pub shaping: Option<TextShaping>,
     pub wrapping: Option<TextWrapping>,
+    pub tracking: Option<f64>,
     pub custom_style: Option<ExternCall>,
 }
 

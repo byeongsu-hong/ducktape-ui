@@ -605,6 +605,45 @@ view
 }
 
 #[test]
+fn lowers_tracking_to_one_widget_per_grapheme() {
+    let source = r#"app Typography
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  label = "SECTION"
+view
+  col
+    text label size=12.0 tracking=1.2 w=fill align-x=center
+    text "PLAIN" size=12.0
+    text "ZERO" size=12.0 tracking=0.0
+"#;
+    let generated = compile(source, "typography.ice").unwrap();
+    assert!(generated.contains(
+        "for __grapheme in ::ui_lang_runtime::graphemes(&__text_value) { __tracked.push(::iced::widget::text(__grapheme.to_owned()).size("
+    ));
+    assert!(generated.contains(
+        "let __spacing = ::ui_lang_runtime::bounded_spacing(1.2, __tracked.len()); let __run = ::iced::widget::row(__tracked).spacing(__spacing);"
+    ));
+    // Bounds and alignment describe the run, so they wrap the row, not a glyph.
+    assert!(generated.contains(
+        "::iced::widget::container(__run).width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)"
+    ));
+    // Absent and zero tracking stay one plain text widget.
+    let plain = "let __text_value = (\"PLAIN\".to_owned()).to_string(); let __text = ::iced::widget::text(__text_value.clone()).size(";
+    let zero = plain.replace("PLAIN", "ZERO");
+    assert!(generated.contains(plain));
+    assert!(generated.contains(&zero));
+}
+
+#[test]
 fn lowers_native_text_style_callbacks() {
     let source = r#"app Typography
 extern crate::backend
@@ -815,7 +854,6 @@ extern crate::backend
   component native() -> unit
   themer themed() -> unit
   shader shaded() -> unit
-qr code "https://example.com"
 theme contract AppTheme
   bg
   fg
@@ -834,7 +872,7 @@ view
   col #root
     progress amount #progress
     rule horizontal #rule
-    qr code #qr
+    qr "https://example.com" #qr
     space #space w=10.0 h=10.0
     markdown docs #markdown -> open_link _
     extern native() #extern

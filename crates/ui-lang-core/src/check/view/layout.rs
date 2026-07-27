@@ -229,6 +229,7 @@ pub(in crate::check) fn infer_layout_group(
                 check_call_args(function, &style.args, env, document, span)?;
             }
             check_container_style_options(&options.style, env, document, span, "E184")?;
+            check_border_dash(options, env, document, span)?;
             check_styles(styles, document, span, StyleTarget::Container(options))?;
             infer_view(content, env, document, signatures, ids)?;
         }

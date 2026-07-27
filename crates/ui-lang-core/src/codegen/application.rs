@@ -228,9 +228,6 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
-    for qr in &document.qr_codes {
-        writeln!(out, "{}: {},", qr.name, qr_data_code(qr)).unwrap();
-    }
     for state in &document.states {
         writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
     }

@@ -430,7 +430,6 @@ extern crate::backend
   component native() -> unit
   themer themed() -> unit
   shader shaded() -> unit
-qr code "https://example.com"
 theme contract AppTheme
   bg
   fg
@@ -449,7 +448,7 @@ view
   col #root
     progress amount #progress
     rule horizontal #rule
-    qr code #qr
+    qr "https://example.com" #qr
     space #space w=10.0 h=10.0
     markdown docs #markdown -> open_link _
     extern native() #extern

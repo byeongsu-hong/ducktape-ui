@@ -385,7 +385,7 @@ view
 }
 
 #[test]
-fn checks_qr_declarations_and_references() {
+fn checks_qr_payloads() {
     let source = r#"app Demo
 theme contract AppTheme
   bg
@@ -397,29 +397,26 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-qr code "hello" version=micro(0)
+state
+  minted = "https://example.com/invite"
+  size = 4.0
 view
-  qr code
+  qr "hello" version=micro(0)
 "#;
     let error = analyze(source).unwrap_err();
     assert_eq!(error.code, "E136");
     assert!(error.message.contains("micro(1..4)"));
 
-    let source = source.replace(
-        "qr code \"hello\" version=micro(0)",
-        "qr saved \"hello\" version=micro(4)",
-    );
-    let error = analyze(&source).unwrap_err();
+    // A literal payload is encoded at compile time, so one that cannot fit the
+    // requested version fails the build.
+    let error = analyze(&source.replace("version=micro(0)", "version=micro(1)")).unwrap_err();
     assert_eq!(error.code, "E136");
-    assert!(error.message.contains("unknown qr data `code`"));
+    assert!(error.message.contains("cannot encode qr payload"));
 
-    let source = source.replace(
-        "qr saved \"hello\" version=micro(4)",
-        "qr code \"hello\" version=micro(1)",
-    );
-    let error = analyze(&source).unwrap_err();
-    assert_eq!(error.code, "E136");
-    assert!(error.message.contains("cannot encode qr data"));
+    // A runtime payload cannot be encoded early, but it still has to be text.
+    analyze(&source.replace("qr \"hello\" version=micro(0)", "qr minted")).unwrap();
+    let error = analyze(&source.replace("qr \"hello\" version=micro(0)", "qr size")).unwrap_err();
+    assert_eq!(error.hint.as_deref(), Some("qr accepts str or bytes"));
 }
 
 #[test]

@@ -288,14 +288,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
     }
-    for qr in &document.qr_codes {
-        writeln!(
-            out,
-            "pub(crate) {}: ::iced::widget::qr_code::Data,",
-            qr.name
-        )
-        .unwrap();
-    }
     for (node, test_only) in document_pane_grids(document) {
         let ViewNode::PaneGrid {
             name,

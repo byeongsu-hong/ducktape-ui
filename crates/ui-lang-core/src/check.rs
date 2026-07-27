@@ -14,7 +14,6 @@ fn check(document: &mut Document) -> Result<(), Error> {
     check_declared_types(document)?;
     check_theme(document)?;
     check_recipes(document)?;
-    check_qr_data(document)?;
     if let Some(span) = repeated_pane_grid_span(&document.view) {
         return Err(Error::new(
             "E187",
@@ -580,7 +579,7 @@ use declarations::*;
 use handler::*;
 use options::*;
 pub(crate) use state::controlled_state_bindings;
-use state::{check_qr_data, check_theme, pane_grid_span, repeated_pane_grid_span};
+use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};
 use style::*;
 use subscription::*;
 use testing::*;

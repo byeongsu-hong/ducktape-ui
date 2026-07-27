@@ -150,8 +150,10 @@ pub enum ViewNode {
         span: Span,
     },
     QrCode {
-        data: String,
+        payload: Expr,
         id: Option<Id>,
+        correction: Option<QrCorrection>,
+        version: Option<QrVersion>,
         cell_size: Option<Expr>,
         total_size: Option<Expr>,
         cell: Option<String>,

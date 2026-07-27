@@ -4507,6 +4507,7 @@ dependencies = [
  "iced",
  "iced_test",
  "iced_tiny_skia",
+ "unicode-segmentation",
 ]
 
 [[package]]

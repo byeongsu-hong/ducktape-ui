@@ -198,7 +198,6 @@ extern
 theme contract
 palette
 recipe
-qr
 state
 preset
 component
@@ -231,10 +230,10 @@ imported_file  = (use_decl | declaration)*
 use_decl       = "use" string ("as" name)?
 declaration    = extern_decl | theme_contract_decl | palette_decl
                | style_recipe_decl | font_decl
-               | qr_decl | enum_decl | state_decl | derived_decl | preset_decl | component_decl
+               | enum_decl | state_decl | derived_decl | preset_decl | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
 document       = root_decl extern_decl* theme_contract_decl palette_decl+
-                 style_recipe_decl* qr_decl* enum_decl* state_decl? derived_decl?
+                 style_recipe_decl* enum_decl* state_decl? derived_decl?
                  preset_decl* component_decl*
                  handler_decl*
                  subscribe_decl? view_decl test_decl*
@@ -406,11 +405,6 @@ font_property  = "family=" (string | "serif" | "sans" | "cursive" | "fantasy" | 
                | "style=" ("normal" | "italic" | "oblique")
                | "default=" bool
 font_ref       = "default" | "mono" | name
-
-qr_decl        = "qr" name qr_payload qr_data_property*
-qr_payload     = string | "bytes(" hex_byte* ")"
-qr_data_property = "correction=" ("low" | "medium" | "quartile" | "high")
-                 | "version=" ("normal(" u8 ")" | "micro(" u8 ")")
 
 state_decl     = "state" INDENT state_entry+
 state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
@@ -625,6 +619,7 @@ layout         = "col" id? column_property* styles? (INDENT node+)?
                | "stack" id? stack_property* styles? (INDENT node+)?
 box            = "box" id? box_property* styles? INDENT node
 box_property   = ("w=" | "h=") length
+                   | "border-dash=" "(" expr_list ")"
                    | ("max-w=" | "max-h=") expr
                    | ("align-x=" | "align-y=") ("start" | "center" | "end")
                    | "clip=" expr
@@ -836,6 +831,7 @@ text_property  = ("w=" | "h=") length | "size=" expr
                | "align-y=" ("top" | "center" | "bottom")
                | "shape=" ("auto" | "basic" | "advanced")
                | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
+               | "tracking=" number
                | "style=" call
 accessibility_property = ("label=" | "description=") expr
 input          = "input" string id? accessibility_property* "<->" name
@@ -1021,8 +1017,10 @@ rule_property  = "thickness=" expr | "style=" ("default" | "weak")
                | "snap=" expr
 rule_fill      = "full" | "percent(" expr ")" | "pad(" u16 ")"
                | "pad(" u16 "," u16 ")"
-qr_code        = "qr" name id? qr_property*
+qr_code        = "qr" expr id? qr_property*
 qr_property    = ("cell-size=" | "size=") expr
+               | "correction=" ("low" | "medium" | "quartile" | "high")
+               | "version=" ("normal(" u8 ")" | "micro(" u8 ")")
                | ("cell=" | "bg=") name ("/" u8)?
 space          = "space" id? ("w=" length)? ("h=" length)? styles?
 media          = ("image" | "svg" | "viewer") expr id? media_property*
@@ -1352,16 +1350,21 @@ builders accept `Pixels`, not `Length`.
 padding is `u16`. Its default/weak preset can be overridden by a checked theme
 color token (including `/0..100` opacity), uniform or per-corner non-negative
 radius, and bool pixel snapping.
-QR declarations accept UTF-8 strings or arbitrary hexadecimal bytes. Normal
-versions are `1..=40`, micro versions are `1..=4`, and omitted correction uses
-iced's medium default. A QR view accepts one of `cell-size=` or `size=`
-plus checked cell/background colors. Its encoded data is built once at app
-startup and borrowed by each view.
+`qr` takes its payload as its first expression: a `str` or `bytes` value, most
+often a literal but equally a state field holding a link minted at runtime.
+Normal versions are `1..=40`, micro versions are `1..=4`, and omitted correction
+uses iced's medium default. A QR view accepts one of `cell-size=` or `size=`
+plus checked cell/background colors. A literal payload is encoded during
+checking, so one that cannot fit the requested version and correction fails the
+build; a payload that is only known at runtime cannot be, and the widget draws
+nothing when its matrix does not fit. The matrix is built where the widget is
+rendered rather than once at startup, because the payload is an expression and a
+matrix cached in application state would outlive its own input.
 Tooltip gap/padding are non-negative `f64`, delay is non-negative `i64`
 milliseconds, and snap is bool.
 
 The consuming Rust crate must enable iced's `image-without-codecs` or `image`
-feature for `image`, `svg` for `svg`, and `qr_code` for QR declarations. Raster
+feature for `image` and `svg` for `svg`. Raster
 decoder features remain a Cargo choice; the reference app enables only the PNM
 decoder used by its tiny checked-in sample.
 
@@ -1417,6 +1420,25 @@ alignment, shaping, wrapping, and declared or built-in fonts.
 `font=mono @font-semibold` preserves both choices. Weight utilities select
 exact iced weights: `font-medium` is 500, `font-semibold` is 600, and
 `font-bold` is 700.
+
+`tracking=` is letter spacing in pixels, as a non-negative number literal — not
+an expression, because it decides how the text is lowered. iced carries no
+letter spacing (`iced::advanced::text` has no such field), so a tracked text
+becomes one text widget per grapheme cluster inside a row whose spacing is the
+tracking, and the properties that describe the run as a whole — `w=`, `h=`,
+`align-x=`, `align-y=` — move to a container around that row. Absent tracking,
+and `tracking=0.0`, emit exactly the untracked single-widget text.
+
+That lowering discards shaping and kerning between graphemes, so `tracking=` is
+only correct for short uppercase latin runs — the design-system convention it
+exists for. The checker rejects what it can prove is broken by it: a non-ASCII
+string literal is `E175`. It cannot prove anything about a runtime value, which
+stays the author's contract; splitting is by grapheme cluster rather than by
+`char` so a combining mark or emoji sequence is at least never torn apart. The
+run also has no line, so `wrap=` and `align-x=justified` are `E174`, as is
+`style=`, whose closure a tracked text would have to repeat per grapheme —
+color a tracked label with a `@text-*` utility instead. Unlike CSS
+`letter-spacing`, tracking adds no trailing space after the last grapheme.
 
 `input` keeps its required `str` binding and additionally supports checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,
@@ -1609,7 +1631,20 @@ or linear background plus theme colors can override the preset's background,
 text, border, and shadow. Border width, shadow
 blur, and uniform/per-corner radii are non-negative f64 values; shadow x/y may
 be negative. `px-snap=` controls the box style's pixel-grid snap and is
-separate from the tooltip overlay's viewport `snap=` behavior. A declared
+separate from the tooltip overlay's viewport `snap=` behavior.
+
+`box border-dash=(on, off, ...)` draws the border as a dash pattern in pixels.
+`iced::Border` is colour, width and radius only, so a dashed border cannot be
+part of the surface quad: the dash lowers to a canvas stroke layered over the
+box, using the same `border=` colour, `border-w=` width and uniform or
+per-corner radius the solid border would have used. It replaces that solid
+border rather than adding to it, and it changes no layout — the box is the base
+layer of the stack it is drawn in, so the stack measures exactly the box. The
+stroke is inset by half the border width and its corners are tightened by the
+same inset, the way a CSS inner border is. Segments are non-negative `f64` and
+at least one is required; the colour has to be named by `border=` (`E176`),
+because that is the colour the stroke draws. A box without `border-dash=` emits
+byte-identical code to one that never knew about dashes. A declared
 `box-style` call may replace the preset because iced uses the same
 `container::Style` callback for tooltip surfaces; concrete tooltip properties
 override the callback result.
@@ -2569,7 +2604,7 @@ The implemented native nodes are:
 | `sensor` | one child with show/resize `(width, height)`, hide, key, anticipation and delay |
 | `responsive` | breakpoint sugar or one arbitrary size-dependent child tree with scoped width/height bindings and typed bounds |
 | `rule` | horizontal/vertical separator with non-negative thickness, all fill modes, default/weak preset, color, corner radii and snap |
-| `qr` | named text/binary QR data with correction/version, cell/overall sizing and checked colors |
+| `qr` | literal or runtime text/binary payload with correction/version, cell/overall sizing and checked colors |
 | `space` | optional fixed/fill/fill-portion/shrink width and height |
 | `image` | raster path or encoded/RGBA handle with every concrete sizing/fit/filter/typed rotation/opacity/scale/expand/per-corner-radius/crop property; `label=` adds an AccessKit `Image` role and unlabeled images are decorative |
 | `viewer` | interactive image zoom/pan with path/handle sources and complete sizing/fit/filter/padding/scale configuration |
@@ -4640,6 +4675,13 @@ wrapper.
 Stack `w-full`/`h-full` write both the stack and its wrapper, so combining them
 with typed stack size is rejected. `cargo ice fmt` only normalizes indentation
 and blank lines; it never changes language vocabulary.
+
+The `E160-E179` family covers the constructs iced cannot express directly, whose
+lowering therefore has limits of its own: `E174` rejects a `tracking=` combined
+with a property its grapheme row cannot honour (`wrap=`, `align-x=justified`,
+`style=`), `E175` rejects a `tracking=` on literal text that is not latin, and
+`E176` rejects a `border-dash=` with no `border=` colour for its stroke to
+draw.
 
 The implemented families are:
 

@@ -7,8 +7,6 @@ enum SurfaceState
   idle
   ready(str)
 
-qr render_code "https://example.com/render"
-
 state
   checked = false
   toggled = true
@@ -93,7 +91,7 @@ view
     pick choices choice #pick -> choice_changed _
     combo search choice "Search" #combo -> search_changed _
     rule horizontal #rule
-    qr render_code #qr
+    qr "https://example.com/render" #qr
     space #space w=24.0 h=8.0
     row #row w=fill gap=4.0
       text "Row child"
