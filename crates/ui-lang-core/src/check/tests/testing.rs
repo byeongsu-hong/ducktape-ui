@@ -41,7 +41,7 @@ test render_contract
     Card value=draft #card
 
   target root = #card/root
-  target draft_input = #card/root/draft
+  target draft_input = root/draft
 
   expect count == 0
   expect normalize(draft) == "ready"
@@ -288,7 +288,7 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
 
     let target_geometry = layout_only
         .replace("#draft <-> value", "#draft(1) <-> value")
-        .replace("#card/root/draft", "#card/root/draft(1)")
+        .replace("root/draft", "root/draft(1)")
         .replace(
             "hover #card/root/draft(1)",
             "hover #card/root/draft(dimension(root.width))",
@@ -309,8 +309,8 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
     assert!(failure.message.contains("paint assertions"));
 
     let selector_dependency = target_geometry.replace(
-        "target draft_input = #card/root/draft(1)",
-        "target draft_input = #card/root/draft(dimension(root.text_size))",
+        "target draft_input = root/draft(1)",
+        "target draft_input = root/draft(dimension(root.text_size))",
     );
     for (source, statement) in [
         (
@@ -329,7 +329,7 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
                 .replace("expect exists draft_input", "expect exists root")
                 .replace("click draft_input", "click root")
                 .replace("press draft_input", "press root"),
-            "target draft_input = #card/root/draft(dimension(root.text_size))",
+            "target draft_input = root/draft(dimension(root.text_size))",
         ),
     ] {
         let line = source

@@ -47,8 +47,9 @@ and real Rust externs. A persistent headless Iced cache drives click, hover,
 press/release, typing, keys, viewport changes, dispatch, update, and recursive
 task completion. Assertions cover state, presence, exact visible text and input
 content, computed layout bounds, and unambiguous structured tiny-skia paint
-output. Test-target definition and rename stay within one test, and generated
-runtime failures retain imported `.ice` paths and lines. Parser, checker,
+output. Absolute and earlier-alias-relative test targets, definition, and rename
+stay within one test, and generated runtime failures retain imported `.ice`
+paths and lines. Parser, checker,
 formatter, codegen, runtime, schema/LSP, migrated examples, and invalid/runtime
 failure tests provide direct evidence. There is no legacy external ICE-test
 parser or adapter.

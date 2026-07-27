@@ -1760,7 +1760,7 @@ mod tests {
     #[test]
     fn test_target_rename_stays_inside_one_test_scope() {
         let uri = "file:///tmp/test-target-navigation.ice";
-        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = #root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -1798,14 +1798,14 @@ mod tests {
         let edits = response(&messages, 3)["result"]["changes"][uri]
             .as_array()
             .unwrap();
-        assert_eq!(edits.len(), 3);
+        assert_eq!(edits.len(), 4);
         assert!(edits.iter().all(|edit| edit["newText"] == "surface"));
         assert_eq!(
             edits
                 .iter()
                 .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            [11, 13, 13]
+            [11, 12, 13, 13]
         );
         assert_eq!(response(&messages, 4)["error"]["code"], -32602);
     }

@@ -591,7 +591,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "target" => details(
             &["test"],
-            "target <name> = #<scoped-id>",
+            "target <name> = #<scoped-id> | <earlier-alias>/<descendant-id>",
             leaf(),
             json!({ "required": true, "name": "name", "source": "widget-selector" }),
             no_route(),
@@ -1523,10 +1523,11 @@ fn test_contract() -> Value {
             "mount": { "syntax": "mount", "required": false, "maxOccurrences": 1, "children": { "min": 1, "max": 1, "role": "view-root" }, "default": "complete app view" },
         },
         "targets": {
-            "declaration": "target <name> = #<scoped-id>",
+            "declaration": "target <name> = #<scoped-id> | <earlier-alias>/<descendant-id>",
             "aliasNames": "unique within one test",
             "references": ["alias identifier", "direct #scoped-id"],
             "aliases": "selectors resolved again after every rerender",
+            "relative": "an earlier alias may prefix a descendant path; it expands to the same checked selector as the corresponding absolute path",
             "componentCallIds": "scopes, not rendered nodes; select an identified rendered descendant",
             "nonRenderedNodes": ["if", "for", "slot"],
             "dynamicKeys": "checked with the normal widget-target key rules",

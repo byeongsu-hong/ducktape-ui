@@ -201,11 +201,11 @@ test render_contract
   mount
     RenderContract #render
   target root = #render/root
-  target heading = #render/root/heading
-  target field = #render/root/field
-  target draft = #render/root/field/draft
-  target increment = #render/root/increment
-  target result = #render/root/result
+  target heading = root/heading
+  target field = root/field
+  target draft = field/draft
+  target increment = root/increment
+  target result = root/result
   expect root.kind == "semantic"
   expect root.visible
   expect root.width ~= 240.0

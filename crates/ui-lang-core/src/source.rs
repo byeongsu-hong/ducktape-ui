@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn keeps_reused_test_target_aliases_scoped_to_their_test() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = #root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -577,7 +577,7 @@ mod tests {
             .find(|symbol| symbol.scope.as_deref() == Some("second") && symbol.name == "root")
             .unwrap();
         assert_eq!(first_root.definition.line, 12);
-        assert_eq!(first_root.references.len(), 2);
+        assert_eq!(first_root.references.len(), 3);
         assert_eq!(second_root.definition.line, 17);
         assert_eq!(second_root.references.len(), 1);
         assert!(first_root.renameable);
