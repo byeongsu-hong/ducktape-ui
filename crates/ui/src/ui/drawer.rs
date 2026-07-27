@@ -250,7 +250,7 @@ where
         });
         let cross_size = (!side.is_vertical()).then_some(DRAWER_MAX_WIDTH);
         let radius = if cross_size.is_some() {
-            self.theme.radius.xl
+            self.theme.radius.modal
         } else {
             0.0
         };

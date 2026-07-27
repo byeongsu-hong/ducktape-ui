@@ -210,13 +210,17 @@ where
     };
     let style_theme = *theme;
 
-    container(text(copy).size(theme.typography.lg).color(foreground))
-        .width(SLOT_SIZE)
-        .height(SLOT_SIZE)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center)
-        .style(move |_iced_theme| slot_style(&style_theme, active, invalid, disabled))
-        .into()
+    container(
+        text(copy)
+            .size(theme.typography.section_title)
+            .color(foreground),
+    )
+    .width(SLOT_SIZE)
+    .height(SLOT_SIZE)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_iced_theme| slot_style(&style_theme, active, invalid, disabled))
+    .into()
 }
 
 pub fn slot_style(
@@ -243,7 +247,7 @@ pub fn slot_style(
         border: Border {
             color: border,
             width: if active || invalid { 2.0 } else { 1.0 },
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }

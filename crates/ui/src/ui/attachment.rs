@@ -17,7 +17,7 @@ where
     let mut copy = Column::new()
         .push(
             text(filename)
-                .size(theme.typography.base)
+                .size(theme.typography.list)
                 .color(theme.palette.foreground),
         )
         .spacing(theme.spacing.xs)
@@ -26,7 +26,7 @@ where
     if let Some(metadata) = metadata {
         copy = copy.push(
             text(metadata)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .color(theme.palette.muted_foreground),
         );
     }
@@ -57,7 +57,7 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.lg.into(),
+            radius: theme.radius.card.into(),
         },
         ..Default::default()
     }
@@ -78,7 +78,7 @@ mod tests {
             );
             assert_eq!(appearance.text_color, Some(theme.palette.foreground));
             assert_eq!(appearance.border.color, theme.palette.border);
-            assert_eq!(appearance.border.radius, theme.radius.lg.into());
+            assert_eq!(appearance.border.radius, theme.radius.card.into());
         }
     }
 }

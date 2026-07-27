@@ -31,7 +31,8 @@ pub(in crate::check) fn check_id(
 
 // Recipes expand in place before utility validation and lowering. Direct typed fields are applied
 // after recipe defaults, while setting the same field through a typed property and a direct
-// utility remains an error. font= and @font-bold compose, with the utility selecting bold weight.
+// utility remains an error. font= and font-weight utilities compose, with the utility selecting
+// the weight.
 #[derive(Clone, Copy)]
 pub(in crate::check) enum StyleTarget<'a> {
     Layout(Layout, &'a LayoutOptions),
@@ -43,6 +44,7 @@ pub(in crate::check) enum StyleTarget<'a> {
         typed_color: bool,
         typed_size: bool,
         typed_line_height: bool,
+        typed_font: bool,
     },
     RichSpan(&'a RichSpanOptions),
     Input(&'a InputOptions),
@@ -267,8 +269,11 @@ pub(in crate::check) fn check_styles(
         let valid_spacing = ["p-", "px-", "py-", "gap-"].iter().any(|prefix| {
             utility
                 .strip_prefix(prefix)
-                .is_some_and(|value| spacing.contains(&value))
+                .is_some_and(|value| spacing.contains(&value) || exact_pixels(value).is_some())
         });
+        let valid_radius = utility
+            .strip_prefix("rounded-")
+            .is_some_and(|value| exact_radius(value).is_some());
         let known = matches!(
             utility,
             "w-full"
@@ -291,6 +296,9 @@ pub(in crate::check) fn check_styles(
                 | "leading-snug"
                 | "leading-normal"
                 | "leading-relaxed"
+                | "font-mono"
+                | "font-medium"
+                | "font-semibold"
                 | "font-bold"
                 | "border"
                 | "border-2"
@@ -300,6 +308,8 @@ pub(in crate::check) fn check_styles(
                 | "rounded-lg"
                 | "rounded-full"
         ) || valid_spacing
+            || valid_radius
+            || is_exact_text_size_utility(utility)
             || valid_color
             || utility
                 .strip_prefix("opacity-")
@@ -348,7 +358,7 @@ pub(in crate::check) fn check_styles(
                     target,
                     StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
                 ),
-                "font-bold" => matches!(
+                "font-mono" | "font-medium" | "font-semibold" | "font-bold" => matches!(
                     target,
                     StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
                 ),
@@ -357,6 +367,10 @@ pub(in crate::check) fn check_styles(
                         || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
                 "rounded-sm" | "rounded" | "rounded-md" | "rounded-lg" | "rounded-full" => {
+                    is_visual_box
+                        || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
+                }
+                utility if utility.starts_with("rounded-") => {
                     is_visual_box
                         || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_))
                 }
@@ -566,11 +580,19 @@ fn check_style_ownership(
                 "line-h=",
                 last_utility(styles, None, is_text_line_height_utility),
             )?;
+            reject_duplicate_style_property(
+                span,
+                options.font.is_some(),
+                "font family",
+                "font=",
+                last_utility(styles, None, |utility| utility == "font-mono"),
+            )?;
         }
         StyleTarget::RichText {
             typed_color,
             typed_size,
             typed_line_height,
+            typed_font,
         } => {
             reject_duplicate_style_property(
                 span,
@@ -593,6 +615,13 @@ fn check_style_ownership(
                 "color=",
                 last_utility(styles, None, is_text_color_utility),
             )?;
+            reject_duplicate_style_property(
+                span,
+                typed_font,
+                "font family",
+                "font=",
+                last_utility(styles, None, |utility| utility == "font-mono"),
+            )?;
         }
         StyleTarget::RichSpan(options) => {
             reject_duplicate_style_property(
@@ -608,6 +637,13 @@ fn check_style_ownership(
                 "text line height",
                 "line-h=",
                 last_utility(styles, None, is_text_line_height_utility),
+            )?;
+            reject_duplicate_style_property(
+                span,
+                options.font.is_some(),
+                "font family",
+                "font=",
+                last_utility(styles, None, |utility| utility == "font-mono"),
             )?;
             reject_duplicate_style_property(
                 span,
@@ -884,7 +920,23 @@ fn is_text_size_utility(utility: &str) -> bool {
     matches!(
         utility,
         "text-xs" | "text-sm" | "text-base" | "text-lg" | "text-xl" | "text-2xl"
-    )
+    ) || is_exact_text_size_utility(utility)
+}
+
+fn is_exact_text_size_utility(utility: &str) -> bool {
+    utility
+        .strip_prefix("text-")
+        .and_then(|value| value.strip_suffix("px"))
+        .and_then(|value| value.parse::<f32>().ok())
+        .is_some_and(|value| value.is_finite() && value > 0.0)
+}
+
+fn exact_pixels(value: &str) -> Option<u16> {
+    value.strip_suffix("px")?.parse().ok()
+}
+
+fn exact_radius(value: &str) -> Option<u16> {
+    exact_pixels(value).filter(|value| *value > 0)
 }
 
 fn is_text_line_height_utility(utility: &str) -> bool {

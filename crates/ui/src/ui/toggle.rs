@@ -63,7 +63,7 @@ where
         variant: ToggleVariant::Default,
         size: ToggleSize::Default,
         disabled: false,
-        radius: theme.radius.md.into(),
+        radius: theme.radius.button.into(),
         theme: *theme,
     }
 }
@@ -141,7 +141,7 @@ where
 }
 
 pub fn style(theme: &Theme, variant: ToggleVariant, pressed: bool, status: Status) -> Style {
-    style_with_radius(theme, variant, pressed, status, theme.radius.md.into())
+    style_with_radius(theme, variant, pressed, status, theme.radius.button.into())
 }
 
 fn style_with_radius(

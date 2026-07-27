@@ -51,7 +51,7 @@ where
     let theme = *theme;
     text_input(placeholder, value)
         .padding([theme.spacing.sm, 0.0])
-        .size(theme.typography.sm)
+        .size(theme.typography.caption)
         .style(move |_iced_theme, status| group_input_style(&theme, status))
 }
 
@@ -64,7 +64,7 @@ pub fn style(theme: &Theme, variant: InputVariant) -> iced::widget::container::S
                 InputVariant::Invalid => theme.palette.destructive,
             },
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         ..Default::default()
     }

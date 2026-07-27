@@ -11,7 +11,7 @@ pub enum ProgressVariant {
     Destructive,
 }
 
-/// Pair the bar with adjacent visible status text, such as `42%` or `Complete`.
+/// Builds a compact progress bar for a bounded percentage.
 pub fn progress(percent: f32, variant: ProgressVariant, theme: &Theme) -> ProgressBar<'static> {
     let theme = *theme;
     progress_bar(0.0..=100.0, normalized(percent))
@@ -38,7 +38,7 @@ pub fn style(theme: &Theme, variant: ProgressVariant) -> iced::widget::progress_
 fn tone(theme: &Theme, variant: ProgressVariant) -> iced::Color {
     match variant {
         ProgressVariant::Default => theme.palette.primary,
-        ProgressVariant::Success => theme.palette.success,
+        ProgressVariant::Success => mix(theme.palette.success, theme.palette.foreground, 0.15),
         ProgressVariant::Warning => theme.palette.warning,
         ProgressVariant::Destructive => theme.palette.destructive,
     }

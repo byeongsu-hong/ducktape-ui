@@ -288,7 +288,7 @@ where
         .push(
             text(title)
                 .width(Length::Fill)
-                .size(theme.typography.xl)
+                .size(theme.typography.section_title)
                 .line_height(1.2)
                 .align_x(horizontal)
                 .color(theme.palette.popover_foreground),
@@ -296,7 +296,7 @@ where
         .push(
             text(description)
                 .width(Length::Fill)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .line_height(1.45)
                 .align_x(horizontal)
                 .color(theme.palette.muted_foreground),

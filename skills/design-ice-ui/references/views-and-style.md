@@ -368,8 +368,8 @@ Use `@` utilities for semantic styling or documented wrapper gaps:
 ```ice
 row @w-full bg-surface border border-border rounded-lg
 text "Title" @text-fg font-bold
-input "Name" <-> name @px-4 py-3 bg-surface border border-border rounded-md
-button "Save" @px-4 py-2 bg-primary text-white rounded-md
+input "Name" <-> name @px-13px py-11px bg-surface border border-border rounded-10px
+button "Save" @px-16px py-11px bg-primary text-white rounded-9px
 ```
 
 Accepted utility families:
@@ -379,16 +379,23 @@ Accepted utility families:
 | wrapper size | `w-full`, `h-full` |
 | max width | `max-w-sm` through `max-w-2xl` |
 | alignment | `items-center`, `self-center` on documented targets |
-| spacing | `gap-N`, `p-N`, `px-N`, `py-N` on documented targets |
+| spacing | scaled `gap-N`, `p-N`, `px-N`, `py-N`, or exact integer `Npx`, on documented targets |
 | semantic colors | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` |
 | border | `border`, `border-2` |
-| radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full` |
-| text | `text-xs` through `text-2xl`, `leading-*`, `font-bold` |
+| radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact integer `rounded-Npx` |
+| text | `text-xs` through `text-2xl`, exact positive `text-Npx`, `leading-*`, `font-mono`, `font-medium`, `font-semibold`, `font-bold` |
 | button state | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` |
 | input focus | `focus:border-*` |
 
-Spacing `N` is one of `0 1 2 3 4 5 6 8 10 12 16 20 24` and maps to four
-logical pixels per unit. Opacity utility values are `0 25 50 75 100`.
+Scaled spacing `N` is one of `0 1 2 3 4 5 6 8 10 12 16 20 24` and maps to
+four logical pixels per unit. An integer `px` suffix selects exact spacing or
+radius; exact text sizes may be positive finite decimals. Opacity utility
+values are `0 25 50 75 100`.
+
+Text font utilities are exact: `font-mono` selects iced's generic monospace
+family, while `font-medium`, `font-semibold`, and `font-bold` select weights
+500, 600, and 700 respectively. A typed `font=` family composes with a weight
+utility.
 
 Do not specify the same owned field twice through a typed property and a direct
 utility. The checker reports an ownership conflict. A typed property may

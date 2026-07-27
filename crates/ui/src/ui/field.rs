@@ -1,7 +1,8 @@
 use super::theme::Theme;
-use iced::Element;
+use iced::font::Weight;
 use iced::widget::text::IntoFragment;
 use iced::widget::{Column, column, text};
+use iced::{Element, Font};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldHint<'a> {
@@ -21,15 +22,19 @@ where
 {
     let mut content = column![
         text(label)
-            .size(theme.typography.sm)
-            .color(theme.palette.foreground),
+            .size(theme.typography.field_label)
+            .font(Font {
+                weight: Weight::Semibold,
+                ..Font::MONOSPACE
+            })
+            .color(theme.palette.muted_foreground),
         control.into(),
     ]
     .spacing(theme.spacing.xs);
 
     if let Some(hint) = hint {
         let (copy, color) = hint_style(hint, theme);
-        content = content.push(text(copy).size(theme.typography.xs).color(color));
+        content = content.push(text(copy).size(theme.typography.caption).color(color));
     }
 
     content

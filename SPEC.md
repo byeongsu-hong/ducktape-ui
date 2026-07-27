@@ -1371,7 +1371,9 @@ scroll dir=both viewport=viewport_changed style=task_scroll(loading)
 `text` accepts str, i64, and f64 values plus typed width/height, positive size,
 relative `line-h=` or absolute `line-h-px=`, horizontal and vertical
 alignment, shaping, wrapping, and declared or built-in fonts.
-`font=mono @font-bold` preserves both choices.
+`font=mono @font-semibold` preserves both choices. Weight utilities select
+exact iced weights: `font-medium` is 500, `font-semibold` is 600, and
+`font-bold` is 700.
 
 `input` keeps its required `str` binding and additionally supports checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,
@@ -4313,14 +4315,15 @@ The accepted utility surface is:
 | alignment | `items-center` | row, col, flex |
 | wrapper alignment | `self-center` | row, col, grid, stack, box |
 | overflow | `overflow-hidden` | row, col, flex, grid, stack, box |
-| gap | `gap-*` | row, col, flex, grid, stack |
-| padding | `p-*`, `px-*`, `py-*` | row, col, flex, grid, stack, box, input, button |
-| text size | `text-xs` through `text-2xl` | text |
+| gap | scaled `gap-*` or exact `gap-Npx` | row, col, flex, grid, stack |
+| padding | scaled `p-*`, `px-*`, `py-*` or exact `p-Npx`, `px-Npx`, `py-Npx` | row, col, flex, grid, stack, box, input, button |
+| text size | `text-xs` through `text-2xl` or exact positive `text-Npx` | text |
 | line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text |
-| text weight | `font-bold` | text |
+| text family | `font-mono` | text |
+| text weight | `font-medium`, `font-semibold`, `font-bold` | text |
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
 | border | `border`, `border-2` | visual layout wrappers, box, input, and button |
-| radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full` | layout wrappers, input, and button |
+| radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |
 | states | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` | button |
 | focus | `focus:border-*` | input |
 
@@ -4332,9 +4335,11 @@ selected controls inherit the corresponding `active checked|unchecked` or
 `focused`, and `opened-hovered` additionally inherits `opened`. Later,
 more-specific fields win.
 
-Spacing values are `0 1 2 3 4 5 6 8 10 12 16 20 24` and map to four iced
-logical pixels per unit. Opacity values are `0 25 50 75 100`; color opacity may
-be any integer from 0 through 100.
+Scaled spacing values are `0 1 2 3 4 5 6 8 10 12 16 20 24` and map to four
+iced logical pixels per unit. An integer `px` suffix selects the exact logical
+pixel value instead; exact text size also accepts a positive finite decimal.
+Opacity values are `0 25 50 75 100`; color opacity may be any integer from 0
+through 100.
 
 `border-TOKEN` and `focus:border-TOKEN` require a border width on the same node,
 provided by `border-w=` or a supported wrapper/status `border` utility. A
@@ -4370,8 +4375,9 @@ an in-memory source, or whose file is no longer readable, retain the compact
 coordinate-only form.
 
 `E045` is limited to two current forms that write the same generated field. It
-does not reject callback or fixed-preset base styles, `font=` composed with
-`@font-bold`, or layout utilities that style only a generated outer wrapper.
+does not reject callback or fixed-preset base styles, `font=` composed with a
+font-weight utility, or layout utilities that style only a generated outer
+wrapper.
 Stack `w-full`/`h-full` write both the stack and its wrapper, so combining them
 with typed stack size is rejected. `cargo ice fmt` only normalizes indentation
 and blank lines; it never changes language vocabulary.

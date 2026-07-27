@@ -164,7 +164,7 @@ where
 
         let pick_list = pick_list(Rc::clone(&options), selected, move |option| select(option))
             .padding(Padding::from([8.0, HORIZONTAL_PADDING]))
-            .text_size(theme.typography.sm)
+            .text_size(theme.typography.caption)
             .text_line_height(text::LineHeight::Absolute(Pixels(
                 NATIVE_SELECT_TEXT_LINE_HEIGHT,
             )))
@@ -469,7 +469,7 @@ where
                 text::Text {
                     content: label.clone(),
                     bounds: Size::new(label_clip.width, NATIVE_SELECT_TEXT_LINE_HEIGHT),
-                    size: Pixels(self.theme.typography.sm),
+                    size: Pixels(self.theme.typography.caption),
                     line_height: text::LineHeight::Absolute(Pixels(NATIVE_SELECT_TEXT_LINE_HEIGHT)),
                     font: renderer.default_font(),
                     align_x: label_alignment,
@@ -487,7 +487,7 @@ where
             text::Text {
                 content: iced::Renderer::ARROW_DOWN_ICON.to_string(),
                 bounds: Size::new(CHEVRON_SLOT, NATIVE_SELECT_TEXT_LINE_HEIGHT),
-                size: Pixels(self.theme.typography.sm),
+                size: Pixels(self.theme.typography.caption),
                 line_height: text::LineHeight::Absolute(Pixels(NATIVE_SELECT_TEXT_LINE_HEIGHT)),
                 font: iced::Renderer::ICON_FONT,
                 align_x: handle_alignment,
@@ -514,7 +514,7 @@ where
                     border: Border {
                         color,
                         width: 2.0,
-                        radius: (self.theme.radius.md + 4.0).into(),
+                        radius: (self.theme.radius.button + 4.0).into(),
                     },
                     ..renderer::Quad::default()
                 },
@@ -787,7 +787,7 @@ pub fn state_style(
         border: Border {
             color: border_color,
             width: border_width,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
     }
 }
@@ -798,7 +798,7 @@ pub fn menu_style(theme: &Theme) -> menu::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         text_color: theme.palette.popover_foreground,
         selected_text_color: theme.palette.accent_foreground,

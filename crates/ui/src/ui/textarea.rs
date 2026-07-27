@@ -34,7 +34,7 @@ where
         .placeholder(placeholder)
         .min_height(96)
         .padding([theme.spacing.sm, theme.spacing.md])
-        .size(theme.typography.sm)
+        .size(theme.typography.body)
         .style(move |_iced_theme, status| style(&theme, variant, status))
 }
 
@@ -95,7 +95,7 @@ pub fn style(
         border: Border {
             color: border,
             width,
-            radius: theme.radius.md.into(),
+            radius: theme.radius.button.into(),
         },
         placeholder,
         value,

@@ -17,24 +17,26 @@ fn parses_compact_app() {
 #[test]
 fn parses_semantic_style_recipes() {
     let document = parse(
-        "app Demo\nrecipe panel for box\n  @w-full p-5 bg-surface border border-border rounded-lg\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\"\n",
+        "app Demo\nrecipe panel for box\n  @w-full px-16px py-11px bg-surface border border-border rounded-9px\nrecipe label for text\n  @text-12.5px\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\" @label\n",
     )
     .unwrap();
 
-    assert_eq!(document.recipes.len(), 1);
+    assert_eq!(document.recipes.len(), 2);
     assert_eq!(document.recipes[0].name, "panel");
     assert_eq!(document.recipes[0].target, StyleRecipeTarget::Container);
     assert_eq!(
         document.recipes[0].utilities,
         [
             "w-full",
-            "p-5",
+            "px-16px",
+            "py-11px",
             "bg-surface",
             "border",
             "border-border",
-            "rounded-lg"
+            "rounded-9px"
         ]
     );
+    assert_eq!(document.recipes[1].utilities, ["text-12.5px"]);
 }
 
 #[test]

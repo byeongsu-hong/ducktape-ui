@@ -18,7 +18,7 @@ where
     let mut copy = Column::new()
         .push(
             text(title)
-                .size(theme.typography.base)
+                .size(theme.typography.list)
                 .color(theme.palette.foreground),
         )
         .spacing(metrics.copy_gap)
@@ -27,7 +27,7 @@ where
     if let Some(description) = description {
         copy = copy.push(
             text(description)
-                .size(theme.typography.sm)
+                .size(theme.typography.caption)
                 .color(theme.palette.muted_foreground),
         );
     }

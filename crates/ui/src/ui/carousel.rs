@@ -655,7 +655,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
                     border: Border {
                         color: self.theme.palette.ring,
                         width: 2.0,
-                        radius: self.theme.radius.lg.into(),
+                        radius: self.theme.radius.card.into(),
                     },
                     ..renderer::Quad::default()
                 },
@@ -843,7 +843,7 @@ where
         id,
         state,
         on_press,
-        text(control_label(true, orientation, direction)).size(theme.typography.sm),
+        text(control_label(true, orientation, direction)).size(theme.typography.caption),
         theme,
     )
 }
@@ -878,7 +878,7 @@ where
         id,
         state,
         on_press,
-        text(control_label(false, orientation, direction)).size(theme.typography.sm),
+        text(control_label(false, orientation, direction)).size(theme.typography.caption),
         theme,
     )
 }
@@ -948,7 +948,7 @@ fn control_style(theme: &Theme, status: Status) -> focus_control::Style {
             theme.palette.input
         },
         width: 1.0,
-        radius: theme.radius.md.into(),
+        radius: theme.radius.button.into(),
     };
     style
 }
@@ -973,7 +973,7 @@ where
         direction,
         |index, _selected| {
             text((index + 1).to_string())
-                .size(theme.typography.xs)
+                .size(theme.typography.meta_compact)
                 .into()
         },
         theme,

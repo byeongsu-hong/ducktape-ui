@@ -17,7 +17,7 @@ where
 
     container(
         text(key)
-            .size(theme.typography.xs)
+            .size(theme.typography.meta)
             .font(font)
             .color(theme.palette.muted_foreground),
     )
@@ -32,7 +32,7 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.sm.into(),
+            radius: theme.radius.chip.into(),
         },
         ..Default::default()
     }
@@ -52,6 +52,6 @@ mod tests {
         );
         assert_eq!(style.text_color, Some(LIGHT.palette.muted_foreground));
         assert_eq!(style.border.color, LIGHT.palette.border);
-        assert_eq!(style.border.radius, LIGHT.radius.sm.into());
+        assert_eq!(style.border.radius, LIGHT.radius.chip.into());
     }
 }

@@ -31,25 +31,25 @@ pub fn style(theme: &Theme, variant: SurfaceVariant) -> iced::widget::container:
             palette.background,
             palette.foreground,
             palette.border,
-            theme.radius.lg,
+            theme.radius.card,
         ),
         SurfaceVariant::Card => (
             palette.card,
             palette.card_foreground,
             palette.border,
-            theme.radius.xl,
+            theme.radius.card,
         ),
         SurfaceVariant::Muted => (
             palette.muted,
             palette.foreground,
             palette.border,
-            theme.radius.lg,
+            theme.radius.card,
         ),
         SurfaceVariant::Popover => (
             palette.popover,
             palette.popover_foreground,
             palette.input,
-            theme.radius.lg,
+            theme.radius.card,
         ),
     };
 

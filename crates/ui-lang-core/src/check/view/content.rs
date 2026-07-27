@@ -42,6 +42,7 @@ pub(in crate::check) fn infer_content_group(
                     typed_color: color.is_some(),
                     typed_size: options.size.is_some(),
                     typed_line_height: options.line_height.is_some(),
+                    typed_font: options.font.is_some(),
                 },
             )?;
             if color

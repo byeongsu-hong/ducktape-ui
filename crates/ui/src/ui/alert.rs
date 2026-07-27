@@ -35,7 +35,7 @@ pub fn style(theme: &Theme, variant: AlertVariant) -> iced::widget::container::S
         border: Border {
             color: mix(theme.palette.background, tone, 0.25),
             width: 1.0,
-            radius: theme.radius.lg.into(),
+            radius: theme.radius.card.into(),
         },
         ..Default::default()
     }

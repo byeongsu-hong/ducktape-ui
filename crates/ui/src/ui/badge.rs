@@ -145,7 +145,7 @@ fn style_with_dot(
         border: Border {
             color: border,
             width: 1.0,
-            radius: 999.0.into(),
+            radius: theme.radius.chip.into(),
         },
         ..Default::default()
     }
@@ -175,14 +175,14 @@ fn metrics(size: BadgeSize, theme: &Theme) -> Metrics {
         BadgeSize::Small => Metrics {
             vertical: 1.0,
             horizontal: 6.0,
-            text: theme.typography.xs,
+            text: theme.typography.badge,
             dot: 6.0,
             gap: 3.0,
         },
         BadgeSize::Default => Metrics {
             vertical: 2.0,
             horizontal: 8.0,
-            text: theme.typography.sm,
+            text: theme.typography.nav_label,
             dot: 8.0,
             gap: 4.0,
         },
@@ -226,11 +226,14 @@ mod tests {
     #[test]
     fn size_controls_label_and_marker_together() {
         assert_eq!(metrics(BadgeSize::Small, &LIGHT).dot, 6.0);
-        assert_eq!(metrics(BadgeSize::Small, &LIGHT).text, LIGHT.typography.xs);
+        assert_eq!(
+            metrics(BadgeSize::Small, &LIGHT).text,
+            LIGHT.typography.badge
+        );
         assert_eq!(metrics(BadgeSize::Default, &LIGHT).dot, 8.0);
         assert_eq!(
             metrics(BadgeSize::Default, &LIGHT).text,
-            LIGHT.typography.sm
+            LIGHT.typography.nav_label
         );
     }
 

@@ -305,7 +305,7 @@ where
                 .then_some(Background::Color(theme.palette.muted)),
             border: Border {
                 radius: if variant == TabsVariant::Default {
-                    theme.radius.lg.into()
+                    theme.radius.card.into()
                 } else {
                     0.0.into()
                 },
@@ -442,7 +442,7 @@ fn trigger_style(
         } else {
             0.0
         },
-        radius: theme.radius.md.into(),
+        radius: theme.radius.button.into(),
     };
     style.shadow = if variant == TabsVariant::Default && selected {
         Shadow {

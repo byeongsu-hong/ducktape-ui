@@ -514,7 +514,7 @@ where
             .on_input(move |query| on_query(CommandEvent::QueryChanged(query)))
             .on_submit_maybe(on_submit)
             .padding([8.0, 12.0])
-            .size(self.theme.typography.sm)
+            .size(self.theme.typography.caption)
             .line_height(LineHeight::Absolute(Pixels(20.0)))
             .width(Length::Fill)
             .style(move |_iced_theme, status| command_input_style(&input_theme, status));
@@ -558,7 +558,7 @@ where
                 } else {
                     let label = container(
                         text(item.label)
-                            .size(self.theme.typography.sm)
+                            .size(self.theme.typography.caption)
                             .line_height(LineHeight::Absolute(Pixels(16.0))),
                     )
                     .width(Length::Fill)
@@ -573,7 +573,7 @@ where
                         row = row.push(
                             container(
                                 text(shortcut)
-                                    .size(self.theme.typography.xs)
+                                    .size(self.theme.typography.meta_compact)
                                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                                     .color(shortcut_color),
                             )
@@ -626,7 +626,7 @@ where
             self.empty_content.unwrap_or_else(|| {
                 container(
                     text(self.empty)
-                        .size(self.theme.typography.sm)
+                        .size(self.theme.typography.caption)
                         .color(self.theme.palette.muted_foreground),
                 )
                 .center_x(Length::Fill)
@@ -670,7 +670,7 @@ where
 {
     container(
         text(heading)
-            .size(theme.typography.xs)
+            .size(theme.typography.meta_compact)
             .line_height(LineHeight::Absolute(Pixels(16.0)))
             .color(theme.palette.muted_foreground),
     )
@@ -828,7 +828,7 @@ pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
         border: Border {
             color: theme.palette.border,
             width: 1.0,
-            radius: theme.radius.lg.into(),
+            radius: theme.radius.card.into(),
         },
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.14),
@@ -842,7 +842,7 @@ pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
 pub fn command_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = base_input_style(theme, InputVariant::Default, status);
     style.border = Border {
-        radius: theme.radius.lg.into(),
+        radius: theme.radius.card.into(),
         ..Border::default()
     };
     style.background = match status {
@@ -880,8 +880,8 @@ pub fn command_item_style(theme: &Theme, selected: bool, status: Status) -> focu
     } else {
         theme.palette.popover_foreground
     });
-    style.border.radius = theme.radius.sm.into();
-    style.focus_ring.radius = (theme.radius.sm + 2.0).into();
+    style.border.radius = theme.radius.row.into();
+    style.focus_ring.radius = (theme.radius.row + 2.0).into();
     style.focus_ring.width = 1.5;
     style.focus_offset = 1.0;
     style

@@ -378,24 +378,8 @@ pub(in crate::codegen) fn render_rich_span(
         )
         .unwrap();
     }
-    if let Some(font) = &item.options.font {
-        let font = font_preset_code(font, document)?;
-        if style.bold {
-            write!(
-                code,
-                ".font(::iced::Font {{ weight: ::iced::font::Weight::Bold, ..{font} }})"
-            )
-            .unwrap();
-        } else {
-            write!(code, ".font({font})").unwrap();
-        }
-    } else if style.bold {
-        let font = app_default_font_code(document);
-        write!(
-            code,
-            ".font(::iced::Font {{ weight: ::iced::font::Weight::Bold, ..{font} }})"
-        )
-        .unwrap();
+    if let Some(font) = styled_font_code(item.options.font.as_ref(), &style, document)? {
+        write!(code, ".font({font})").unwrap();
     }
     if let Some(color) = item.options.color.as_ref().or(style.text_color.as_ref()) {
         write!(code, ".color({})", theme_color(document, color)).unwrap();
