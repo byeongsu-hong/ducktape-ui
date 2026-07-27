@@ -27,6 +27,18 @@ pub(crate) fn expr_type(
         }
         Expr::None => Ok(Type::Option(Box::new(Type::Unknown))),
         Expr::Path(path) => {
+            if let [enum_name, variant_name] = path.as_slice()
+                && let Some((_, variant)) = ui_enum_variant(document, enum_name, variant_name)
+            {
+                if variant.payload.is_some() {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        format!("enum variant `{enum_name}.{variant_name}` requires one payload"),
+                    ));
+                }
+                return Ok(Type::Named(enum_name.clone()));
+            }
             let mut ty = env
                 .get(&path[0])
                 .cloned()
@@ -37,6 +49,26 @@ pub(crate) fn expr_type(
             Ok(ty)
         }
         Expr::Call { name, args } => {
+            if let Some((enum_name, variant_name)) = name.split_once('.')
+                && let Some((_, variant)) = ui_enum_variant(document, enum_name, variant_name)
+            {
+                let Some(payload) = &variant.payload else {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        format!("enum variant `{name}` has no payload and is written without `()`"),
+                    ));
+                };
+                if args.len() != 1 {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        format!("enum variant `{name}` expects one payload"),
+                    ));
+                }
+                require_type(&expr_type(&args[0], env, document, span)?, payload, span)?;
+                return Ok(Type::Named(enum_name.to_owned()));
+            }
             if let Some(function) = document
                 .functions
                 .iter()
@@ -1763,6 +1795,24 @@ pub(crate) fn expr_type(
                         &args[0], env, document, span,
                     )?)))
                 }
+                "ok" => {
+                    if args.len() != 1 {
+                        return Err(Error::new("E152", span, "ok expects one argument"));
+                    }
+                    Ok(Type::Result(
+                        Box::new(expr_type(&args[0], env, document, span)?),
+                        Box::new(Type::Unknown),
+                    ))
+                }
+                "err" => {
+                    if args.len() != 1 {
+                        return Err(Error::new("E152", span, "err expects one argument"));
+                    }
+                    Ok(Type::Result(
+                        Box::new(Type::Unknown),
+                        Box::new(expr_type(&args[0], env, document, span)?),
+                    ))
+                }
                 "markdown" => {
                     if args.len() != 1 {
                         return Err(Error::new("E152", span, "markdown expects one argument"));
@@ -1897,6 +1947,13 @@ pub(crate) fn expr_type(
                 | BinaryOp::LtEq
                 | BinaryOp::Gt
                 | BinaryOp::GtEq => {
+                    if contains_ui_enum(&left, document) || contains_ui_enum(&right, document) {
+                        return Err(Error::new(
+                            "E153",
+                            span,
+                            "UI enum values use exhaustive match instead of comparison",
+                        ));
+                    }
                     if contains_task_handle(&left) || contains_task_handle(&right) {
                         return Err(Error::new(
                             "E153",
@@ -2062,6 +2119,32 @@ pub(crate) fn expr_type(
                 }
             }
         }
+    }
+}
+
+fn ui_enum_variant<'a>(
+    document: &'a Document,
+    enum_name: &str,
+    variant_name: &str,
+) -> Option<(&'a UiEnum, &'a UiEnumVariant)> {
+    let item = document.enums.iter().find(|item| item.name == enum_name)?;
+    let variant = item
+        .variants
+        .iter()
+        .find(|variant| variant.name == variant_name)?;
+    Some((item, variant))
+}
+
+pub(in crate::check) fn contains_ui_enum(ty: &Type, document: &Document) -> bool {
+    match ty {
+        Type::Named(name) => document.enums.iter().any(|item| item.name == *name),
+        Type::List(inner) | Type::Option(inner) | Type::Combo(inner) | Type::Animation(inner) => {
+            contains_ui_enum(inner, document)
+        }
+        Type::Result(output, error) => {
+            contains_ui_enum(output, document) || contains_ui_enum(error, document)
+        }
+        _ => false,
     }
 }
 

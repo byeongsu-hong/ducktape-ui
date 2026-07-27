@@ -323,6 +323,11 @@ pub(in crate::codegen) fn pane_grids(root: &ViewNode) -> Vec<&ViewNode> {
                     collect(child, output);
                 }
             }
+            ViewNode::Match { arms, .. } => {
+                for child in arms.iter().flat_map(|arm| &arm.children) {
+                    collect(child, output);
+                }
+            }
             ViewNode::Tooltip { content, tip, .. } => {
                 collect(content, output);
                 collect(tip, output);
@@ -436,6 +441,11 @@ pub(in crate::codegen) fn canvases(
                     collect(child, output);
                 }
             }
+            ViewNode::Match { arms, .. } => {
+                for child in arms.iter().flat_map(|arm| &arm.children) {
+                    collect(child, output);
+                }
+            }
             ViewNode::Tooltip { content, tip, .. } => {
                 collect(content, output);
                 collect(tip, output);
@@ -537,6 +547,7 @@ pub(in crate::codegen) fn needs_extern_noop(document: &Document) -> bool {
             ViewNode::Layout { children, .. }
             | ViewNode::If { children, .. }
             | ViewNode::For { children, .. } => children.iter().any(contains),
+            ViewNode::Match { arms, .. } => arms.iter().flat_map(|arm| &arm.children).any(contains),
             ViewNode::Tooltip { content, tip, .. } => contains(content) || contains(tip),
             ViewNode::Overlay { .. } => true,
             ViewNode::PaneGrid {

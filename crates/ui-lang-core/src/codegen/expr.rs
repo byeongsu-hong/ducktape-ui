@@ -52,6 +52,20 @@ pub(in crate::codegen) fn expr_code(
         Expr::List(values) => format!("::std::vec![{}]", expr_list_code(values, env, document)?),
         Expr::None => "::std::option::Option::None".into(),
         Expr::Path(path) => {
+            if let [enum_name, variant_name] = path.as_slice()
+                && document.enums.iter().any(|item| {
+                    item.name == *enum_name
+                        && item.variants.iter().any(|variant| {
+                            variant.name == *variant_name && variant.payload.is_none()
+                        })
+                })
+            {
+                return Ok(format!(
+                    "{}::{}",
+                    generated_named_rust(enum_name),
+                    pascal(variant_name)
+                ));
+            }
             let binding = env.get(&path[0]).ok_or_else(|| {
                 Error::new(
                     "E150",
@@ -162,6 +176,21 @@ pub(in crate::codegen) fn expr_code(
             code
         }
         Expr::Call { name, args } => {
+            if let Some((enum_name, variant_name)) = name.split_once('.')
+                && document.enums.iter().any(|item| {
+                    item.name == enum_name
+                        && item.variants.iter().any(|variant| {
+                            variant.name == variant_name && variant.payload.is_some()
+                        })
+                })
+            {
+                return Ok(format!(
+                    "{}::{}({})",
+                    generated_named_rust(enum_name),
+                    pascal(variant_name),
+                    expr_code(&args[0], env, document, ValueMode::Owned)?
+                ));
+            }
             if let Some(function) = find_extern_function(document, name, ExternKind::Sync) {
                 let args = expr_list_code(args, env, document)?;
                 return Ok(format!("{}({args})", function.rust_path));
@@ -1435,6 +1464,14 @@ pub(in crate::codegen) fn expr_code(
             ),
             "some" => format!(
                 "::std::option::Option::Some({})",
+                expr_code(&args[0], env, document, ValueMode::Owned)?
+            ),
+            "ok" => format!(
+                "::std::result::Result::Ok({})",
+                expr_code(&args[0], env, document, ValueMode::Owned)?
+            ),
+            "err" => format!(
+                "::std::result::Result::Err({})",
                 expr_code(&args[0], env, document, ValueMode::Owned)?
             ),
             "markdown" => format!(

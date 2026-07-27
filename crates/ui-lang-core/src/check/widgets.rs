@@ -79,6 +79,39 @@ fn collect_widget_ids(
         Ok(())
     }
 
+    fn match_binding_type(
+        pattern: &MatchPattern,
+        value_ty: &Type,
+        document: &Document,
+    ) -> Option<(String, Type)> {
+        match (pattern, value_ty) {
+            (MatchPattern::Some(binding), Type::Option(inner)) => {
+                Some((binding.clone(), inner.as_ref().clone()))
+            }
+            (MatchPattern::Ok(binding), Type::Result(output, _)) => {
+                Some((binding.clone(), output.as_ref().clone()))
+            }
+            (MatchPattern::Err(binding), Type::Result(_, error)) => {
+                Some((binding.clone(), error.as_ref().clone()))
+            }
+            (
+                MatchPattern::Enum {
+                    enum_name,
+                    variant,
+                    binding: Some(binding),
+                },
+                Type::Named(name),
+            ) if enum_name == name => document
+                .enums
+                .iter()
+                .find(|item| item.name == *enum_name)
+                .and_then(|item| item.variants.iter().find(|item| item.name == *variant))
+                .and_then(|variant| variant.payload.clone())
+                .map(|payload| (binding.clone(), payload)),
+            _ => None,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn collect(
         node: &ViewNode,
@@ -222,6 +255,29 @@ fn collect_widget_ids(
                         component_scopes,
                         inspect_all,
                     )?;
+                }
+            }
+            ViewNode::Match { value, arms, span } => {
+                let value_ty = expr_type(value, env, document, span)?;
+                for arm in arms {
+                    let mut child_env = env.clone();
+                    if let Some((name, ty)) = match_binding_type(&arm.pattern, &value_ty, document)
+                    {
+                        child_env.insert(name, ty);
+                    }
+                    for child in &arm.children {
+                        collect(
+                            child,
+                            &child_env,
+                            document,
+                            scope,
+                            slot,
+                            components,
+                            output,
+                            component_scopes,
+                            inspect_all,
+                        )?;
+                    }
                 }
             }
             ViewNode::KeyedColumn {
@@ -905,6 +961,11 @@ pub(in crate::check) fn static_pane_grids(
             | ViewNode::If { children, .. }
             | ViewNode::For { children, .. } => {
                 for child in children {
+                    collect(child, states, document, output)?;
+                }
+            }
+            ViewNode::Match { arms, .. } => {
+                for child in arms.iter().flat_map(|arm| &arm.children) {
                     collect(child, states, document, output)?;
                 }
             }

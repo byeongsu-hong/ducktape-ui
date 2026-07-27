@@ -647,6 +647,40 @@ fn render_flex_children(
                 )?;
                 out.push_str(" }");
             }
+            ViewNode::Match { value, arms, span } => {
+                let value_ty = expr_type(value, &env_types(env), document, span)?;
+                let value = expr_code(value, env, document, ValueMode::Borrowed)?;
+                write!(out, " match &({value}) {{").unwrap();
+                for arm in arms {
+                    write!(out, " {} => {{", match_pattern_code(&arm.pattern)).unwrap();
+                    let mut child_env = env.clone();
+                    if let Some((name, ty)) =
+                        match_pattern_binding(&arm.pattern, &value_ty, document)
+                    {
+                        child_env.insert(
+                            name.clone(),
+                            Binding {
+                                code: name,
+                                ty,
+                                local: false,
+                                state: None,
+                            },
+                        );
+                    }
+                    render_flex_children(
+                        out,
+                        &arm.children,
+                        document,
+                        message,
+                        &child_env,
+                        scope,
+                        slot,
+                        min_cell,
+                    )?;
+                    out.push_str(" },");
+                }
+                out.push_str(" }");
+            }
             _ => {
                 let rendered = render_node(child, document, message, env, scope, slot)?;
                 let item = if let Some(min_cell) = min_cell {

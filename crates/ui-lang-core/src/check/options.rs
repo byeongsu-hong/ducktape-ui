@@ -45,6 +45,12 @@ pub(in crate::check) fn check_lazy_subtree(
             }
             Ok(())
         }
+        ViewNode::Match { arms, .. } => {
+            for child in arms.iter().flat_map(|arm| &arm.children) {
+                check_lazy_subtree(child, document, components, supplied_slot)?;
+            }
+            Ok(())
+        }
         ViewNode::Button {
             content: Some(content),
             ..

@@ -37,6 +37,10 @@ pub(in crate::check) fn infer_documents_group(
                 infer_view(child, &child_env, document, signatures, ids)?;
             }
         }
+        ViewNode::Match { value, arms, span } => {
+            let value_ty = expr_type(value, env, document, span)?;
+            infer_match_arms(&value_ty, arms, env, document, signatures, ids, span)?;
+        }
         ViewNode::KeyedColumn {
             item,
             items,
@@ -90,7 +94,7 @@ pub(in crate::check) fn infer_documents_group(
         } => {
             check_id(id, env, document, ids, span)?;
             let dependency_type = expr_type(dependency, env, document, span)?;
-            if !lazy_hashable(&dependency_type) {
+            if !lazy_hashable(&dependency_type) || contains_ui_enum(&dependency_type, document) {
                 return Err(Error::new(
                     "E139",
                     span,
@@ -270,4 +274,161 @@ pub(in crate::check) fn infer_documents_group(
         _ => return Ok(false),
     };
     Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn infer_match_arms(
+    value_ty: &Type,
+    arms: &[MatchArm],
+    env: &HashMap<String, Type>,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    ids: &mut HashSet<String>,
+    span: &Span,
+) -> Result<(), Error> {
+    let mut covered = HashSet::new();
+    let wildcard = arms
+        .iter()
+        .any(|arm| matches!(arm.pattern, MatchPattern::Wildcard));
+    for arm in arms {
+        let binding = match (value_ty, &arm.pattern) {
+            (Type::Option(inner), MatchPattern::Some(name)) => {
+                if !covered.insert("some".to_owned()) {
+                    return Err(Error::new("E195", &arm.span, "duplicate `some` match arm"));
+                }
+                Some((name, inner.as_ref().clone()))
+            }
+            (Type::Option(_), MatchPattern::None) => {
+                if !covered.insert("none".to_owned()) {
+                    return Err(Error::new("E195", &arm.span, "duplicate `none` match arm"));
+                }
+                None
+            }
+            (Type::Result(output, _), MatchPattern::Ok(name)) => {
+                if !covered.insert("ok".to_owned()) {
+                    return Err(Error::new("E195", &arm.span, "duplicate `ok` match arm"));
+                }
+                Some((name, output.as_ref().clone()))
+            }
+            (Type::Result(_, error_ty), MatchPattern::Err(name)) => {
+                if !covered.insert("err".to_owned()) {
+                    return Err(Error::new("E195", &arm.span, "duplicate `err` match arm"));
+                }
+                Some((name, error_ty.as_ref().clone()))
+            }
+            (
+                Type::Named(name),
+                MatchPattern::Enum {
+                    enum_name,
+                    variant,
+                    binding,
+                },
+            ) => {
+                let item = document
+                    .enums
+                    .iter()
+                    .find(|item| item.name == *name)
+                    .ok_or_else(|| pattern_type_error(value_ty, &arm.span))?;
+                if enum_name != name {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!("expected `{name}` pattern, got `{enum_name}.{variant}`"),
+                    ));
+                }
+                let declared = item
+                    .variants
+                    .iter()
+                    .find(|declared| declared.name == *variant)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E195",
+                            &arm.span,
+                            format!("unknown `{name}` variant `{variant}`"),
+                        )
+                    })?;
+                if !covered.insert(variant.clone()) {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!("duplicate `{name}.{variant}` match arm"),
+                    ));
+                }
+                match (&declared.payload, binding) {
+                    (Some(payload), Some(binding)) => Some((binding, payload.clone())),
+                    (Some(_), None) => {
+                        return Err(Error::new(
+                            "E195",
+                            &arm.span,
+                            format!("`{name}.{variant}` pattern must bind its payload"),
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Error::new(
+                            "E195",
+                            &arm.span,
+                            format!("`{name}.{variant}` has no payload to bind"),
+                        ));
+                    }
+                    (None, None) => None,
+                }
+            }
+            (_, MatchPattern::Wildcard) => None,
+            _ => return Err(pattern_type_error(value_ty, &arm.span)),
+        };
+        let mut child_env = env.clone();
+        if let Some((name, ty)) = binding {
+            child_env.insert(name.clone(), ty);
+        }
+        for child in &arm.children {
+            infer_view(child, &child_env, document, signatures, ids)?;
+        }
+    }
+
+    if wildcard {
+        return Ok(());
+    }
+    let missing = match value_ty {
+        Type::Option(_) => ["some", "none"]
+            .into_iter()
+            .filter(|name| !covered.contains(*name))
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        Type::Result(_, _) => ["ok", "err"]
+            .into_iter()
+            .filter(|name| !covered.contains(*name))
+            .map(str::to_owned)
+            .collect(),
+        Type::Named(name) => document
+            .enums
+            .iter()
+            .find(|item| item.name == *name)
+            .ok_or_else(|| pattern_type_error(value_ty, span))?
+            .variants
+            .iter()
+            .filter(|variant| !covered.contains(&variant.name))
+            .map(|variant| format!("{name}.{}", variant.name))
+            .collect(),
+        _ => return Err(pattern_type_error(value_ty, span)),
+    };
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::new(
+            "E195",
+            span,
+            format!("non-exhaustive match; missing {}", missing.join(", ")),
+        ))
+    }
+}
+
+fn pattern_type_error(ty: &Type, span: &Span) -> Error {
+    Error::new(
+        "E195",
+        span,
+        format!(
+            "typed match patterns require option, result, or UI enum; got `{}`",
+            ty.display()
+        ),
+    )
 }

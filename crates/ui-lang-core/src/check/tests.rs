@@ -9,6 +9,8 @@ mod events;
 mod native;
 #[path = "tests/platform.rs"]
 mod platform;
+#[path = "tests/sum_types.rs"]
+mod sum_types;
 #[path = "tests/tasks.rs"]
 mod tasks;
 #[path = "tests/testing.rs"]

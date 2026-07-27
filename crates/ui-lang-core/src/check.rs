@@ -579,8 +579,8 @@ use testing::*;
 use view::*;
 use widgets::*;
 
-use expr::check_length_value;
 pub(crate) use expr::expr_type;
+use expr::{check_length_value, contains_ui_enum};
 pub(crate) use handler::task_flow_type;
 
 pub(in crate::check) type WidgetIdPath = Vec<(String, Option<Type>)>;

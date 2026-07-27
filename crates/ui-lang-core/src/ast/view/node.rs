@@ -170,6 +170,11 @@ pub enum ViewNode {
         children: Vec<ViewNode>,
         span: Span,
     },
+    Match {
+        value: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
     For {
         item: String,
         items: Expr,
@@ -323,4 +328,38 @@ pub enum ViewNode {
         height: Option<LengthValue>,
         span: Span,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub children: Vec<ViewNode>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub enum MatchPattern {
+    Some(String),
+    None,
+    Ok(String),
+    Err(String),
+    Enum {
+        enum_name: String,
+        variant: String,
+        binding: Option<String>,
+    },
+    Wildcard,
+}
+
+impl MatchPattern {
+    pub fn binding(&self) -> Option<&str> {
+        match self {
+            Self::Some(binding) | Self::Ok(binding) | Self::Err(binding) => Some(binding),
+            Self::Enum {
+                binding: Some(binding),
+                ..
+            } => Some(binding),
+            Self::None | Self::Enum { binding: None, .. } | Self::Wildcard => None,
+        }
+    }
 }

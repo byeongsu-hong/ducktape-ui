@@ -24,6 +24,62 @@ fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
     );
 }
 
+fn match_pattern_code(pattern: &MatchPattern) -> String {
+    match pattern {
+        MatchPattern::Some(binding) => {
+            format!("::std::option::Option::Some({binding})")
+        }
+        MatchPattern::None => "::std::option::Option::None".into(),
+        MatchPattern::Ok(binding) => format!("::std::result::Result::Ok({binding})"),
+        MatchPattern::Err(binding) => format!("::std::result::Result::Err({binding})"),
+        MatchPattern::Enum {
+            enum_name,
+            variant,
+            binding,
+        } => {
+            let enum_name = generated_named_rust(enum_name);
+            binding.as_ref().map_or_else(
+                || format!("{enum_name}::{}", pascal(variant)),
+                |binding| format!("{enum_name}::{}({binding})", pascal(variant)),
+            )
+        }
+        MatchPattern::Wildcard => "_".into(),
+    }
+}
+
+fn match_pattern_binding(
+    pattern: &MatchPattern,
+    value_ty: &Type,
+    document: &Document,
+) -> Option<(String, Type)> {
+    match (pattern, value_ty) {
+        (MatchPattern::Some(binding), Type::Option(inner)) => {
+            Some((binding.clone(), inner.as_ref().clone()))
+        }
+        (MatchPattern::Ok(binding), Type::Result(output, _)) => {
+            Some((binding.clone(), output.as_ref().clone()))
+        }
+        (MatchPattern::Err(binding), Type::Result(_, error)) => {
+            Some((binding.clone(), error.as_ref().clone()))
+        }
+        (
+            MatchPattern::Enum {
+                enum_name,
+                variant,
+                binding: Some(binding),
+            },
+            Type::Named(name),
+        ) if enum_name == name => document
+            .enums
+            .iter()
+            .find(|item| item.name == *enum_name)
+            .and_then(|item| item.variants.iter().find(|item| item.name == *variant))
+            .and_then(|variant| variant.payload.clone())
+            .map(|payload| (binding.clone(), payload)),
+        _ => None,
+    }
+}
+
 pub(in crate::codegen) fn find_extern_function<'a>(
     document: &'a Document,
     name: &str,
@@ -112,6 +168,24 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_widget_selector_types(&mut out, document);
     generate_canvas_types(&mut out, document);
     generate_pane_types(&mut out, document)?;
+
+    for item in &document.enums {
+        writeln!(
+            out,
+            "#[derive(Clone)]\npub(crate) enum {} {{",
+            generated_named_rust(&item.name)
+        )
+        .unwrap();
+        for variant in &item.variants {
+            let name = pascal(&variant.name);
+            if let Some(payload) = &variant.payload {
+                writeln!(out, "{name}({}),", payload.rust(&document.structs)).unwrap();
+            } else {
+                writeln!(out, "{name},").unwrap();
+            }
+        }
+        writeln!(out, "}}").unwrap();
+    }
 
     for component in document
         .components

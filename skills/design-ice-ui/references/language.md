@@ -2,7 +2,7 @@
 
 Use this reference for the source model, declarations, types, expressions,
 state, handlers, routes, and components. The repository implements language
-revision 1.64; package version `0.1.0` and Iced version `0.14.x` are separate
+revision 2.0; package version `0.1.0` and Iced version `0.14.x` are separate
 version axes.
 
 ## Contents
@@ -79,6 +79,7 @@ extern
 theme
 recipe
 font / qr
+enum
 state
 preset
 component
@@ -223,6 +224,7 @@ Common Ice types:
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
+| declared UI enum `Name` | generated cloneable Rust enum `Name` |
 | named `Task` | declared Rust struct |
 | `unit` | `()` |
 
@@ -495,7 +497,42 @@ lazy loading as busy
     text "Working"
 ```
 
-`match` uses first-match semantics; `_` is an optional final fallback.
+Literal `match` uses first-match semantics; `_` is an optional final fallback.
+Option and result patterns are exhaustive:
+
+```ice
+match choice
+  some(value)
+    text value
+  none
+    text "Not selected"
+
+match outcome
+  ok(value)
+    text value
+  err(error)
+    text error
+```
+
+Top-level, non-generic UI enums use zero or one cloneable payload per variant.
+They cannot be recursive. Constructors and exhaustive patterns share the same
+spelling; a payload binding exists only inside its arm:
+
+```ice
+enum RequestState
+  idle
+  ready([Task])
+  failed(AppError)
+
+match request
+  RequestState.idle
+    text "Idle"
+  RequestState.ready(tasks)
+    TaskList tasks=tasks
+  RequestState.failed(error)
+    text error.message
+```
+
 `for` renders a checked list. `keyed` provides stable reconciliation identity.
 `lazy dependency as name` rebuilds only when its hashable dependency changes.
 

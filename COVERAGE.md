@@ -6,7 +6,7 @@ resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
 This is an implementation inventory, not a roadmap. A partial or missing row does
 not imply planned Ice syntax; uncommon behavior should use an existing typed
 Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-Language revision 1.70 and the workspace's pre-1.0 package version `0.1.0`
+Language revision 2.0 and the workspace's pre-1.0 package version `0.1.0`
 are intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
@@ -36,6 +36,9 @@ runtime reactive graph. Handler-local `let` values use the same closed typed
 expression language, are immutable and non-shadowing, and remain available to
 later assignments, guards, and the final task. Parser, checker, codegen, schema,
 README, and reference-app tests are direct evidence for both constructs.
+Core view control includes checked `if`, `for`, first-match literal `match`
+arms, and exhaustive Option/Result/UI-enum payload patterns. UI enums are
+non-generic, non-recursive cloneable data; match payloads are block-scoped.
 Components may own ordinary cloneable state and local handlers, including
 Future externs; `run latest` filters stale completions by scope and call site.
 Writable component inputs are explicit `bind` props; calls use `<->` with a
@@ -49,7 +52,7 @@ Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
 interaction-specific delta.
 
-Top-level semantic style recipes are native Core declarations in 1.70. They
+Top-level semantic style recipes are native Core declarations in 2.0. They
 package checked utility tokens for one declared target (`col`, `row`, `flex`,
 `grid`, `stack`, `box`, `text`, `input`, or `button`), optionally specialize
 one same-target base, expand base-first across imported source graphs, preserve
@@ -64,7 +67,7 @@ participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
-Component contracts in 1.70 support checked prop defaults. Missing named
+Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values
 cannot be defaulted.
@@ -72,7 +75,7 @@ Required props must precede defaulted props.
 Parser, checker, formatter, and codegen tests cover omission, override, type and
 capture errors, and mutable-value rejection.
 
-First-class Ice tests are native in 1.70. Top-level `test` declarations reuse
+First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. A persistent headless Iced cache drives click, hover,
 press/release, typing, keys, viewport changes, dispatch, update, and recursive
@@ -91,11 +94,11 @@ The scoped implementation score is **100%** on all three executable inventories:
 
 - **59/59 public ledger rows are native.** No row below is `partial` or
   `missing` for the pinned iced baseline.
-- **47/47 render-node kinds have a runtime witness.** The dedicated
+- **48/48 render-node kinds have a runtime witness.** The dedicated
   `render_surface.ice` contract keeps every branch populated, resolves every
   concrete rendered node by its checked ID, asserts its computed visibility,
-  and checks the rendered descendants of `if`, `for`, component, and slot
-  nodes. Its visible-text assertions execute the complete fixture through the
+  and checks the rendered descendants of `if`, typed `match`, `for`, component,
+  and slot nodes. Its visible-text assertions execute the complete fixture through the
   tiny-skia headless draw path. The separate `render_contract_covers_every_render_node`
   gate uses an exhaustive `ViewNode` match with no wildcard and compares that
   same reachable application graph with the exact node inventory. Adding or
@@ -150,7 +153,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 1.70 has thirty-three checked Rust boundaries:
+Ice 2.0 has thirty-three checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |

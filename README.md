@@ -95,7 +95,7 @@ prop are the only accepted sources.
 Component props may use a closed, pure default such as
 `component Panel(title:str, elevated:bool=false)`; a call omits only props that
 declare defaults, and defaults cannot capture state or other parameters.
-`match` selects the first matching view arm, with `_` as an optional final
+Literal `match` arms retain first-match behavior, with `_` as an optional final
 fallback:
 
 Reusable components are closed over app handlers. Declare named events in the
@@ -136,6 +136,36 @@ component Counter()
       _
         text count
 ```
+
+Options, results, and UI-local enums use payload patterns with exhaustive
+checking. Payload names exist only inside their arm:
+
+```ice
+enum RequestState
+  idle
+  loading
+  ready([Task])
+  failed(AppError)
+
+state
+  request:RequestState = RequestState.idle
+
+view
+  col
+    match request
+      RequestState.idle
+        button "Load" -> load
+      RequestState.loading
+        text "Loading…"
+      RequestState.ready(tasks)
+        TaskList tasks=tasks
+      RequestState.failed(error)
+        ErrorPanel message=error.message
+```
+
+`some(value)`/`none` and `ok(value)`/`err(error)` use the same exhaustive arm
+rules. `_` is allowed as the final catch-all. UI enums are non-generic and
+non-recursive, and payloads must be ordinary cloneable Ice data.
 
 Native interaction styles inherit their `active` fields, so hovered, pressed,
 focused, opened, dragged, and disabled blocks only declare their differences.
@@ -424,7 +454,7 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 1.70 is an executable language revision, not an attempt to replace iced.
+Ice 2.0 is an executable language revision, not an attempt to replace iced.
 Its stable authoring Core is app/state/derived/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, typed Rust effects, and first-class headless tests over generated
@@ -434,7 +464,7 @@ while typed
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 1.70; the workspace packages currently use pre-1.0
+specification is revision 2.0; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.

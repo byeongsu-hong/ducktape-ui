@@ -5,6 +5,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         .structs
         .iter()
         .map(|item| item.name.as_str())
+        .chain(document.enums.iter().map(|item| item.name.as_str()))
         .collect::<HashSet<_>>();
     let check = |ty: &Type, span: &Span| check_declared_type(ty, span, &known);
     let reject_debug_span = |ty: &Type, span: &Span| {
@@ -25,6 +26,22 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
             check(ty, &item.span)?;
         }
     }
+    for item in &document.enums {
+        for variant in &item.variants {
+            if let Some(payload) = &variant.payload {
+                if !component_value_is_cloneable(payload) {
+                    return Err(Error::new(
+                        "E103",
+                        &variant.span,
+                        "enum payloads support ordinary cloneable data only",
+                    ));
+                }
+                reject_debug_span(payload, &variant.span)?;
+                check(payload, &variant.span)?;
+            }
+        }
+    }
+    check_recursive_enums(document)?;
     for item in &document.functions {
         for (_, ty) in &item.params {
             reject_debug_span(ty, &item.span)?;
@@ -94,6 +111,82 @@ pub(in crate::check) fn component_value_is_cloneable(ty: &Type) -> bool {
     }
 }
 
+fn check_recursive_enums(document: &Document) -> Result<(), Error> {
+    fn enum_references<'a>(ty: &'a Type, names: &HashSet<&str>, output: &mut Vec<&'a str>) {
+        match ty {
+            Type::Named(name) if names.contains(name.as_str()) => output.push(name),
+            Type::List(inner)
+            | Type::Option(inner)
+            | Type::Combo(inner)
+            | Type::Animation(inner) => {
+                enum_references(inner, names, output);
+            }
+            Type::Result(output_ty, error_ty) => {
+                enum_references(output_ty, names, output);
+                enum_references(error_ty, names, output);
+            }
+            _ => {}
+        }
+    }
+
+    fn visit<'a>(
+        name: &'a str,
+        document: &'a Document,
+        names: &HashSet<&str>,
+        visiting: &mut HashSet<&'a str>,
+        visited: &mut HashSet<&'a str>,
+    ) -> bool {
+        if visited.contains(name) {
+            return false;
+        }
+        if !visiting.insert(name) {
+            return true;
+        }
+        let item = document
+            .enums
+            .iter()
+            .find(|item| item.name == name)
+            .expect("enum reference resolves to a declaration");
+        let mut references = Vec::new();
+        for payload in item
+            .variants
+            .iter()
+            .filter_map(|variant| variant.payload.as_ref())
+        {
+            enum_references(payload, names, &mut references);
+        }
+        let recursive = references
+            .into_iter()
+            .any(|reference| visit(reference, document, names, visiting, visited));
+        visiting.remove(name);
+        visited.insert(name);
+        recursive
+    }
+
+    let names = document
+        .enums
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut visited = HashSet::new();
+    for item in &document.enums {
+        if visit(
+            &item.name,
+            document,
+            &names,
+            &mut HashSet::new(),
+            &mut visited,
+        ) {
+            return Err(Error::new(
+                "E103",
+                &item.span,
+                format!("recursive enum `{}` is not supported", item.name),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::check) fn contains_debug_span(ty: &Type) -> bool {
     match ty {
         Type::DebugSpan => true,
@@ -158,6 +251,52 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
                     "E100",
                     &item.span,
                     format!("duplicate field `{field}`"),
+                ));
+            }
+        }
+    }
+    for item in &document.enums {
+        if !names.insert(("type", item.name.as_str()))
+            || item.name == document.app
+            || document
+                .structs
+                .iter()
+                .any(|external| external.name == item.name)
+        {
+            return Err(Error::new(
+                "E100",
+                &item.span,
+                format!("duplicate type `{}`", item.name),
+            ));
+        }
+        let mut variants = HashSet::new();
+        let mut rust_variants = HashSet::new();
+        for variant in &item.variants {
+            if !variants.insert(&variant.name) {
+                return Err(Error::new(
+                    "E100",
+                    &variant.span,
+                    format!("duplicate enum variant `{}`", variant.name),
+                ));
+            }
+            let rust_name = variant
+                .name
+                .split('_')
+                .map(|part| {
+                    let mut chars = part.chars();
+                    chars.next().map_or_else(String::new, |first| {
+                        first.to_uppercase().collect::<String>() + chars.as_str()
+                    })
+                })
+                .collect::<String>();
+            if !rust_variants.insert(rust_name) {
+                return Err(Error::new(
+                    "E100",
+                    &variant.span,
+                    format!(
+                        "enum variant `{}` conflicts with another generated variant name",
+                        variant.name
+                    ),
                 ));
             }
         }
@@ -444,6 +583,11 @@ pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, &Span)> {
             | ViewNode::If { children, .. }
             | ViewNode::For { children, .. } => {
                 for child in children {
+                    collect(child, output);
+                }
+            }
+            ViewNode::Match { arms, .. } => {
+                for child in arms.iter().flat_map(|arm| &arm.children) {
                     collect(child, output);
                 }
             }

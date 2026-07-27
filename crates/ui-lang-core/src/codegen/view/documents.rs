@@ -313,11 +313,13 @@ pub(in crate::codegen) fn render_documents(
             &child_scope,
             slot,
         ),
-        ViewNode::If { span, .. } | ViewNode::For { span, .. } => Err(Error::new(
-            "E170",
-            span,
-            "if and for must be children of a layout node",
-        )),
+        ViewNode::If { span, .. } | ViewNode::For { span, .. } | ViewNode::Match { span, .. } => {
+            Err(Error::new(
+                "E170",
+                span,
+                "if, for, and match must be children of a layout node",
+            ))
+        }
         _ => return Ok(None),
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
