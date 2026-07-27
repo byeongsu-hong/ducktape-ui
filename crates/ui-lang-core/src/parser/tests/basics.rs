@@ -41,16 +41,17 @@ fn parses_semantic_style_recipes() {
 #[test]
 fn parses_component_prop_defaults() {
     let document = parse(
-        "app Demo\ncomponent Badge(label:str=\"Untitled\", selected:bool=false, count:i64)\n  text label\nview\n  Badge count=1\n",
+        "app Demo\ncomponent Badge(count:i64, label:str=\"Untitled\", selected:bool=false)\n  text label\nview\n  Badge count=1\n",
     )
     .unwrap();
 
     let params = &document.components[0].params;
-    assert_eq!(params[0].name, "label");
-    assert_eq!(params[0].ty, Type::Str);
-    assert!(matches!(params[0].default, Some(Expr::Str(ref value)) if value == "Untitled"));
-    assert!(matches!(params[1].default, Some(Expr::Bool(false))));
-    assert!(params[2].default.is_none());
+    assert_eq!(params[0].name, "count");
+    assert!(params[0].default.is_none());
+    assert_eq!(params[1].name, "label");
+    assert_eq!(params[1].ty, Type::Str);
+    assert!(matches!(params[1].default, Some(Expr::Str(ref value)) if value == "Untitled"));
+    assert!(matches!(params[2].default, Some(Expr::Bool(false))));
 }
 
 #[test]
