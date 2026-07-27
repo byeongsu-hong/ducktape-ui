@@ -372,7 +372,7 @@ theme_decl     = "theme" INDENT color_entry+
 color_entry    = name color
 
 style_recipe_decl
-               = "recipe" name "for" style_recipe_target
+               = "recipe" name "for" style_recipe_target ("extends" name)?
                  INDENT style_recipe_line+
 style_recipe_target
                = "col" | "row" | "flex" | "grid" | "stack" | "box"
@@ -410,8 +410,11 @@ preset_state   = "state" INDENT preset_override*
 preset_override = name "=" expr
 preset_boot    = "boot" INDENT statement*
 
-component_decl = "component" component_name "(" field_list? ")" ("->" type)?
+component_decl = "component" component_name "(" component_param_list? ")"
+                 ("->" type)?
                  INDENT component_member+
+component_param_list = component_param ("," component_param)*
+component_param = name ":" type ("=" expr)?
 component_member = component_state | component_handler | node
 component_state = "state" INDENT state_entry+
 component_handler = "on" name ("(" name_list? ")")?
@@ -2897,6 +2900,27 @@ their own rendered subtree. Other native tasks, streams, task composition,
 lifecycle hooks, and implicit prop capture stay at app level. Pass a prop or
 event value explicitly through the route when a local handler needs it.
 
+A prop may declare a default after its type. Calls may omit that named prop;
+required props may appear before or after defaulted props because calls are
+named:
+
+```ice
+component Panel(title:str, description:str="", elevated:bool=false)
+  col
+    text title
+    text description
+
+view
+  Panel title="Settings"
+```
+
+Defaults are pure checked expressions evaluated without an environment. They
+cannot refer to app state, component state, or any parameter (including an
+earlier parameter), call an extern function, or belong to a `bind` prop.
+Mutable component-only values such as `editor`,
+`markdown`, `combo`, `animation`, task handles, and debug spans cannot have
+defaults. A supplied argument always overrides the default.
+
 `run latest` gives local request/response interactions latest-wins behavior:
 
 ```ice
@@ -4303,9 +4327,12 @@ checked default without adding a runtime style system:
 recipe panel for box
   @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
 
-recipe primary_action for button
-  @px-4 py-2 bg-primary text-primary_fg rounded-md
-  @hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
+recipe action for button
+  @px-4 py-2 rounded-md disabled:opacity-50
+
+recipe primary_action for button extends action
+  @bg-primary text-primary_fg
+  @hover:bg-primary/90 pressed:bg-primary/80
 
 view
   box @panel
@@ -4315,12 +4342,15 @@ view
 Recipe names are graph-global and must be unique. A recipe may contain one or
 more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
 `stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
-spans. Recipes do not compose other recipes. Applying one to the wrong target
-is `E046`. Every recipe body is checked against its declared target even when
-the recipe is not used by the current view.
+spans. A recipe may extend at most one recipe with the same target. Missing
+bases, target mismatches, and inheritance cycles are `E046`; multiple bases and
+free recipe composition are not syntax. Every flattened recipe body is checked
+against its declared target even when the recipe is not used by the current
+view.
 
-Recipes expand in place at compile time. Later utility values win, then direct
-typed properties on the node override recipe defaults. This makes
+Recipes expand in place at compile time, with the base first and the child
+second. Child utility values win, later node utilities win, then direct typed
+properties on the node override recipe defaults. This makes
 `box p=24.0 @panel` a valid local exception. A direct typed property combined
 with a direct utility that owns the same field remains `E045`.
 

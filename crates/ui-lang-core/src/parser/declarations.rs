@@ -537,7 +537,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
     let mut params = Vec::new();
     if !params_source.trim().is_empty() {
         for param in split_top(&params_source, ',') {
-            let Some((name, ty)) = param.split_once(':') else {
+            let Some((name, declaration)) = param.split_once(':') else {
                 return Err(error(
                     "E043",
                     line,
@@ -548,10 +548,18 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
             let (bind, name) = name
                 .strip_prefix("bind ")
                 .map_or((false, name), |name| (true, name.trim_start()));
+            let (ty, default) = split_top_once(declaration.trim(), '=')
+                .map_or((declaration.trim(), None), |(ty, default)| {
+                    (ty.trim(), Some(default.trim()))
+                });
+            if default == Some("") {
+                return Err(error("E043", line, "component prop default needs a value"));
+            }
             params.push(ComponentParam {
                 name: identifier(name, line)?,
-                ty: parse_type(ty.trim(), line)?,
+                ty: parse_type(ty, line)?,
                 bind,
+                default: default.map(|value| parse_expr(value, line)).transpose()?,
             });
         }
     }

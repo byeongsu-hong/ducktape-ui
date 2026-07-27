@@ -222,11 +222,25 @@ fn parse_extern_call(
 
 fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     let parts = split_words(source);
-    let [name, separator, target] = parts.as_slice() else {
-        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+    let (name, separator, target, base) = match parts.as_slice() {
+        [name, separator, target] => (name, separator, target, None),
+        [name, separator, target, extends, base] if extends == "extends" => {
+            (name, separator, target, Some(base))
+        }
+        _ => {
+            return Err(error(
+                "E046",
+                line,
+                "recipe uses `recipe name for target` or `recipe name for target extends base`",
+            ));
+        }
     };
     if separator != "for" {
-        return Err(error("E046", line, "recipe uses `recipe name for target`"));
+        return Err(error(
+            "E046",
+            line,
+            "recipe uses `recipe name for target` or `recipe name for target extends base`",
+        ));
     }
     if line.children.is_empty() {
         return Err(error("E046", line, "recipe requires at least one utility"));
@@ -260,9 +274,14 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     }
     let name = identifier(name, line)?;
     line.record_symbol(SymbolKind::Recipe, &name, true, source);
+    let base = base.map(|base| identifier(base, line)).transpose()?;
+    if let Some(base) = &base {
+        line.record_symbol(SymbolKind::Recipe, base, false, source);
+    }
     Ok(StyleRecipe {
         name,
         target,
+        base,
         utilities,
         span: Span::line(line.number),
     })

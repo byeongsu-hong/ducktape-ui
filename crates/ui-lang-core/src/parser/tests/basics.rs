@@ -17,26 +17,40 @@ fn parses_compact_app() {
 #[test]
 fn parses_semantic_style_recipes() {
     let document = parse(
-        "app Demo\nrecipe panel for box\n  @w-full px-16px py-11px bg-surface border border-border rounded-9px\nrecipe label for text\n  @text-12.5px\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\" @label\n",
+        "app Demo\nrecipe surface for box\n  @w-full bg-surface\nrecipe panel for box extends surface\n  @px-16px py-11px border border-border rounded-9px\nrecipe label for text\n  @text-12.5px\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\" @label\n",
     )
     .unwrap();
 
-    assert_eq!(document.recipes.len(), 2);
-    assert_eq!(document.recipes[0].name, "panel");
-    assert_eq!(document.recipes[0].target, StyleRecipeTarget::Container);
+    assert_eq!(document.recipes.len(), 3);
+    assert_eq!(document.recipes[1].name, "panel");
+    assert_eq!(document.recipes[1].target, StyleRecipeTarget::Container);
+    assert_eq!(document.recipes[1].base.as_deref(), Some("surface"));
     assert_eq!(
-        document.recipes[0].utilities,
+        document.recipes[1].utilities,
         [
-            "w-full",
             "px-16px",
             "py-11px",
-            "bg-surface",
             "border",
             "border-border",
             "rounded-9px"
         ]
     );
-    assert_eq!(document.recipes[1].utilities, ["text-12.5px"]);
+    assert_eq!(document.recipes[2].utilities, ["text-12.5px"]);
+}
+
+#[test]
+fn parses_component_prop_defaults() {
+    let document = parse(
+        "app Demo\ncomponent Badge(label:str=\"Untitled\", selected:bool=false, count:i64)\n  text label\nview\n  Badge count=1\n",
+    )
+    .unwrap();
+
+    let params = &document.components[0].params;
+    assert_eq!(params[0].name, "label");
+    assert_eq!(params[0].ty, Type::Str);
+    assert!(matches!(params[0].default, Some(Expr::Str(ref value)) if value == "Untitled"));
+    assert!(matches!(params[1].default, Some(Expr::Bool(false))));
+    assert!(params[2].default.is_none());
 }
 
 #[test]

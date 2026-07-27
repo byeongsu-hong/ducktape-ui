@@ -98,6 +98,40 @@ fn check(document: &mut Document) -> Result<(), Error> {
         }
     }
     for component in &document.components {
+        for param in &component.params {
+            if let Some(default) = &param.default {
+                if param.bind {
+                    return Err(Error::new(
+                        "E103",
+                        &component.span,
+                        format!("bind prop `{}` cannot declare a default", param.name),
+                    ));
+                }
+                if !component_value_is_cloneable(&param.ty) {
+                    return Err(Error::new(
+                        "E103",
+                        &component.span,
+                        format!(
+                            "component prop `{}` cannot default a mutable value of type `{}`",
+                            param.name,
+                            param.ty.display()
+                        ),
+                    ));
+                }
+                if let Some(function) = sync_extern_call(default, document) {
+                    return Err(Error::new(
+                        "E103",
+                        &component.span,
+                        format!(
+                            "component prop `{}` default cannot call extern function `{function}`",
+                            param.name
+                        ),
+                    ));
+                }
+                let actual = expr_type(default, &HashMap::new(), document, &component.span)?;
+                require_type(&actual, &param.ty, &component.span)?;
+            }
+        }
         for state in &component.states {
             let actual = expr_type(&state.initial, &HashMap::new(), document, &state.span)?;
             if actual != Type::Unknown && !compatible(&state.ty, &actual) {
@@ -293,6 +327,35 @@ fn check(document: &mut Document) -> Result<(), Error> {
     }
     check_tests(document, &view_states)?;
     Ok(())
+}
+
+fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {
+    match expr {
+        Expr::Call { name, args } => document
+            .functions
+            .iter()
+            .any(|function| function.name == *name && function.kind == ExternKind::Sync)
+            .then_some(name.as_str())
+            .or_else(|| {
+                args.iter()
+                    .find_map(|argument| sync_extern_call(argument, document))
+            }),
+        Expr::List(values) => values
+            .iter()
+            .find_map(|value| sync_extern_call(value, document)),
+        Expr::Unary { value, .. } => sync_extern_call(value, document),
+        Expr::Binary { left, right, .. } => {
+            sync_extern_call(left, document).or_else(|| sync_extern_call(right, document))
+        }
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None
+        | Expr::Path(_) => None,
+    }
 }
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";

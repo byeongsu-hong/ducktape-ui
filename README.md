@@ -70,6 +70,9 @@ Ordinary component props are read-only. Declare writable inputs with
 `component Field(bind value:str)` and pass a direct state explicitly as
 `Field value<->draft`; app state, component-local state, and another `bind`
 prop are the only accepted sources.
+Component props may use a closed, pure default such as
+`component Panel(title:str, elevated:bool=false)`; a call omits only props that
+declare defaults, and defaults cannot capture state or other parameters.
 `match` selects the first matching view arm, with `_` as an optional final
 fallback:
 
@@ -95,6 +98,9 @@ Semantic recipes can use the fixed four-pixel spacing scale or exact logical
 pixels. Exact utilities carry a `px` suffix, for example `px-16px`,
 `py-11px`, `rounded-9px`, and `text-13.5px`; the checker rejects fractional
 spacing/radius values and non-positive or non-finite text sizes.
+Recipes may specialize one same-target base with
+`recipe danger_action for button extends action`. The base expands first, the
+child overrides it, and direct typed node properties remain the final override.
 
 `box` and `flex` provide a checked CSS-like flexbox. `flex` supports reverse
 directions, wrapping, `justify`, `items`, `content`, and axis-specific gaps.

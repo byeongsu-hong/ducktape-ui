@@ -93,21 +93,26 @@ pub(in crate::codegen) fn render_content(
                 .find(|item| item.name == *name)
                 .ok_or_else(|| Error::new("E122", span, format!("unknown component `{name}`")))?;
             let mut component_env = HashMap::new();
+            let default_env = HashMap::new();
             for param in &component.params {
-                let arg = args
-                    .iter()
-                    .find(|arg| arg.name == param.name)
-                    .expect("checker requires every component prop");
-                let state = match (param.bind, &arg.value) {
-                    (true, Expr::Path(path)) if path.len() == 1 => {
+                let arg = args.iter().find(|arg| arg.name == param.name);
+                let state = match (param.bind, arg.map(|arg| &arg.value)) {
+                    (true, Some(Expr::Path(path))) if path.len() == 1 => {
                         env.get(&path[0]).and_then(|binding| binding.state.clone())
                     }
                     _ => None,
                 };
+                let value = arg.map(|arg| (&arg.value, env)).or_else(|| {
+                    param
+                        .default
+                        .as_ref()
+                        .map(|default| (default, &default_env))
+                });
+                let (value, value_env) = value.expect("checker requires a component prop value");
                 component_env.insert(
                     param.name.clone(),
                     Binding {
-                        code: expr_code(&arg.value, env, document, ValueMode::Borrowed)?,
+                        code: expr_code(value, value_env, document, ValueMode::Borrowed)?,
                         ty: param.ty.clone(),
                         local: false,
                         state,

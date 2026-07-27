@@ -34,9 +34,10 @@ interaction-specific delta.
 
 Top-level semantic style recipes are native Core declarations in 1.64. They
 package checked utility tokens for one declared target (`col`, `row`, `flex`,
-`grid`, `stack`, `box`, `text`, `input`, or `button`), expand across imported
-source graphs, preserve later-utility precedence, and let direct typed node
-properties override recipe defaults. Scaled utilities and exact-pixel spacing,
+`grid`, `stack`, `box`, `text`, `input`, or `button`), optionally specialize
+one same-target base, expand base-first across imported source graphs, preserve
+child and later-utility precedence, and let direct typed node properties
+override recipe defaults. Scaled utilities and exact-pixel spacing,
 radius, and decimal text sizes share that checked lowering path. Every recipe
 is checked at declaration time, including unused imported recipes. Parser,
 checker, and codegen tests
@@ -45,6 +46,14 @@ declarations, and target mismatch. Recipe definitions and references also
 participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
+
+Component contracts in 1.64 support checked prop defaults. Missing named
+arguments use pure closed expressions that cannot capture app state, component
+state, parameters, or extern calls; bind and mutable component-only values
+cannot be defaulted.
+Required props may follow defaulted props because component calls are named.
+Parser, checker, formatter, and codegen tests cover omission, override, type and
+capture errors, and mutable-value rejection.
 
 First-class Ice tests are native in 1.64. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
