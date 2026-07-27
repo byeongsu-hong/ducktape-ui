@@ -43,7 +43,7 @@ pub(in crate::codegen) fn render_controls(
                 .map(|value| expr_code(value, env, document, ValueMode::Owned))
                 .transpose()?
                 .unwrap_or_else(|| "false".into());
-            let content = if let Some(content) = content {
+            let mut content = if let Some(content) = content {
                 let child_scope = id.as_ref().map_or_else(
                     || Ok(scope.to_owned()),
                     |id| id_code(id, scope, env, document),
@@ -51,26 +51,26 @@ pub(in crate::codegen) fn render_controls(
                 render_node(content, document, message, env, &child_scope, slot)?
             } else {
                 let label = rust_string(label.as_ref().expect("button label"));
-                let center_x = matches!(options.width.as_ref(), Some(LengthValue::Fixed(_)));
-                let center_y = matches!(options.height.as_ref(), Some(LengthValue::Fixed(_)));
-                if !center_x && !center_y {
-                    format!("::iced::widget::text({label}).into()")
-                } else {
-                    let mut label =
-                        format!("::iced::widget::container(::iced::widget::text({}))", label);
-                    if center_x {
-                        label.push_str(
-                            ".width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)",
-                        );
-                    }
-                    if center_y {
-                        label.push_str(
-                            ".height(::iced::Fill).align_y(::iced::alignment::Vertical::Center)",
-                        );
-                    }
-                    format!("{label}.into()")
-                }
+                format!("::iced::widget::text({label}).into()")
             };
+            let center_x = matches!(options.width.as_ref(), Some(LengthValue::Fixed(_)));
+            let center_y = matches!(options.height.as_ref(), Some(LengthValue::Fixed(_)));
+            if center_x || center_y {
+                let mut centered = format!(
+                    "{{ let __button_inner: __IceElement<'_, {message}> = {content}; ::iced::widget::container(__button_inner)"
+                );
+                if center_x {
+                    centered.push_str(
+                        ".width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)",
+                    );
+                }
+                if center_y {
+                    centered.push_str(
+                        ".height(::iced::Fill).align_y(::iced::alignment::Vertical::Center)",
+                    );
+                }
+                content = format!("{centered}.into() }}");
+            }
             let mut code = format!(
                 "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled_value}; let __activate = {message_code}; let __button_content: __IceElement<'_, {message}> = {content}; let __button = ::iced::widget::button(__button_content)"
             );
