@@ -22,6 +22,7 @@ app Music
 font geist family="Geist" default=true
 
 use "extern/mock_api.ice"
+use "music_tests.ice"
 use "../../../../crates/ui/src/ice/recipes.ice"
 use "../../../../crates/ui/src/ice/components.ice"
 
@@ -53,6 +54,9 @@ theme
   hero_end     #251319
   frame_start  #fffafb
   frame_end    #eee6e9
+  glass        #fffafa
+  glass_edge   #ffffff
+  player_track #d7cfd3
   stop         #ff5f57
   caution      #febc2e
   go           #28c840
@@ -75,6 +79,7 @@ state
   playing = true
   position = 34.0
   volume = 76.0
+  unmuted_volume = 76.0
   queue_open = false
   error = ""
 
@@ -83,147 +88,164 @@ preset test
     run load_home() -> home_loaded _ | failed _
 
 component TrafficLights()
-  row gap=8.0 h=32.0 align=center
-    box w=12.0 h=12.0 bg=stop r=6.0
-      text ""
-    box w=12.0 h=12.0 bg=caution r=6.0
-      text ""
-    box w=12.0 h=12.0 bg=go r=6.0
-      text ""
+  row #root gap=8.0 h=32.0 align=center
+    button "" label="Close window" #close w=12.0 h=12.0 p=0.0 -> close_window
+      active bg=stop text=stop r=6.0
+      hovered bg=stop/80
+      pressed bg=stop/65
+    button "" label="Minimize window" #minimize w=12.0 h=12.0 p=0.0 -> minimize_window
+      active bg=caution text=caution r=6.0
+      hovered bg=caution/80
+      pressed bg=caution/65
+    button "" label="Maximize window" #maximize w=12.0 h=12.0 p=0.0 -> toggle_maximize_window
+      active bg=go text=go r=6.0
+      hovered bg=go/80
+      pressed bg=go/65
 
 component Cover(source:str, size:f64, radius:f64)
-  box w=size h=size clip=true r=radius
-    image source w=size h=size fit=cover r=radius
+  box #root w=size h=size clip=true r=radius shadow=black/16 shadow-y=3.0 shadow-blur=8.0
+    image source #image w=size h=size fit=cover r=radius
 
 component NavItem(icon:str, label:str, selected:bool)
-  col w=fill
+  col #root w=fill
     if selected
-      button label=label #selected-control w=fill h=38.0 p=9.0 -> navigate(trim(label))
+      button label=label #selected-control w=fill h=37.0 p=8.0 -> navigate(trim(label))
         row w=fill gap=10.0 align=center
-          text icon w=20.0 size=15.0 align-x=center @text-primary
-          text label size=13.0 @text-primary font-bold
-        active bg=surface text=primary border=primary/18 border-w=1.0 r=10.0 shadow=black/8 shadow-y=2.0 shadow-blur=6.0
+          text icon #selected-icon w=20.0 size=15.0 align-x=center @text-primary
+          text label #selected-label size=13.0 @text-primary font-bold
+        active bg=surface/72 text=primary border=white/82 border-w=1.0 r=10.0 shadow=black/8 shadow-y=2.0 shadow-blur=8.0
     if !selected
-      button label=label #control w=fill h=38.0 p=9.0 -> navigate(trim(label))
+      button label=label #control w=fill h=37.0 p=8.0 -> navigate(trim(label))
         row w=fill gap=10.0 align=center
-          text icon w=20.0 size=15.0 align-x=center @text-muted
-          text label size=13.0 @text-fg
+          text icon #icon w=20.0 size=15.0 align-x=center @text-muted
+          text label #label size=13.0 @text-fg
         active bg=transparent text=fg r=10.0
-        hovered bg=surface text=fg
+        hovered bg=surface/58 text=fg
         pressed bg=accent text=primary
 
 component Sidebar(query:str, section:str, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
-  box #root w=220.0 h=fill p=12.0 bg=linear(1.57, surface@0.0, sidebar@1.0) border=white/70 border-w=1.0 r=18.0 shadow=black/10 shadow-y=3.0 shadow-blur=12.0
-    col w=fill h=fill gap=6.0
-      flex w=fill h=36.0 dir=row justify=space-between items=center
-        TrafficLights
-        Badge.Secondary label="ICE"
-      input "" #music-search label="Search music" <-> query hint="Search" submit=search w=fill p=9.0 text-size=13.0
-        active bg=surface border=input value=fg placeholder=muted selection=primary border-w=1.0 r=10.0
-        hovered border=border
-        focused border=ring border-w=1.0
-        disabled bg=accent value=muted
-        icon code="⌕" size=16.0 gap=8.0
-      text "DISCOVER" size=9.0 @text-muted font-bold
-      NavItem icon="⌂" label="Home" selected=(section == "Home") #home
-      NavItem icon="✦" label="New" selected=(section == "New") #new
-      NavItem icon="◉" label="Radio" selected=(section == "Radio") #radio
-      Separator
-      text "YOUR LIBRARY" size=9.0 @text-muted font-bold
-      NavItem icon="◷" label="Recently Added" selected=(section == "Recently Added") #recently-added
-      NavItem icon="⌁" label="Artists" selected=(section == "Artists") #artists
-      NavItem icon="▣" label="Albums" selected=(section == "Albums") #albums
-      NavItem icon="♫" label="Songs" selected=(section == "Songs") #songs
-      space w=fill h=fill
-      box w=fill p=10.0 bg=surface/75 border=white border-w=1.0 r=12.0
-        col w=fill gap=7.0
-          text "NOW PLAYING" size=9.0 @text-muted font-bold
-          row w=fill gap=9.0 align=center
-            Cover source=current_cover size=38.0 radius=8.0
-            col w=fill gap=2.0
-              text current_title size=11.0 wrap=none @text-fg font-bold
-              text current_artist size=10.0 wrap=none @text-muted
-      if !signed_in
-        button "Sign in to Music" #sign-in w=fill p=9.0 @outline_action -> sign_in
-      if signed_in
-        button label=profile_name #profile w=fill p=6.0 -> sign_in
-          row w=fill gap=9.0 align=center
-            Avatar initials="EK"
-            col w=fill gap=1.0
-              text profile_name size=12.0 @text-fg font-bold
-              text "Apple Music member" size=9.0 @text-muted
-          active bg=transparent text=fg r=10.0
-          hovered bg=surface
+  stack #root w=232.0 h=fill
+    shader liquid_glass(1, 24.0, 4.5, 0.58, 20.0) w=232.0 h=fill
+    box #surface w=232.0 h=fill p=14.0 bg=glass/34 border=glass_edge/76 border-w=1.0 r=20.0 shadow=black/12 shadow-y=5.0 shadow-blur=18.0
+      col #content w=fill h=fill gap=6.0
+        row #header w=fill h=42.0 align=center
+          TrafficLights #traffic-lights
+          mouse press=drag_window
+            box #drag-zone w=fill h=42.0 align-x=end align-y=center
+              col gap=0.0 align=end
+                text "Music" size=12.0 @text-fg font-bold
+                text "ICE PLAYER" size=8.0 @text-muted font-bold
+        input "" #music-search label="Search music" <-> query hint="Artists, albums, and songs" submit=search disabled=loading w=fill p=10.0 text-size=13.0
+          active bg=surface/66 border=white/78 value=fg placeholder=muted selection=primary border-w=1.0 r=11.0
+          hovered bg=surface/80 border=white
+          focused bg=surface/90 border=ring border-w=1.0
+          disabled bg=surface/32 value=muted
+          icon code="⌕" size=16.0 gap=8.0
+        text "DISCOVER" #discover-label size=9.0 @text-muted font-bold
+        NavItem icon="⌂" label="Home" selected=(section == "Home") #home
+        NavItem icon="✦" label="New" selected=(section == "New") #new
+        NavItem icon="◉" label="Radio" selected=(section == "Radio") #radio
+        Separator
+        text "YOUR LIBRARY" #library-label size=9.0 @text-muted font-bold
+        NavItem icon="◷" label="Recently Added" selected=(section == "Recently Added") #recently-added
+        NavItem icon="⌁" label="Artists" selected=(section == "Artists") #artists
+        NavItem icon="▣" label="Albums" selected=(section == "Albums") #albums
+        NavItem icon="♫" label="Songs" selected=(section == "Songs") #songs
+        space w=fill h=fill
+        button label=current_title #mini-player w=fill p=9.0 -> restart_current
+          col w=fill gap=7.0
+            text "NOW PLAYING" #mini-status size=9.0 @text-primary font-bold
+            row w=fill gap=10.0 align=center
+              Cover source=current_cover size=42.0 radius=9.0 #mini-cover
+              col w=fill gap=2.0
+                text current_title #mini-title size=11.0 wrap=none @text-fg font-bold
+                text current_artist #mini-artist size=10.0 wrap=none @text-muted
+              text "↻" size=13.0 @text-muted
+          active bg=surface/62 text=fg border=white/78 border-w=1.0 r=13.0
+          hovered bg=surface/82 border=white
           pressed bg=accent text=primary
+        if !signed_in
+          button "Sign in to Music" #sign-in w=fill p=9.0 disabled=loading @outline_action -> sign_in
+        if signed_in
+          button label=profile_name #profile w=fill p=7.0 -> sign_out
+            row w=fill gap=9.0 align=center
+              Avatar initials="EK"
+              col w=fill gap=1.0
+                text profile_name #profile-name size=12.0 @text-fg font-bold
+                text "Click to sign out" size=9.0 @text-muted
+            active bg=surface/32 text=fg r=10.0
+            hovered bg=surface/72
+            pressed bg=accent text=primary
 
 component PageTitle(eyebrow:str, title:str, description:str)
-  col #root w=fill gap=4.0
+  col #root w=fill gap=5.0
     text eyebrow #eyebrow size=10.0 @text-primary font-bold
-    text title #title size=30.0 line-h=1.05 @text-fg font-bold
-    text description #description size=13.0 @text-muted
+    text title #title size=32.0 line-h=1.0 @text-fg font-bold
+    text description #description size=13.0 line-h=1.4 @text-muted
 
 component SectionTitle(title:str, detail:str)
-  flex #root w=fill dir=row justify=space-between items=center
-    text title #title size=17.0 @text-fg font-bold
+  flex #root w=fill h=28.0 dir=row justify=space-between items=center
+    text title #title size=18.0 line-h=1.0 @text-fg font-bold
     Badge.Outline label=detail
 
 component FeatureHero(kicker:str, title:str, artist:str, description:str, cover:str)
-  box #root w=fill h=220.0 p=24.0 bg=linear(0.0, hero_start@0.0, hero_end@1.0) text=white border=white/12 border-w=1.0 r=20.0 shadow=black/18 shadow-y=8.0 shadow-blur=22.0
-    flex w=fill h=fill dir=row gap=24.0 justify=space-between items=center
+  box #root w=fill h=228.0 p=24.0 bg=linear(0.0, hero_start@0.0, hero_end@1.0) text=white border=white/16 border-w=1.0 r=22.0 shadow=black/20 shadow-y=9.0 shadow-blur=24.0
+    flex #layout w=fill h=fill dir=row gap=28.0 justify=space-between items=center
       box #copy flex=1.0,1.0,0.0 h=fill align-y=center
-        col w=fill gap=9.0
+        col w=fill gap=8.0
           Badge label=kicker
-          text title size=34.0 line-h=1.0 wrap=none @text-white font-bold
-          text artist size=14.0 @text-white/85 font-bold
-          text description w=fill size=12.0 wrap=word @text-white/68
-          row gap=8.0 align=center
+          text title #title size=36.0 line-h=1.0 wrap=none @text-white font-bold
+          text artist #artist size=14.0 line-h=1.2 @text-white/88 font-bold
+          text description #description w=fill size=12.0 line-h=1.4 wrap=word @text-white/72
+          row #actions gap=8.0 align=center
             button "Play now" #play @primary_action -> restart_current
             button "Open queue" #queue p=9.0 -> queue
               active bg=white/12 text=white border=white/25 border-w=1.0 r=10.0
               hovered bg=white/20
               pressed bg=white/28
-      box #art w=172.0 h=172.0 p=6.0 bg=white/12 border=white/22 border-w=1.0 r=18.0 shadow=black/35 shadow-y=8.0 shadow-blur=18.0
-        Cover source=cover size=160.0 radius=13.0
+      box #art w=180.0 h=180.0 p=6.0 bg=white/12 border=white/24 border-w=1.0 r=19.0 shadow=black/38 shadow-y=9.0 shadow-blur=20.0
+        Cover source=cover size=168.0 radius=14.0 #cover
 
 component FeaturedCard(album:Album)
-  col w=190.0 gap=7.0
-    text album.eyebrow size=10.0 wrap=none @text-muted font-bold
-    button label=album.title w=190.0 h=252.0 p=0.0 clip=true -> play(album.title, album.artist, album.cover)
+  col #root w=190.0 gap=7.0
+    text album.eyebrow #eyebrow size=10.0 wrap=none @text-muted font-bold
+    button label=album.title #control w=190.0 h=252.0 p=0.0 clip=true -> play(album.title, album.artist, album.cover)
       col w=190.0 h=252.0
-        Cover source=album.cover size=190.0 radius=0.0
+        Cover source=album.cover size=190.0 radius=0.0 #cover
         col w=fill h=62.0 p=11.0 gap=2.0 @bg-card
-          text album.title size=13.0 wrap=none @text-white font-bold
-          text album.artist size=10.0 wrap=none @text-white/65
+          text album.title #title size=13.0 wrap=none @text-white font-bold
+          text album.artist #artist size=10.0 wrap=none @text-white/68
       active bg=card text=white r=14.0
       hovered shadow=black/28 shadow-y=5.0 shadow-blur=12.0
+      pressed bg=hero_start
 
 component RecentCard(album:Album)
-  button label=album.title w=152.0 h=200.0 p=0.0 -> play(album.title, album.artist, album.cover)
+  button label=album.title #root w=152.0 h=204.0 p=0.0 -> play(album.title, album.artist, album.cover)
     col w=152.0 h=200.0 gap=6.0
-      Cover source=album.cover size=152.0 radius=12.0
-      text album.title size=12.0 wrap=none @text-fg font-bold
-      text album.artist size=10.0 wrap=none @text-muted
+      Cover source=album.cover size=152.0 radius=12.0 #cover
+      text album.title #title size=12.0 line-h=1.15 wrap=none @text-fg font-bold
+      text album.artist #artist size=10.0 line-h=1.15 wrap=none @text-muted
     active bg=transparent text=fg r=12.0
     hovered shadow=black/16 shadow-y=3.0 shadow-blur=9.0
     pressed bg=accent
 
 component AlbumStrip(albums:[Album], featured:bool)
-  col w=fill
+  col #root w=fill
     if featured
       scroll dir=horizontal w=fill h=286.0 bar=hidden
         row gap=14.0 h=276.0
           for album in albums
-            FeaturedCard album=album
+            FeaturedCard album=album #featured(album.id)
     if !featured
-      scroll dir=horizontal w=fill h=210.0 bar=hidden
-        row gap=14.0 h=200.0
+      scroll dir=horizontal w=fill h=214.0 bar=hidden
+        row gap=14.0 h=204.0
           for album in albums
-            RecentCard album=album
+            RecentCard album=album #recent(album.id)
 
 component AlbumGrid(albums:[Album])
-  grid min-cell=152.0 gap=16.0 @w-full
+  grid #root min-cell=152.0 gap=16.0 @w-full
     for album in albums
-      button label=album.title w=fill h=210.0 p=0.0 -> play(album.title, album.artist, album.cover)
+      button label=album.title #album(album.id) w=fill h=214.0 p=0.0 -> play(album.title, album.artist, album.cover)
         col w=fill h=210.0 gap=7.0
           image album.cover w=fill h=160.0 fit=cover r=12.0
           text album.title size=12.0 wrap=none @text-fg font-bold
@@ -233,62 +255,62 @@ component AlbumGrid(albums:[Album])
         pressed bg=accent
 
 component StationCard(album:Album)
-  button label=album.title w=268.0 h=166.0 p=0.0 clip=true -> play(album.title, album.artist, album.cover)
+  button label=album.title #root w=268.0 h=166.0 p=0.0 clip=true -> play(album.title, album.artist, album.cover)
     stack w=268.0 h=166.0
       image album.cover w=268.0 h=166.0 fit=cover
       box w=268.0 h=166.0 p=16.0 bg=linear(1.57, black/10@0.0, black/72@1.0)
         col w=fill h=fill
           Badge label="LIVE"
           space w=fill h=fill
-          text album.title size=17.0 @text-white font-bold
-          text album.artist size=11.0 @text-white/72
+          text album.title #title size=17.0 line-h=1.05 @text-white font-bold
+          text album.artist #artist size=11.0 @text-white/74
     active bg=card text=white r=14.0
     hovered shadow=black/30 shadow-y=5.0 shadow-blur=13.0
 
 component StationStrip(albums:[Album])
-  scroll dir=horizontal w=fill h=178.0 bar=hidden
+  scroll #root dir=horizontal w=fill h=178.0 bar=hidden
     row gap=14.0 h=166.0
       for album in albums
-        StationCard album=album
+        StationCard album=album #station(album.id)
 
 component ArtistRow(album:Album)
-  button label=album.artist w=fill h=72.0 p=10.0 -> play(album.title, album.artist, album.cover)
+  button label=album.artist #root w=fill h=72.0 p=10.0 -> play(album.title, album.artist, album.cover)
     row w=fill h=fill gap=12.0 align=center
-      Cover source=album.cover size=48.0 radius=24.0
+      Cover source=album.cover size=48.0 radius=24.0 #cover
       col w=fill gap=3.0
-        text album.artist size=13.0 @text-fg font-bold
-        text album.eyebrow size=10.0 @text-muted
+        text album.artist #artist size=13.0 @text-fg font-bold
+        text album.eyebrow #detail size=10.0 @text-muted
       text "›" size=20.0 @text-muted
     active bg=surface text=fg border=border border-w=1.0 r=13.0
     hovered bg=accent border=primary/18
     pressed bg=accent text=primary
 
 component ArtistGrid(albums:[Album])
-  grid min-cell=270.0 gap=12.0 @w-full
+  grid #root min-cell=270.0 gap=12.0 @w-full
     for album in albums
-      ArtistRow album=album
+      ArtistRow album=album #artist(album.id)
 
 component SongRow(album:Album)
-  button label=album.title w=fill h=58.0 p=7.0 -> play(album.title, album.artist, album.cover)
+  button label=album.title #root w=fill h=60.0 p=8.0 -> play(album.title, album.artist, album.cover)
     row w=fill h=fill gap=11.0 align=center
       text album.id w=22.0 size=10.0 align-x=center @text-muted
-      Cover source=album.cover size=42.0 radius=8.0
+      Cover source=album.cover size=42.0 radius=8.0 #cover
       col w=fill gap=2.0
-        text album.title size=12.0 @text-fg font-bold
-        text album.artist size=10.0 @text-muted
+        text album.title #title size=12.0 @text-fg font-bold
+        text album.artist #artist size=10.0 @text-muted
       Badge.Outline label=album.eyebrow
-      text "•••" size=10.0 @text-muted
+      text "3:47" #duration w=34.0 size=10.0 align-x=right @text-muted
     active bg=transparent text=fg r=10.0
     hovered bg=accent
     pressed bg=accent text=primary
 
 component QueueRow(album:Album, selected:bool)
-  button label=album.title w=fill h=58.0 p=6.0 -> play(album.title, album.artist, album.cover)
+  button label=album.title #root w=fill h=60.0 p=7.0 -> play(album.title, album.artist, album.cover)
     row w=fill h=fill gap=10.0 align=center
-      Cover source=album.cover size=44.0 radius=9.0
+      Cover source=album.cover size=44.0 radius=9.0 #cover
       col w=fill gap=2.0
-        text album.title size=11.0 wrap=none @text-fg font-bold
-        text album.artist size=9.0 wrap=none @text-muted
+        text album.title #title size=11.0 wrap=none @text-fg font-bold
+        text album.artist #artist size=9.0 wrap=none @text-muted
       if selected
         Badge label="NOW"
       if !selected
@@ -298,73 +320,92 @@ component QueueRow(album:Album, selected:bool)
     pressed bg=accent text=primary
 
 component QueuePanel(albums:[Album], current_title:str, current_artist:str, current_cover:str)
-  box #root w=340.0 h=fill p=18.0 bg=surface border=white/80 border-w=1.0 r=20.0 shadow=black/28 shadow-x=-8.0 shadow-y=8.0 shadow-blur=24.0
-    col w=fill h=fill gap=12.0
-      flex w=fill dir=row justify=space-between items=center
-        col gap=2.0
-          text "Playing Next" size=20.0 @text-fg font-bold
-          text "From your library" size=10.0 @text-muted
-        button label="Close queue" #close p=7.0 style=text -> queue
-          text "×" size=18.0
-      box w=fill p=10.0 bg=linear(0.0, accent@0.0, surface@1.0) border=border border-w=1.0 r=13.0
-        row w=fill gap=10.0 align=center
-          Cover source=current_cover size=54.0 radius=10.0
-          col w=fill gap=2.0
-            Badge label="NOW PLAYING"
-            text current_title size=12.0 wrap=none @text-fg font-bold
-            text current_artist size=10.0 wrap=none @text-muted
-      Separator
-      text "UP NEXT" size=9.0 @text-muted font-bold
-      scroll dir=vertical w=fill h=fill bar=hidden
-        col w=fill gap=3.0
-          for album in albums
-            QueueRow album=album selected=(album.title == current_title)
+  stack #root w=354.0 h=fill
+    shader liquid_glass(3, 26.0, 5.0, 0.62, 22.0) w=354.0 h=fill
+    box #surface w=354.0 h=fill p=18.0 bg=glass/42 border=white/82 border-w=1.0 r=22.0 shadow=black/28 shadow-x=-8.0 shadow-y=8.0 shadow-blur=24.0
+      col w=fill h=fill gap=12.0
+        flex #header w=fill dir=row justify=space-between items=center
+          col gap=2.0
+            text "Playing Next" #title size=21.0 line-h=1.0 @text-fg font-bold
+            text "From your library" #subtitle size=10.0 @text-muted
+          button label="Close queue" #close p=7.0 style=text -> queue
+            text "×" size=18.0
+        box #current w=fill p=11.0 bg=surface/58 border=white/76 border-w=1.0 r=14.0
+          row w=fill gap=11.0 align=center
+            Cover source=current_cover size=56.0 radius=11.0 #current-cover
+            col w=fill gap=3.0
+              Badge label="NOW PLAYING"
+              text current_title #current-title size=12.0 wrap=none @text-fg font-bold
+              text current_artist #current-artist size=10.0 wrap=none @text-muted
+        Separator
+        text "UP NEXT" size=9.0 @text-muted font-bold
+        scroll #list dir=vertical w=fill h=fill bar=hidden
+          col w=fill gap=3.0
+            for album in albums
+              QueueRow album=album selected=(album.title == current_title) #row(album.id)
 
 component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64, loudness:f64)
-  stack #root w=fill h=72.0
-    shader liquid_glass(18.0, 5.0, 0.52) w=fill h=72.0
-    box w=fill h=72.0 p=10.0 bg=white/38 border=white/72 border-w=1.0 r=22.0 shadow=black/20 shadow-y=6.0 shadow-blur=18.0
-      flex w=fill h=fill dir=row gap=12.0 items=center
-        box w=126.0 h=fill align-y=center
-          row gap=4.0 align=center
-            button label="Previous song" #previous p=7.0 style=text -> previous
-              text "◀" size=12.0
-            if active
-              button label="Pause" #pause p=9.0 -> toggle_playback
-                text "Ⅱ" size=13.0
-                active bg=primary text=white r=12.0
-                hovered bg=primary/88
-            if !active
-              button label="Play" #play p=9.0 -> toggle_playback
-                text "▶" size=13.0
-                active bg=primary text=white r=12.0
-                hovered bg=primary/88
-            button label="Next song" #next p=7.0 style=text -> next
-              text "▶|" size=12.0
-        box flex=1.0,1.0,0.0 h=fill
-          row w=fill h=fill gap=10.0 align=center
-            Cover source=cover size=50.0 radius=10.0
+  stack #root w=fill h=98.0
+    shader liquid_glass(2, 26.0, 6.0, 0.50, 24.0) w=fill h=98.0
+    box #surface w=fill h=98.0 p=12.0 bg=glass/38 border=white/82 border-w=1.0 r=24.0 shadow=black/22 shadow-y=7.0 shadow-blur=22.0
+      flex #layout w=fill h=fill dir=row gap=18.0 items=center
+        box #metadata w=220.0 h=fill align-y=center
+          row w=fill gap=11.0 align=center
+            Cover source=cover size=66.0 radius=13.0 #cover
             col w=fill gap=3.0
-              row w=fill
-                text title w=fill size=12.0 wrap=none @text-fg font-bold
-                text artist size=10.0 wrap=none @text-muted
-              slider playhead min=0.0 max=100.0 step=1.0 w=fill h=10.0 -> seek _
-                active rail-start=primary rail-end=track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=primary
+              text "NOW PLAYING" #status size=8.0 @text-primary font-bold
+              text title #title size=13.0 line-h=1.15 wrap=none @text-fg font-bold
+              text artist #artist size=10.0 line-h=1.15 wrap=none @text-muted
+        box #transport flex=1.0,1.0,0.0 h=fill
+          col #transport-content w=fill h=fill gap=5.0 align=center
+            flex #controls w=fill h=36.0 dir=row gap=8.0 justify=center items=center
+              button label="Shuffle" #shuffle p=7.0 style=text -> shuffle
+                text "⤨" size=13.0
+              button label="Previous song" #previous p=7.0 style=text -> previous
+                text "◀" size=12.0
+              if active
+                button label="Pause" #pause w=36.0 h=36.0 p=8.0 -> toggle_playback
+                  text "Ⅱ" size=13.0
+                  active bg=primary text=white r=18.0 shadow=primary/28 shadow-y=3.0 shadow-blur=8.0
+                  hovered bg=primary/88
+                  pressed bg=primary/72
+              if !active
+                button label="Play" #play w=36.0 h=36.0 p=8.0 -> toggle_playback
+                  text "▶" size=13.0
+                  active bg=primary text=white r=18.0 shadow=primary/28 shadow-y=3.0 shadow-blur=8.0
+                  hovered bg=primary/88
+                  pressed bg=primary/72
+              button label="Next song" #next p=7.0 style=text -> next
+                text "▶|" size=12.0
+            row #timeline w=fill gap=8.0 align=center
+              text playback_elapsed(playhead) #elapsed w=34.0 size=9.0 align-x=right @text-muted
+              slider playhead #seek min=0.0 max=100.0 step=1.0 w=fill h=12.0 -> seek _
+                active rail-start=primary rail-end=player_track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=primary
                 hovered rail-w=4.0 handle=circle(4.0)
                 dragged rail-w=4.0 handle=circle(5.0)
-        box w=184.0 h=fill align-y=center
+              text playback_remaining(playhead) #remaining w=34.0 size=9.0 @text-muted
+        box #utilities w=200.0 h=fill align-y=center
           row w=fill gap=7.0 align=center
-            button label="Playing Next" #queue p=7.0 style=text -> queue
-              text "☵" size=15.0
-            text "◖" size=13.0 @text-muted
-            slider loudness min=0.0 max=100.0 step=1.0 w=104.0 h=12.0 -> volume_changed _
-              active rail-start=fg rail-end=track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=fg
+            if loudness > 0.0
+              button label="Mute" #mute p=7.0 style=text -> toggle_mute
+                text "◖" size=13.0
+            if loudness <= 0.0
+              button label="Unmute" #unmute p=7.0 style=text -> toggle_mute
+                text "○" size=13.0
+            slider loudness #volume min=0.0 max=100.0 step=1.0 w=102.0 h=12.0 -> volume_changed _
+              active rail-start=fg rail-end=player_track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=fg
               hovered handle=circle(4.0)
               dragged rail-start=primary handle=circle(5.0) handle-color=primary
+            button label="Playing Next" #queue p=7.0 style=text -> queue
+              text "☵" size=15.0
 
 component LibraryContent(section:str, query:str, loading:bool, error:str, top_picks:[Album], recently_played:[Album], search_results:[Album], current_title:str, current_artist:str, current_cover:str)
   scroll #root dir=vertical w=fill h=fill bar=hidden
-    col #content w=fill p=28.0 pb=34.0 gap=20.0
+    col #content w=fill p=30.0 pb=38.0 gap=22.0
+      if loading
+        Alert title="Loading your library" description="The mock catalog is preparing the next set of recommendations."
+      if error != ""
+        Alert.Destructive title="Music is unavailable" description=error
       match section
         "Home"
           PageTitle eyebrow="FOR YOU" title="Listen now" description="A daily soundtrack tuned to your library." #home-title
@@ -422,10 +463,6 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           if !empty(search_results)
             SectionTitle title="Top results" detail="BEST MATCHES"
             AlbumGrid albums=search_results
-      if loading
-        Alert title="Loading your library" description="The mock catalog is preparing the next set of recommendations."
-      if error != ""
-        Alert.Destructive title="Music is unavailable" description=error
 
 on mount
   loading = true
@@ -449,6 +486,10 @@ on authenticated(session)
   signed_in = true
   profile_name = session.name
   loading = false
+
+on sign_out
+  signed_in = false
+  profile_name = "Sign In"
 
 on search
   return if empty(trim(query))
@@ -480,6 +521,10 @@ on seek(next_position)
 
 on volume_changed(next_volume)
   volume = next_volume
+  unmuted_volume = remember_volume(next_volume, unmuted_volume)
+
+on toggle_mute
+  volume = toggle_mute(volume, unmuted_volume)
 
 on previous
   run adjacent_track(current_title, -1) -> track_loaded _ | failed _
@@ -492,6 +537,18 @@ on shuffle
 
 on queue
   queue_open = !queue_open
+
+on close_window
+  task window close
+
+on minimize_window
+  task window minimize true
+
+on toggle_maximize_window
+  task window toggle-maximize
+
+on drag_window
+  task window drag
 
 on track_loaded(album)
   current_title = album.title
@@ -514,20 +571,28 @@ test music_surfaces
   target library = #app/shell/content/library/root
   target dock = #app/shell/content/dock
   target player = #app/shell/content/dock/player/root
+  target close_window = #app/shell/sidebar/root/surface/content/header/traffic-lights/root/close
+  target minimize_window = #app/shell/sidebar/root/surface/content/header/traffic-lights/root/minimize
+  target maximize_window = #app/shell/sidebar/root/surface/content/header/traffic-lights/root/maximize
+  target drag_zone = #app/shell/sidebar/root/surface/content/header/drag-zone
   target home_title = #app/shell/content/library/root/content/home-title/root/title
   target queue_panel = #queue-panel/root
   expect app.width ~= 1180.0
   expect app.height ~= 760.0
   expect app.border.width ~= 1.0
-  expect app.border.radius == radius(24.0)
-  expect shell.x ~= app.x + 8.0
-  expect shell.y ~= app.y + 8.0
+  expect app.border.radius == radius(26.0)
+  expect shell.x ~= app.x + 10.0
+  expect shell.y ~= app.y + 10.0
   expect sidebar.height ~= shell.height
-  expect content.x ~= sidebar.right + 8.0
+  expect content.x ~= sidebar.right + 10.0
   expect content.right ~= shell.right
   expect library.bottom ~= dock.top
-  expect player.x ~= dock.x + 18.0
-  expect player.right ~= dock.right - 18.0
+  expect player.x ~= dock.x + 16.0
+  expect player.right ~= dock.right - 16.0
+  expect close_window.kind == "button"
+  expect minimize_window.kind == "button"
+  expect maximize_window.kind == "button"
+  expect drag_zone.visible
   expect home_title.font.family == family.named("Geist")
   expect text "Listen now"
   dispatch navigate("New")
@@ -552,12 +617,12 @@ test music_surfaces
 test music_interactions
   preset test
   viewport 1180 760
-  target search_input = #app/shell/sidebar/root/music-search
-  target sign_in = #app/shell/sidebar/root/sign-in
-  target pause = #app/shell/content/dock/player/root/pause
-  target next_track = #app/shell/content/dock/player/root/next
-  target queue_button = #app/shell/content/dock/player/root/queue
-  target queue_close = #queue-panel/root/close
+  target search_input = #app/shell/sidebar/root/surface/content/music-search
+  target sign_in = #app/shell/sidebar/root/surface/content/sign-in
+  target pause = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/pause
+  target next_track = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/next
+  target queue_button = #app/shell/content/dock/player/root/surface/layout/utilities/queue
+  target queue_close = #queue-panel/root/surface/header/close
   click search_input
   type "nova"
   expect search_input.value == "nova"
@@ -586,13 +651,13 @@ test music_interactions
 view
   overlay when=queue_open dismiss=queue backdrop=black/18 p=12.0 align-x=end align-y=center
     content
-      box #app w=fill h=fill p=8.0 clip=true bg=linear(1.57, frame_start@0.0, frame_end@1.0) border=white/72 border-w=1.0 r=24.0
-        flex #shell w=fill h=fill dir=row gap=8.0
+      box #app w=fill h=fill p=10.0 clip=true bg=linear(1.57, frame_start@0.0, frame_end@1.0) border=white/78 border-w=1.0 r=26.0
+        flex #shell w=fill h=fill dir=row gap=10.0
           Sidebar query=query section=section signed_in=signed_in profile_name=profile_name loading=loading current_title=current_title current_artist=current_artist current_cover=current_cover #sidebar
           box #content flex=1.0,1.0,0.0 h=fill
             col w=fill h=fill
               LibraryContent section=section query=query loading=loading error=error top_picks=top_picks recently_played=recently_played search_results=search_results current_title=current_title current_artist=current_artist current_cover=current_cover #library
-              box #dock w=fill px=18.0 pb=14.0
+              box #dock w=fill px=16.0 pb=16.0
                 PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume #player
     layer
       QueuePanel albums=recently_played current_title=current_title current_artist=current_artist current_cover=current_cover #queue-panel

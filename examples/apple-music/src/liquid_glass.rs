@@ -1,32 +1,41 @@
 use iced::widget::shader::{self, Pipeline, Primitive, Program};
 use iced::{Rectangle, Size, mouse};
 use std::borrow::Cow;
+use std::collections::HashMap;
 
-pub fn liquid_glass(blur: f64, refraction: f64, tint: f64) -> LiquidGlass {
+pub fn liquid_glass(layer: i64, blur: f64, refraction: f64, tint: f64, radius: f64) -> LiquidGlass {
     LiquidGlass {
+        layer,
         blur: blur.clamp(0.0, 32.0) as f32,
         refraction: refraction.clamp(0.0, 12.0) as f32,
         tint: tint.clamp(0.0, 1.0) as f32,
+        radius: radius.clamp(0.0, 64.0) as f32,
     }
 }
 
 pub struct LiquidGlass {
+    layer: i64,
     blur: f32,
     refraction: f32,
     tint: f32,
+    radius: f32,
 }
 
 #[derive(Debug)]
 pub struct GlassPrimitive {
+    layer: i64,
     bounds: Rectangle,
     blur: f32,
     refraction: f32,
     tint: f32,
+    radius: f32,
 }
 
-struct GlassTarget {
+struct GlassSurface {
     size: Size<u32>,
     view: iced::wgpu::TextureView,
+    uniform: iced::wgpu::Buffer,
+    prepared: Prepared,
 }
 
 #[derive(Clone, Copy)]
@@ -44,14 +53,15 @@ pub struct GlassPipeline {
     layout: iced::wgpu::BindGroupLayout,
     glass: iced::wgpu::RenderPipeline,
     composite: iced::wgpu::RenderPipeline,
-    uniform: iced::wgpu::Buffer,
-    // ponytail: this showcase has one glass widget; key targets per widget before adding another.
-    target: Option<GlassTarget>,
-    prepared: Prepared,
+    surfaces: HashMap<i64, GlassSurface>,
 }
 
 impl GlassPipeline {
-    fn bind_group(&self, view: &iced::wgpu::TextureView) -> iced::wgpu::BindGroup {
+    fn bind_group(
+        &self,
+        view: &iced::wgpu::TextureView,
+        uniform: &iced::wgpu::Buffer,
+    ) -> iced::wgpu::BindGroup {
         self.device
             .create_bind_group(&iced::wgpu::BindGroupDescriptor {
                 label: Some("apple_music liquid glass bind group"),
@@ -67,10 +77,52 @@ impl GlassPipeline {
                     },
                     iced::wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.uniform.as_entire_binding(),
+                        resource: uniform.as_entire_binding(),
                     },
                 ],
             })
+    }
+}
+
+impl GlassSurface {
+    fn new(
+        device: &iced::wgpu::Device,
+        format: iced::wgpu::TextureFormat,
+        size: Size<u32>,
+    ) -> Self {
+        let texture = device.create_texture(&iced::wgpu::TextureDescriptor {
+            label: Some("apple_music liquid glass target"),
+            size: iced::wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: iced::wgpu::TextureDimension::D2,
+            format,
+            usage: iced::wgpu::TextureUsages::RENDER_ATTACHMENT
+                | iced::wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let uniform = device.create_buffer(&iced::wgpu::BufferDescriptor {
+            label: Some("apple_music liquid glass uniform"),
+            size: 48,
+            usage: iced::wgpu::BufferUsages::UNIFORM | iced::wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            size,
+            view: texture.create_view(&iced::wgpu::TextureViewDescriptor::default()),
+            uniform,
+            prepared: Prepared {
+                x: 0.0,
+                y: 0.0,
+                width: size.width as f32,
+                height: size.height as f32,
+            },
+        }
     }
 }
 
@@ -147,13 +199,6 @@ impl Pipeline for GlassPipeline {
             min_filter: iced::wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&iced::wgpu::BufferDescriptor {
-            label: Some("apple_music liquid glass uniform"),
-            size: 48,
-            usage: iced::wgpu::BufferUsages::UNIFORM | iced::wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             device: device.clone(),
             format,
@@ -161,14 +206,7 @@ impl Pipeline for GlassPipeline {
             layout,
             glass,
             composite,
-            uniform,
-            target: None,
-            prepared: Prepared {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-            },
+            surfaces: HashMap::new(),
         }
     }
 }
@@ -191,32 +229,20 @@ impl Primitive for GlassPrimitive {
         );
 
         if pipeline
-            .target
-            .as_ref()
-            .is_none_or(|target| target.size != size)
+            .surfaces
+            .get(&self.layer)
+            .is_none_or(|surface| surface.size != size)
         {
-            let texture = device.create_texture(&iced::wgpu::TextureDescriptor {
-                label: Some("apple_music liquid glass target"),
-                size: iced::wgpu::Extent3d {
-                    width: size.width,
-                    height: size.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: iced::wgpu::TextureDimension::D2,
-                format: pipeline.format,
-                usage: iced::wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | iced::wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            pipeline.target = Some(GlassTarget {
-                size,
-                view: texture.create_view(&iced::wgpu::TextureViewDescriptor::default()),
-            });
+            pipeline
+                .surfaces
+                .insert(self.layer, GlassSurface::new(device, pipeline.format, size));
         }
 
-        pipeline.prepared = Prepared {
+        let surface = pipeline
+            .surfaces
+            .get_mut(&self.layer)
+            .expect("glass surface was just prepared");
+        surface.prepared = Prepared {
             x: self.bounds.x * scale,
             y: self.bounds.y * scale,
             width: size.width as f32,
@@ -224,20 +250,20 @@ impl Primitive for GlassPrimitive {
         };
         let screen = viewport.physical_size();
         let values = [
-            pipeline.prepared.x,
-            pipeline.prepared.y,
+            surface.prepared.x,
+            surface.prepared.y,
             screen.width as f32,
             screen.height as f32,
-            pipeline.prepared.width,
-            pipeline.prepared.height,
-            pipeline.prepared.height * 0.5,
+            surface.prepared.width,
+            surface.prepared.height,
+            self.radius * scale,
             self.blur * scale,
             self.refraction * scale,
             self.tint,
             0.0,
             0.0,
         ];
-        queue.write_buffer(&pipeline.uniform, 0, &uniform_bytes(values));
+        queue.write_buffer(&surface.uniform, 0, &uniform_bytes(values));
     }
 
     fn render(
@@ -247,16 +273,16 @@ impl Primitive for GlassPrimitive {
         backdrop: &iced::wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let Some(glass_target) = &pipeline.target else {
+        let Some(surface) = pipeline.surfaces.get(&self.layer) else {
             return;
         };
-        let backdrop_group = pipeline.bind_group(backdrop);
+        let backdrop_group = pipeline.bind_group(backdrop, &surface.uniform);
 
         {
             let mut pass = encoder.begin_render_pass(&iced::wgpu::RenderPassDescriptor {
                 label: Some("apple_music liquid glass pass"),
                 color_attachments: &[Some(iced::wgpu::RenderPassColorAttachment {
-                    view: &glass_target.view,
+                    view: &surface.view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: iced::wgpu::Operations {
@@ -273,7 +299,7 @@ impl Primitive for GlassPrimitive {
             pass.draw(0..3, 0..1);
         }
 
-        let glass_group = pipeline.bind_group(&glass_target.view);
+        let glass_group = pipeline.bind_group(&surface.view, &surface.uniform);
         let mut pass = encoder.begin_render_pass(&iced::wgpu::RenderPassDescriptor {
             label: Some("apple_music liquid glass composite"),
             color_attachments: &[Some(iced::wgpu::RenderPassColorAttachment {
@@ -290,10 +316,10 @@ impl Primitive for GlassPrimitive {
             occlusion_query_set: None,
         });
         pass.set_viewport(
-            pipeline.prepared.x,
-            pipeline.prepared.y,
-            pipeline.prepared.width,
-            pipeline.prepared.height,
+            surface.prepared.x,
+            surface.prepared.y,
+            surface.prepared.width,
+            surface.prepared.height,
             0.0,
             1.0,
         );
@@ -320,10 +346,12 @@ impl Program<()> for LiquidGlass {
         bounds: Rectangle,
     ) -> Self::Primitive {
         GlassPrimitive {
+            layer: self.layer,
             bounds,
             blur: self.blur,
             refraction: self.refraction,
             tint: self.tint,
+            radius: self.radius,
         }
     }
 }
@@ -377,7 +405,11 @@ mod tests {
 
     #[test]
     fn clamps_effect_settings_before_they_reach_the_gpu() {
-        let glass = liquid_glass(-1.0, 99.0, 2.0);
-        assert_eq!((glass.blur, glass.refraction, glass.tint), (0.0, 12.0, 1.0));
+        let glass = liquid_glass(7, -1.0, 99.0, 2.0, 100.0);
+        assert_eq!(glass.layer, 7);
+        assert_eq!(
+            (glass.blur, glass.refraction, glass.tint, glass.radius),
+            (0.0, 12.0, 1.0, 64.0)
+        );
     }
 }

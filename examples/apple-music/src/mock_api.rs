@@ -90,6 +90,34 @@ pub async fn adjacent_track(current_title: String, step: i64) -> Result<Album, A
     Ok(albums[next].clone())
 }
 
+pub fn playback_elapsed(progress: f64) -> String {
+    format_duration(progress_seconds(progress))
+}
+
+pub fn playback_remaining(progress: f64) -> String {
+    format!("-{}", format_duration(227 - progress_seconds(progress)))
+}
+
+pub fn remember_volume(volume: f64, previous: f64) -> f64 {
+    if volume > 0.0 { volume } else { previous }
+}
+
+pub fn toggle_mute(volume: f64, unmuted_volume: f64) -> f64 {
+    if volume > 0.0 { 0.0 } else { unmuted_volume }
+}
+
+fn progress_seconds(progress: f64) -> u64 {
+    if progress.is_finite() {
+        (progress.clamp(0.0, 100.0) * 2.27).round() as u64
+    } else {
+        0
+    }
+}
+
+fn format_duration(seconds: u64) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
 fn adjacent_index(len: usize, current: usize, step: i64) -> usize {
     (current as i64 + step).rem_euclid(len as i64) as usize
 }
@@ -124,5 +152,16 @@ mod tests {
             albums[adjacent_index(albums.len(), albums.len() - 1, 1)].title,
             "Velvet Sun"
         );
+    }
+
+    #[test]
+    fn playback_details_follow_position_and_mute_state() {
+        assert_eq!(playback_elapsed(0.0), "0:00");
+        assert_eq!(playback_elapsed(50.0), "1:54");
+        assert_eq!(playback_remaining(100.0), "-0:00");
+        assert_eq!(remember_volume(42.0, 76.0), 42.0);
+        assert_eq!(remember_volume(0.0, 42.0), 42.0);
+        assert_eq!(toggle_mute(42.0, 42.0), 0.0);
+        assert_eq!(toggle_mute(0.0, 42.0), 42.0);
     }
 }
