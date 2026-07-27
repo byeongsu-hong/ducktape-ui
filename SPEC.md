@@ -4649,7 +4649,7 @@ failures already retain their original root or imported Ice path and line.
 | `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
-| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, schema-driven Core/test completion, definition, and rename |
+| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit code actions, definition, and rename |
 
 `cargo-ice` discovers `.ice` files recursively below the current directory,
 skips `.git`, worktree metadata, `target`, and `tests/cases` fixture trees,
@@ -4663,7 +4663,25 @@ inspection, and runtime support. Completion entries are generated from that
 same construct table instead of a separate vocabulary.
 
 The LSP uses Content-Length framed stdio, full-document synchronization, and
-the same parser/checker/source map as the compiler. Existing file URIs use the
+the same parser/checker/source map as the compiler. Completion distinguishes
+top-level, handler, view, typed-match-arm, widget-status, component-call,
+theme-contract, and test contexts.
+Checked component calls expose only their read/bind/default props, slots, and
+named events; handler completion lowers each Future, Task, and Stream extern to
+its valid `run`, `task`, or `stream` form. Component hover and signature help
+show the complete contract, while recipe hover flattens utilities base-first.
+Code actions return direct workspace edits for binding syntax, missing event and
+error routes, handler skeletons, accessible child-content button labels, and
+long-node `with` conversion. They can also extract an identical sequence of two
+or more inline utilities when it occurs on at least two nodes of the same
+recipe target, replacing every exact occurrence with one top-level recipe. A
+component's direct app-handler route can become a typed named event when the
+payload types and single call site are unambiguous. Code actions also add all
+missing explicit Option, Result, or UI-enum arms; selecting a wildcard replaces
+it and copies its view body into the generated arms. An unresolved unqualified
+component, recipe, extern, or type reference
+is qualified only when checking each imported namespace proves exactly one
+alias makes the complete source graph valid. Existing file URIs use the
 open buffers throughout each import graph; imported diagnostics are published
 at the imported URI with UTF-16 ranges. Opening, changing, or closing a buffer
 reanalyzes every open app root, and closing it returns that file to disk.

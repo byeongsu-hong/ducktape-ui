@@ -1822,8 +1822,35 @@ pub fn document() -> Value {
             },
             "completion": {
                 "supported": true,
-                "source": "core.constructs",
-                "contextAware": false,
+                "source": "core constructs plus checked component and extern contracts",
+                "contextAware": true,
+                "contexts": ["top-level", "handler", "view", "typed-match-arm", "status", "component-call", "theme-contract", "test"],
+            },
+            "hover": {
+                "supported": true,
+                "symbols": ["component", "recipe"],
+                "recipeExpansion": "base-first utilities",
+            },
+            "signatureHelp": {
+                "supported": true,
+                "symbols": ["component"],
+                "contract": ["read/bind/default props", "output", "named events", "slots"],
+            },
+            "codeAction": {
+                "supported": true,
+                "edits": "workspace edits with no server command round-trip",
+                "actions": [
+                    "component binding syntax",
+                    "missing named event routes",
+                    "handler skeleton",
+                    "fallible extern error route",
+                    "child-content button label",
+                    "long node with block",
+                    "repeated inline utilities to recipe",
+                    "direct app handler to named component event",
+                    "all missing explicit typed match arms",
+                    "unambiguous import alias qualification",
+                ],
             },
             "definition": {
                 "supported": true,
@@ -1940,23 +1967,34 @@ pub fn document() -> Value {
     })
 }
 
+fn completion_item(item: &Completion) -> Value {
+    let kind = match item.category {
+        "operator" => 24,
+        "layout" | "widget" => 15,
+        _ => 14,
+    };
+    json!({
+        "label": item.label,
+        "kind": kind,
+        "detail": format!("Ice Core {}", item.category),
+        "insertText": item.insert_text,
+        "insertTextFormat": 2,
+    })
+}
+
 pub fn completion_items() -> Vec<Value> {
+    COMPLETIONS.iter().map(completion_item).collect()
+}
+
+pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
     COMPLETIONS
         .iter()
-        .map(|item| {
-            let kind = match item.category {
-                "operator" => 24,
-                "layout" | "widget" => 15,
-                _ => 14,
-            };
-            json!({
-                "label": item.label,
-                "kind": kind,
-                "detail": format!("Ice Core {}", item.category),
-                "insertText": item.insert_text,
-                "insertTextFormat": 2,
-            })
+        .filter(|item| {
+            item.category
+                .split('/')
+                .any(|category| categories.contains(&category))
         })
+        .map(completion_item)
         .collect()
 }
 

@@ -180,6 +180,9 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                             "textDocumentSync": { "openClose": true, "change": 1 },
                             "documentFormattingProvider": true,
                             "completionProvider": { "resolveProvider": false },
+                            "hoverProvider": true,
+                            "signatureHelpProvider": { "triggerCharacters": [" ", "=", "<"] },
+                            "codeActionProvider": true,
                             "definitionProvider": true,
                             "renameProvider": { "prepareProvider": true },
                         },
@@ -257,9 +260,42 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/completion" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        respond(writer, id, Value::Array(schema::completion_items()))?;
+                        let items = completion_items_at(&documents, &message["params"])
+                            .unwrap_or_else(schema::completion_items);
+                        respond(writer, id, Value::Array(items))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
+                    }
+                }
+            }
+            "textDocument/hover" => {
+                if let Some(id) = id {
+                    if valid_text_document_position_params(&message["params"]) {
+                        let result = hover_at(&documents, &message["params"]);
+                        respond(writer, id, result.unwrap_or(Value::Null))?;
+                    } else {
+                        invalid_params(writer, id, "invalid text document position")?;
+                    }
+                }
+            }
+            "textDocument/signatureHelp" => {
+                if let Some(id) = id {
+                    if valid_text_document_position_params(&message["params"]) {
+                        let result = signature_help_at(&documents, &message["params"]);
+                        respond(writer, id, result.unwrap_or(Value::Null))?;
+                    } else {
+                        invalid_params(writer, id, "invalid text document position")?;
+                    }
+                }
+            }
+            "textDocument/codeAction" => {
+                if let Some(id) = id {
+                    if valid_code_action_params(&message["params"]) {
+                        let actions =
+                            code_actions_at(&documents, &message["params"]).unwrap_or_default();
+                        respond(writer, id, Value::Array(actions))?;
+                    } else {
+                        invalid_params(writer, id, "invalid code action params")?;
                     }
                 }
             }
@@ -469,6 +505,1776 @@ fn valid_document_formatting_params(params: &Value) -> bool {
             .as_u64()
             .is_some_and(|value| value <= i32::MAX as u64)
         && options["insertSpaces"].is_boolean()
+}
+
+fn valid_code_action_params(params: &Value) -> bool {
+    let range = &params["range"];
+    params.is_object()
+        && params["textDocument"]["uri"].is_string()
+        && range["start"]["line"].as_u64().is_some()
+        && range["start"]["character"].as_u64().is_some()
+        && range["end"]["line"].as_u64().is_some()
+        && range["end"]["character"].as_u64().is_some()
+}
+
+fn checked_document(
+    documents: &HashMap<String, String>,
+    uri: &str,
+) -> Option<ui_lang_core::CheckedDocument> {
+    let source = documents.get(uri)?;
+    let overlays = source_overlays(documents);
+    file_uri_path(uri).map_or_else(
+        || ui_lang_core::analyze(source).ok(),
+        |path| ui_lang_core::analyze_file_with_overlays(path, &overlays).ok(),
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CompletionContext {
+    TopLevel,
+    Handler,
+    Status(Option<String>),
+    View,
+    Match(usize),
+    Component(String),
+    ThemeContract,
+    Test,
+}
+
+const STATUS_NAMES: &[&str] = &[
+    "active",
+    "hovered",
+    "pressed",
+    "disabled",
+    "focused",
+    "focused-hovered",
+    "opened",
+    "opened-hovered",
+    "dragged",
+];
+
+fn indentation(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+fn ancestor_lines<'a>(lines: &'a [&str], line: usize) -> Vec<(usize, &'a str)> {
+    let indent = lines.get(line).map_or(0, |line| indentation(line));
+    let mut limit = indent;
+    let mut ancestors = Vec::new();
+    for (index, candidate) in lines[..line.min(lines.len())].iter().enumerate().rev() {
+        if candidate.trim().is_empty() || indentation(candidate) >= limit {
+            continue;
+        }
+        limit = indentation(candidate);
+        ancestors.push((index, *candidate));
+        if limit == 0 {
+            break;
+        }
+    }
+    ancestors
+}
+
+fn first_word(line: &str) -> Option<&str> {
+    line.trim().split_ascii_whitespace().next()
+}
+
+fn component_name_on_line(line: &str, document: Option<&ui_lang_core::Document>) -> Option<String> {
+    let name = first_word(line)?;
+    document?
+        .components
+        .iter()
+        .any(|component| component.name == name)
+        .then(|| name.to_owned())
+}
+
+fn completion_context(
+    source: &str,
+    line: usize,
+    document: Option<&ui_lang_core::Document>,
+) -> CompletionContext {
+    let lines = source.split('\n').collect::<Vec<_>>();
+    let current = lines.get(line).copied().unwrap_or("");
+    if indentation(current) == 0 && !current.trim().is_empty() {
+        return CompletionContext::TopLevel;
+    }
+    let ancestors = ancestor_lines(&lines, line);
+    if ancestors.iter().any(|(_, line)| {
+        indentation(line) == 0
+            && (line.trim_start().starts_with("on ") || line.trim() == "on mount")
+    }) {
+        return CompletionContext::Handler;
+    }
+    if ancestors
+        .iter()
+        .any(|(_, line)| indentation(line) == 0 && line.trim_start().starts_with("test "))
+    {
+        return CompletionContext::Test;
+    }
+    if ancestors
+        .iter()
+        .any(|(_, line)| indentation(line) == 0 && line.trim_start().starts_with("theme contract "))
+    {
+        return CompletionContext::ThemeContract;
+    }
+    if first_word(current).is_some_and(|word| STATUS_NAMES.contains(&word)) {
+        return CompletionContext::Status(
+            ancestors
+                .first()
+                .and_then(|(_, line)| first_word(line))
+                .map(str::to_owned),
+        );
+    }
+    if ancestors
+        .first()
+        .and_then(|(_, line)| first_word(line))
+        .is_some_and(|word| STATUS_NAMES.contains(&word))
+    {
+        return CompletionContext::Status(
+            ancestors
+                .get(1)
+                .and_then(|(_, line)| first_word(line))
+                .map(str::to_owned),
+        );
+    }
+    if let Some((match_line, parent)) = ancestors
+        .iter()
+        .find(|(_, candidate)| candidate.trim_start().starts_with("match "))
+        && indentation(current) == indentation(parent) + 2
+    {
+        return CompletionContext::Match(*match_line);
+    }
+    if let Some(name) = component_name_on_line(current, document) {
+        return CompletionContext::Component(name);
+    }
+    for (_, ancestor) in &ancestors {
+        if ancestor.trim() == "events" {
+            continue;
+        }
+        if let Some(name) = component_name_on_line(ancestor, document) {
+            return CompletionContext::Component(name);
+        }
+        break;
+    }
+    if indentation(current) == 0 {
+        CompletionContext::TopLevel
+    } else {
+        CompletionContext::View
+    }
+}
+
+fn completion_items_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+    let uri = params["textDocument"]["uri"].as_str()?;
+    let source = documents.get(uri)?;
+    let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
+    let checked = checked_document(documents, uri);
+    let parsed = checked
+        .is_none()
+        .then(|| ui_lang_core::parse(source).ok())
+        .flatten();
+    let document = checked.as_deref().or(parsed.as_ref());
+    let context = completion_context(source, line, document);
+    let items = match context {
+        CompletionContext::TopLevel => schema::completion_items_for(&["declaration"]),
+        CompletionContext::Handler => {
+            let mut items = schema::completion_items_for(&["statement"]);
+            if let Some(document) = document {
+                items.extend(effect_completions(document));
+            }
+            items
+        }
+        CompletionContext::Status(parent) => status_completions(parent.as_deref()),
+        CompletionContext::View => {
+            let mut items = schema::completion_items_for(&["layout", "widget", "control"]);
+            if let Some(document) = document {
+                items.extend(document.components.iter().map(component_node_completion));
+            }
+            items
+        }
+        CompletionContext::Match(match_line) => document
+            .map(|document| match_arm_completions(document, match_line))
+            .unwrap_or_default(),
+        CompletionContext::Component(name) => document
+            .and_then(|document| {
+                document
+                    .components
+                    .iter()
+                    .find(|component| component.name == name)
+            })
+            .map(component_contract_completions)
+            .unwrap_or_default(),
+        CompletionContext::ThemeContract => Vec::new(),
+        CompletionContext::Test => schema::completion_items_for(&[
+            "test configuration",
+            "test statement",
+            "test interaction",
+            "test assertion",
+            "operator",
+        ]),
+    };
+    Some(items)
+}
+
+fn component_node_completion(component: &ui_lang_core::Component) -> Value {
+    json!({
+        "label": component.name,
+        "kind": 7,
+        "detail": "Ice component",
+        "insertText": component.name,
+    })
+}
+
+fn component_contract_completions(component: &ui_lang_core::Component) -> Vec<Value> {
+    let mut items = component
+        .params
+        .iter()
+        .map(|param| {
+            let capability = if param.bind { "bind" } else { "read" };
+            let default = if param.default.is_some() {
+                " (default)"
+            } else {
+                ""
+            };
+            let operator = if param.bind { "<->" } else { "=" };
+            json!({
+                "label": format!("{}{operator}", param.name),
+                "kind": 10,
+                "detail": format!("{capability} {}{default}", param.ty.display()),
+                "insertText": format!("{}{operator}${{1:value}}", param.name),
+                "insertTextFormat": 2,
+            })
+        })
+        .collect::<Vec<_>>();
+    items.extend(component_slots(&component.root).into_iter().map(|slot| {
+        let optional = if slot.optional { "optional " } else { "" };
+        json!({
+            "label": format!("{}:", slot.name),
+            "kind": 10,
+            "detail": format!("{optional}component slot"),
+            "insertText": format!("{}:\n  $0", slot.name),
+            "insertTextFormat": 2,
+        })
+    }));
+    items.extend(component.events.iter().map(|event| {
+        json!({
+            "label": event.name,
+            "kind": 23,
+            "detail": component_event_signature(event),
+            "insertText": format!("{} -> ${{1:handler}}", event.name),
+            "insertTextFormat": 2,
+        })
+    }));
+    items
+}
+
+fn status_completions(parent: Option<&str>) -> Vec<Value> {
+    let statuses: &[&str] = match parent {
+        Some("button") => &["active", "hovered", "pressed", "disabled"],
+        Some("input" | "editor" | "combo") => &[
+            "active",
+            "hovered",
+            "focused",
+            "focused-hovered",
+            "disabled",
+        ],
+        Some("slider" | "scroll") => &["active", "hovered", "dragged"],
+        Some("pick") => &["active", "hovered", "opened", "opened-hovered"],
+        Some("checkbox" | "toggler") => &["active", "hovered", "disabled"],
+        Some("radio") => &["active", "hovered"],
+        _ => STATUS_NAMES,
+    };
+    statuses
+        .iter()
+        .map(|status| {
+            json!({
+                "label": status,
+                "kind": 14,
+                "detail": "Ice widget status",
+                "insertText": format!("{status} ${{1:property}}=${{2:value}}"),
+                "insertTextFormat": 2,
+            })
+        })
+        .collect()
+}
+
+fn effect_completions(document: &ui_lang_core::Document) -> Vec<Value> {
+    document
+        .functions
+        .iter()
+        .filter_map(|function| {
+            let keyword = match function.kind {
+                ui_lang_core::ExternKind::Future => "run",
+                ui_lang_core::ExternKind::Task => "task",
+                ui_lang_core::ExternKind::Stream => "stream",
+                _ => return None,
+            };
+            let error = function.error.as_ref().map_or(String::new(), |_| {
+                format!(" | ${{4:{}_failed}} _", function.name)
+            });
+            Some(json!({
+                "label": function.name,
+                "kind": 3,
+                "detail": format!("Ice {keyword} extern -> {}", function.output.display()),
+                "insertText": format!(
+                    "{keyword} {}(${{1}}) -> ${{2:{}_completed}} ${{3:_}}{error}",
+                    function.name, function.name
+                ),
+                "insertTextFormat": 2,
+            }))
+        })
+        .collect()
+}
+
+fn visit_view<'a>(
+    node: &'a ui_lang_core::ViewNode,
+    visitor: &mut impl FnMut(&'a ui_lang_core::ViewNode),
+) {
+    use ui_lang_core::{ResponsiveContent, ViewNode};
+    visitor(node);
+    match node {
+        ViewNode::Layout { children, .. }
+        | ViewNode::If { children, .. }
+        | ViewNode::For { children, .. } => {
+            for child in children {
+                visit_view(child, visitor);
+            }
+        }
+        ViewNode::Match { arms, .. } => {
+            for child in arms.iter().flat_map(|arm| &arm.children) {
+                visit_view(child, visitor);
+            }
+        }
+        ViewNode::Button {
+            content: Some(content),
+            ..
+        }
+        | ViewNode::MouseArea { content, .. }
+        | ViewNode::ResizeHandle { content, .. }
+        | ViewNode::Container { content, .. }
+        | ViewNode::Theme { content, .. }
+        | ViewNode::Float { content, .. }
+        | ViewNode::Pin { content, .. }
+        | ViewNode::Sensor { content, .. }
+        | ViewNode::KeyedColumn { child: content, .. }
+        | ViewNode::Lazy { child: content, .. } => visit_view(content, visitor),
+        ViewNode::Tooltip { content, tip, .. }
+        | ViewNode::Overlay {
+            content,
+            layer: tip,
+            ..
+        } => {
+            visit_view(content, visitor);
+            visit_view(tip, visitor);
+        }
+        ViewNode::PaneGrid {
+            panes, templates, ..
+        } => {
+            for child in panes
+                .iter()
+                .flat_map(ui_lang_core::PaneView::nodes)
+                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
+            {
+                visit_view(child, visitor);
+            }
+        }
+        ViewNode::Table { columns, .. } => {
+            for column in columns {
+                visit_view(&column.header, visitor);
+                visit_view(&column.cell, visitor);
+            }
+        }
+        ViewNode::Component { slots, .. } => {
+            for slot in slots {
+                visit_view(&slot.content, visitor);
+            }
+        }
+        ViewNode::Responsive { content, .. } => match content {
+            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                visit_view(narrow, visitor);
+                visit_view(wide, visitor);
+            }
+            ResponsiveContent::Size { content, .. } => visit_view(content, visitor),
+        },
+        _ => {}
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ComponentSlotInfo<'a> {
+    name: &'a str,
+    optional: bool,
+}
+
+fn component_slots(node: &ui_lang_core::ViewNode) -> Vec<ComponentSlotInfo<'_>> {
+    let mut output = Vec::new();
+    visit_view(node, &mut |node| {
+        if let ui_lang_core::ViewNode::Slot { name, optional, .. } = node {
+            output.push(ComponentSlotInfo {
+                name,
+                optional: *optional,
+            });
+        }
+    });
+    output
+}
+
+fn match_node_at_line(
+    root: &ui_lang_core::ViewNode,
+    line: usize,
+) -> Option<(&ui_lang_core::Expr, &[ui_lang_core::MatchArm])> {
+    let mut found = None;
+    visit_view(root, &mut |node| {
+        if let ui_lang_core::ViewNode::Match { value, arms, span } = node
+            && span.line == line + 1
+        {
+            found = Some((value, arms.as_slice()));
+        }
+    });
+    found
+}
+
+fn match_at_line(
+    document: &ui_lang_core::Document,
+    line: usize,
+) -> Option<(
+    &ui_lang_core::Expr,
+    &[ui_lang_core::MatchArm],
+    Option<&ui_lang_core::Component>,
+)> {
+    if let Some((value, arms)) = match_node_at_line(&document.view, line) {
+        return Some((value, arms, None));
+    }
+    document.components.iter().find_map(|component| {
+        match_node_at_line(&component.root, line)
+            .map(|(value, arms)| (value, arms, Some(component)))
+    })
+}
+
+fn match_value_type<'a>(
+    document: &'a ui_lang_core::Document,
+    component: Option<&'a ui_lang_core::Component>,
+    value: &ui_lang_core::Expr,
+) -> Option<&'a ui_lang_core::Type> {
+    let ui_lang_core::Expr::Path(path) = value else {
+        return None;
+    };
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    component
+        .and_then(|component| {
+            component
+                .params
+                .iter()
+                .find(|param| param.name == *name)
+                .map(|param| &param.ty)
+                .or_else(|| {
+                    component
+                        .states
+                        .iter()
+                        .find(|state| state.name == *name)
+                        .map(|state| &state.ty)
+                })
+        })
+        .or_else(|| {
+            document
+                .states
+                .iter()
+                .find(|state| state.name == *name)
+                .map(|state| &state.ty)
+        })
+        .or_else(|| {
+            document
+                .derived
+                .iter()
+                .find(|derived| derived.name == *name)
+                .map(|derived| &derived.ty)
+        })
+}
+
+fn missing_match_patterns(
+    document: &ui_lang_core::Document,
+    value_ty: &ui_lang_core::Type,
+    arms: &[ui_lang_core::MatchArm],
+) -> Vec<String> {
+    use ui_lang_core::{MatchPattern, Type};
+    let covered = arms
+        .iter()
+        .filter_map(|arm| match &arm.pattern {
+            MatchPattern::Some(_) => Some("some".to_owned()),
+            MatchPattern::None => Some("none".to_owned()),
+            MatchPattern::Ok(_) => Some("ok".to_owned()),
+            MatchPattern::Err(_) => Some("err".to_owned()),
+            MatchPattern::Enum { variant, .. } => Some(variant.clone()),
+            MatchPattern::Wildcard => None,
+        })
+        .collect::<BTreeSet<_>>();
+    match value_ty {
+        Type::Option(_) => [("some", "some(value)"), ("none", "none")]
+            .into_iter()
+            .filter(|(key, _)| !covered.contains(*key))
+            .map(|(_, pattern)| pattern.to_owned())
+            .collect(),
+        Type::Result(_, _) => [("ok", "ok(value)"), ("err", "err(error)")]
+            .into_iter()
+            .filter(|(key, _)| !covered.contains(*key))
+            .map(|(_, pattern)| pattern.to_owned())
+            .collect(),
+        Type::Named(name) => document
+            .enums
+            .iter()
+            .find(|item| item.name == *name)
+            .map(|item| {
+                item.variants
+                    .iter()
+                    .filter(|variant| !covered.contains(&variant.name))
+                    .map(|variant| {
+                        if variant.payload.is_some() {
+                            format!("{name}.{}(value)", variant.name)
+                        } else {
+                            format!("{name}.{}", variant.name)
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn match_patterns_fit_type(
+    document: &ui_lang_core::Document,
+    value_ty: &ui_lang_core::Type,
+    arms: &[ui_lang_core::MatchArm],
+) -> bool {
+    use ui_lang_core::{MatchPattern, Type};
+    arms.iter().all(|arm| match (value_ty, &arm.pattern) {
+        (Type::Option(_), MatchPattern::Some(_) | MatchPattern::None)
+        | (Type::Result(_, _), MatchPattern::Ok(_) | MatchPattern::Err(_))
+        | (_, MatchPattern::Wildcard) => true,
+        (
+            Type::Named(name),
+            MatchPattern::Enum {
+                enum_name,
+                variant,
+                binding,
+            },
+        ) if name == enum_name => document
+            .enums
+            .iter()
+            .find(|item| item.name == *name)
+            .and_then(|item| item.variants.iter().find(|item| item.name == *variant))
+            .is_some_and(|variant| variant.payload.is_some() == binding.is_some()),
+        _ => false,
+    })
+}
+
+fn missing_match_patterns_at(
+    document: &ui_lang_core::Document,
+    line: usize,
+) -> Option<Vec<String>> {
+    let (value, arms, component) = match_at_line(document, line)?;
+    let value_ty = match_value_type(document, component, value)?;
+    match_patterns_fit_type(document, value_ty, arms)
+        .then(|| missing_match_patterns(document, value_ty, arms))
+}
+
+fn match_arm_completions(document: &ui_lang_core::Document, line: usize) -> Vec<Value> {
+    missing_match_patterns_at(document, line)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pattern| {
+            json!({
+                "label": pattern,
+                "kind": 14,
+                "detail": "missing typed match arm",
+                "insertText": format!("{pattern}\n  $0"),
+                "insertTextFormat": 2,
+            })
+        })
+        .collect()
+}
+
+fn component_event_signature(event: &ui_lang_core::ComponentEvent) -> String {
+    let payloads = event
+        .payloads
+        .iter()
+        .map(ui_lang_core::Type::display)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("event {}({payloads})", event.name)
+}
+
+fn hover_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+    let uri = params["textDocument"]["uri"].as_str()?;
+    let source = documents.get(uri)?;
+    let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
+    let character = usize::try_from(params["position"]["character"].as_u64()?).ok()?;
+    let word = word_at(source_line(source, line)?, character)?;
+    let checked = checked_document(documents, uri);
+    let parsed = checked
+        .is_none()
+        .then(|| ui_lang_core::parse(source).ok())
+        .flatten();
+    let document = checked.as_deref().or(parsed.as_ref())?;
+    let value = if let Some(component) = document
+        .components
+        .iter()
+        .find(|component| component.name == word)
+    {
+        component_hover(component)
+    } else {
+        let recipe_name = word.strip_prefix('@').unwrap_or(word);
+        let recipe = document
+            .recipes
+            .iter()
+            .find(|recipe| recipe.name == recipe_name)?;
+        recipe_hover(document, recipe)
+    };
+    Some(json!({
+        "contents": { "kind": "markdown", "value": value },
+    }))
+}
+
+fn signature_help_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+    let uri = params["textDocument"]["uri"].as_str()?;
+    let source = documents.get(uri)?;
+    let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
+    let character = usize::try_from(params["position"]["character"].as_u64()?).ok()?;
+    let checked = checked_document(documents, uri);
+    let parsed = checked
+        .is_none()
+        .then(|| ui_lang_core::parse(source).ok())
+        .flatten();
+    let document = checked.as_deref().or(parsed.as_ref())?;
+    let name = component_name_on_line(source_line(source, line)?, Some(document))?;
+    let component = document
+        .components
+        .iter()
+        .find(|component| component.name == name)?;
+    let parameters = component
+        .params
+        .iter()
+        .map(|param| {
+            let capability = if param.bind { "bind " } else { "" };
+            let default = if param.default.is_some() {
+                "=<default>"
+            } else {
+                ""
+            };
+            format!("{capability}{}:{}{default}", param.name, param.ty.display())
+        })
+        .collect::<Vec<_>>();
+    let output = if component.output == ui_lang_core::Type::Unit {
+        String::new()
+    } else {
+        format!(" -> {}", component.output.display())
+    };
+    let prefix = source_line(source, line)?
+        .encode_utf16()
+        .take(character)
+        .collect::<Vec<_>>();
+    let prefix = String::from_utf16(&prefix).ok()?;
+    let active = component
+        .params
+        .iter()
+        .position(|param| {
+            prefix
+                .split_ascii_whitespace()
+                .last()
+                .is_some_and(|word| word.starts_with(&param.name))
+        })
+        .unwrap_or(0);
+    Some(json!({
+        "signatures": [{
+            "label": format!("{}({}){output}", component.name, parameters.join(", ")),
+            "documentation": { "kind": "markdown", "value": component_hover(component) },
+            "parameters": parameters
+                .iter()
+                .map(|label| json!({ "label": label }))
+                .collect::<Vec<_>>(),
+        }],
+        "activeSignature": 0,
+        "activeParameter": active,
+    }))
+}
+
+fn word_range_at(line: &str, utf16_character: usize) -> Option<(usize, usize)> {
+    let column = utf16_column(line, utf16_character)?.saturating_sub(1);
+    let column = line
+        .char_indices()
+        .nth(column)
+        .map_or(line.len(), |(byte, _)| byte);
+    let bytes = line.as_bytes();
+    let is_word =
+        |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'@');
+    let mut start = column.min(bytes.len());
+    while start > 0 && is_word(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = column.min(bytes.len());
+    while end < bytes.len() && is_word(bytes[end]) {
+        end += 1;
+    }
+    (start < end).then_some((start, end))
+}
+
+fn word_at(line: &str, utf16_character: usize) -> Option<&str> {
+    let (start, end) = word_range_at(line, utf16_character)?;
+    Some(&line[start..end])
+}
+
+fn component_hover(component: &ui_lang_core::Component) -> String {
+    let mut lines = vec![format!("```ice\ncomponent {}", component.name)];
+    for param in &component.params {
+        let capability = if param.bind { "bind" } else { "read" };
+        let default = if param.default.is_some() {
+            " = <default>"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "  {}: {capability} {}{default}",
+            param.name,
+            param.ty.display()
+        ));
+    }
+    if component.output != ui_lang_core::Type::Unit {
+        lines.push(format!("  output: {}", component.output.display()));
+    }
+    if !component.events.is_empty() {
+        lines.push("  emits:".into());
+        lines.extend(
+            component
+                .events
+                .iter()
+                .map(|event| format!("    {}", component_event_signature(event))),
+        );
+    }
+    let slots = component_slots(&component.root);
+    if !slots.is_empty() {
+        lines.push(format!(
+            "  slots: {}",
+            slots
+                .iter()
+                .map(|slot| format!("{}{}", slot.name, if slot.optional { "?" } else { "" }))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    lines.push("```".into());
+    lines.join("\n")
+}
+
+fn recipe_hover(document: &ui_lang_core::Document, recipe: &ui_lang_core::StyleRecipe) -> String {
+    fn flatten(
+        document: &ui_lang_core::Document,
+        recipe: &ui_lang_core::StyleRecipe,
+        utilities: &mut Vec<String>,
+    ) {
+        if let Some(base) = recipe.base.as_deref().and_then(|name| {
+            document
+                .recipes
+                .iter()
+                .find(|candidate| candidate.name == name)
+        }) {
+            flatten(document, base, utilities);
+        }
+        utilities.extend(recipe.utilities.iter().cloned());
+    }
+
+    let mut utilities = Vec::new();
+    flatten(document, recipe, &mut utilities);
+    let base = recipe
+        .base
+        .as_deref()
+        .map(|base| format!(" extends @{base}"))
+        .unwrap_or_default();
+    format!(
+        "```ice\n@{} for {}{base}\n  {}\n```",
+        recipe.name,
+        recipe.target.source_name(),
+        utilities
+            .iter()
+            .map(|utility| format!("@{utility}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+    let uri = params["textDocument"]["uri"].as_str()?;
+    let source = documents.get(uri)?;
+    let line = usize::try_from(params["range"]["start"]["line"].as_u64()?).ok()?;
+    let character = usize::try_from(params["range"]["start"]["character"].as_u64()?).ok()?;
+    let lines = source.split('\n').collect::<Vec<_>>();
+    let current = lines.get(line).copied()?;
+    let parsed = ui_lang_core::parse(source).ok();
+    let checked = checked_document(documents, uri);
+    let document = checked.as_deref().or(parsed.as_ref());
+    let mut actions = Vec::new();
+
+    if let Some(document) = document {
+        bind_declaration_action(source, line, character, document, uri, &mut actions);
+        component_call_actions(source, &lines, line, document, uri, &mut actions);
+        exhaustive_match_action(source, &lines, line, document, uri, &mut actions);
+        fallible_route_action(source, line, current, document, uri, &mut actions);
+        handler_skeleton_action(source, line, current, document, uri, &mut actions);
+        recipe_extraction_action(source, &lines, current, document, uri, &mut actions);
+        component_handler_event_action(source, &lines, line, current, document, uri, &mut actions);
+    }
+    qualification_action(documents, source, line, character, uri, &mut actions);
+    button_label_action(source, &lines, line, uri, &mut actions);
+    with_block_action(source, line, current, uri, &mut actions);
+    Some(actions)
+}
+
+fn code_action(title: &str, kind: &str, uri: &str, edits: Vec<Value>) -> Value {
+    json!({
+        "title": title,
+        "kind": kind,
+        "edit": { "changes": { uri: edits } },
+    })
+}
+
+fn utf16_offset(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())].encode_utf16().count()
+}
+
+fn line_range(source: &str, line: usize, start: usize, end: usize) -> Value {
+    let text = source_line(source, line).unwrap_or("");
+    json!({
+        "start": { "line": line, "character": utf16_offset(text, start) },
+        "end": { "line": line, "character": utf16_offset(text, end) },
+    })
+}
+
+fn insertion_at_line(line: usize) -> Value {
+    json!({
+        "start": { "line": line, "character": 0 },
+        "end": { "line": line, "character": 0 },
+    })
+}
+
+fn line_block_range(source: &str, start: usize, end: usize) -> Value {
+    let line_count = source.split('\n').count();
+    let end = if end < line_count {
+        json!({ "line": end, "character": 0 })
+    } else {
+        whole_document_range(source)["end"].clone()
+    };
+    json!({
+        "start": { "line": start, "character": 0 },
+        "end": end,
+    })
+}
+
+fn edit(range: Value, new_text: impl Into<String>) -> Value {
+    json!({ "range": range, "newText": new_text.into() })
+}
+
+fn enclosing_match_line(lines: &[&str], line: usize) -> Option<usize> {
+    lines
+        .get(line)
+        .is_some_and(|line| line.trim_start().starts_with("match "))
+        .then_some(line)
+        .or_else(|| {
+            ancestor_lines(lines, line)
+                .into_iter()
+                .find(|(_, candidate)| candidate.trim_start().starts_with("match "))
+                .map(|(line, _)| line)
+        })
+}
+
+fn exhaustive_match_action(
+    source: &str,
+    lines: &[&str],
+    line: usize,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(match_line) = enclosing_match_line(lines, line) else {
+        return;
+    };
+    let Some(patterns) = missing_match_patterns_at(document, match_line) else {
+        return;
+    };
+    if patterns.is_empty() {
+        return;
+    }
+    let Some((_, arms, _)) = match_at_line(document, match_line) else {
+        return;
+    };
+    let match_indent = indentation(lines[match_line]);
+    let wildcard = arms
+        .iter()
+        .find(|arm| matches!(arm.pattern, ui_lang_core::MatchPattern::Wildcard));
+    let fallback = wildcard.and_then(|arm| {
+        let wildcard_line = arm.span.line.checked_sub(1)?;
+        let end = child_block_end(lines, wildcard_line, match_indent + 2);
+        Some((wildcard_line, end, &lines[wildcard_line + 1..end]))
+    });
+    let replacement = patterns
+        .iter()
+        .map(|pattern| {
+            let mut arm = format!("{}{pattern}\n", " ".repeat(match_indent + 2));
+            if let Some((_, _, children)) = fallback {
+                for child in children {
+                    arm.push_str(child);
+                    arm.push('\n');
+                }
+            } else {
+                arm.push_str(&format!("{}space\n", " ".repeat(match_indent + 4)));
+            }
+            arm
+        })
+        .collect::<String>();
+    let (title, range) = match fallback {
+        Some((wildcard_line, end, _)) if line == wildcard_line => (
+            "Replace wildcard with all missing typed match arms",
+            line_block_range(source, wildcard_line, end),
+        ),
+        Some((wildcard_line, _, _)) => (
+            "Add all missing typed match arms before wildcard",
+            insertion_at_line(wildcard_line),
+        ),
+        None => (
+            "Add all missing typed match arms",
+            insertion_at_line(child_block_end(lines, match_line, match_indent)),
+        ),
+    };
+    actions.push(code_action(
+        title,
+        "quickfix",
+        uri,
+        vec![edit(range, replacement)],
+    ));
+}
+
+fn import_aliases(source: &str) -> BTreeSet<&str> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let line = line.strip_prefix("use ")?;
+            let (_, alias) = line.rsplit_once(" as ")?;
+            (!alias.is_empty()
+                && alias
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+            .then_some(alias)
+        })
+        .collect()
+}
+
+fn qualification_action(
+    documents: &HashMap<String, String>,
+    source: &str,
+    line: usize,
+    character: usize,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(path) = file_uri_path(uri) else {
+        return;
+    };
+    let path = canonical_path(&path).unwrap_or(path);
+    let Some(text) = source_line(source, line) else {
+        return;
+    };
+    let Some((start, end)) = word_range_at(text, character) else {
+        return;
+    };
+    if text[..start].ends_with("::") || text[end..].starts_with("::") {
+        return;
+    }
+    let word = &text[start..end];
+    let name = word.strip_prefix('@').unwrap_or(word);
+    if name.is_empty() || name.contains(['.', '-']) {
+        return;
+    }
+    let aliases = import_aliases(source);
+    if aliases.is_empty() {
+        return;
+    }
+    let mut overlays = source_overlays(documents);
+    if ui_lang_core::analyze_file_with_overlays(&path, &overlays).is_ok() {
+        return;
+    }
+    let offset = source
+        .split_inclusive('\n')
+        .take(line)
+        .map(str::len)
+        .sum::<usize>();
+    let mut candidates = Vec::new();
+    for alias in aliases {
+        let qualified = if word.starts_with('@') {
+            format!("@{alias}::{name}")
+        } else {
+            format!("{alias}::{name}")
+        };
+        let mut candidate = source.to_owned();
+        candidate.replace_range(offset + start..offset + end, &qualified);
+        overlays.insert(path.clone(), candidate);
+        if ui_lang_core::analyze_file_with_overlays(&path, &overlays).is_ok() {
+            candidates.push(qualified);
+        }
+    }
+    let [qualified] = candidates.as_slice() else {
+        return;
+    };
+    actions.push(code_action(
+        &format!("Qualify `{word}` as `{qualified}`"),
+        "quickfix",
+        uri,
+        vec![edit(
+            line_range(source, line, start, end),
+            qualified.clone(),
+        )],
+    ));
+}
+
+fn recipe_extraction_action(
+    source: &str,
+    lines: &[&str],
+    current: &str,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(target) = first_word(current).filter(|target| recipe_target(target)) else {
+        return;
+    };
+    let Some(style_start) = current.rfind(" @") else {
+        return;
+    };
+    let style_end = current[style_start + 1..]
+        .find(" ->")
+        .map_or(current.len(), |end| style_start + 1 + end);
+    let utilities = current[style_start + 2..style_end]
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>();
+    if utilities.len() < 2 || utilities.iter().any(|utility| utility.contains(['"', '='])) {
+        return;
+    }
+    let occurrences = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(line, candidate)| {
+            if first_word(candidate) != Some(target) {
+                return None;
+            }
+            let start = candidate.rfind(" @")?;
+            let end = candidate[start + 1..]
+                .find(" ->")
+                .map_or(candidate.len(), |end| start + 1 + end);
+            (candidate[start + 2..end]
+                .split_ascii_whitespace()
+                .eq(utilities.iter().copied()))
+            .then_some((line, start, end))
+        })
+        .collect::<Vec<_>>();
+    if occurrences.len() < 2 {
+        return;
+    }
+    let base = format!("{target}_recipe");
+    let name = (1..)
+        .map(|index| {
+            if index == 1 {
+                base.clone()
+            } else {
+                format!("{base}_{index}")
+            }
+        })
+        .find(|name| document.recipes.iter().all(|recipe| recipe.name != *name))
+        .expect("an unused recipe suffix exists");
+    let Some(app_line) = lines
+        .iter()
+        .position(|line| line.starts_with("app ") || line.starts_with("daemon "))
+    else {
+        return;
+    };
+    let declaration = format!("recipe {name} for {target}\n  @{}\n", utilities.join(" "));
+    actions.push(code_action(
+        &format!("Extract utilities to `@{name}`"),
+        "refactor.extract",
+        uri,
+        occurrences
+            .into_iter()
+            .map(|(line, start, end)| {
+                edit(line_range(source, line, start, end), format!(" @{name}"))
+            })
+            .chain(std::iter::once(block_insertion(
+                source,
+                lines,
+                child_block_end(lines, app_line, 0),
+                declaration,
+            )))
+            .collect(),
+    ));
+}
+
+fn recipe_target(target: &str) -> bool {
+    matches!(
+        target,
+        "col" | "row" | "flex" | "grid" | "stack" | "box" | "text" | "input" | "button"
+    )
+}
+
+fn component_handler_event_action(
+    source: &str,
+    lines: &[&str],
+    line: usize,
+    current: &str,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some((component_line, component)) = document.components.iter().find_map(|component| {
+        let declaration = component.span.line.checked_sub(1)?;
+        (declaration < line && line < child_block_end(lines, declaration, 0))
+            .then_some((declaration, component))
+    }) else {
+        return;
+    };
+    let in_root = lines[component_line + 1..=line]
+        .iter()
+        .rev()
+        .find(|candidate| !candidate.trim().is_empty() && indentation(candidate) == 2)
+        .is_some_and(|ancestor| {
+            ancestor.trim() != "state"
+                && ancestor.trim() != "emits"
+                && !ancestor.trim_start().starts_with("on ")
+        });
+    if !in_root {
+        return;
+    }
+    let Some(arrow) = current.rfind("->") else {
+        return;
+    };
+    let route = split_words(current[arrow + 2..].trim());
+    let Some((handler_name, args)) = route.split_first() else {
+        return;
+    };
+    if handler_name == "emit"
+        || component
+            .handlers
+            .iter()
+            .any(|handler| handler.name == *handler_name)
+    {
+        return;
+    }
+    let Some(handler) = document
+        .handlers
+        .iter()
+        .find(|handler| handler.name == *handler_name && handler.params.len() == args.len())
+    else {
+        return;
+    };
+    let Some(types) = args
+        .iter()
+        .map(|arg| component_value_type(arg, first_word(current), component))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let calls = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| first_word(candidate) == Some(component.name.as_str()))
+        .collect::<Vec<_>>();
+    let [(call_line, call)] = calls.as_slice() else {
+        return;
+    };
+    if let Some(event) = component
+        .events
+        .iter()
+        .find(|event| event.name == *handler_name)
+        && event.payloads != types
+    {
+        return;
+    }
+
+    let call_indent = indentation(call);
+    let call_end = child_block_end(lines, *call_line, call_indent);
+    let event_block = (*call_line + 1..call_end).find(|index| {
+        indentation(lines[*index]) == call_indent + 2 && lines[*index].trim() == "events"
+    });
+    let existing_route = event_block.and_then(|events| {
+        let end = child_block_end(lines, events, call_indent + 2);
+        lines[events + 1..end]
+            .iter()
+            .find(|route| first_word(route) == Some(handler_name))
+            .map(|route| route.trim())
+    });
+    let placeholders = " _".repeat(types.len());
+    let expected_route = format!("{handler_name} -> {handler_name}{placeholders}");
+    if existing_route.is_some_and(|route| route != expected_route) {
+        return;
+    }
+
+    let route_start = arrow + 2;
+    let handler_start =
+        route_start + current[route_start..].len() - current[route_start..].trim_start().len();
+    let mut edits = vec![edit(
+        line_range(source, line, route_start, handler_start),
+        " emit ",
+    )];
+    if component
+        .events
+        .iter()
+        .all(|event| event.name != *handler_name)
+    {
+        let signature = if types.is_empty() {
+            handler_name.clone()
+        } else {
+            format!(
+                "{}({})",
+                handler_name,
+                types
+                    .iter()
+                    .map(ui_lang_core::Type::display)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let component_end = child_block_end(lines, component_line, 0);
+        if let Some(emits) = (component_line + 1..component_end)
+            .find(|index| indentation(lines[*index]) == 2 && lines[*index].trim() == "emits")
+        {
+            edits.push(block_insertion(
+                source,
+                lines,
+                child_block_end(lines, emits, 2),
+                format!("    {signature}\n"),
+            ));
+        } else {
+            edits.push(edit(
+                insertion_at_line(component_line + 1),
+                format!("  emits\n    {signature}\n"),
+            ));
+        }
+    }
+    if existing_route.is_none() {
+        let (at, route) = if let Some(events) = event_block {
+            (
+                child_block_end(lines, events, call_indent + 2),
+                format!("{}{expected_route}\n", " ".repeat(call_indent + 4)),
+            )
+        } else {
+            (
+                call_end,
+                format!(
+                    "{}events\n{}{expected_route}\n",
+                    " ".repeat(call_indent + 2),
+                    " ".repeat(call_indent + 4)
+                ),
+            )
+        };
+        edits.push(block_insertion(source, lines, at, route));
+    }
+    actions.push(code_action(
+        &format!(
+            "Route app handler `{}` through a component event",
+            handler.name
+        ),
+        "refactor.rewrite",
+        uri,
+        edits,
+    ));
+}
+
+fn component_value_type(
+    source: &str,
+    node: Option<&str>,
+    component: &ui_lang_core::Component,
+) -> Option<ui_lang_core::Type> {
+    if source == "_" {
+        return match node {
+            Some("checkbox" | "toggler") => Some(ui_lang_core::Type::Bool),
+            Some("markdown" | "rich-text") => Some(ui_lang_core::Type::Str),
+            _ => None,
+        };
+    }
+    component
+        .params
+        .iter()
+        .find(|param| param.name == source)
+        .map(|param| param.ty.clone())
+        .or_else(|| {
+            component
+                .states
+                .iter()
+                .find(|state| state.name == source)
+                .map(|state| state.ty.clone())
+        })
+        .or_else(|| match source {
+            "true" | "false" => Some(ui_lang_core::Type::Bool),
+            source if quoted_prefix(source) == Some(source) => Some(ui_lang_core::Type::Str),
+            source if source.parse::<i64>().is_ok() => Some(ui_lang_core::Type::I64),
+            source if source.parse::<f64>().is_ok() => Some(ui_lang_core::Type::F64),
+            _ => None,
+        })
+}
+
+fn bind_declaration_action(
+    source: &str,
+    line: usize,
+    character: usize,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(component) = document
+        .components
+        .iter()
+        .find(|component| component.span.line == line + 1)
+    else {
+        return;
+    };
+    let Some(selected) = source_line(source, line).and_then(|line| word_at(line, character)) else {
+        return;
+    };
+    let Some(param) = component
+        .params
+        .iter()
+        .find(|param| param.name == selected && !param.bind)
+    else {
+        return;
+    };
+    let text = source_line(source, line).unwrap_or("");
+    let Some(start) = text.find(&format!("{}:", param.name)) else {
+        return;
+    };
+    actions.push(code_action(
+        &format!("Declare `{}` as a bind prop", param.name),
+        "quickfix",
+        uri,
+        vec![edit(line_range(source, line, start, start), "bind ")],
+    ));
+}
+
+fn component_call_actions(
+    source: &str,
+    lines: &[&str],
+    line: usize,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(name) = first_word(lines[line]) else {
+        return;
+    };
+    let Some(component) = document
+        .components
+        .iter()
+        .find(|component| component.name == name)
+    else {
+        return;
+    };
+    let text = lines[line];
+    for param in &component.params {
+        let (wrong, right) = if param.bind {
+            ("=", "<->")
+        } else {
+            ("<->", "=")
+        };
+        let pattern = format!("{}{wrong}", param.name);
+        let Some(start) = text.find(&pattern).map(|start| start + param.name.len()) else {
+            continue;
+        };
+        actions.push(code_action(
+            &format!(
+                "Use `{}` for {} prop `{}`",
+                right,
+                if param.bind { "bind" } else { "read" },
+                param.name
+            ),
+            "quickfix",
+            uri,
+            vec![edit(
+                line_range(source, line, start, start + wrong.len()),
+                right,
+            )],
+        ));
+    }
+
+    if component.events.is_empty() {
+        return;
+    }
+    let indent = indentation(text);
+    let end = child_block_end(lines, line, indent);
+    let event_block = (line + 1..end)
+        .find(|index| indentation(lines[*index]) == indent + 2 && lines[*index].trim() == "events");
+    let existing = event_block
+        .map(|events| {
+            let event_end = child_block_end(lines, events, indent + 2);
+            lines[events + 1..event_end]
+                .iter()
+                .filter_map(|line| first_word(line))
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let missing = component
+        .events
+        .iter()
+        .filter(|event| !existing.contains(event.name.as_str()))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    let (at, text) = if let Some(events) = event_block {
+        let at = child_block_end(lines, events, indent + 2);
+        let text = missing
+            .iter()
+            .map(|event| {
+                format!(
+                    "{}{} -> {}\n",
+                    " ".repeat(indent + 4),
+                    event.name,
+                    event.name
+                )
+            })
+            .collect::<String>();
+        (at, text)
+    } else {
+        let text = format!(
+            "{}events\n{}",
+            " ".repeat(indent + 2),
+            missing
+                .iter()
+                .map(|event| format!(
+                    "{}{} -> {}\n",
+                    " ".repeat(indent + 4),
+                    event.name,
+                    event.name
+                ))
+                .collect::<String>()
+        );
+        (end, text)
+    };
+    actions.push(code_action(
+        "Add missing component event routes",
+        "quickfix",
+        uri,
+        vec![block_insertion(source, lines, at, text)],
+    ));
+}
+
+fn child_block_end(lines: &[&str], line: usize, indent: usize) -> usize {
+    for (index, candidate) in lines.iter().enumerate().skip(line + 1) {
+        if !candidate.trim().is_empty() && indentation(candidate) <= indent {
+            return index;
+        }
+    }
+    lines.len()
+}
+
+fn block_insertion(source: &str, lines: &[&str], at: usize, text: String) -> Value {
+    if at < lines.len() {
+        edit(insertion_at_line(at), text)
+    } else {
+        let prefix = if source.ends_with('\n') { "" } else { "\n" };
+        edit(whole_document_end(source), format!("{prefix}{text}"))
+    }
+}
+
+fn route_handler(line: &str) -> Option<(&str, usize)> {
+    let route = line.split_once("->")?.1.trim();
+    let success = route.split('|').next()?.trim();
+    let mut words = success.split_ascii_whitespace();
+    let handler = words.next()?;
+    if handler == "_" {
+        return None;
+    }
+    let payloads = words.filter(|word| *word == "_").count();
+    Some((handler, payloads))
+}
+
+fn handler_skeleton_action(
+    source: &str,
+    _line: usize,
+    current: &str,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some((handler, payloads)) = route_handler(current) else {
+        return;
+    };
+    if document.handlers.iter().any(|item| item.name == handler) {
+        return;
+    }
+    let skeleton = handler_skeleton(source, handler, payloads);
+    actions.push(code_action(
+        &format!("Create handler `{handler}`"),
+        "quickfix",
+        uri,
+        vec![edit(whole_document_end(source), skeleton)],
+    ));
+}
+
+fn handler_skeleton(source: &str, handler: &str, payloads: usize) -> String {
+    let parameters = (0..payloads)
+        .map(|index| {
+            if index == 0 {
+                "value".into()
+            } else {
+                format!("value{}", index + 1)
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+    let prefix = if source.ends_with('\n') { "\n" } else { "\n\n" };
+    if parameters.is_empty() {
+        format!("{prefix}on {handler}\n  return if true\n")
+    } else {
+        format!("{prefix}on {handler}({parameters})\n  return if true\n")
+    }
+}
+
+fn whole_document_end(source: &str) -> Value {
+    let range = whole_document_range(source);
+    json!({ "start": range["end"], "end": range["end"] })
+}
+
+fn fallible_route_action(
+    source: &str,
+    line: usize,
+    current: &str,
+    document: &ui_lang_core::Document,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    if current.contains('|') {
+        return;
+    }
+    let trimmed = current.trim();
+    let Some(call) = ["run ", "task ", "stream "]
+        .iter()
+        .find_map(|prefix| trimmed.strip_prefix(prefix))
+    else {
+        return;
+    };
+    let call = call.strip_prefix("latest ").unwrap_or(call);
+    let Some((function_name, _)) = call.split_once('(') else {
+        return;
+    };
+    let function_name = function_name.trim();
+    let Some(function) = document
+        .functions
+        .iter()
+        .find(|function| function.name == function_name && function.error.is_some())
+    else {
+        return;
+    };
+    let handler = format!("{}_failed", function.name);
+    let mut edits = vec![edit(
+        line_range(source, line, current.len(), current.len()),
+        format!(" | {handler} _"),
+    )];
+    if !document.handlers.iter().any(|item| item.name == handler) {
+        edits.push(edit(
+            whole_document_end(source),
+            handler_skeleton(source, &handler, 1),
+        ));
+    }
+    actions.push(code_action(
+        &format!("Add error route for `{function_name}`"),
+        "quickfix",
+        uri,
+        edits,
+    ));
+}
+
+fn button_label_action(
+    source: &str,
+    lines: &[&str],
+    line: usize,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let current = lines[line];
+    let trimmed = current.trim();
+    let Some(after_button) = trimmed.strip_prefix("button") else {
+        return;
+    };
+    if after_button.trim_start().starts_with('"') || current.contains(" label=") {
+        return;
+    }
+    let indent = indentation(current);
+    let Some(child) = lines[line + 1..]
+        .iter()
+        .find(|candidate| !candidate.trim().is_empty())
+    else {
+        return;
+    };
+    if indentation(child) <= indent {
+        return;
+    }
+    let label = child
+        .trim()
+        .strip_prefix("text ")
+        .filter(|text| text.starts_with('"'))
+        .and_then(quoted_prefix)
+        .unwrap_or("\"Button\"");
+    let metadata_end = [current.find(" @"), current.find(" ->")]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(current.len());
+    actions.push(code_action(
+        "Add an accessible label to child-content button",
+        "quickfix",
+        uri,
+        vec![edit(
+            line_range(source, line, metadata_end, metadata_end),
+            format!(" label={label}"),
+        )],
+    ));
+}
+
+fn quoted_prefix(source: &str) -> Option<&str> {
+    let mut escaped = false;
+    for (index, ch) in source.char_indices().skip(1) {
+        if ch == '"' && !escaped {
+            return Some(&source[..=index]);
+        }
+        escaped = ch == '\\' && !escaped;
+        if ch != '\\' {
+            escaped = false;
+        }
+    }
+    None
+}
+
+fn with_block_action(
+    source: &str,
+    line: usize,
+    current: &str,
+    uri: &str,
+    actions: &mut Vec<Value>,
+) {
+    let Some(replacement) = with_block(current) else {
+        return;
+    };
+    actions.push(code_action(
+        "Convert long node metadata to a `with` block",
+        "refactor.rewrite",
+        uri,
+        vec![edit(
+            line_range(source, line, 0, current.len()),
+            replacement,
+        )],
+    ));
+}
+
+fn with_block(line: &str) -> Option<String> {
+    let indent = indentation(line);
+    let trimmed = line.trim();
+    let (node, route) = trimmed
+        .split_once(" -> ")
+        .map_or((trimmed, None), |(node, route)| (node, Some(route)));
+    let words = split_words(node);
+    let mut head = Vec::new();
+    let mut metadata = Vec::new();
+    let mut utilities = false;
+    for word in words {
+        if word.starts_with('@') {
+            utilities = true;
+            metadata.push(word);
+        } else if utilities {
+            metadata.push(format!("@{word}"));
+        } else if word.contains('=') || word.contains("<->") {
+            metadata.push(word);
+        } else {
+            head.push(word);
+        }
+    }
+    if metadata.len() < 3 && line.chars().count() <= 100 {
+        return None;
+    }
+    if metadata.is_empty() || !first_word(trimmed).is_some_and(is_view_node) {
+        return None;
+    }
+    let mut output = format!("{}{}", " ".repeat(indent), head.join(" "));
+    if let Some(route) = route {
+        output.push_str(" -> ");
+        output.push_str(route);
+    }
+    output.push('\n');
+    output.push_str(&" ".repeat(indent + 2));
+    output.push_str("with\n");
+    for item in metadata {
+        output.push_str(&" ".repeat(indent + 4));
+        output.push_str(&item);
+        output.push('\n');
+    }
+    Some(output.trim_end_matches('\n').to_owned())
+}
+
+fn split_words(source: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut start = 0;
+    let mut quote = false;
+    let mut depth = 0usize;
+    for (index, ch) in source.char_indices() {
+        match ch {
+            '"' => quote = !quote,
+            '(' | '[' if !quote => depth += 1,
+            ')' | ']' if !quote => depth = depth.saturating_sub(1),
+            _ if ch.is_whitespace() && !quote && depth == 0 => {
+                if start < index {
+                    words.push(source[start..index].to_owned());
+                }
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < source.len() {
+        words.push(source[start..].to_owned());
+    }
+    words
+}
+
+fn is_view_node(name: &str) -> bool {
+    name.chars().next().is_some_and(char::is_uppercase)
+        || matches!(
+            name,
+            "row"
+                | "col"
+                | "flex"
+                | "grid"
+                | "stack"
+                | "scroll"
+                | "box"
+                | "text"
+                | "input"
+                | "button"
+                | "checkbox"
+                | "toggler"
+                | "slider"
+                | "progress"
+                | "radio"
+                | "pick"
+                | "combo"
+                | "rule"
+                | "qr"
+                | "space"
+                | "markdown"
+                | "editor"
+                | "image"
+                | "svg"
+                | "viewer"
+                | "tooltip"
+                | "mouse"
+                | "resize-handle"
+                | "theme"
+                | "float"
+                | "pin"
+                | "sensor"
+                | "responsive"
+        )
 }
 
 fn navigation_at(
@@ -1050,8 +2856,9 @@ fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Navigation, diagnostic_range, file_path_uri, file_uri_path, navigation_at, read_message,
-        serve, source_range, whole_document_range, workspace_edit,
+        Navigation, code_actions_at, completion_items_at, diagnostic_range, file_path_uri,
+        file_uri_path, hover_at, navigation_at, read_message, serve, signature_help_at,
+        source_range, whole_document_range, workspace_edit,
     };
     use serde_json::{Value, json};
     use std::collections::HashMap;
@@ -1122,6 +2929,37 @@ mod tests {
         messages.iter().find(|message| message["id"] == id).unwrap()
     }
 
+    fn apply_action(source: &str, action: &Value, uri: &str) -> String {
+        let offset = |position: &Value| {
+            let line = usize::try_from(position["line"].as_u64().unwrap()).unwrap();
+            let character = usize::try_from(position["character"].as_u64().unwrap()).unwrap();
+            source
+                .split_inclusive('\n')
+                .take(line)
+                .map(str::len)
+                .sum::<usize>()
+                + character
+        };
+        let mut edits = action["edit"]["changes"][uri]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edit| {
+                (
+                    offset(&edit["range"]["start"]),
+                    offset(&edit["range"]["end"]),
+                    edit["newText"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        edits.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        let mut output = source.to_owned();
+        for (start, end, text) in edits {
+            output.replace_range(start..end, text);
+        }
+        output
+    }
+
     #[test]
     fn initializes_and_shuts_down_with_honest_capabilities() {
         let messages = run(&[
@@ -1136,6 +2974,12 @@ mod tests {
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
         assert_eq!(capabilities["documentFormattingProvider"], true);
         assert_eq!(capabilities["completionProvider"]["resolveProvider"], false);
+        assert_eq!(capabilities["hoverProvider"], true);
+        assert_eq!(
+            capabilities["signatureHelpProvider"]["triggerCharacters"],
+            json!([" ", "=", "<"])
+        );
+        assert_eq!(capabilities["codeActionProvider"], true);
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(response(&messages, 2)["result"], Value::Null);
@@ -1670,22 +3514,557 @@ mod tests {
             })
         );
         let completions = response(&messages, 3)["result"].as_array().unwrap();
-        let completion = |label| {
-            completions
+        assert!(completions.iter().any(|item| item["label"] == "text"));
+        assert!(completions.iter().any(|item| item["label"] == "button"));
+        assert!(!completions.iter().any(|item| item["label"] == "state"));
+        assert!(!completions.iter().any(|item| item["label"] == "run"));
+    }
+
+    #[test]
+    fn completion_uses_cursor_and_checked_contract_context() {
+        let uri = "file:///tmp/context.ice";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\n  task save(value:str) -> bool\n  stream changes() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  title = \"Draft\"\non submit\n  return if true\ncomponent Card(bind title:str, tone:str=\"quiet\")\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit select title\n      text title\n      active bg=primary\nview\n  Card title<->title\n    events\n      select -> selected _\n";
+        assert!(
+            ui_lang_core::parse(source).is_ok(),
+            "{:?}",
+            ui_lang_core::parse(source)
+        );
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let complete = |line| {
+            completion_items_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": 2 },
+                }),
+            )
+            .unwrap()
+        };
+
+        let handler = complete(18);
+        assert!(handler.iter().any(|item| {
+            item["label"] == "load"
+                && item["insertText"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("run load(")
+        }));
+        assert!(handler.iter().any(|item| {
+            item["label"] == "save"
+                && item["insertText"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("task save(")
+        }));
+        assert!(handler.iter().any(|item| {
+            item["label"] == "changes"
+                && item["insertText"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("stream changes(")
+        }));
+        assert!(!handler.iter().any(|item| item["label"] == "button"));
+
+        let top_level = complete(0);
+        assert!(top_level.iter().any(|item| item["label"] == "component"));
+        assert!(top_level.iter().any(|item| item["label"] == "state"));
+        assert!(!top_level.iter().any(|item| item["label"] == "button"));
+        assert!(!top_level.iter().any(|item| item["label"] == "run"));
+
+        let status = complete(26);
+        for label in ["active", "hovered", "pressed", "disabled"] {
+            assert!(status.iter().any(|item| item["label"] == label));
+        }
+        assert!(!status.iter().any(|item| item["label"] == "opened"));
+        assert!(!status.iter().any(|item| item["label"] == "button"));
+
+        let component = complete(28);
+        let item = |label| {
+            component
                 .iter()
                 .find(|item| item["label"] == label)
-                .unwrap_or_else(|| panic!("missing `{label}` completion"))
+                .unwrap_or_else(|| panic!("missing {label}"))
         };
-        let component = completion("component");
-        assert_eq!(component["insertText"], "component ${1:Name}(${2})\n  $0");
-        assert_eq!(component["insertTextFormat"], 2);
+        assert_eq!(item("title<->")["detail"], "bind str");
+        assert_eq!(item("tone=")["detail"], "read str (default)");
+        assert_eq!(item("Header:")["detail"], "component slot");
+        assert!(item("select")["detail"].as_str().unwrap().contains("str"));
+        assert!(!component.iter().any(|item| item["label"] == "button"));
+
+        let signature = signature_help_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 28, "character": 22 },
+            }),
+        )
+        .unwrap();
         assert_eq!(
-            completion("emits")["insertText"],
-            "emits\n  ${1:event}(${2:type})"
+            signature["signatures"][0]["label"],
+            "Card(bind title:str, tone:str=<default>)"
         );
+        assert_eq!(signature["activeParameter"], 0);
+        assert!(
+            signature["signatures"][0]["documentation"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("event select(str)")
+        );
+    }
+
+    #[test]
+    fn completion_tracks_match_arms_optional_slots_and_theme_contracts() {
+        let uri = "file:///tmp/new-contexts.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  choice:str? = none\ncomponent Card()\n  col\n    slot Header\n    slot Footer?\nview\n  col\n    Card\n    match choice\n      some(value)\n        text value\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let complete = |line, character| {
+            completion_items_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character },
+                }),
+            )
+            .unwrap()
+        };
+
+        assert!(complete(2, 2).is_empty());
+        let component = complete(19, 6);
         assert_eq!(
-            completion("events")["insertText"],
-            "events\n  ${1:event} -> ${2:handler} $0"
+            component
+                .iter()
+                .find(|item| item["label"] == "Footer:")
+                .unwrap()["detail"],
+            "optional component slot"
+        );
+        let hover = hover_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 13, "character": 12 },
+            }),
+        )
+        .unwrap();
+        assert!(
+            hover["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("slots: Header, Footer?")
+        );
+        let patterns = complete(21, 8);
+        assert!(patterns.iter().any(|item| item["label"] == "none"));
+        assert!(!patterns.iter().any(|item| item["label"] == "some(value)"));
+        assert!(!patterns.iter().any(|item| item["label"] == "text"));
+    }
+
+    #[test]
+    fn hover_shows_component_contract_and_flattened_recipe() {
+        let uri = "file:///tmp/hover.ice";
+        let source = "app Demo\nrecipe action for button\n  @px-4 rounded-md\nrecipe danger for button extends action\n  @bg-danger\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Card(bind title:str, tone:str=\"quiet\") -> bool\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit select title\n      text title\nview\n  text \"Demo\"\n";
+        assert!(
+            ui_lang_core::analyze(source).is_ok(),
+            "{:?}",
+            ui_lang_core::analyze(source)
+        );
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let hover = |line, character| {
+            hover_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character },
+                }),
+            )
+            .unwrap()["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+
+        let component = hover(15, 12);
+        assert!(component.contains("title: bind str"));
+        assert!(component.contains("tone: read str = <default>"));
+        assert!(component.contains("output: bool"));
+        assert!(component.contains("event select(str)"));
+        assert!(component.contains("slots: Header"));
+
+        let recipe = hover(3, 10);
+        assert!(recipe.contains("@danger for button extends @action"));
+        assert!(recipe.contains("@px-4 @rounded-md @bg-danger"));
+    }
+
+    #[test]
+    fn code_actions_return_workspace_edits_for_component_contracts() {
+        let uri = "file:///tmp/actions.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  title = \"Draft\"\n  tone = \"quiet\"\ncomponent Card(bind title:str, tone:str)\n  emits\n    select(str)\n  text title\nview\n  Card title=title tone<->tone\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let actions = |line, character| {
+            code_actions_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "range": {
+                        "start": { "line": line, "character": character },
+                        "end": { "line": line, "character": character },
+                    },
+                    "context": { "diagnostics": [] },
+                }),
+            )
+            .unwrap()
+        };
+
+        let declaration = actions(14, 35);
+        let bind = declaration
+            .iter()
+            .find(|action| action["title"] == "Declare `tone` as a bind prop")
+            .unwrap();
+        assert_eq!(bind["edit"]["changes"][uri][0]["newText"], "bind ");
+
+        let call = actions(19, 8);
+        let titles = call
+            .iter()
+            .filter_map(|action| action["title"].as_str())
+            .collect::<Vec<_>>();
+        assert!(titles.contains(&"Use `<->` for bind prop `title`"));
+        assert!(titles.contains(&"Use `=` for read prop `tone`"));
+        assert!(titles.contains(&"Add missing component event routes"));
+        let events = call
+            .iter()
+            .find(|action| action["title"] == "Add missing component event routes")
+            .unwrap();
+        assert!(
+            events["edit"]["changes"][uri][0]["newText"]
+                .as_str()
+                .unwrap()
+                .contains("select -> select")
+        );
+    }
+
+    #[test]
+    fn code_action_adds_all_missing_typed_match_arms() {
+        let prefix = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+        for (declaration, expected) in [
+            (
+                "state\n  value:str? = none\nview\n  match value\n    some(value)\n      text value\n",
+                "none\n      space",
+            ),
+            (
+                "state\n  value:result[str,str] = ok(\"yes\")\nview\n  match value\n    ok(value)\n      text value\n",
+                "err(error)\n      space",
+            ),
+            (
+                "enum Screen\n  home\n  settings(str)\nstate\n  value:Screen = Screen.home\nview\n  match value\n    Screen.home\n      text \"home\"\n",
+                "Screen.settings(value)\n      space",
+            ),
+        ] {
+            let source = format!("{prefix}{declaration}");
+            let uri = "file:///tmp/exhaustive.ice";
+            let line = source
+                .lines()
+                .position(|line| line.trim_start().starts_with("match "))
+                .unwrap();
+            let documents = HashMap::from([(uri.to_owned(), source.clone())]);
+            let actions = code_actions_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "range": {
+                        "start": { "line": line, "character": 4 },
+                        "end": { "line": line, "character": 4 },
+                    },
+                    "context": { "diagnostics": [] },
+                }),
+            )
+            .unwrap();
+            let action = actions
+                .iter()
+                .find(|action| action["title"] == "Add all missing typed match arms")
+                .unwrap();
+            let output = apply_action(&source, action, uri);
+            assert!(output.contains(expected), "{output}");
+            ui_lang_core::analyze(&output).unwrap();
+        }
+    }
+
+    #[test]
+    fn code_action_can_replace_a_selected_match_wildcard() {
+        let uri = "file:///tmp/wildcard.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nenum Screen\n  home\n  settings(str)\nstate\n  value:Screen = Screen.home\nview\n  match value\n    Screen.home\n      text \"home\"\n    _\n      text \"fallback\"\n";
+        let line = source.lines().position(|line| line.trim() == "_").unwrap();
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": line, "character": 4 },
+                    "end": { "line": line, "character": 4 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let action = actions
+            .iter()
+            .find(|action| action["title"] == "Replace wildcard with all missing typed match arms")
+            .unwrap();
+        let output = apply_action(source, action, uri);
+        assert!(!output.contains("\n    _\n"));
+        assert!(output.contains("Screen.settings(value)\n      text \"fallback\""));
+        assert!(output.contains("Screen.home\n      text \"home\""));
+        ui_lang_core::analyze(&output).unwrap();
+    }
+
+    #[test]
+    fn code_action_qualifies_only_the_one_import_alias_that_checks() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "ui.ice",
+            "extern crate::backend\n  sync label(value:str) -> str\nenum Mode\n  idle\nrecipe panel for text\n  @text-fg\ncomponent Card()\n  text \"Card\"\n",
+        );
+        let prefix = "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+        for (name, suffix, selected) in [
+            ("component", "view\n  Card\n", "Card"),
+            ("recipe", "view\n  text \"Demo\" @panel\n", "@panel"),
+            ("extern", "view\n  text label(\"Demo\")\n", "label"),
+            (
+                "type",
+                "state\n  mode:Mode = ui::Mode.idle\nview\n  text \"Demo\"\n",
+                "Mode",
+            ),
+        ] {
+            let source = format!("{prefix}{suffix}");
+            let path = fixture.path(&format!("{name}.ice"));
+            fixture.write(&format!("{name}.ice"), &source);
+            let uri = file_path_uri(&path);
+            let (line, column) = source
+                .lines()
+                .enumerate()
+                .find_map(|(line, text)| {
+                    text.find(selected)
+                        .map(|column| (line, column + selected.len()))
+                })
+                .unwrap();
+            let documents = HashMap::from([(uri.clone(), source.clone())]);
+            let actions = code_actions_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "range": {
+                        "start": { "line": line, "character": column },
+                        "end": { "line": line, "character": column },
+                    },
+                    "context": { "diagnostics": [] },
+                }),
+            )
+            .unwrap();
+            let action = actions
+                .iter()
+                .find(|action| {
+                    action["title"]
+                        .as_str()
+                        .is_some_and(|title| title.starts_with(&format!("Qualify `{selected}`")))
+                })
+                .unwrap_or_else(|| panic!("missing qualification for {name}: {actions:?}"));
+            let output = apply_action(&source, action, &uri);
+            let qualified = if selected.starts_with('@') {
+                format!("@ui::{}", selected.trim_start_matches('@'))
+            } else {
+                format!("ui::{selected}")
+            };
+            assert!(output.contains(&qualified), "{output}");
+            let overlays = HashMap::from([(path, output)]);
+            ui_lang_core::analyze_file_with_overlays(
+                fixture.path(&format!("{name}.ice")),
+                &overlays,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn code_action_omits_ambiguous_import_qualification() {
+        let fixture = Fixture::new();
+        fixture.write("ui.ice", "component Card()\n  text \"Card\"\n");
+        let source = "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let path = fixture.path("app.ice");
+        fixture.write("app.ice", source);
+        let uri = file_path_uri(&path);
+        let line = source
+            .lines()
+            .position(|line| line.trim() == "Card")
+            .unwrap();
+        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": line, "character": 6 },
+                    "end": { "line": line, "character": 6 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        assert!(!actions.iter().any(|action| {
+            action["title"]
+                .as_str()
+                .is_some_and(|title| title.starts_with("Qualify `Card`"))
+        }));
+    }
+
+    #[test]
+    fn code_actions_cover_handlers_errors_accessibility_and_long_nodes() {
+        let uri = "file:///tmp/more-actions.ice";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non loaded(value)\n  return if true\non submit\n  run load(\"x\") -> loaded _\nview\n  col\n    button #go w=fill h=40.0 p=8.0 disabled=false @w-full px-4 rounded-2 -> missing _\n      text \"Go\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 16, "character": 4 },
+                    "end": { "line": 16, "character": 4 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let error = actions
+            .iter()
+            .find(|action| action["title"] == "Add error route for `load`")
+            .unwrap();
+        assert_eq!(
+            error["edit"]["changes"][uri][0]["newText"],
+            " | load_failed _"
+        );
+
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 19, "character": 8 },
+                    "end": { "line": 19, "character": 8 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let titles = actions
+            .iter()
+            .filter_map(|action| action["title"].as_str())
+            .collect::<Vec<_>>();
+        assert!(titles.contains(&"Create handler `missing`"));
+        assert!(titles.contains(&"Add an accessible label to child-content button"));
+        assert!(titles.contains(&"Convert long node metadata to a `with` block"));
+        let label = actions
+            .iter()
+            .find(|action| action["title"] == "Add an accessible label to child-content button")
+            .unwrap();
+        assert_eq!(label["edit"]["changes"][uri][0]["newText"], " label=\"Go\"");
+    }
+
+    #[test]
+    fn code_action_extracts_inline_utilities_into_a_recipe() {
+        let uri = "file:///tmp/extract-recipe.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non save\n  return if true\nview\n  col\n    button \"Save\" @px-4 py-3 -> save\n    button \"Save again\" @px-4 py-3 -> save\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 15, "character": 4 },
+                    "end": { "line": 15, "character": 4 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let action = actions
+            .iter()
+            .find(|action| action["title"] == "Extract utilities to `@button_recipe`")
+            .unwrap();
+
+        let output = apply_action(source, action, uri);
+        assert!(output.contains("recipe button_recipe for button\n  @px-4 py-3\n"));
+        assert_eq!(output.matches("@button_recipe -> save").count(), 2);
+        assert_eq!(output.matches("@px-4 py-3").count(), 1);
+        ui_lang_core::analyze(&output).unwrap();
+
+        let single = source.replace("    button \"Save again\" @px-4 py-3 -> save\n", "");
+        let documents = HashMap::from([(uri.to_owned(), single)]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 15, "character": 4 },
+                    "end": { "line": 15, "character": 4 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action["title"] == "Extract utilities to `@button_recipe`")
+        );
+    }
+
+    #[test]
+    fn code_action_closes_a_component_over_one_unambiguous_call_site() {
+        let uri = "file:///tmp/close-component.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Nav(page:str)\n  button \"Open\" -> navigate page\non navigate(page)\n  return if true\nview\n  Nav page=\"home\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 12, "character": 20 },
+                    "end": { "line": 12, "character": 20 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let action = actions
+            .iter()
+            .find(|action| {
+                action["title"] == "Route app handler `navigate` through a component event"
+            })
+            .unwrap();
+
+        let output = apply_action(source, action, uri);
+        assert!(output.contains("component Nav(page:str)\n  emits\n    navigate(str)"));
+        assert!(output.contains("button \"Open\" -> emit navigate page"));
+        assert!(output.contains("events\n      navigate -> navigate _"));
+        ui_lang_core::analyze(&output).unwrap();
+
+        let ambiguous = source.replace(
+            "view\n  Nav page=\"home\"",
+            "view\n  col\n    Nav page=\"home\"\n    Nav page=\"other\"",
+        );
+        let documents = HashMap::from([(uri.to_owned(), ambiguous)]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 12, "character": 20 },
+                    "end": { "line": 12, "character": 20 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        assert!(
+            !actions.iter().any(|action| action["title"]
+                == "Route app handler `navigate` through a component event")
         );
     }
 

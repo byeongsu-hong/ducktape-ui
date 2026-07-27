@@ -416,9 +416,20 @@ plus the first-class test grammar, target fields, execution and renderer
 inspection contracts, language revision, and backend contract. LSP completion
 is derived from the same construct table.
 
-`cargo ice lsp` is a minimal stdio server with full-document synchronization,
-UTF-16 diagnostics, whole-document formatting, and schema-driven Core and test
-completion. For an existing app file it overlays every open buffer in the
+`cargo ice lsp` is a stdio server with full-document synchronization, UTF-16
+diagnostics, whole-document formatting, and cursor-aware completion for
+declarations, handlers, views, typed match arms, widget statuses, component
+contracts, theme contracts, and tests.
+Component hover/signature help exposes read/bind/default props, output, named
+events, and required/optional slots; recipe hover shows base-first expansion.
+Workspace-edit code actions repair component bindings and event routes, create
+handler/error-route skeletons, label child-content buttons, extract repeated
+inline utilities into recipes, close direct app-handler captures through named
+events, and expand long node metadata into a `with` block. They also add every
+missing explicit Option/Result/UI-enum match arm and qualify an unresolved
+component, recipe, extern, or type reference when exactly one import alias
+makes the complete source graph check. For an existing app file it overlays
+every open buffer in the
 import graph, reanalyzes
 all open app roots after buffer changes, and publishes imported errors at the
 imported URI. Checked component, app-handler, recipe, and test-target symbols
