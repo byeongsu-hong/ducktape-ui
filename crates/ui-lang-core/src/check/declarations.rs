@@ -59,7 +59,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         reject_debug_span(&component.output, &component.span)?;
         check(&component.output, &component.span)?;
         for state in &component.states {
-            if !component_state_is_cloneable(&state.ty) {
+            if !component_value_is_cloneable(&state.ty) {
                 return Err(Error::new(
                     "E103",
                     &state.span,
@@ -72,7 +72,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
     Ok(())
 }
 
-fn component_state_is_cloneable(ty: &Type) -> bool {
+pub(in crate::check) fn component_value_is_cloneable(ty: &Type) -> bool {
     match ty {
         Type::Animation(_)
         | Type::Combo(_)
@@ -80,9 +80,9 @@ fn component_state_is_cloneable(ty: &Type) -> bool {
         | Type::Editor
         | Type::Markdown
         | Type::TaskHandle => false,
-        Type::List(inner) | Type::Option(inner) => component_state_is_cloneable(inner),
+        Type::List(inner) | Type::Option(inner) => component_value_is_cloneable(inner),
         Type::Result(output, error) => {
-            component_state_is_cloneable(output) && component_state_is_cloneable(error)
+            component_value_is_cloneable(output) && component_value_is_cloneable(error)
         }
         _ => true,
     }

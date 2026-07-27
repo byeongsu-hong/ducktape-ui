@@ -5,8 +5,10 @@ fn expands_semantic_recipes_before_explicit_overrides() {
     let source = r#"app Recipes
 recipe page for col
   w-full h-full gap-6 p-6 bg-bg
-recipe panel for box
-  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
+recipe surface for box
+  w-full p-5 bg-surface
+recipe panel for box extends surface
+  border border-border rounded-lg overflow-hidden
 recipe title for text
   text-22px leading-tight font-bold text-fg
 theme
@@ -44,8 +46,8 @@ view
 
     let error = compile(
         &source.replace(
-            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden",
-            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden\nrecipe panel for box\n  p-4 bg-surface",
+            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden",
+            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden\nrecipe panel for box\n  p-4 bg-surface",
         ),
         "recipes.ice",
     )
@@ -55,8 +57,8 @@ view
 
     let error = compile(
         &source.replace(
-            "recipe panel for box\n  w-full p-5 bg-surface border border-border rounded-lg overflow-hidden",
-            "recipe panel for box\n  grid-cols-3",
+            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden",
+            "recipe panel for box extends surface\n  grid-cols-3",
         ),
         "recipes.ice",
     )
@@ -70,6 +72,8 @@ fn lowers_exact_pixel_recipe_utilities() {
     let source = r#"app ExactRecipes
 recipe action for button
   px-16px py-11px rounded-9px bg-primary text-primary_fg
+recipe danger_action for button extends action
+  bg-danger
 recipe caption for text
   text-12.5px text-fg
 theme
@@ -81,7 +85,7 @@ theme
 on pressed
 view
   col
-    button "Save" @action -> pressed
+    button "Delete" @danger_action -> pressed
     text "Caption" @caption
 "#;
     let generated = compile(source, "exact-recipes.ice").unwrap();
@@ -89,6 +93,34 @@ view
     assert!(generated.contains("top: 11.0, right: 16.0, bottom: 11.0, left: 16.0"));
     assert!(generated.contains("__style.border.radius = 9.0.into()"));
     assert!(generated.contains(".size(12.5)"));
+    assert!(generated.contains("::iced::Color::from_rgba8(204, 0, 0, 1.000000)"));
+
+    let error = compile(
+        &source.replace("extends action", "extends missing"),
+        "exact-recipes.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E046");
+    assert!(error.message.contains("extends unknown recipe `missing`"));
+
+    let error = compile(
+        &source.replace(
+            "recipe caption for text",
+            "recipe caption for text extends action",
+        ),
+        "exact-recipes.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E046");
+    assert!(error.message.contains("targets `text`"));
+
+    let cycle = source.replace(
+        "recipe action for button",
+        "recipe action for button extends danger_action",
+    );
+    let error = compile(&cycle, "exact-recipes.ice").unwrap_err();
+    assert_eq!(error.code, "E046");
+    assert!(error.message.contains("recipe inheritance cycle"));
 }
 
 #[test]

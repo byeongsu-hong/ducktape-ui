@@ -159,10 +159,6 @@ pub(crate) fn controlled_state_bindings(
                     .expect("checker validates component names");
                 let mut component_env = HashMap::new();
                 for param in &component.params {
-                    let arg = args
-                        .iter()
-                        .find(|arg| arg.name == param.name)
-                        .expect("checker validates named component arguments");
                     if !param.bind {
                         component_env.insert(
                             param.name.clone(),
@@ -170,6 +166,10 @@ pub(crate) fn controlled_state_bindings(
                         );
                         continue;
                     }
+                    let arg = args
+                        .iter()
+                        .find(|arg| arg.name == param.name)
+                        .expect("checker requires every bind prop");
                     let Expr::Path(path) = &arg.value else {
                         return Err(Error::new(
                             "E139",

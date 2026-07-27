@@ -59,7 +59,7 @@ pub(in crate::check) fn infer_components_group(
             if let Some(missing) = component
                 .params
                 .iter()
-                .find(|param| !supplied.contains(&param.name))
+                .find(|param| param.default.is_none() && !supplied.contains(&param.name))
             {
                 return Err(Error::new(
                     "E123",

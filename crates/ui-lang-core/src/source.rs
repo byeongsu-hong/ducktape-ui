@@ -738,7 +738,7 @@ mod tests {
         fixture.write("app.ice", root);
         fixture.write(
             "recipes.ice",
-            "recipe panel for box\n  @p-4 bg-surface rounded-md\n",
+            "recipe surface for box\n  @bg-surface\nrecipe panel for box extends surface\n  @p-4 rounded-md\n",
         );
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -753,6 +753,18 @@ mod tests {
         assert_eq!(panel.definition.path.as_deref(), Some(recipes.as_path()));
         assert_eq!(panel.references.as_slice(), std::slice::from_ref(reference));
         assert!(panel.renameable);
+
+        let surface = checked
+            .symbols()
+            .iter()
+            .find(|symbol| symbol.name == "surface")
+            .unwrap();
+        assert_eq!(surface.kind, SymbolKind::Recipe);
+        assert_eq!(surface.references.len(), 1);
+        assert_eq!(
+            surface.references[0].path.as_deref(),
+            Some(recipes.as_path())
+        );
     }
 
     #[test]

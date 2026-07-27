@@ -514,7 +514,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "component" => details(
             &["document"],
-            "component <Name>([bind] <prop>:<type>, ...)",
+            "component <Name>([bind] <prop>:<type>[=<default-expression>], ...)",
             child_shape(1, None, "component-state|component-handler|view-root"),
             no_binding(),
             no_route(),
@@ -1458,12 +1458,12 @@ fn style_contract() -> Value {
     json!({
         "utilitySyntax": "forms omit the leading `@` marker",
         "recipes": {
-            "declaration": "recipe <name> for <target>",
+            "declaration": "recipe <name> for <target> [extends <base>]",
             "use": "@<name>",
             "targets": ["col", "row", "flex", "grid", "stack", "box", "text", "input", "button"],
-            "expansion": "checked utility tokens expand in place",
+            "expansion": "the optional same-target base expands first, then child utility tokens expand in place",
             "precedence": "later utilities win; direct typed properties override recipe defaults",
-            "composition": false,
+            "composition": { "bases": 1, "sameTarget": true, "cycles": false },
         },
         "statusCascade": {
             "base": "active fields apply to every native interaction status",
@@ -1745,6 +1745,16 @@ pub fn document() -> Value {
                 "test-target": "checked runtime selector available only inside test declarations",
             },
             "constructs": constructs,
+            "components": {
+                "prop": "<name>:<type>[=<default-expression>]",
+                "defaults": {
+                    "optional": true,
+                    "expression": "pure checked expression closed over no app state, component state, or parameters",
+                    "mutableValues": false,
+                    "requiredAfterDefault": true,
+                    "callRule": "a missing named argument uses its declared default"
+                }
+            },
             "style": style_contract(),
             "testMode": test_contract(),
         },
@@ -1982,6 +1992,12 @@ mod tests {
             serde_json::json!([
                 "col", "row", "flex", "grid", "stack", "box", "text", "input", "button"
             ])
+        );
+        assert_eq!(styles["recipes"]["composition"]["bases"], 1);
+        assert_eq!(schema["core"]["components"]["defaults"]["optional"], true);
+        assert_eq!(
+            schema["core"]["components"]["defaults"]["requiredAfterDefault"],
+            true
         );
         assert!(
             styles["utilities"]["rule"]

@@ -25,6 +25,7 @@ pub struct Document {
 pub struct StyleRecipe {
     pub name: String,
     pub target: StyleRecipeTarget,
+    pub base: Option<String>,
     pub utilities: Vec<String>,
     pub span: Span,
 }
@@ -64,13 +65,26 @@ impl Document {
     }
 
     pub(crate) fn expand_styles(&self, styles: &[String]) -> Vec<String> {
-        styles
-            .iter()
-            .flat_map(|style| {
-                self.style_recipe(style)
-                    .map_or_else(|| vec![style.clone()], |recipe| recipe.utilities.clone())
-            })
-            .collect()
+        let mut expanded = Vec::new();
+        for style in styles {
+            if let Some(recipe) = self.style_recipe(style) {
+                self.expand_recipe(recipe, &mut expanded);
+            } else {
+                expanded.push(style.clone());
+            }
+        }
+        expanded
+    }
+
+    fn expand_recipe(&self, recipe: &StyleRecipe, expanded: &mut Vec<String>) {
+        if let Some(base) = recipe
+            .base
+            .as_deref()
+            .and_then(|name| self.style_recipe(name))
+        {
+            self.expand_recipe(base, expanded);
+        }
+        expanded.extend(recipe.utilities.iter().cloned());
     }
 }
 

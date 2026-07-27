@@ -60,15 +60,53 @@ pub(in crate::check) enum StyleTarget<'a> {
 
 pub(in crate::check) fn check_recipes(document: &Document) -> Result<(), Error> {
     for recipe in &document.recipes {
+        let mut seen = HashSet::from([recipe.name.as_str()]);
+        let mut current = recipe;
+        while let Some(base_name) = &current.base {
+            let base = document.style_recipe(base_name).ok_or_else(|| {
+                Error::new(
+                    "E046",
+                    &recipe.span,
+                    format!(
+                        "recipe `{}` extends unknown recipe `{base_name}`",
+                        recipe.name
+                    ),
+                )
+            })?;
+            if current.target != base.target {
+                return Err(Error::new(
+                    "E046",
+                    &recipe.span,
+                    format!(
+                        "recipe `{}` targets `{}` but extends `{base_name}`, which targets `{}`",
+                        current.name,
+                        current.target.source_name(),
+                        base.target.source_name()
+                    ),
+                ));
+            }
+            if !seen.insert(base.name.as_str()) {
+                return Err(Error::new(
+                    "E046",
+                    &recipe.span,
+                    format!("recipe inheritance cycle includes `{}`", base.name),
+                ));
+            }
+            current = base;
+        }
+    }
+
+    for recipe in &document.recipes {
+        let utilities = document.expand_styles(std::slice::from_ref(&recipe.name));
         match recipe.target {
             StyleRecipeTarget::Column => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Layout(Layout::Column, &LayoutOptions::default()),
             )?,
             StyleRecipeTarget::Row => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Layout(Layout::Row, &LayoutOptions::default()),
@@ -79,44 +117,44 @@ pub(in crate::check) fn check_recipes(document: &Document) -> Result<(), Error> 
                     ..LayoutOptions::default()
                 };
                 check_styles(
-                    &recipe.utilities,
+                    &utilities,
                     document,
                     &recipe.span,
                     StyleTarget::Layout(Layout::Row, &options),
                 )?;
             }
             StyleRecipeTarget::Grid => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Layout(Layout::Grid, &LayoutOptions::default()),
             )?,
             StyleRecipeTarget::Stack => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Layout(Layout::Stack, &LayoutOptions::default()),
             )?,
             StyleRecipeTarget::Container => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Container(&ContainerOptions::default()),
             )?,
             StyleRecipeTarget::Text => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Text(&TextOptions::default()),
             )?,
             StyleRecipeTarget::Input => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Input(&InputOptions::default()),
             )?,
             StyleRecipeTarget::Button => check_styles(
-                &recipe.utilities,
+                &utilities,
                 document,
                 &recipe.span,
                 StyleTarget::Button(&ButtonOptions::default()),

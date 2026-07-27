@@ -44,6 +44,7 @@ pub struct ComponentParam {
     pub name: String,
     pub ty: Type,
     pub bind: bool,
+    pub default: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]

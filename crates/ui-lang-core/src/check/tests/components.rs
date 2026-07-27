@@ -278,6 +278,74 @@ view
 }
 
 #[test]
+fn checks_closed_component_prop_defaults() {
+    let source = r#"app Demo
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  app_title = "Captured"
+component Panel(description:str="", elevated:bool=false, title:str)
+  col
+    text title
+    text description
+    if elevated
+      text "Elevated"
+view
+  Panel title="Editor"
+"#;
+    analyze(source).unwrap();
+
+    let error =
+        analyze(&source.replace("description:str=\"\"", "description:str=app_title")).unwrap_err();
+    assert_eq!(error.code, "E150");
+    assert!(error.message.contains("unknown value `app_title`"));
+
+    let error =
+        analyze(&source.replace("description:str=\"\"", "description:str=title")).unwrap_err();
+    assert_eq!(error.code, "E150");
+    assert!(error.message.contains("unknown value `title`"));
+
+    let error =
+        analyze(&source.replace("elevated:bool=false", "elevated:bool=\"yes\"")).unwrap_err();
+    assert_eq!(error.code, "E101");
+
+    let error = analyze(&source.replace("title:str", "title:editor=\"\"")).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(error.message.contains("cannot default a mutable value"));
+
+    let error = analyze(&source.replace("Panel title=\"Editor\"", "Panel")).unwrap_err();
+    assert_eq!(error.code, "E123");
+    assert!(error.message.contains("missing prop `title`"));
+
+    let error = analyze(
+        &source
+            .replace(
+                "component Panel(",
+                "extern crate::backend\n  sync fallback_title() -> str\ncomponent Panel(",
+            )
+            .replace("description:str=\"\"", "description:str=fallback_title()"),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(
+        error
+            .message
+            .contains("cannot call extern function `fallback_title`")
+    );
+
+    let error = analyze(&source.replace("title:str", "bind title:str=\"Editor\"")).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(
+        error
+            .message
+            .contains("bind prop `title` cannot declare a default")
+    );
+}
+
+#[test]
 fn checks_named_component_slots() {
     let source = r#"app Demo
 theme

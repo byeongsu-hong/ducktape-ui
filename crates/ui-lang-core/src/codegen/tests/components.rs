@@ -709,6 +709,28 @@ view
 }
 
 #[test]
+fn lowers_missing_component_props_from_defaults() {
+    let source = r#"app Defaults
+theme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Badge(label:str="Untitled", selected:bool=false)
+  col
+    text label
+    if selected
+      text "Selected"
+view
+  Badge selected=true
+"#;
+    let generated = compile(source, "defaults.ice").unwrap();
+
+    assert!(generated.contains("(\"Untitled\".clone()).to_string()"));
+    assert!(generated.contains("if true"));
+}
+
+#[test]
 fn lowers_component_scoped_widget_operations() {
     let source = r#"app LocalFocus
 theme
