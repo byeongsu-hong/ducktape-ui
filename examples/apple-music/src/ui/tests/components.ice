@@ -38,6 +38,9 @@ test component_sidebar_contract
   expect text "Music" within drag_zone
   expect search_input.y ~= header.bottom + 6.0
   expect selected_home.kind == "button"
+  expect selected_home.background == background.color(color.rgb8(247, 232, 237))
+  expect selected_home.border.width ~= 0.0
+  expect selected_home.shadow.blur ~= 0.0
   expect new_item.kind == "button"
   expect mini_cover.width ~= 42.0
   expect mini_title.font.family == family.named("Geist")
@@ -146,7 +149,7 @@ test component_card_contracts
   expect recent_cover.width ~= 152.0
   expect station.kind == "button"
   expect station.width ~= 268.0
-  expect station_title.text_size ~= 17.0
+  expect station_title.text_size ~= 18.0
   expect artist.kind == "button"
   expect artist_name.value == "Mira Vale"
   expect song.kind == "button"
@@ -213,7 +216,7 @@ test component_player_and_queue_contract
   viewport 1200 800
   mount
     col #stage w=fill h=fill p=12.0 gap=12.0
-      PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume #player
+      PlayerBar title=current_title artist=current_artist cover=current_cover active=playing playhead=position loudness=volume lyrics_active=lyrics_open queue_active=queue_open #player
       row #lower w=fill h=fill gap=12.0
         QueuePanel albums=recently_played current_title=current_title current_artist=current_artist current_cover=current_cover #queue-panel
         box w=fill h=fill bg=bg r=22.0
@@ -228,7 +231,9 @@ test component_player_and_queue_contract
   target shuffle_button = #stage/player/root/surface/layout/transport/transport-content/controls/shuffle
   target previous_button = #stage/player/root/surface/layout/transport/transport-content/controls/previous
   target pause_button = #stage/player/root/surface/layout/transport/transport-content/controls/pause
+  target pause_glyph = #stage/player/root/surface/layout/transport/transport-content/controls/pause/pause-glyph/root
   target play_button = #stage/player/root/surface/layout/transport/transport-content/controls/play
+  target play_glyph = #stage/player/root/surface/layout/transport/transport-content/controls/play/play-glyph/root
   target next_button = #stage/player/root/surface/layout/transport/transport-content/controls/next
   target elapsed = #stage/player/root/surface/layout/transport/transport-content/timeline/elapsed
   target seek_slider = #stage/player/root/surface/layout/transport/transport-content/timeline/seek
@@ -237,7 +242,8 @@ test component_player_and_queue_contract
   target mute_button = #stage/player/root/surface/layout/utilities/mute
   target unmute_button = #stage/player/root/surface/layout/utilities/unmute
   target volume_slider = #stage/player/root/surface/layout/utilities/volume
-  target queue_button = #stage/player/root/surface/layout/utilities/queue
+  target lyrics_button = #stage/player/root/surface/layout/utilities/lyrics/lyrics-inactive
+  target queue_button = #stage/player/root/surface/layout/utilities/queue/queue-inactive
   target queue_panel = #stage/lower/queue-panel/root
   target queue_surface = #stage/lower/queue-panel/root/surface
   target queue_close = #stage/lower/queue-panel/root/surface/header/close
@@ -254,6 +260,8 @@ test component_player_and_queue_contract
   expect elapsed.value == "1:17"
   expect remaining.value == "-2:30"
   expect exists pause_button
+  expect pause_glyph.center_x ~= pause_button.center_x
+  expect pause_glyph.center_y ~= pause_button.center_y
   expect missing play_button
   expect queue_panel.width ~= 354.0
   expect queue_surface.border.radius == radius(22.0)
@@ -263,6 +271,8 @@ test component_player_and_queue_contract
   expect !playing
   expect missing pause_button
   expect exists play_button
+  expect play_glyph.center_x ~= play_button.center_x
+  expect play_glyph.center_y ~= play_button.center_y
   click play_button
   expect playing
   click previous_button
@@ -283,12 +293,45 @@ test component_player_and_queue_contract
   expect exists unmute_button
   click unmute_button
   expect volume ~= 50.0
+  click lyrics_button
+  expect lyrics_open
+  expect !queue_open
   click queue_button
   expect queue_open
+  expect !lyrics_open
   click queued_song
   expect current_title == "Velvet Sun"
   click queue_close
   expect !queue_open
+
+test component_lyrics_contract
+  preset test
+  viewport 420 760
+  mount
+    LyricsPanel title=current_title artist=current_artist lines=lyrics_for(current_title, position) #lyrics-panel
+  target root = #lyrics-panel/root
+  target surface = #lyrics-panel/root/surface
+  target title = #lyrics-panel/root/surface/header/title
+  target track_title = #lyrics-panel/root/surface/header/track/track-title
+  target track_artist = #lyrics-panel/root/surface/header/track/track-artist
+  target active_line = #lyrics-panel/root/surface/lines/line(2)/root/active
+  target later_line = #lyrics-panel/root/surface/lines/line(3)/root/inactive
+  target close = #lyrics-panel/root/surface/header/close
+  expect root.width ~= 330.0
+  expect surface.border.radius == radius(22.0)
+  expect title.value == "Lyrics"
+  expect title.text_size ~= 18.0
+  expect track_title.value == "Liquid Light"
+  expect track_artist.value == "Nova June"
+  expect active_line.kind == "button"
+  expect text "Under a velvet sun" within active_line
+  expect later_line.kind == "button"
+  click later_line
+  expect position ~= 60.0
+  dispatch lyrics
+  expect lyrics_open
+  click close
+  expect !lyrics_open
 
 test component_library_content_contract
   preset test
@@ -352,7 +395,7 @@ test minimum_window_layout_contract
   target timeline = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/timeline
   target utilities = #app/shell/content/dock/player/root/surface/layout/utilities
   target volume_control = #app/shell/content/dock/player/root/surface/layout/utilities/volume
-  target queue_control = #app/shell/content/dock/player/root/surface/layout/utilities/queue
+  target queue_control = #app/shell/content/dock/player/root/surface/layout/utilities/queue/queue-inactive
   expect app.width ~= 980.0
   expect app.height ~= 640.0
   expect shell.width ~= app.width - 20.0

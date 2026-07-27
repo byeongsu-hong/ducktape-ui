@@ -9,6 +9,14 @@ pub struct Album {
     pub cover: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct LyricLine {
+    pub id: i64,
+    pub text: String,
+    pub position: f64,
+    pub active: bool,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct HomeFeed {
     pub top_picks: Vec<Album>,
@@ -106,6 +114,33 @@ pub fn toggle_mute(volume: f64, unmuted_volume: f64) -> f64 {
     if volume > 0.0 { 0.0 } else { unmuted_volume }
 }
 
+pub fn lyrics_for(title: String, progress: f64) -> Vec<LyricLine> {
+    let text = [
+        title,
+        "After blue".into(),
+        "Under a velvet sun".into(),
+        "Soft weather moving in".into(),
+        "An amber signal".into(),
+        "Across the open water".into(),
+    ];
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let active = ((progress / 100.0 * text.len() as f64).floor() as usize).min(text.len() - 1);
+
+    text.into_iter()
+        .enumerate()
+        .map(|(id, text)| LyricLine {
+            id: id as i64,
+            text,
+            position: id as f64 * 20.0,
+            active: id == active,
+        })
+        .collect()
+}
+
 fn progress_seconds(progress: f64) -> u64 {
     if progress.is_finite() {
         (progress.clamp(0.0, 100.0) * 2.27).round() as u64
@@ -163,5 +198,15 @@ mod tests {
         assert_eq!(remember_volume(0.0, 42.0), 42.0);
         assert_eq!(toggle_mute(42.0, 42.0), 0.0);
         assert_eq!(toggle_mute(0.0, 42.0), 42.0);
+    }
+
+    #[test]
+    fn lyrics_follow_the_playhead() {
+        let lines = lyrics_for("Liquid Light".into(), 34.0);
+
+        assert_eq!(lines.len(), 6);
+        assert_eq!(lines[0].text, "Liquid Light");
+        assert!(lines[2].active);
+        assert_eq!(lines[3].position, 60.0);
     }
 }
