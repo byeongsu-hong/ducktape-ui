@@ -22,7 +22,7 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{__NotionMessage, Notion, helpers};
+    use super::{__NotionMessage, ModalState, Notion, helpers};
 
     fn notion_settings() -> iced::Settings {
         iced::Settings {
@@ -120,7 +120,7 @@ mod tests {
             let _ = app.__update(message);
         }
 
-        assert!(app.search_open);
+        assert!(matches!(app.modal, ModalState::Search));
         assert!(app.search_query.is_empty());
         let mut screen =
             iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());

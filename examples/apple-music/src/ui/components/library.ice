@@ -3,6 +3,9 @@ component PageTitle(eyebrow:str, title:str, description:str)
     text eyebrow #eyebrow size=10.0 @text-primary font-bold
     text title #title size=32.0 line-h=1.0 @text-fg font-bold
     text description #description size=13.0 line-h=1.4 @text-muted
+    if provided(Actions)
+      row #actions w=fill pt=4.0
+        slot Actions?
 
 component SectionTitle(title:str, detail:str)
   flex #root w=fill h=28.0 dir=row justify=space-between items=center
@@ -209,7 +212,7 @@ component SongRow(album:Album)
     hovered bg=accent
     pressed bg=accent text=primary
 
-component LibraryContent(section:str, query:str, loading:bool, error:str, top_picks:[Album], recently_played:[Album], search_results:[Album], current_title:str, current_artist:str, current_cover:str)
+component LibraryContent(section:MusicSection, query:str, loading:bool, error:str, top_picks:[Album], recently_played:[Album], search_results:[Album], current_title:str, current_artist:str, current_cover:str)
   emits
     restart_current
     queue
@@ -224,7 +227,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
       if error != ""
         Alert.Destructive title="Music is unavailable" description=error
       match section
-        "Home"
+        MusicSection.home
           PageTitle #home-title
             with
               eyebrow="FOR YOU"
@@ -248,7 +251,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           AlbumStrip albums=recently_played featured=false
             events
               play -> emit play _ _ _
-        "New"
+        MusicSection.new
           PageTitle #new-title
             with
               eyebrow="UPDATED FRIDAY"
@@ -272,7 +275,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           AlbumGrid albums=recently_played
             events
               play -> emit play _ _ _
-        "Radio"
+        MusicSection.radio
           PageTitle #radio-title
             with
               eyebrow="LIVE & ON DEMAND"
@@ -296,7 +299,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           AlbumStrip albums=recently_played featured=false
             events
               play -> emit play _ _ _
-        "Recently Added"
+        MusicSection.recently_added
           PageTitle #recent-title
             with
               eyebrow="YOUR LIBRARY"
@@ -313,7 +316,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
                 SongRow album=album #song(album.id)
                   events
                     play -> emit play _ _ _
-        "Artists"
+        MusicSection.artists
           PageTitle #artists-title
             with
               eyebrow="YOUR LIBRARY"
@@ -323,7 +326,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           ArtistGrid albums=recently_played
             events
               play -> emit play _ _ _
-        "Albums"
+        MusicSection.albums
           PageTitle #albums-title
             with
               eyebrow="YOUR LIBRARY"
@@ -333,7 +336,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           AlbumGrid albums=recently_played
             events
               play -> emit play _ _ _
-        "Songs"
+        MusicSection.songs
           PageTitle #songs-title
             with
               eyebrow="YOUR LIBRARY"
@@ -350,7 +353,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
                 SongRow album=album #song(album.id)
                   events
                     play -> emit play _ _ _
-        "Search"
+        MusicSection.search
           PageTitle eyebrow="CATALOG" title="Search results" description=query #search-title
           if empty(search_results) && !loading
             EmptyState

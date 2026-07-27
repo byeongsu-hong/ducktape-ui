@@ -128,17 +128,34 @@ fn rejects_enum_names_that_collide_after_rust_lowering() {
 }
 
 #[test]
-fn keeps_clone_only_ui_enums_out_of_comparison_and_lazy_hashing() {
-    for view in [
-        "text (screen == Screen.home)",
-        "lazy screen as value #screen\n    text \"screen\"",
-    ] {
-        let source = format!(
-            "{PREFIX}enum Screen\n  home\nstate\n  screen:Screen = Screen.home\nview\n  {view}\n"
-        );
-        let error = analyze(&source).unwrap_err();
-        assert!(matches!(error.code, "E139" | "E153"));
-    }
+fn compares_fieldless_ui_enums_but_keeps_them_out_of_lazy_hashing() {
+    let source = format!(
+        "{PREFIX}enum Screen\n  home\n  settings\nstate\n  screen:Screen = Screen.home\nview\n  if screen == Screen.home\n    text \"home\"\n"
+    );
+    analyze(&source).unwrap();
+
+    let lazy = format!(
+        "{PREFIX}enum Screen\n  home\n  settings\nstate\n  screen:Screen = Screen.home\nview\n  lazy screen as value #screen\n    text \"screen\"\n"
+    );
+    let error = analyze(&lazy).unwrap_err();
+    assert_eq!(error.code, "E139");
+
+    let ordering = format!(
+        "{PREFIX}enum Screen\n  home\n  settings\nstate\n  screen:Screen = Screen.home\nview\n  text (screen < Screen.settings)\n"
+    );
+    let error = analyze(&ordering).unwrap_err();
+    assert_eq!(error.code, "E153");
+    assert!(error.message.contains("ordering is undefined"));
+}
+
+#[test]
+fn keeps_payload_ui_enums_out_of_comparison() {
+    let source = format!(
+        "{PREFIX}enum Request\n  ready(str)\nstate\n  request:Request = Request.ready(\"done\")\nview\n  text (request == Request.ready(\"done\"))\n"
+    );
+    let error = analyze(&source).unwrap_err();
+    assert_eq!(error.code, "E153");
+    assert!(error.message.contains("payload-carrying UI enum"));
 }
 
 #[test]

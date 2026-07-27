@@ -13,6 +13,8 @@ app Notion
 font inter family="Inter" default=true
 font inter_bold family="Inter" weight=bold
 
+use "styles.ice" as notion
+
 extern crate::helpers
   sync page_matches(query:str, title:str) -> bool
   sync page_link(page:str) -> str
@@ -58,12 +60,16 @@ palette app for AppTheme
   danger     #eb5757
   blue_soft  #eaf3fb
 
+enum ModalState
+  closed
+  search
+  share
+
 state
   selected_page = "home"
   sidebar_open = true
-  search_open = false
+  modal:ModalState = ModalState.closed
   search_query = ""
-  share_open = false
   home_favorite = false
   roadmap_favorite = false
   launch_favorite = false
@@ -88,13 +94,17 @@ state
   meeting_document:BlockEditorState = block_editor_state("meeting")
   untitled_document:BlockEditorState = block_editor_state("untitled")
 
+derived
+  normalized_invite_email = trim(invite_email)
+  invite_ready = !empty(normalized_invite_email)
+  has_search_query = !empty(trim(search_query))
+
 preset test
   state
     selected_page = "home"
     sidebar_open = true
-    search_open = false
+    modal = ModalState.closed
     search_query = ""
-    share_open = false
     home_favorite = false
     roadmap_favorite = false
     launch_favorite = false
@@ -120,17 +130,16 @@ preset test
 
 on navigate(page)
   selected_page = page
-  search_open = false
+  modal = ModalState.closed
 
 on toggle_sidebar
   sidebar_open = !sidebar_open
 
 on open_search
-  search_open = true
-  share_open = false
+  modal = ModalState.search
 
 on close_search
-  search_open = false
+  modal = ModalState.closed
 
 on toggle_home_favorite
   home_favorite = !home_favorite
@@ -163,13 +172,12 @@ on untitled_comments_toggled
   untitled_document = block_editor_toggle_comments(untitled_document)
 
 on open_share
-  share_open = true
-  search_open = false
+  modal = ModalState.share
   link_copied = false
   invite_access_choice = none
 
 on close_share
-  share_open = false
+  modal = ModalState.closed
 
 on new_page
   selected_page = "untitled"
@@ -177,8 +185,8 @@ on new_page
   untitled_document = block_editor_state("untitled")
 
 on send_invite
-  let email = trim(invite_email)
-  return if empty(email)
+  let email = normalized_invite_email
+  return if !invite_ready
   invited_email = email
   invited_access = selected_access(invite_access_choice)
   invite_email = ""
@@ -390,9 +398,13 @@ component MiniSidebar()
     open_search
   box #root w=44.0 h=fill bg=sidebar border=border border-w=1.0 align-x=center
     col w=fill h=fill p=7.0 align=center
-      button #expand label="Expand sidebar" p=6.0 style=text -> emit toggle_sidebar
+      button #expand -> emit toggle_sidebar
+        with
+          label="Expand sidebar"
+          style=text
+          @notion::toolbar_action
         text "»" size=17.0 @text-muted
-      button #search label="Search" p=6.0 style=text -> emit open_search
+      button #search label="Search" style=text @notion::toolbar_action -> emit open_search
         text "⌕" size=17.0 @text-muted
       space w=fill h=fill
       box w=26.0 h=26.0 align-x=center align-y=center bg=fg r=5.0
@@ -404,15 +416,17 @@ component Topbar(current_title:str, current_icon:str)
   row #root w=fill h=46.0 px=12.0 gap=5.0 align=center
     text current_icon size=13.0 @text-muted
     text current_title w=fill size=12.0 @text-fg
-    slot comments
-    slot favorite_action
-    button #share label="Share" p=6.0 -> emit open_share
+    if provided(comments)
+      slot comments?
+    if provided(favorite_action)
+      slot favorite_action?
+    button #share label="Share" @notion::toolbar_action -> emit open_share
       text "Share" size=12.0 @text-primary
       active bg=transparent text=primary r=5.0
       hovered bg=blue_soft
       pressed bg=selected
 
-component Document(bind title:str, state:BlockEditorState, icon:str) -> BlockEditorEvent
+component Document(bind title:str, state:BlockEditorState, icon:str="□") -> BlockEditorEvent
   box #root w=fill h=fill px=28.0 align-x=center
     col w=fill h=fill max-w=920.0 pt=26.0
       text icon #icon size=42.0 @text-fg
@@ -430,7 +444,7 @@ component Document(bind title:str, state:BlockEditorState, icon:str) -> BlockEdi
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
       extern block_editor(state) #editor -> emit _
 
-component SearchDialog(bind search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str)
+component SearchDialog(bind search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str, untitled_title:str, has_query:bool)
   emits
     close_search
     navigate(str)
@@ -456,13 +470,13 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
             p=8.0
           active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
           focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
-        button #close label="Close search" p=5.0 style=text -> emit close_search
+        button #close label="Close search" style=text @notion::compact_action -> emit close_search
           text "esc" size=10.0 @text-faint
       box w=fill h=1.0 bg=border
         text ""
-      if empty(trim(search_query))
+      if !has_query
         text "RECENT" size=10.0 @text-faint font-bold
-      if !empty(trim(search_query))
+      if has_query
         text "BEST MATCHES" size=10.0 @text-faint font-bold
       if page_matches(search_query, home_title)
         PageItem #home-result
@@ -512,7 +526,7 @@ component SearchDialog(bind search_query:str, selected_page:str, home_title:str,
       if !page_matches(search_query, home_title) && !page_matches(search_query, roadmap_title) && !page_matches(search_query, launch_title) && !page_matches(search_query, meeting_title) && !page_matches(search_query, untitled_title)
         text "No pages found" size=13.0 @text-muted
 
-component ShareDialog(bind invite_email:str, invite_access_options:[str], invite_access_choice:str?, invited_email:str, invited_access:str, link_copied:bool, page_link:str)
+component ShareDialog(bind invite_email:str, invite_access_options:[str], invite_access_choice:str?, invited_email:str, invited_access:str, link_copied:bool, page_link:str, invite_ready:bool)
   emits
     close_share
     invite_access_changed(str)
@@ -532,7 +546,11 @@ component ShareDialog(bind invite_email:str, invite_access_options:[str], invite
     col w=fill gap=14.0
       row w=fill align=center
         text "Share this page" w=fill size=17.0 @text-fg font-bold
-        button #close label="Close share dialog" p=5.0 style=text -> emit close_share
+        button #close -> emit close_share
+          with
+            label="Close share dialog"
+            style=text
+            @notion::compact_action
           text "×" size=18.0 @text-muted
       row w=fill gap=8.0
         input "" #email label="Email address" <-> invite_email hint="Email or name" w=fill p=9.0
@@ -543,7 +561,7 @@ component ShareDialog(bind invite_email:str, invite_access_options:[str], invite
             hint="Can edit"
             w=112.0
             p=9.0
-        button "Invite" #invite disabled=empty(trim(invite_email)) p=9.0 -> emit send_invite
+        button "Invite" #invite disabled=!invite_ready p=9.0 -> emit send_invite
           active bg=primary text=white r=6.0
           hovered bg=primary/85
           disabled bg=hover text=faint
@@ -619,7 +637,7 @@ test sidebar_component
   click launch
   expect selected_page == "launch"
   click search
-  expect search_open
+  expect modal == ModalState.search
   click collapse
   expect !sidebar_open
 
@@ -636,7 +654,7 @@ test mini_sidebar_component
   target search = #mini/root/search
   expect root.width ~= 44.0
   click search
-  expect search_open
+  expect modal == ModalState.search
   click expand
   expect !sidebar_open
 
@@ -648,7 +666,11 @@ test topbar_component
       events
         open_share -> open_share
       comments:
-        button #comments label="Open comments" p=6.0 style=text -> home_comments_toggled
+        button #comments -> home_comments_toggled
+          with
+            label="Open comments"
+            style=text
+            @notion::toolbar_action
           text "☵" size=15.0 @text-muted
       favorite_action:
         row
@@ -656,11 +678,15 @@ test topbar_component
             button #remove-favorite -> toggle_home_favorite
               with
                 label="Remove from favorites"
-                p=6.0
+                @notion::toolbar_action
                 style=text
               text "★" size=16.0 @text-fg
           if !home_favorite
-            button #favorite label="Add to favorites" p=6.0 style=text -> toggle_home_favorite
+            button #favorite -> toggle_home_favorite
+              with
+                label="Add to favorites"
+                style=text
+                @notion::toolbar_action
               text "☆" size=16.0 @text-muted
   target root = #topbar/root
   target comments = #topbar/root/comments
@@ -674,13 +700,13 @@ test topbar_component
   click favorite_button
   expect home_favorite
   click share
-  expect share_open
+  expect modal == ModalState.share
 
 test document_component
   preset test
   viewport 960 650
   mount
-    Document title<->home_title state=home_document icon="◆" #document -> home_editor_changed _
+    Document title<->home_title state=home_document #document -> home_editor_changed _
   target root = #document/root
   target title = #document/root/title
   target editor = #document/root/editor
@@ -711,6 +737,7 @@ test search_dialog_component
         launch_title=launch_title
         meeting_title=meeting_title
         untitled_title=untitled_title
+        has_query=has_search_query
       events
         close_search -> close_search
         navigate -> navigate _
@@ -742,6 +769,7 @@ test share_dialog_component
         invited_access=invited_access
         link_copied=link_copied
         page_link=page_link("home")
+        invite_ready=invite_ready
       events
         close_share -> close_share
         invite_access_changed -> invite_access_changed _
@@ -869,7 +897,7 @@ test minimum_window_layout
 view
   overlay
     with
-      when=search_open
+      when=(modal == ModalState.search)
       dismiss=close_search
       backdrop=black/18
       p=24.0
@@ -878,7 +906,7 @@ view
     content
       overlay
         with
-          when=share_open
+          when=(modal == ModalState.share)
           dismiss=close_share
           backdrop=black/18
           p=24.0
@@ -921,7 +949,7 @@ view
                         button #comments -> home_comments_toggled
                           with
                             label="Open comments"
-                            p=6.0
+                            @notion::toolbar_action
                             style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
@@ -930,14 +958,14 @@ view
                             button #remove-favorite -> toggle_home_favorite
                               with
                                 label="Remove from favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "★" size=16.0 @text-fg
                           if !home_favorite
                             button #favorite -> toggle_home_favorite
                               with
                                 label="Add to favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "☆" size=16.0 @text-muted
                     Document #home-document -> home_editor_changed _
@@ -954,7 +982,7 @@ view
                         button #comments -> roadmap_comments_toggled
                           with
                             label="Open comments"
-                            p=6.0
+                            @notion::toolbar_action
                             style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
@@ -963,14 +991,14 @@ view
                             button #remove-favorite -> toggle_roadmap_favorite
                               with
                                 label="Remove from favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "★" size=16.0 @text-fg
                           if !roadmap_favorite
                             button #favorite -> toggle_roadmap_favorite
                               with
                                 label="Add to favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "☆" size=16.0 @text-muted
                     Document #roadmap-document -> roadmap_editor_changed _
@@ -987,7 +1015,7 @@ view
                         button #comments -> launch_comments_toggled
                           with
                             label="Open comments"
-                            p=6.0
+                            @notion::toolbar_action
                             style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
@@ -996,14 +1024,14 @@ view
                             button #remove-favorite -> toggle_launch_favorite
                               with
                                 label="Remove from favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "★" size=16.0 @text-fg
                           if !launch_favorite
                             button #favorite -> toggle_launch_favorite
                               with
                                 label="Add to favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "☆" size=16.0 @text-muted
                     Document #launch-document -> launch_editor_changed _
@@ -1020,7 +1048,7 @@ view
                         button #comments -> meeting_comments_toggled
                           with
                             label="Open comments"
-                            p=6.0
+                            @notion::toolbar_action
                             style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
@@ -1029,14 +1057,14 @@ view
                             button #remove-favorite -> toggle_meeting_favorite
                               with
                                 label="Remove from favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "★" size=16.0 @text-fg
                           if !meeting_favorite
                             button #favorite -> toggle_meeting_favorite
                               with
                                 label="Add to favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "☆" size=16.0 @text-muted
                     Document #meeting-document -> meeting_editor_changed _
@@ -1053,7 +1081,7 @@ view
                         button #comments -> untitled_comments_toggled
                           with
                             label="Open comments"
-                            p=6.0
+                            @notion::toolbar_action
                             style=text
                           text "☵" size=15.0 @text-muted
                       favorite_action:
@@ -1062,21 +1090,20 @@ view
                             button #remove-favorite -> toggle_untitled_favorite
                               with
                                 label="Remove from favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "★" size=16.0 @text-fg
                           if !untitled_favorite
                             button #favorite -> toggle_untitled_favorite
                               with
                                 label="Add to favorites"
-                                p=6.0
+                                @notion::toolbar_action
                                 style=text
                               text "☆" size=16.0 @text-muted
                     Document #untitled-document -> untitled_editor_changed _
                       with
                         title<->untitled_title
                         state=untitled_document
-                        icon="□"
         layer
           ShareDialog #share-dialog
             with
@@ -1087,6 +1114,7 @@ view
               invited_access=invited_access
               link_copied=link_copied
               page_link=page_link(selected_page)
+              invite_ready=invite_ready
             events
               close_share -> close_share
               invite_access_changed -> invite_access_changed _
@@ -1102,6 +1130,7 @@ view
           launch_title=launch_title
           meeting_title=meeting_title
           untitled_title=untitled_title
+          has_query=has_search_query
         events
           close_search -> close_search
           navigate -> navigate _

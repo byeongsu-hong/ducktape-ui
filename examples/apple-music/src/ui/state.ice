@@ -1,8 +1,18 @@
+enum MusicSection
+  home
+  new
+  radio
+  recently_added
+  artists
+  albums
+  songs
+  search
+
 state
   app_theme = "app"
   app_background = "#00000000"
   app_text = "#21191d"
-  section = "Home"
+  section:MusicSection = MusicSection.home
   query = ""
   loading = false
   signed_in = false
@@ -20,6 +30,10 @@ state
   queue_open = false
   lyrics_open = false
   error = ""
+
+derived
+  normalized_query = trim(query)
+  has_query = !empty(normalized_query)
 
 preset test
   boot

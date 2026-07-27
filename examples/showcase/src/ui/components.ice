@@ -1,3 +1,20 @@
+use "../../../../crates/ui/src/ice/default.ice"
+
+enum DemoTab
+  preview
+  code
+
+recipe demo_pager_action for button extends secondary_action
+  @p-8px
+
+component ProjectSlugInput(bind value:str)
+  row w=fill gap=4.0 align=center
+    text "https://ducktape.dev/" size=12.0 @text-muted
+    input "" #project-slug <-> value label="Project slug" hint="ui-lang" w=fill p=6.0
+      active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+      hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
+      focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+
 component CollapsibleDemo()
   state
     open = false
@@ -83,48 +100,47 @@ component CarouselDemo()
       button "Next" p=7.0 @secondary_action -> next
 
 component TabsDemo()
+  lifetime mounted
   state
-    selected = "preview"
+    selected:DemoTab = DemoTab.preview
   on preview
-    selected = "preview"
+    selected = DemoTab.preview
   on code
-    selected = "code"
+    selected = DemoTab.code
   col w=fill gap=12.0
-    row gap=4.0 p=4.0 @bg-accent rounded-lg
-      if selected == "preview"
-        button "Preview" p=8.0 @secondary_action -> preview
-      if selected != "preview"
-        button "Preview" p=8.0 @ghost_action -> preview
-      if selected == "code"
-        button "Code" p=8.0 @secondary_action -> code
-      if selected != "code"
-        button "Code" p=8.0 @ghost_action -> code
-    if selected == "preview"
-      box w=fill h=92.0 p=16.0 bg=accent/40 border=border border-w=1.0 r=9.0
-        text "The default component is ready to compose." size=13.0 @text-fg
-    if selected == "code"
-      box w=fill h=92.0 p=16.0 bg=fg r=9.0
-        text "button \"Save\" @primary_action -> save" size=13.0 @text-white
+    match selected
+      DemoTab.preview
+        row gap=4.0 p=4.0 @bg-accent rounded-lg
+          button "Preview" p=8.0 @secondary_action -> preview
+          button "Code" #show-code p=8.0 @ghost_action -> code
+        box w=fill h=92.0 p=16.0 bg=accent/40 border=border border-w=1.0 r=9.0
+          text "The default component is ready to compose." size=13.0 @text-fg
+      DemoTab.code
+        row gap=4.0 p=4.0 @bg-accent rounded-lg
+          button "Preview" #show-preview p=8.0 @ghost_action -> preview
+          button "Code" p=8.0 @secondary_action -> code
+        box w=fill h=92.0 p=16.0 bg=fg r=9.0
+          text "button \"Save\" @primary_action -> save" size=13.0 @text-white
 
-component PaginationDemo()
-  state
-    page = 1
-  on previous
-    return if page <= 1
-    page = page - 1
-  on next
-    return if page >= 5
-    page = page + 1
+component PaginationDemo(page:i64, max_page:i64=5)
+  emits
+    previous
+    next
   row gap=6.0 align=center
-    button "Previous" disabled=(page <= 1) p=8.0 @secondary_action -> previous
+    button "Previous" #previous disabled=(page <= 1) @demo_pager_action -> emit previous
     box w=36.0 h=36.0 align-x=center align-y=center bg=primary r=8.0
       text page size=13.0 @font-bold text-white
-    text "of 5" size=12.0 @text-muted
-    button "Next" disabled=(page >= 5) p=8.0 @secondary_action -> next
+    text "of" size=12.0 @text-muted
+    text max_page size=12.0 @text-muted
+    button "Next" #next disabled=(page >= max_page) @demo_pager_action -> emit next
 
-component AspectRatioDemo()
+component AspectRatioDemo(label:str="16 / 9")
   box w=fill h=281.25 align-x=center align-y=center bg=accent border=border border-w=1.0 r=10.0
-    slot
+    col align=center
+      if provided(Content)
+        slot Content?
+      if !provided(Content)
+        text label size=20.0 @font-bold text-primary
 
 component ScrollAreaDemo()
   scroll dir=vertical w=fill h=132.0 bar=visible

@@ -205,7 +205,9 @@ view
 
 `some(value)`/`none` and `ok(value)`/`err(error)` use the same exhaustive arm
 rules. `_` is allowed as the final catch-all. UI enums are non-generic and
-non-recursive, and payloads must be ordinary cloneable Ice data.
+non-recursive, and payloads must be ordinary cloneable Ice data. Fieldless UI
+enums also support `==` and `!=`; payload-carrying enums use exhaustive
+`match` instead of comparison.
 
 Native interaction styles inherit their `active` fields, so hovered, pressed,
 focused, opened, dragged, and disabled blocks only declare their differences.

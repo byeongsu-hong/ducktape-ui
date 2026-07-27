@@ -38,7 +38,7 @@ use "extern/backend.ice"
 use "theme.ice"
 use "state.ice"
 use "components/task_row.ice"
-use "components/dialog.ice"
+use "components/dialog.ice" as modal
 use "handlers/tasks.ice"
 
 preset pristine
@@ -106,15 +106,7 @@ view
         if has_error
           row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
             text error size=14.0 @text-white
-            button "Retry" -> retry
-              with
-                disabled=loading
-                style=danger
-                @px-4
-                @py-2
-                @bg-white
-                @text-danger
-                @rounded-md
+            button "Retry" disabled=loading style=danger @task_danger_action -> retry
 
         lazy loading as busy
           col
@@ -222,13 +214,13 @@ view
             box w=fill h=fill p=16.0
               text "This pane was opened dynamically." size=14.0 @text-muted
     layer
-      Dialog
-        Dialog.Header
+      modal::Dialog
+        modal::Dialog.Header
           text "About Ice Tasks" size=20.0 @font-bold text-fg
-        Dialog.Body
+        modal::Dialog.Body
           rich-text w=fill wrap=word size=14.0 @text-muted -> about_link _
             span "This dialog is a structured overlay written entirely in "
             span ".ice" link="https://github.com/byeongsu-hong/ducktape-ui-lang" bg=linear(1.57, primary/20@0.0, surface@1.0) p=2.0 r=2.0 underline @font-bold text-primary
             span "."
-        Dialog.Actions
-          button "Close" style=primary @px-4 py-2 bg-primary text-white rounded-md -> close_about
+        modal::Dialog.Actions
+          button "Close" style=primary @task_primary_action -> close_about

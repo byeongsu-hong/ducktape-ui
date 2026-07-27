@@ -29,7 +29,7 @@ pub(in crate::codegen) fn generate_view(
     let root_scope = if mounted.is_empty() {
         rust_string(&document.app)
     } else {
-        "__ice_root_scope.as_str()".into()
+        "__ice_root_scope_ref".into()
     };
     let rendered_root =
         render_node_if_present(&document.view, document, message, &env, &root_scope, None)?
@@ -70,7 +70,7 @@ pub(in crate::codegen) fn generate_view(
             .collect::<String>();
         let finish = mounted
             .iter()
-            .map(|field| format!("self.{field}.finish_render(&__ice_root_scope);"))
+            .map(|field| format!("self.{field}.finish_render(__ice_root_scope_ref);"))
             .collect::<String>();
         let result = if document.daemon {
             "__ice_content".into()
@@ -81,7 +81,7 @@ pub(in crate::codegen) fn generate_view(
         };
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_code}; {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {result} }}"
+            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_code}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {result} }}"
         )
         .unwrap();
     }

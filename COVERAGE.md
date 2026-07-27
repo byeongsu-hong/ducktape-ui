@@ -38,7 +38,8 @@ later assignments, guards, and the final task. Parser, checker, codegen, schema,
 README, and reference-app tests are direct evidence for both constructs.
 Core view control includes checked `if`, `for`, first-match literal `match`
 arms, and exhaustive Option/Result/UI-enum payload patterns. UI enums are
-non-generic, non-recursive cloneable data; match payloads are block-scoped.
+non-generic, non-recursive cloneable data; fieldless enums support equality,
+while payload enums remain match-only and match payloads are block-scoped.
 Components may own ordinary cloneable state and local handlers, including
 Future externs; `run latest` filters stale completions by scope and call site.
 Writable component inputs are explicit `bind` props; calls use `<->` with a

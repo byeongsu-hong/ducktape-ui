@@ -67,7 +67,7 @@ test component_sidebar_contract
   expect missing profile
   dispatch queue
   click new_item
-  expect section == "New"
+  expect section == MusicSection.new
   expect !queue_open
   expect missing new_item
   expect exists selected_new
@@ -85,7 +85,7 @@ test component_sidebar_contract
   click search_input
   type "nova"
   key enter
-  expect section == "Search"
+  expect section == MusicSection.search
   expect !empty(search_results)
 
 test component_titles_and_hero_contract
@@ -98,6 +98,8 @@ test component_titles_and_hero_contract
           eyebrow="FOR YOU"
           title="Listen now"
           description="A daily soundtrack tuned to your library."
+        Actions:
+          Badge.Outline label="LOSSLESS" #lossless
       SectionTitle title="Top picks" detail="CURATED FOR YOU" #section
       FeatureHero #hero
         with
@@ -114,6 +116,7 @@ test component_titles_and_hero_contract
   target eyebrow = #stage/page/root/eyebrow
   target page_title = #stage/page/root/title
   target page_description = #stage/page/root/description
+  target page_action = #stage/page/root/actions/lossless/root
   target section_header = #stage/section/root
   target section_title = #stage/section/root/title
   target hero = #stage/hero/root
@@ -130,6 +133,7 @@ test component_titles_and_hero_contract
   expect page_description.y ~= page_title.bottom + 5.0
   expect page_title.text_size ~= 32.0
   expect page_title.font.family == family.named("Geist")
+  expect exists page_action
   expect section_header.height ~= 28.0
   expect section_title.text_size ~= 18.0
   expect hero.height ~= 228.0
@@ -461,22 +465,22 @@ test component_library_content_contract
   expect content.x ~= root.x
   expect home_title.x ~= content.x + 30.0
   expect home_title.value == "Listen now"
-  dispatch navigate("New")
+  dispatch navigate(MusicSection.new)
   expect exists new_title
   expect missing home_title
-  dispatch navigate("Radio")
+  dispatch navigate(MusicSection.radio)
   expect exists radio_title
-  dispatch navigate("Recently Added")
+  dispatch navigate(MusicSection.recently_added)
   expect exists recent_title
   expect library_song.kind == "button"
-  dispatch navigate("Artists")
+  dispatch navigate(MusicSection.artists)
   expect exists artists_title
-  dispatch navigate("Albums")
+  dispatch navigate(MusicSection.albums)
   expect exists albums_title
-  dispatch navigate("Songs")
+  dispatch navigate(MusicSection.songs)
   expect exists songs_title
   expect library_song.kind == "button"
-  dispatch navigate("Search")
+  dispatch navigate(MusicSection.search)
   expect exists search_title
   expect text "Nothing here yet"
 
