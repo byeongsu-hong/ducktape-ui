@@ -3,11 +3,12 @@ use super::*;
 pub(in crate::check) fn check_handler(
     handler: &Handler,
     states: &HashMap<String, Type>,
+    readables: &HashMap<String, Type>,
     document: &Document,
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
 ) -> Result<(), Error> {
-    let mut env = states.clone();
+    let mut env = readables.clone();
     env.extend(
         handler
             .params
@@ -16,6 +17,24 @@ pub(in crate::check) fn check_handler(
     );
     for (index, statement) in handler.statements.iter().enumerate() {
         match statement {
+            Statement::Let { name, value, span } => {
+                if env.contains_key(name) {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        format!("local binding `{name}` shadows an existing value"),
+                    ));
+                }
+                let ty = expr_type(value, &env, document, span)?;
+                if ty == Type::Unknown {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        format!("cannot infer type of local binding `{name}`"),
+                    ));
+                }
+                env.insert(name.clone(), ty);
+            }
             Statement::Assign {
                 target,
                 value,
@@ -181,6 +200,7 @@ pub(in crate::check) fn check_handler(
                             ..handler.clone()
                         },
                         states,
+                        &env,
                         document,
                         operation_ids,
                         pane_grids,
@@ -197,6 +217,7 @@ pub(in crate::check) fn check_handler(
                         ..handler.clone()
                     },
                     states,
+                    &env,
                     document,
                     operation_ids,
                     pane_grids,
@@ -649,6 +670,7 @@ pub(in crate::check) fn invalid_task_producer(statement: &Statement) -> Option<&
             statements.iter().find_map(invalid_task_producer)
         }
         Statement::Assign { .. }
+        | Statement::Let { .. }
         | Statement::MarkdownAppend { .. }
         | Statement::ComboPush { .. }
         | Statement::ReturnIf { .. }
@@ -691,7 +713,8 @@ pub(in crate::check) fn require_debug_span_state(
 
 pub(in crate::check) fn statement_span(statement: &Statement) -> &Span {
     match statement {
-        Statement::Assign { span, .. }
+        Statement::Let { span, .. }
+        | Statement::Assign { span, .. }
         | Statement::MarkdownAppend { span, .. }
         | Statement::ComboPush { span, .. }
         | Statement::ReturnIf { span, .. }

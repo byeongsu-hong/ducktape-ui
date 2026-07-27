@@ -210,6 +210,22 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
             ));
         }
     }
+    for derived in &document.derived {
+        if document.daemon && derived.name == "window" {
+            return Err(Error::new(
+                "E100",
+                &derived.span,
+                "daemon derived value cannot be named `window`",
+            ));
+        }
+        if !fields.insert(&derived.name) {
+            return Err(Error::new(
+                "E100",
+                &derived.span,
+                format!("duplicate app value `{}`", derived.name),
+            ));
+        }
+    }
     let mut handlers = HashSet::new();
     for handler in &document.handlers {
         if !handlers.insert(&handler.name) {
@@ -245,6 +261,10 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
                 .states
                 .iter()
                 .any(|state| state.name == target.name)
+                || document
+                    .derived
+                    .iter()
+                    .any(|derived| derived.name == target.name)
                 || document.daemon && target.name == "window"
             {
                 return Err(Error::new(

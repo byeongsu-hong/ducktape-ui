@@ -34,17 +34,22 @@ state
   draft = ""
   loading = false
 
+derived
+  normalized_draft = trim(draft)
+  can_submit = !loading && !empty(normalized_draft)
+
 on submit
-  return if loading || empty(trim(draft))
+  let title = normalized_draft
+  return if !can_submit
   loading = true
-  run create_task(trim(draft)) -> created _ | failed _
+  run create_task(title) -> created _ | failed _
 
 view
   col w=fill h=fill p=24.0 gap=16.0 @bg-bg
     Panel title="Create task" #create-task
       row w=fill gap=12.0
         input "New task" #new-task <-> draft w=fill p=12.0 @bg-surface
-        button "Add" disabled=loading p=12.0 @bg-primary text-white -> submit
+        button "Add" disabled=!can_submit p=12.0 @bg-primary text-white -> submit
 ```
 
 `use` resolves relative to the importing file. Imported declarations share the
@@ -61,6 +66,10 @@ The punctuation has one job each:
 - `<->` is a two-way state or explicit `bind` component-prop binding;
 - `->` routes a widget or async result to a handler;
 - `_` is the payload supplied by that route.
+
+`derived` names pure read-only expressions over app state; they are recomputed
+when read and create no runtime signal graph. Handler-local `let` bindings are
+immutable and scoped to that handler invocation.
 
 Components may keep instance-scoped UI state and local handlers. A handler may
 end with `run` or a widget operation scoped to its own rendered subtree;
@@ -379,7 +388,7 @@ next to their parser, checker, or code generator module.
 ## Status
 
 Ice 1.64 is an executable language revision, not an attempt to replace iced.
-Its stable authoring Core is app/state/component/handler/view structure,
+Its stable authoring Core is app/state/derived/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, typed Rust effects, and first-class headless tests over generated
 programs and mounted components. The extended native surface remains available,

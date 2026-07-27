@@ -68,6 +68,20 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
             span: Span::line(line.number),
         });
     }
+    if let Some(source) = line.text.strip_prefix("let ") {
+        let Some((name, value)) = split_top_once(source, '=') else {
+            return Err(error(
+                "E050",
+                line,
+                "local bindings use `let name = expression`",
+            ));
+        };
+        return Ok(Statement::Let {
+            name: identifier(name.trim(), line)?,
+            value: parse_expr(value.trim(), line)?,
+            span: Span::line(line.number),
+        });
+    }
     if let Some(source) = line.text.strip_prefix("combo ") {
         let Some((target, value)) = split_top_marker(source, " push ") else {
             return Err(error(

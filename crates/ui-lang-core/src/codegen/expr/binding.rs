@@ -156,8 +156,12 @@ pub(in crate::codegen) fn component_latest_variant(component: &str, line: usize)
     }
 }
 
+pub(in crate::codegen) fn derived_method(name: &str) -> String {
+    format!("__ice_derived_{name}")
+}
+
 pub(in crate::codegen) fn state_env(document: &Document, name: &str) -> HashMap<String, Binding> {
-    document
+    let mut env = document
         .states
         .iter()
         .map(|state| {
@@ -171,7 +175,19 @@ pub(in crate::codegen) fn state_env(document: &Document, name: &str) -> HashMap<
                 },
             )
         })
-        .collect()
+        .collect::<HashMap<_, _>>();
+    env.extend(document.derived.iter().map(|derived| {
+        (
+            derived.name.clone(),
+            Binding {
+                code: format!("Self::{}({name})", derived_method(&derived.name)),
+                ty: derived.ty.clone(),
+                local: true,
+                state: None,
+            },
+        )
+    }));
+    env
 }
 
 pub(in crate::codegen) fn env_types(env: &HashMap<String, Binding>) -> HashMap<String, Type> {

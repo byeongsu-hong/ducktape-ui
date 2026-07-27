@@ -63,6 +63,11 @@ pub struct HandlerParam {
 
 #[derive(Clone, Debug)]
 pub enum Statement {
+    Let {
+        name: String,
+        value: Expr,
+        span: Span,
+    },
     Assign {
         target: String,
         value: Expr,

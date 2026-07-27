@@ -28,6 +28,9 @@ fn check(document: &mut Document) -> Result<(), Error> {
         .iter()
         .map(|state| (state.name.clone(), state.ty.clone()))
         .collect();
+    let derived = check_derived(document, &states)?;
+    let mut app_values = states.clone();
+    app_values.extend(derived);
     let preset_handlers = document
         .presets
         .iter()
@@ -166,7 +169,8 @@ fn check(document: &mut Document) -> Result<(), Error> {
             if handler.statements.iter().any(|statement| {
                 !matches!(
                     statement,
-                    Statement::Assign { .. }
+                    Statement::Let { .. }
+                        | Statement::Assign { .. }
                         | Statement::ReturnIf { .. }
                         | Statement::WidgetOperation {
                             operation: WidgetOperation::Focus { .. }
@@ -216,7 +220,7 @@ fn check(document: &mut Document) -> Result<(), Error> {
     }
 
     let mut ids = HashSet::new();
-    let mut view_states = states.clone();
+    let mut view_states = app_values.clone();
     if document.daemon {
         view_states.insert("window".into(), Type::WindowId);
     }
@@ -266,13 +270,17 @@ fn check(document: &mut Document) -> Result<(), Error> {
     infer_subscriptions(document, &states, &mut signatures)?;
     let empty_env = HashMap::new();
     for handler in document.handlers.iter().chain(&preset_handlers) {
-        infer_runs(handler, document, &mut signatures, &empty_env)?;
+        infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
     }
     for component in &document.components {
-        let mut env = HashMap::new();
-        env.insert(component_context_key(&component.name), Type::Unit);
+        let values = component
+            .states
+            .iter()
+            .map(|state| (state.name.clone(), state.ty.clone()))
+            .collect();
+        let env = HashMap::from([(component_context_key(&component.name), Type::Unit)]);
         for handler in &component.handlers {
-            infer_runs(handler, document, &mut signatures, &env)?;
+            infer_runs(handler, document, &mut signatures, &values, &env)?;
         }
     }
 
@@ -312,7 +320,14 @@ fn check(document: &mut Document) -> Result<(), Error> {
     }
 
     for handler in document.handlers.iter().chain(&preset_handlers) {
-        check_handler(handler, &states, document, &operation_ids, &pane_grids)?;
+        check_handler(
+            handler,
+            &states,
+            &app_values,
+            document,
+            &operation_ids,
+            &pane_grids,
+        )?;
     }
     for component in &document.components {
         let mut operation_env: HashMap<String, Type> = component
@@ -333,7 +348,14 @@ fn check(document: &mut Document) -> Result<(), Error> {
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
         for handler in &component.handlers {
-            check_handler(handler, &states, document, &operation_ids, &HashMap::new())?;
+            check_handler(
+                handler,
+                &states,
+                &states,
+                document,
+                &operation_ids,
+                &HashMap::new(),
+            )?;
         }
     }
     check_tests(document, &view_states)?;
@@ -367,6 +389,132 @@ fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> 
         | Expr::None
         | Expr::Path(_) => None,
     }
+}
+
+fn check_derived(
+    document: &mut Document,
+    states: &HashMap<String, Type>,
+) -> Result<HashMap<String, Type>, Error> {
+    fn dependencies(expr: &Expr, names: &HashMap<String, usize>, output: &mut Vec<usize>) {
+        match expr {
+            Expr::Path(path) => {
+                if let Some(index) = path.first().and_then(|name| names.get(name)) {
+                    output.push(*index);
+                }
+            }
+            Expr::List(values) | Expr::Call { args: values, .. } => {
+                for value in values {
+                    dependencies(value, names, output);
+                }
+            }
+            Expr::Unary { value, .. } => dependencies(value, names, output),
+            Expr::Binary { left, right, .. } => {
+                dependencies(left, names, output);
+                dependencies(right, names, output);
+            }
+            Expr::Bool(_)
+            | Expr::I64(_)
+            | Expr::F64(_)
+            | Expr::Str(_)
+            | Expr::Bytes(_)
+            | Expr::EmptyList
+            | Expr::None => {}
+        }
+    }
+
+    fn contains_unknown(ty: &Type) -> bool {
+        match ty {
+            Type::Unknown => true,
+            Type::List(inner)
+            | Type::Option(inner)
+            | Type::Combo(inner)
+            | Type::Animation(inner) => contains_unknown(inner),
+            Type::Result(output, error) => contains_unknown(output) || contains_unknown(error),
+            _ => false,
+        }
+    }
+
+    fn visit(
+        index: usize,
+        document: &Document,
+        states: &HashMap<String, Type>,
+        names: &HashMap<String, usize>,
+        marks: &mut [u8],
+        types: &mut [Option<Type>],
+    ) -> Result<Type, Error> {
+        if marks[index] == 1 {
+            return Err(Error::new(
+                "E103",
+                &document.derived[index].span,
+                format!(
+                    "derived value `{}` has a dependency cycle",
+                    document.derived[index].name
+                ),
+            ));
+        }
+        if let Some(ty) = &types[index] {
+            return Ok(ty.clone());
+        }
+        marks[index] = 1;
+        let derived = &document.derived[index];
+        if sync_extern_call(&derived.value, document).is_some() {
+            return Err(Error::new(
+                "E103",
+                &derived.span,
+                format!(
+                    "derived value `{}` must use a pure Ice expression",
+                    derived.name
+                ),
+            ));
+        }
+        let mut env = states.clone();
+        let mut deps = Vec::new();
+        dependencies(&derived.value, names, &mut deps);
+        for dependency in deps {
+            let ty = visit(dependency, document, states, names, marks, types)?;
+            env.insert(document.derived[dependency].name.clone(), ty);
+        }
+        let ty = expr_type(&derived.value, &env, document, &derived.span)?;
+        if contains_unknown(&ty) {
+            return Err(Error::new(
+                "E103",
+                &derived.span,
+                format!("cannot infer type of derived value `{}`", derived.name),
+            ));
+        }
+        if !component_value_is_cloneable(&ty) {
+            return Err(Error::new(
+                "E103",
+                &derived.span,
+                format!(
+                    "derived value `{}` must produce an ordinary cloneable value",
+                    derived.name
+                ),
+            ));
+        }
+        marks[index] = 2;
+        types[index] = Some(ty.clone());
+        Ok(ty)
+    }
+
+    let names = document
+        .derived
+        .iter()
+        .enumerate()
+        .map(|(index, derived)| (derived.name.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let mut marks = vec![0; document.derived.len()];
+    let mut types = vec![None; document.derived.len()];
+    for index in 0..document.derived.len() {
+        visit(index, document, states, &names, &mut marks, &mut types)?;
+    }
+    let mut env = HashMap::new();
+    for (derived, ty) in document.derived.iter_mut().zip(types) {
+        let ty = ty.expect("every derived value was visited");
+        derived.ty = ty.clone();
+        env.insert(derived.name.clone(), ty);
+    }
+    Ok(env)
 }
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";

@@ -15,10 +15,19 @@ pub struct Document {
     pub fonts: Vec<FontDecl>,
     pub qr_codes: Vec<QrData>,
     pub states: Vec<State>,
+    pub derived: Vec<Derived>,
     pub components: Vec<Component>,
     pub handlers: Vec<Handler>,
     pub tests: Vec<TestDecl>,
     pub view: ViewNode,
+}
+
+#[derive(Clone, Debug)]
+pub struct Derived {
+    pub name: String,
+    pub value: Expr,
+    pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]

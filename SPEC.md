@@ -42,11 +42,11 @@ The Rust action must still validate its input.
 
 ### Core and backend boundary
 
-Ice Core is the stable authoring surface: `app`, `use`, `state`, `component`,
-`slot`, `on`, `view`, `if`, `match`, `for`, `keyed`, and `lazy`; common row, column,
-stack, scroll, and box layout; text, input, button, checkbox, and image
-widgets; bindings, routes, payloads, scoped IDs, typed extern calls, and basic
-async success/failure routing.
+Ice Core is the stable authoring surface: `app`, `use`, `state`, `derived`,
+`component`, `slot`, `on`, `view`, `if`, `match`, `for`, `keyed`, and `lazy`;
+common row, column, stack, scroll, and box layout; text, input, button,
+checkbox, and image widgets; bindings, routes, payloads, scoped IDs, typed
+extern calls, and basic async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
@@ -221,10 +221,10 @@ root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
 use_decl       = "use" string
 declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
-               | qr_decl | state_decl | preset_decl | component_decl
+               | qr_decl | state_decl | derived_decl | preset_decl | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
 document       = root_decl extern_decl* theme_decl style_recipe_decl* qr_decl*
-                 state_decl? preset_decl* component_decl* handler_decl*
+                 state_decl? derived_decl? preset_decl* component_decl* handler_decl*
                  subscribe_decl? view_decl test_decl*
 
 root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
@@ -398,6 +398,8 @@ qr_data_property = "correction=" ("low" | "medium" | "quartile" | "high")
 
 state_decl     = "state" INDENT state_entry+
 state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
+derived_decl   = "derived" INDENT derived_entry+
+derived_entry  = name "=" expr
 animation_setting = "easing" name
                   | "duration" (duration | "very-quick" | "quick" | "slow" | "very-slow")
                   | "delay" duration
@@ -419,12 +421,13 @@ component_member = component_state | component_handler | node
 component_state = "state" INDENT state_entry+
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
-component_statement = name "=" expr | "return if" expr
+component_statement = "let" name "=" expr | name "=" expr | "return if" expr
                     | "run" ("latest")? call "->" route ("|" route)?
 
 handler_decl   = "on" name ("(" name_list? ")")?
                  INDENT statement*
-statement      = name "=" expr ("at" expr)?
+statement      = "let" name "=" expr
+               | name "=" expr ("at" expr)?
                | "markdown" name "append" expr
                | "combo" name "push" expr
                | "return if" expr
@@ -2098,6 +2101,21 @@ state
 
 These infer to `str`, `bool`, `i64`, and `[str]`, respectively.
 
+Top-level `derived` declarations name pure read-only expressions over app state
+and other derived values:
+
+```ice
+derived
+  normalized_draft = trim(draft)
+  can_submit = !loading && !empty(normalized_draft)
+```
+
+Derived values are available in app handlers and views. Their types are
+inferred, dependency cycles are errors, and assignment or `<->` binding is
+forbidden. Derived expressions use Ice built-ins and cannot call extern
+functions. They lower to ordinary pure Rust getters and are recomputed when
+read; Ice does not create a signal, cache, or runtime dependency graph.
+
 Empty lists need an annotation because their element type is unknowable:
 
 ```ice
@@ -2271,14 +2289,18 @@ Handlers are the only place state changes:
 
 ```ice
 on submit
-  return if loading || empty(trim(draft))
+  let title = trim(draft)
+  return if loading || empty(title)
   loading = true
-  run create_task(trim(draft)) -> created _ | failed _
+  run create_task(title) -> created _ | failed _
 ```
 
 Rules:
 
 - assignment targets must be declared state;
+- `let` introduces one immutable handler-local value using the normal closed
+  expression language; it cannot shadow state, derived values, parameters, or
+  an earlier local;
 - assigned expressions must have the state type;
 - assigning the inner value of `animation[T]` starts its native transition at
   the current monotonic instant; `state = value at instant` supplies an exact

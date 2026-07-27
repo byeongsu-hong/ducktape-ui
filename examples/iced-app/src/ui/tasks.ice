@@ -85,13 +85,13 @@ view
 
         row gap=12.0 align=center @w-full
           input "New task" <-> draft hint="What needs doing?" disabled=loading submit=submit w=fill @px-4 py-3 bg-surface border border-border rounded-lg
-          button "Add" disabled=(loading || empty(trim(draft))) style=success @px-4 py-3 disabled:opacity-50 -> submit
+          button "Add" disabled=!can_submit style=success @px-4 py-3 disabled:opacity-50 -> submit
             active bg=linear(1.57, primary@0.0, surface@1.0) text=white border=primary border-w=1.0 r=8.0 shadow=black/25 shadow-y=2.0 shadow-blur=4.0 px-snap=true
             hovered bg=linear(1.57, surface@0.0, primary@1.0) text=white r=10.0
             pressed bg=primary/80 text=white r=10.0
             disabled bg=surface text=muted r=10.0
 
-        if error != ""
+        if has_error
           row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
             text error size=14.0 @text-white
             button "Retry" disabled=loading style=danger @px-4 py-2 bg-white text-danger rounded-md -> retry

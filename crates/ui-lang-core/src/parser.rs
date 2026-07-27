@@ -302,6 +302,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let mut fonts = Vec::new();
     let mut qr_codes = Vec::new();
     let mut states = Vec::new();
+    let mut derived = Vec::new();
     let mut components = Vec::new();
     let mut handlers = Vec::new();
     let mut tests = Vec::new();
@@ -554,6 +555,26 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
                     .map(parse_state)
                     .collect::<Result<Vec<_>, _>>()?,
             );
+        } else if line.text == "derived" {
+            if line.children.is_empty() {
+                return Err(error("E032", line, "derived cannot be empty"));
+            }
+            for item in &line.children {
+                ensure_leaf(item)?;
+                let Some((name, value)) = split_top_once(&item.text, '=') else {
+                    return Err(error(
+                        "E032",
+                        item,
+                        "derived values use `name = expression`",
+                    ));
+                };
+                derived.push(Derived {
+                    name: identifier(name.trim(), item)?,
+                    value: parse_expr(value.trim(), item)?,
+                    ty: Type::Unknown,
+                    span: Span::line(item.number),
+                });
+            }
         } else if let Some(source) = line.text.strip_prefix("font ") {
             fonts.push(parse_font(source, line)?);
         } else if line.text == "qr" || line.text.starts_with("qr ") {
@@ -649,6 +670,7 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
         fonts,
         qr_codes,
         states,
+        derived,
         components,
         handlers,
         tests,
