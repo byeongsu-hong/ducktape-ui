@@ -1,5 +1,20 @@
 use super::*;
 
+// A handler parameter is a Rust binding, not a materialized temporary: the
+// first by-value use MOVES it, so `local` must stay false and every owned use
+// clones. `local: true` is reserved for bindings whose code already evaluates
+// to a fresh owned value (component state reads) or is Copy — re-emitting one
+// of those costs nothing, while re-emitting a parameter is a use after move
+// that surfaces as an E0382 on the `include_app!` line with no usable span.
+fn handler_param_binding(param: &HandlerParam) -> Binding {
+    Binding {
+        code: param.name.clone(),
+        ty: param.ty.clone(),
+        local: false,
+        state: None,
+    }
+}
+
 pub(in crate::codegen) fn generate_theme(
     out: &mut String,
     document: &Document,
@@ -466,15 +481,7 @@ pub(in crate::codegen) fn generate_update(
         writeln!(out, "{pattern} => (|| {{").unwrap();
         let mut env = state_env(document, "self");
         for param in &handler.params {
-            env.insert(
-                param.name.clone(),
-                Binding {
-                    code: param.name.clone(),
-                    ty: param.ty.clone(),
-                    local: true,
-                    state: None,
-                },
-            );
+            env.insert(param.name.clone(), handler_param_binding(param));
         }
         let has_task = generate_statements(
             out,
@@ -547,15 +554,7 @@ pub(in crate::codegen) fn generate_update(
                 );
             }
             for param in &handler.params {
-                env.insert(
-                    param.name.clone(),
-                    Binding {
-                        code: param.name.clone(),
-                        ty: param.ty.clone(),
-                        local: true,
-                        state: None,
-                    },
-                );
+                env.insert(param.name.clone(), handler_param_binding(param));
             }
             env.insert(
                 component_context_key(&component.name),

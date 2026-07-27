@@ -815,7 +815,7 @@ view
     assert!(generated.contains(".menu_style(move |__theme|"));
     assert!(generated.contains("__style.selected_background"));
     assert!(generated.contains("__style.shadow.blur_radius = 4.0 as f32"));
-    assert!(generated.contains("self.selected = ::std::option::Option::Some(next);"));
+    assert!(generated.contains("self.selected = ::std::option::Option::Some(next.clone());"));
     let defaults = compile(
         &source.replace(
             " style=dynamic_pick(busy) menu-style=dynamic_menu(busy)",

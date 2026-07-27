@@ -1140,3 +1140,41 @@ view
         "::iced::Task::batch([__task, ::ui_lang_runtime::snapshot::<__AccessibleMessage>"
     ));
 }
+
+#[test]
+fn clones_handler_parameters_at_every_owned_use() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  latch = ""
+  echo = ""
+  count = 0
+  cursor = 0
+on pick(value, times)
+  latch = value
+  echo = value
+  count = times
+  cursor = times
+view
+  button "one" -> pick("x", 2)
+"#;
+    let generated = compile(source, "params.ice").unwrap();
+
+    // A parameter is a Rust binding: the first owned use would MOVE it, so
+    // both reads clone. Without this the generated Rust fails borrowck at the
+    // `include_app!` line, where no span points back at the `.ice` source.
+    assert!(generated.contains("self.latch = value.clone();"));
+    assert!(generated.contains("self.echo = value.clone();"));
+    // Copy parameters keep the bare read — cloning those is pure noise.
+    assert!(generated.contains("self.count = times;"));
+    assert!(generated.contains("self.cursor = times;"));
+}
