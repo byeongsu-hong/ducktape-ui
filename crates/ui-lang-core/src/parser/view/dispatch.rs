@@ -5,9 +5,50 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
         if line.children.is_empty() {
             return Err(error("E060", line, "match requires at least one arm"));
         }
-        // ponytail: lower through the existing If IR; add a Match node only if
-        // single evaluation of large or expensive match expressions matters.
         let value = parse_expr(value, line)?;
+        let patterns = line
+            .children
+            .iter()
+            .map(parse_match_pattern)
+            .collect::<Result<Vec<_>, _>>()?;
+        if patterns.iter().any(|pattern| {
+            pattern
+                .as_ref()
+                .is_some_and(|pattern| !matches!(pattern, MatchPattern::Wildcard))
+        }) {
+            if patterns.iter().any(Option::is_none) {
+                return Err(error(
+                    "E060",
+                    line,
+                    "typed match patterns cannot be mixed with literal arms",
+                ));
+            }
+            let mut arms = Vec::new();
+            for (index, (arm, pattern)) in line.children.iter().zip(patterns).enumerate() {
+                if arm.children.is_empty() {
+                    return Err(error("E060", arm, "match arms require view content"));
+                }
+                let pattern = pattern.expect("all typed match arms have a pattern");
+                if matches!(pattern, MatchPattern::Wildcard) && index + 1 != line.children.len() {
+                    return Err(error("E060", arm, "the `_` match arm must be last"));
+                }
+                arms.push(MatchArm {
+                    pattern,
+                    children: arm
+                        .children
+                        .iter()
+                        .map(parse_view)
+                        .collect::<Result<_, _>>()?,
+                    span: Span::line(arm.number),
+                });
+            }
+            return Ok(ViewNode::Match {
+                value,
+                arms,
+                span: Span::line(line.number),
+            });
+        }
+        // Literal matches keep their established first-match lowering.
         let mut matched = None;
         let mut branches = Vec::new();
         for (index, arm) in line.children.iter().enumerate() {
@@ -265,4 +306,56 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
         }
         _ => Err(error("E064", line, format!("unknown view node `{kind}`"))),
     }
+}
+
+fn parse_match_pattern(line: &Line) -> Result<Option<MatchPattern>, Error> {
+    if line.text == "_" {
+        return Ok(Some(MatchPattern::Wildcard));
+    }
+    if line.text == "none" {
+        return Ok(Some(MatchPattern::None));
+    }
+    for (name, constructor) in [
+        ("some", MatchPattern::Some as fn(String) -> MatchPattern),
+        ("ok", MatchPattern::Ok as fn(String) -> MatchPattern),
+        ("err", MatchPattern::Err as fn(String) -> MatchPattern),
+    ] {
+        if line.text.starts_with(&format!("{name}(")) {
+            let (actual, binding) = parse_local_signature(&line.text, line)?;
+            if actual != name || binding.contains(',') || binding.trim().is_empty() {
+                return Err(error(
+                    "E060",
+                    line,
+                    format!("{name} pattern binds one value"),
+                ));
+            }
+            return Ok(Some(constructor(identifier(binding.trim(), line)?)));
+        }
+    }
+    let Some((enum_name, rest)) = line.text.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if !enum_name
+        .rsplit("::")
+        .next()
+        .and_then(|name| name.chars().next())
+        .is_some_and(char::is_uppercase)
+    {
+        return Ok(None);
+    }
+    let enum_name = line.qualify(&qualified_identifier(enum_name, line)?);
+    let (variant, binding) = if rest.contains('(') {
+        let (variant, binding) = parse_local_signature(rest, line)?;
+        if binding.contains(',') || binding.trim().is_empty() {
+            return Err(error("E060", line, "enum payload pattern binds one value"));
+        }
+        (variant, Some(identifier(binding.trim(), line)?))
+    } else {
+        (identifier(rest, line)?, None)
+    };
+    Ok(Some(MatchPattern::Enum {
+        enum_name,
+        variant,
+        binding,
+    }))
 }

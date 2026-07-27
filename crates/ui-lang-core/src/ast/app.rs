@@ -9,6 +9,7 @@ pub struct Document {
     pub presets: Vec<Preset>,
     pub recipes: Vec<StyleRecipe>,
     pub structs: Vec<ExternStruct>,
+    pub enums: Vec<UiEnum>,
     pub functions: Vec<ExternFn>,
     pub subscriptions: Vec<Subscription>,
     pub theme: BTreeMap<String, String>,
@@ -27,6 +28,20 @@ pub struct Derived {
     pub name: String,
     pub value: Expr,
     pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct UiEnum {
+    pub name: String,
+    pub variants: Vec<UiEnumVariant>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct UiEnumVariant {
+    pub name: String,
+    pub payload: Option<Type>,
     pub span: Span,
 }
 

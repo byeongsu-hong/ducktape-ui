@@ -66,6 +66,17 @@ pub(crate) fn controlled_state_bindings(
                     collect(child, document, editors, &child_env, components, output)?;
                 }
             }
+            ViewNode::Match { arms, .. } => {
+                for arm in arms {
+                    let mut child_env = env.clone();
+                    if let Some(binding) = arm.pattern.binding() {
+                        child_env.remove(binding);
+                    }
+                    for child in &arm.children {
+                        collect(child, document, editors, &child_env, components, output)?;
+                    }
+                }
+            }
             ViewNode::Button {
                 content: Some(content),
                 ..
@@ -320,6 +331,10 @@ pub(in crate::check) fn pane_grid_span(node: &ViewNode) -> Option<&Span> {
         ViewNode::Layout { children, .. }
         | ViewNode::If { children, .. }
         | ViewNode::For { children, .. } => children.iter().find_map(pane_grid_span),
+        ViewNode::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.children)
+            .find_map(pane_grid_span),
         ViewNode::Button {
             content: Some(content),
             ..
@@ -365,6 +380,10 @@ pub(in crate::check) fn repeated_pane_grid_span(node: &ViewNode) -> Option<&Span
         ViewNode::Layout { children, .. } | ViewNode::If { children, .. } => {
             children.iter().find_map(repeated_pane_grid_span)
         }
+        ViewNode::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.children)
+            .find_map(repeated_pane_grid_span),
         ViewNode::Button {
             content: Some(content),
             ..

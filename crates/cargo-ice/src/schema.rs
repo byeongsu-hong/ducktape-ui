@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const LANGUAGE_REVISION: &str = "1.70";
+pub const LANGUAGE_REVISION: &str = "2.0";
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
 pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
@@ -43,6 +43,11 @@ const COMPLETIONS: &[Completion] = &[
         "derived",
         "declaration",
         "derived\n  ${1:name} = ${2:expression}",
+    ),
+    Completion::new(
+        "enum",
+        "declaration",
+        "enum ${1:Name}\n  ${2:idle}\n  ${3:ready}(${4:str})",
     ),
     Completion::new(
         "component",
@@ -91,7 +96,15 @@ const COMPLETIONS: &[Completion] = &[
     ),
     Completion::new("expect", "test assertion", "expect ${1:condition}"),
     Completion::new("if", "control", "if ${1:condition}\n  $0"),
-    Completion::new("match", "control", "match ${1:value}\n  ${2:case}\n    $0"),
+    Completion::new(
+        "match",
+        "control",
+        "match ${1:value}\n  ${2:some(value)}\n    $0",
+    ),
+    Completion::new("some", "expression/pattern", "some(${1:value})"),
+    Completion::new("none", "expression/pattern", "none"),
+    Completion::new("ok", "expression/pattern", "ok(${1:value})"),
+    Completion::new("err", "expression/pattern", "err(${1:error})"),
     Completion::new("for", "control", "for ${1:item} in ${2:items}\n  $0"),
     Completion::new(
         "keyed",
@@ -536,6 +549,14 @@ fn construct_schema(item: &Completion) -> Value {
             no_route(),
             Vec::new(),
         ),
+        "enum" => details(
+            &["document"],
+            "enum <Name>\n  <variant>\n  <variant>(<cloneable-type>)",
+            child_shape(1, None, "enum-variant"),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
         "component" => details(
             &["document"],
             "component <Name>([bind] <prop>:<type>[=<default-expression>], ...) [-> <default-output-type>]",
@@ -731,9 +752,41 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "match" => details(
             &["view"],
-            "match <expression>\n  <case-expression>|_\n    <view-node>...",
+            "match <expression>\n  <case-expression>|some(<binding>)|none|ok(<binding>)|err(<binding>)|<Enum>.<variant>[(<binding>)]|_\n    <view-node>...",
             child_shape(1, None, "match-arm"),
             no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
+        "some" => details(
+            &["expression", "match-arm"],
+            "some(<expression>) | some(<payload-binding>)",
+            leaf(),
+            json!({ "requiredWhen": "used as a match pattern", "source": "option payload" }),
+            no_route(),
+            Vec::new(),
+        ),
+        "none" => details(
+            &["expression", "match-arm"],
+            "none",
+            leaf(),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
+        "ok" => details(
+            &["expression", "match-arm"],
+            "ok(<expression>) | ok(<payload-binding>)",
+            leaf(),
+            json!({ "requiredWhen": "used as a match pattern", "source": "result output" }),
+            no_route(),
+            Vec::new(),
+        ),
+        "err" => details(
+            &["expression", "match-arm"],
+            "err(<expression>) | err(<payload-binding>)",
+            leaf(),
+            json!({ "requiredWhen": "used as a match pattern", "source": "result error" }),
             no_route(),
             Vec::new(),
         ),
@@ -1471,7 +1524,7 @@ fn construct_schema(item: &Completion) -> Value {
             Vec::new(),
         ),
         "_" => details(
-            &["route-payload"],
+            &["route-payload", "match-arm"],
             "_",
             leaf(),
             no_binding(),
@@ -1802,6 +1855,7 @@ pub fn document() -> Value {
                 "radius": "typed per-corner radius",
                 "shadow": "typed color, offset, and blur shadow",
                 "test-target": "checked runtime selector available only inside test declarations",
+                "ui-enum": "non-generic, non-recursive cloneable variants declared with enum",
             },
             "constructs": constructs,
             "components": {
@@ -1893,6 +1947,20 @@ mod tests {
     }
 
     #[test]
+    fn completes_ui_enums_and_sum_type_patterns() {
+        let completions = completion_items();
+        for label in ["enum", "match", "some", "none", "ok", "err"] {
+            assert!(
+                completions
+                    .iter()
+                    .any(|completion| completion["label"] == label),
+                "missing `{label}` completion"
+            );
+        }
+        assert_eq!(document()["language"]["revision"], "2.0");
+    }
+
+    #[test]
     fn generative_core_matches_the_contract_boundary() {
         const CORE_CONTRACT: &[&str] = &[
             "app",
@@ -1900,6 +1968,7 @@ mod tests {
             "recipe",
             "state",
             "derived",
+            "enum",
             "component",
             "emits",
             "events",
@@ -1924,6 +1993,10 @@ mod tests {
             "expect",
             "if",
             "match",
+            "some",
+            "none",
+            "ok",
+            "err",
             "for",
             "keyed",
             "lazy",

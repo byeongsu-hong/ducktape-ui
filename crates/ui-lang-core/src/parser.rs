@@ -321,6 +321,7 @@ pub(crate) fn parse_with_symbols_and_namespaces(
     let mut presets = Vec::new();
     let mut recipes = Vec::new();
     let mut structs = Vec::new();
+    let mut enums = Vec::new();
     let mut functions = Vec::new();
     let mut subscriptions = Vec::new();
     let mut theme = BTreeMap::new();
@@ -337,6 +338,7 @@ pub(crate) fn parse_with_symbols_and_namespaces(
         if line.namespace.is_some()
             && !(line.text.starts_with("recipe ")
                 || line.text.starts_with("extern ")
+                || line.text.starts_with("enum ")
                 || line.text == "theme"
                 || line.text.starts_with("font ")
                 || line.text.starts_with("component "))
@@ -344,7 +346,7 @@ pub(crate) fn parse_with_symbols_and_namespaces(
             return Err(error(
                 "E180",
                 line,
-                "aliased imports may declare components, recipes, extern items, fonts, and global theme tokens only",
+                "aliased imports may declare components, recipes, extern items, enums, fonts, and global theme tokens only",
             ));
         }
         let root = line
@@ -374,6 +376,8 @@ pub(crate) fn parse_with_symbols_and_namespaces(
             daemon = is_daemon;
         } else if let Some(source) = line.text.strip_prefix("recipe ") {
             recipes.push(parse_style_recipe(source, line)?);
+        } else if let Some(name) = line.text.strip_prefix("enum ") {
+            enums.push(parse_ui_enum(name.trim(), line)?);
         } else if let Some(name) = line.text.strip_prefix("preset ") {
             presets.push(parse_preset(name.trim(), line)?);
         } else if let Some(path) = line.text.strip_prefix("extern ") {
@@ -706,6 +710,7 @@ pub(crate) fn parse_with_symbols_and_namespaces(
         presets,
         recipes,
         structs,
+        enums,
         functions,
         subscriptions,
         theme,

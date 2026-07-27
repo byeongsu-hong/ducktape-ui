@@ -52,6 +52,39 @@ pub(in crate::codegen) fn render_children(
                 render_children(out, children, document, message, &child_env, scope, slot)?;
                 out.push_str(" }");
             }
+            ViewNode::Match { value, arms, span } => {
+                let value_ty = expr_type(value, &env_types(env), document, span)?;
+                let value = expr_code(value, env, document, ValueMode::Borrowed)?;
+                write!(out, " match &({value}) {{").unwrap();
+                for arm in arms {
+                    write!(out, " {} => {{", match_pattern_code(&arm.pattern)).unwrap();
+                    let mut child_env = env.clone();
+                    if let Some((name, ty)) =
+                        match_pattern_binding(&arm.pattern, &value_ty, document)
+                    {
+                        child_env.insert(
+                            name.clone(),
+                            Binding {
+                                code: name,
+                                ty,
+                                local: false,
+                                state: None,
+                            },
+                        );
+                    }
+                    render_children(
+                        out,
+                        &arm.children,
+                        document,
+                        message,
+                        &child_env,
+                        scope,
+                        slot,
+                    )?;
+                    out.push_str(" },");
+                }
+                out.push_str(" }");
+            }
             _ => {
                 let child = render_node(child, document, message, env, scope, slot)?;
                 write!(out, " __children.push({child});").unwrap();

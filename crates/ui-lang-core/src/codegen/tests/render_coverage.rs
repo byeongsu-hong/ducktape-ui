@@ -21,6 +21,7 @@ const ALL_RENDER_NODES: &[&str] = &[
     "input",
     "keyed",
     "lazy",
+    "match",
     "markdown",
     "mouse",
     "overlay",
@@ -107,6 +108,7 @@ fn collect(
         ViewNode::QrCode { .. } => "qr",
         ViewNode::Space { .. } => "space",
         ViewNode::If { .. } => "if",
+        ViewNode::Match { .. } => "match",
         ViewNode::For { .. } => "for",
         ViewNode::KeyedColumn { .. } => "keyed",
         ViewNode::Lazy { .. } => "lazy",
@@ -142,6 +144,11 @@ fn collect(
             children
                 .iter()
                 .for_each(|child| collect(child, document, covered, visited_components));
+        }
+        ViewNode::Match { arms, .. } => {
+            arms.iter().flat_map(|arm| &arm.children).for_each(|child| {
+                collect(child, document, covered, visited_components);
+            });
         }
         ViewNode::Container { content, .. }
         | ViewNode::MouseArea { content, .. }

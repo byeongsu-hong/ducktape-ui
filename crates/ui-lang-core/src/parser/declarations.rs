@@ -1,5 +1,65 @@
 use super::*;
 
+pub(in crate::parser) fn parse_ui_enum(source: &str, line: &Line) -> Result<UiEnum, Error> {
+    let name = identifier(source, line)?;
+    if !name.chars().next().is_some_and(char::is_uppercase) {
+        return Err(error(
+            "E024",
+            line,
+            "enum names must start with an uppercase letter",
+        ));
+    }
+    let name = line.qualify(&name);
+    if line.children.is_empty() {
+        return Err(error("E024", line, "enum requires at least one variant"));
+    }
+    let mut variants = Vec::new();
+    for variant in &line.children {
+        ensure_leaf(variant)?;
+        let (name, payload) = if variant.text.contains('(') {
+            let close = matching_paren(&variant.text, variant)?;
+            if close + 1 != variant.text.len() {
+                return Err(error(
+                    "E024",
+                    variant,
+                    "enum variants use `name` or `name(Type)`",
+                ));
+            }
+            let open = variant
+                .text
+                .find('(')
+                .expect("variant has an opening parenthesis");
+            let payload = variant.text[open + 1..close].trim();
+            if payload.is_empty() {
+                return Err(error("E024", variant, "payload variants require one type"));
+            }
+            (
+                identifier(variant.text[..open].trim(), variant)?,
+                Some(parse_type(payload, variant)?),
+            )
+        } else {
+            (identifier(&variant.text, variant)?, None)
+        };
+        if name.split('_').any(str::is_empty)
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(error("E024", variant, "enum variants use snake_case"));
+        }
+        variants.push(UiEnumVariant {
+            name,
+            payload,
+            span: Span::line(variant.number),
+        });
+    }
+    Ok(UiEnum {
+        name,
+        variants,
+        span: Span::line(line.number),
+    })
+}
+
 pub(in crate::parser) fn parse_extern_struct(
     line: &Line,
     namespace: &str,

@@ -3,6 +3,10 @@ app RenderSurface
 use "extern/render_surface.ice"
 use "theme.ice"
 
+enum SurfaceState
+  idle
+  ready(str)
+
 qr render_code "https://example.com/render"
 
 state
@@ -21,6 +25,8 @@ state
   memory_image = rgba(1, 1, bytes(ff 00 ff ff))
   overlay_open = true
   external_active = false
+  outcome:result[str,str] = ok("Result child")
+  surface_state:SurfaceState = SurfaceState.idle
 
 component Slotted()
   box #frame w=240.0 h=32.0 @bg-surface
@@ -150,6 +156,21 @@ view
         text "Pane child"
     if true
       text "If child" #if-child
+    match choice
+      some(value)
+        text value
+      none
+        text "Match child" #match-child
+    match outcome
+      ok(value)
+        text value
+      err(error)
+        text error
+    match surface_state
+      SurfaceState.idle
+        text "Enum child"
+      SurfaceState.ready(value)
+        text value
     for item in items
       text item #for-item(item)
       Slotted #repeated(item)
@@ -203,6 +224,7 @@ test renders_every_node
   target responsive = #root/responsive
   target panes = #root/panes
   target if_child = #root/if-child
+  target match_child = #root/match-child
   target for_item = #root/for-item("One")
   target repeated_text = #root/repeated("One")/frame/repeated-text
   expect root.visible
@@ -251,6 +273,7 @@ test renders_every_node
   expect responsive.visible
   expect panes.visible
   expect if_child.visible
+  expect match_child.visible
   expect for_item.visible
   expect repeated_text.visible
   expect text "Render surface" within root
@@ -258,4 +281,5 @@ test renders_every_node
   expect text "Table header" within table
   expect text "Slotted child" within component_frame
   expect text "If child" within root
+  expect text "Match child" within root
   expect text "Two" within root

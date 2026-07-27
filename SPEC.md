@@ -1,4 +1,4 @@
-# Ice Language Specification 1.70
+# Ice Language Specification 2.0
 
 Status: implemented reference slice
 
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 1.70 syntax.
+marked “planned” is a design constraint, not accepted 2.0 syntax.
 
 ## 1. Design contract
 
@@ -42,7 +42,7 @@ The Rust action must still validate its input.
 
 ### Core and backend boundary
 
-Ice Core is the stable authoring surface: `app`, `use`, `state`, `derived`,
+Ice Core is the stable authoring surface: `app`, `use`, `enum`, `state`, `derived`,
 `component`, `slot`, `on`, `view`, `if`, `match`, `for`, `keyed`, and `lazy`;
 common row, column, stack, scroll, and box layout; text, input, button,
 checkbox, and image widgets; bindings, routes, payloads, scoped IDs, typed
@@ -50,7 +50,7 @@ extern calls, and basic async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
 form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 1.70, with one canonical spelling for each construct. Spellings
+for revision 2.0, with one canonical spelling for each construct. Spellings
 removed in this revision are syntax errors and the formatter never translates
 old vocabulary. Future additions or changes require an explicit language
 design and a new revision; future removals require deprecation and migration.
@@ -61,7 +61,7 @@ are the extended surface. It is not a parity roadmap and must not grow only
 because iced exposes another public type or method.
 
 Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 1.70. The workspace packages are
+document specifies language revision 2.0. The workspace packages are
 pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
 resolved iced/iced_widget versions are a third, independent backend baseline.
 
@@ -168,7 +168,7 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
   line. Indentation may only return to an existing level.
 - Empty lines are ignored by the parser and normalized by the formatter.
 - A line whose first non-space characters are `//` is a comment. Inline and
-  block comments are not part of 1.70.
+  block comments are not part of 2.0.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
   or `__`, and `_`, `none`, and Rust keywords are reserved.
 - Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
@@ -227,10 +227,11 @@ root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
 use_decl       = "use" string ("as" name)?
 declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
-               | qr_decl | state_decl | derived_decl | preset_decl | component_decl
+               | qr_decl | enum_decl | state_decl | derived_decl | preset_decl | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
 document       = root_decl extern_decl* theme_decl style_recipe_decl* qr_decl*
-                 state_decl? derived_decl? preset_decl* component_decl* handler_decl*
+                 enum_decl* state_decl? derived_decl? preset_decl* component_decl*
+                 handler_decl*
                  subscribe_decl? view_decl test_decl*
 
 root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
@@ -407,6 +408,8 @@ state_decl     = "state" INDENT state_entry+
 state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
 derived_decl   = "derived" INDENT derived_entry+
 derived_entry  = name "=" expr
+enum_decl      = "enum" PascalName INDENT enum_variant+
+enum_variant   = name ("(" type ")")?
 animation_setting = "easing" name
                   | "duration" (duration | "very-quick" | "quick" | "slow" | "very-slow")
                   | "delay" duration
@@ -1141,7 +1144,11 @@ shader_view    = "shader" name "(" expr_list? ")"
                  id? (("w=" | "h=") length)* ("->" route)?
 if_node        = "if" expr INDENT node+
 match_node     = "match" expr INDENT match_arm+
-match_arm      = (expr | "_") INDENT node+
+match_arm      = (expr | option_pattern | result_pattern | enum_pattern | "_")
+                 INDENT node+
+option_pattern = "some" "(" name ")" | "none"
+result_pattern = "ok" "(" name ")" | "err" "(" name ")"
+enum_pattern   = PascalName "." name ("(" name ")")?
 for_node       = "for" name "in" expr INDENT node+
 
 property       = "hint=" string | "disabled=" expr | "checked=" expr
@@ -1250,7 +1257,7 @@ codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 1.70.
+compile time. Encoded icon formats remain outside 2.0.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -1835,6 +1842,7 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
+| declared UI enum `Name` | generated cloneable Rust enum `Name` |
 | `combo[T]` | `iced::widget::combo_box::State<T>` |
 | `animation[bool]` | `iced::Animation<bool>` |
 | `animation[f64]` | `iced::Animation<f32>`; expressions convert at the Ice numeric boundary |
@@ -1910,7 +1918,7 @@ crate::backend::create_task
 Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
 `A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
 messages must satisfy the traits required by generated iced code, notably
-`Clone` for 1.70 message payloads. Generated app and message debug output is
+`Clone` for 2.0 message payloads. Generated app and message debug output is
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
@@ -2180,6 +2188,7 @@ The expression language contains:
 - parentheses;
 - built-ins: `len(list_or_str_or_bytes) -> i64`,
   `empty(list_or_str_or_bytes) -> bool`, `trim(str) -> str`, `some(T) -> T?`,
+  `ok(T) -> result[T,_]`, `err(E) -> result[_,E]`,
   `encoded(bytes) -> image`, `rgba(i64, i64, bytes) -> image`, and
   `aborted(task-handle?) -> bool`;
 - namespaced keyboard built-ins such as `key.named("Enter")`,
@@ -2892,8 +2901,8 @@ drawing groups or control flow.
 
 ### View control flow
 
-`match` has first-match semantics. Each arm owns one or more nodes; an optional
-`_` catch-all must be last:
+Literal `match` has first-match semantics. Each arm owns one or more nodes; an
+optional `_` catch-all must be last:
 
 ```ice
 match status
@@ -2907,6 +2916,35 @@ match status
 
 Arm values are compared with checked equality. Exhaustiveness is not required;
 without `_`, no arm renders when no value matches.
+
+Option, result, and UI-enum patterns are exhaustive. `some(value)` and
+`ok(value)`/`err(value)` introduce immutable payload names scoped to that arm;
+`none` has no payload. An enum pattern uses `Enum.variant` or
+`Enum.variant(value)` according to the declaration. Every variant must appear
+exactly once unless a final `_` arm handles the remainder.
+
+```ice
+enum RequestState
+  idle
+  loading
+  ready([Task])
+  failed(AppError)
+
+match request
+  RequestState.idle
+    text "Idle"
+  RequestState.loading
+    text "Loading…"
+  RequestState.ready(tasks)
+    TaskList tasks=tasks
+  RequestState.failed(error)
+    ErrorPanel message=error.message
+```
+
+UI enums are top-level, non-generic, and non-recursive. A variant has zero or
+one payload, and payload types must be ordinary cloneable Ice data. Enums have
+no methods or struct literals. Constructors use `Enum.variant` for an empty
+variant and `Enum.variant(value)` for a payload variant.
 
 ### Components
 
@@ -4336,7 +4374,7 @@ hidden `step` helper adds Ice source context to panics from generated statement
 evaluation. Generated Ice tests need no Rust wrapper, registration, or
 application-level dependency on the internal simulator crate.
 
-Revision 1.70 deliberately has no DOM, CSS selector engine, computed-style
+Revision 2.0 deliberately has no DOM, CSS selector engine, computed-style
 object, synthetic component bounds, component-local-state access, test mock
 DSL, virtual time, pixel-snapshot syntax, or multi-window orchestration. The
 removed external ICE test format is not accepted and has no compatibility
@@ -4513,7 +4551,7 @@ The implemented families are:
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 1.70 does not claim that remapping. Generated first-class test
+extern line; 2.0 does not claim that remapping. Generated first-class test
 failures already retain their original root or imported Ice path and line.
 
 ## 12. Cargo commands
@@ -4575,7 +4613,7 @@ above.
 
 ## 13. Current coverage and escape hatches
 
-The 1.70 native backend covers both windowed applications and windowless
+The 2.0 native backend covers both windowed applications and windowless
 daemons alongside CRUD/settings-style screens, selection, media, hover
 overlays, declarative canvas geometry, and pointer events. Borrowed custom
 widgets and an application-wide renderer type remain the escape hatch for

@@ -524,11 +524,11 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  first_data:first::Data = first::data(\"A\")\n  second_data:second::Data = second::data(\"B\")\nview\n  row\n    first::Badge value=first_data\n    second::Badge value=second_data\n",
+            "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  first_data:first::Data = first::data(\"A\")\n  second_data:second::Data = second::data(\"B\")\n  first_mode:first::Mode = first::Mode.idle\n  second_mode:second::Mode = second::Mode.ready(\"B\")\nview\n  row\n    first::Badge value=first_data mode=first_mode\n    second::Badge value=second_data mode=second_mode\n    match second_mode\n      second::Mode.idle\n        text \"Idle\"\n      second::Mode.ready(label)\n        text label\n",
         );
         fixture.write(
             "ui.ice",
-            "extern crate::helpers\n  Data(value:str)\n  sync data(value:str) -> Data\n  sync label(value:str) -> str\nrecipe panel for box\n  @p-4\nfont body family=\"Inter\"\ncomponent Badge(value:Data)\n  box @panel\n    text label(trim(value.value)) font=body\n",
+            "extern crate::helpers\n  Data(value:str)\n  sync data(value:str) -> Data\n  sync label(value:str) -> str\nenum Mode\n  idle\n  ready(str)\nrecipe panel for box\n  @p-4\nfont body family=\"Inter\"\ncomponent Badge(value:Data, mode:Mode)\n  box @panel\n    col\n      text label(trim(value.value)) font=body\n      match mode\n        Mode.idle\n          text \"Idle\"\n        Mode.ready(label)\n          text label\n",
         );
 
         let document = analyze_file(fixture.path("app.ice")).unwrap();
@@ -564,9 +564,11 @@ mod tests {
                 .iter()
                 .any(|function| function.name == "second::label")
         );
+        assert!(document.enums.iter().any(|item| item.name == "first::Mode"));
 
         let compiled = compile_file(fixture.path("app.ice")).unwrap();
         assert!(compiled.rust.contains("crate::helpers::label"));
+        assert!(!compiled.rust.contains("enum first::Mode"));
         assert_eq!(compiled.dependencies.len(), 2);
     }
 

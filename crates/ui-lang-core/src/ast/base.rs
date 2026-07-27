@@ -230,7 +230,7 @@ impl Type {
             Self::Named(name) => structs
                 .iter()
                 .find(|item| item.name == *name)
-                .map_or_else(|| name.clone(), |item| item.rust_path.clone()),
+                .map_or_else(|| generated_named_rust(name), |item| item.rust_path.clone()),
             Self::Unit => "()".into(),
             Self::Unknown => "_".into(),
         }
@@ -325,5 +325,21 @@ impl Type {
             Self::Unit => "unit".into(),
             Self::Unknown => "unknown".into(),
         }
+    }
+}
+
+pub(crate) fn generated_named_rust(name: &str) -> String {
+    if name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        name.to_owned()
+    } else {
+        format!(
+            "__IceType0{}",
+            name.bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
     }
 }
