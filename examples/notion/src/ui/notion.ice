@@ -1,7 +1,8 @@
 app Notion
   title "Notion"
   id "dev.ducktape.ice.notion"
-  font "../../../showcase/assets/fonts/Geist.ttf"
+  font "../../../showcase/assets/fonts/Geist-Regular.ttf"
+  font "../../../showcase/assets/fonts/Geist-Bold.ttf"
   text-size 14
   antialiasing true
   window
