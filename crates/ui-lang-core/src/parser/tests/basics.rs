@@ -17,7 +17,7 @@ fn parses_compact_app() {
 #[test]
 fn parses_semantic_style_recipes() {
     let document = parse(
-        "app Demo\nrecipe surface for box\n  @w-full bg-surface\nrecipe panel for box extends surface\n  @px-16px py-11px border border-border rounded-9px\nrecipe label for text\n  @text-12.5px\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\" @label\n",
+        "app Demo\nrecipe surface for box\n  @w-full bg-surface\nrecipe panel for box extends surface\n  @px-16px py-11px border border-border rounded-9px\nrecipe label for text\n  @text-12.5px\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n  surface\n  border\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\n  border #222222\nview\n  box @panel\n    text \"Panel\" @label\n",
     )
     .unwrap();
 
@@ -66,7 +66,9 @@ fn rejects_removed_property_spellings() {
         "flex justify=normal\n    text \"Demo\"",
         "flex items=self-start\n    text \"Demo\"",
     ] {
-        let source = format!("app Demo\ntheme\n  bg #000000\nview\n  {view}\n");
+        let source = format!(
+            "app Demo\ntheme contract AppTheme\n  bg\npalette app for AppTheme\n  bg #000000\nview\n  {view}\n"
+        );
         parse(&source).unwrap_err();
     }
 }
@@ -101,7 +103,12 @@ fn parses_borrowed_component_parameters() {
 extern crate::backend
   Item(label:str)
   component native_row(label:&str, items:&[Item], active:&bool) -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

@@ -1,6 +1,14 @@
 app ResizablePanes
 
-theme
+theme contract AppTheme
+  bg
+  surface
+  fg
+  muted
+  border
+  primary
+  danger
+palette app for AppTheme
   bg #0f172a
   surface #111827
   fg #f8fafc

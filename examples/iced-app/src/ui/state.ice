@@ -1,6 +1,7 @@
 state
   window_title = "Ice Tasks"
   app_theme = "app"
+  active_palette = "dark"
   app_background = "#0f172a"
   app_text = "#f8fafc"
   ui_scale = 1.0

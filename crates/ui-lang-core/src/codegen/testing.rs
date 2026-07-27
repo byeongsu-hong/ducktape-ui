@@ -35,16 +35,20 @@ pub(in crate::codegen) fn generate_test_mounts(
         } else {
             ""
         };
+        let callback_value = if document.daemon { "window" } else { "" };
+        let palette = format!(
+            "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
+        );
         if document.daemon {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {root} }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {root} }}"
             )
             .unwrap();
         } else {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ let __ice_content: __IceElement<'_, {message}> = {root}; ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {root}; ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
             )
             .unwrap();
         }

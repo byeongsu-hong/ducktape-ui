@@ -472,12 +472,63 @@ pub(in crate::check) fn check_qr_data(document: &Document) -> Result<(), Error> 
 }
 
 pub(in crate::check) fn check_theme(document: &Document) -> Result<(), Error> {
+    let contract = document.theme_contract.as_ref().ok_or_else(|| {
+        Error::new(
+            "E110",
+            &Span::line(1),
+            "missing `theme contract Name` declaration",
+        )
+    })?;
     for required in ["bg", "fg", "primary", "danger"] {
-        if !document.theme.contains_key(required) {
+        if !contract.tokens.iter().any(|token| token == required) {
             return Err(Error::new(
                 "E110",
-                &Span::line(1),
-                format!("theme is missing `{required}`"),
+                &contract.span,
+                format!("theme contract `{}` is missing `{required}`", contract.name),
+            ));
+        }
+    }
+    if document.palettes.is_empty() {
+        return Err(Error::new(
+            "E110",
+            &contract.span,
+            format!(
+                "theme contract `{}` requires at least one palette",
+                contract.name
+            ),
+        ));
+    }
+    for palette in &document.palettes {
+        if palette.contract != contract.name {
+            return Err(Error::new(
+                "E110",
+                &palette.span,
+                format!(
+                    "palette `{}` targets theme contract `{}`, not `{}`",
+                    palette.name, palette.contract, contract.name
+                ),
+            ));
+        }
+        if let Some(token) = palette
+            .colors
+            .keys()
+            .find(|token| !contract.tokens.contains(token))
+        {
+            return Err(Error::new(
+                "E110",
+                &palette.span,
+                format!("palette `{}` has unknown token `{token}`", palette.name),
+            ));
+        }
+        if let Some(token) = contract
+            .tokens
+            .iter()
+            .find(|token| !palette.colors.contains_key(*token))
+        {
+            return Err(Error::new(
+                "E110",
+                &palette.span,
+                format!("palette `{}` is missing token `{token}`", palette.name),
             ));
         }
     }

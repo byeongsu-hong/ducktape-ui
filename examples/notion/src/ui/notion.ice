@@ -31,7 +31,20 @@ extern crate::editor
   task block_editor_focus(search:bool) -> bool
   component block_editor(state:&BlockEditorState) -> BlockEditorEvent
 
-theme
+theme contract AppTheme
+  bg
+  surface
+  sidebar
+  fg
+  muted
+  faint
+  hover
+  selected
+  border
+  primary
+  danger
+  blue_soft
+palette app for AppTheme
   bg         #ffffff
   surface    #ffffff
   sidebar    #f7f7f5

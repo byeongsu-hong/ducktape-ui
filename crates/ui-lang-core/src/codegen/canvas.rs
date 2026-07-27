@@ -71,7 +71,7 @@ pub(in crate::codegen) fn render_canvas(
     let cache_key = if let Some(dependency) = &options.cache {
         let dependency = expr_code(dependency, env, document, ValueMode::Owned)?;
         format!(
-            "::std::option::Option::Some({{ let mut __hasher = ::std::hash::DefaultHasher::new(); ::std::hash::Hash::hash(&({dependency}), &mut __hasher); ::std::hash::Hasher::finish(&__hasher) }})"
+            "::std::option::Option::Some({{ let mut __hasher = ::std::hash::DefaultHasher::new(); ::std::hash::Hash::hash(&(__ice_palette.name, {dependency}), &mut __hasher); ::std::hash::Hasher::finish(&__hasher) }})"
         )
     } else {
         "::std::option::Option::None".into()

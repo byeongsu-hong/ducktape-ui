@@ -5,7 +5,12 @@ fn lowers_derived_values_to_getters_and_handler_locals_to_rust_lets() {
     let source = r#"app Derived
 extern crate::backend
   save(title:str) -> unit
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -34,7 +39,12 @@ view
 #[test]
 fn lowers_structured_task_groups_to_native_combinators() {
     let source = r#"app Grouped
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -61,7 +71,12 @@ view
 #[test]
 fn lowers_native_task_cancellation() {
     let source = r#"app Cancel
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -98,7 +113,12 @@ extern crate::backend
   stream fallible() -> str ! AppError
   recipe snapshot(id:i64) -> str
   event-filter raw_event() -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -152,7 +172,12 @@ extern crate::backend
   AppError(message:str)
   sip transfer(size:i64) progress=f64 -> bytes
   sip fallible() progress=i64 -> str ! AppError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -190,7 +215,12 @@ extern crate::backend
   stream numbers(limit:i64) -> i64
   task double(value:i64) -> i64
   task fallible(value:i64) -> i64 ! AppError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -239,7 +269,12 @@ extern crate::backend
   AppError(message:str)
   sync normalize(error:NetworkError) -> AppError
   task request() -> i64 ! NetworkError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

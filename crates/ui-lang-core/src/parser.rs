@@ -305,6 +305,93 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     })
 }
 
+fn parse_theme_contract(name: &str, line: &Line) -> Result<ThemeContract, Error> {
+    let name = identifier(name.trim(), line)?;
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+    {
+        return Err(error(
+            "E072",
+            line,
+            format!("invalid theme contract name `{name}`"),
+        ));
+    }
+    let mut tokens = Vec::new();
+    for item in &line.children {
+        ensure_leaf(item)?;
+        let token = identifier(&item.text, item)?;
+        if matches!(token.as_str(), "white" | "black" | "transparent") {
+            return Err(error(
+                "E012",
+                item,
+                format!("theme token `{token}` is built in and cannot be declared"),
+            ));
+        }
+        if tokens.contains(&token) {
+            return Err(error(
+                "E012",
+                item,
+                format!("duplicate theme contract token `{token}`"),
+            ));
+        }
+        tokens.push(token);
+    }
+    Ok(ThemeContract {
+        name,
+        tokens,
+        span: Span::line(line.number),
+    })
+}
+
+fn parse_palette(source: &str, line: &Line) -> Result<Palette, Error> {
+    let parts = split_words(source);
+    let [name, separator, contract] = parts.as_slice() else {
+        return Err(error(
+            "E010",
+            line,
+            "palette uses `palette name for Contract`",
+        ));
+    };
+    if separator != "for" {
+        return Err(error(
+            "E010",
+            line,
+            "palette uses `palette name for Contract`",
+        ));
+    }
+    let mut colors = BTreeMap::new();
+    for item in &line.children {
+        ensure_leaf(item)?;
+        let Some((token, value)) = item.text.split_once(char::is_whitespace) else {
+            return Err(error("E010", item, "expected `token #RRGGBB`"));
+        };
+        let token = identifier(token, item)?;
+        let value = value.trim();
+        if !valid_color(value) {
+            return Err(error(
+                "E011",
+                item,
+                "palette colors use #RRGGBB or #RRGGBBAA",
+            ));
+        }
+        if colors.insert(token.clone(), value.into()).is_some() {
+            return Err(error(
+                "E012",
+                item,
+                format!("duplicate palette token `{token}`"),
+            ));
+        }
+    }
+    Ok(Palette {
+        name: identifier(name, line)?,
+        contract: identifier(contract, line)?,
+        colors,
+        span: Span::line(line.number),
+    })
+}
+
 pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSymbol>), Error> {
     parse_with_symbols_and_namespaces(source, &vec![None; source.lines().count()])
 }
@@ -324,7 +411,8 @@ pub(crate) fn parse_with_symbols_and_namespaces(
     let mut enums = Vec::new();
     let mut functions = Vec::new();
     let mut subscriptions = Vec::new();
-    let mut theme = BTreeMap::new();
+    let mut theme_contract = None;
+    let mut palettes = Vec::new();
     let mut fonts = Vec::new();
     let mut qr_codes = Vec::new();
     let mut states = Vec::new();
@@ -339,14 +427,15 @@ pub(crate) fn parse_with_symbols_and_namespaces(
             && !(line.text.starts_with("recipe ")
                 || line.text.starts_with("extern ")
                 || line.text.starts_with("enum ")
-                || line.text == "theme"
+                || line.text.starts_with("theme contract ")
+                || line.text.starts_with("palette ")
                 || line.text.starts_with("font ")
                 || line.text.starts_with("component "))
         {
             return Err(error(
                 "E180",
                 line,
-                "aliased imports may declare components, recipes, extern items, enums, fonts, and global theme tokens only",
+                "aliased imports may declare components, recipes, extern items, enums, fonts, and the global theme contract only",
             ));
         }
         let root = line
@@ -564,32 +653,24 @@ pub(crate) fn parse_with_symbols_and_namespaces(
                     )?);
                 }
             }
-        } else if line.text == "theme" {
-            for item in &line.children {
-                ensure_leaf(item)?;
-                let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
-                    return Err(error("E010", item, "expected `name #RRGGBB`"));
-                };
-                let name = identifier(name, item)?;
-                if matches!(name.as_str(), "white" | "black" | "transparent") {
-                    return Err(error(
-                        "E012",
-                        item,
-                        format!("theme token `{name}` is built in and cannot be redeclared"),
-                    ));
-                }
-                let value = value.trim();
-                if !valid_color(value) {
-                    return Err(error("E011", item, "theme colors use #RRGGBB or #RRGGBBAA"));
-                }
-                if theme.insert(name.clone(), value.into()).is_some() {
-                    return Err(error(
-                        "E012",
-                        item,
-                        format!("duplicate theme token `{name}`"),
-                    ));
-                }
+        } else if let Some(name) = line.text.strip_prefix("theme contract ") {
+            if theme_contract.is_some() {
+                return Err(error("E012", line, "duplicate theme contract"));
             }
+            theme_contract = Some(parse_theme_contract(name, line)?);
+        } else if let Some(source) = line.text.strip_prefix("palette ") {
+            let palette = parse_palette(source, line)?;
+            if palettes
+                .iter()
+                .any(|existing: &Palette| existing.name == palette.name)
+            {
+                return Err(error(
+                    "E012",
+                    line,
+                    format!("duplicate palette `{}`", palette.name),
+                ));
+            }
+            palettes.push(palette);
         } else if line.text == "state" {
             states.extend(
                 line.children
@@ -713,7 +794,8 @@ pub(crate) fn parse_with_symbols_and_namespaces(
         enums,
         functions,
         subscriptions,
-        theme,
+        theme_contract,
+        palettes,
         fonts,
         qr_codes,
         states,

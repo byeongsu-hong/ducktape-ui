@@ -505,7 +505,7 @@ mod tests {
         );
         fixture.write(
             "shared/theme.ice",
-            "theme\n  fg #ffffff\n  bg #000000\n  primary #333333\n  danger #ff0000\n",
+            "theme contract AppTheme\n  fg\n  bg\n  primary\n  danger\npalette app for AppTheme\n  fg #ffffff\n  bg #000000\n  primary #333333\n  danger #ff0000\n",
         );
         fixture.write(
             "parts/body.ice",
@@ -524,7 +524,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  first_data:first::Data = first::data(\"A\")\n  second_data:second::Data = second::data(\"B\")\n  first_mode:first::Mode = first::Mode.idle\n  second_mode:second::Mode = second::Mode.ready(\"B\")\nview\n  row\n    first::Badge value=first_data mode=first_mode\n    second::Badge value=second_data mode=second_mode\n    match second_mode\n      second::Mode.idle\n        text \"Idle\"\n      second::Mode.ready(label)\n        text label\n",
+            "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  first_data:first::Data = first::data(\"A\")\n  second_data:second::Data = second::data(\"B\")\n  first_mode:first::Mode = first::Mode.idle\n  second_mode:second::Mode = second::Mode.ready(\"B\")\nview\n  row\n    first::Badge value=first_data mode=first_mode\n    second::Badge value=second_data mode=second_mode\n    match second_mode\n      second::Mode.idle\n        text \"Idle\"\n      second::Mode.ready(label)\n        text label\n",
         );
         fixture.write(
             "ui.ice",
@@ -577,7 +577,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\nuse \"ui.ice\" as ui\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::parts::Badge\n",
+            "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::parts::Badge\n",
         );
         fixture.write("ui.ice", "use \"parts.ice\" as parts\n");
         fixture.write("parts.ice", "component Badge()\n  text \"Badge\"\n");
@@ -585,6 +585,24 @@ mod tests {
         let document = analyze_file(fixture.path("app.ice")).unwrap();
 
         assert_eq!(document.components[0].name, "ui::parts::Badge");
+    }
+
+    #[test]
+    fn aliased_imports_keep_the_theme_contract_global() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"ui.ice\" as ui\nview\n  ui::Badge\n",
+        );
+        fixture.write(
+            "ui.ice",
+            "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette light for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Badge()\n  text \"Badge\"\n",
+        );
+
+        let document = analyze_file(fixture.path("app.ice")).unwrap();
+        assert_eq!(document.theme_contract.as_ref().unwrap().name, "AppTheme");
+        assert_eq!(document.palettes[0].name, "light");
+        assert_eq!(document.components[0].name, "ui::Badge");
     }
 
     #[test]
@@ -614,7 +632,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Saved\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Saved\"\n",
+            "app Saved\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Saved\"\n",
         );
         fixture.write("part.ice", "component Broken()\n  text \"Saved\"\n");
         let root = fixture.path("app.ice");
@@ -622,7 +640,7 @@ mod tests {
         let mut overlays = HashMap::from([
             (
                 root.clone(),
-                "app Overlay\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n"
+                "app Overlay\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n"
                     .into(),
             ),
             (part.clone(), "component Broken()\n  wat\n".into()),
@@ -646,7 +664,7 @@ mod tests {
         let overlays = HashMap::from([
             (
                 root.clone(),
-                "app New\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n"
+                "app New\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n"
                     .to_owned(),
             ),
             (part, "component Card()\n  text \"Unsaved\"\n".to_owned()),
@@ -658,7 +676,7 @@ mod tests {
     #[test]
     fn retains_checked_component_and_handler_locations_across_imports() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  Card\n    events\n      click -> clicked\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  Card\n    events\n      click -> clicked\n";
         fixture.write("app.ice", root);
         fixture.write(
             "part.ice",
@@ -668,8 +686,8 @@ mod tests {
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
         let part = fixture.path("part.ice").canonicalize().unwrap();
-        let (component, _) = checked.symbol_at(Some(&app), 10, 3).unwrap();
-        let (handler, _) = checked.symbol_at(Some(&app), 12, 16).unwrap();
+        let (component, _) = checked.symbol_at(Some(&app), 15, 3).unwrap();
+        let (handler, _) = checked.symbol_at(Some(&app), 17, 16).unwrap();
 
         assert_eq!(component.name, "Card");
         assert_eq!(component.definition.path.as_deref(), Some(part.as_path()));
@@ -677,7 +695,7 @@ mod tests {
         assert_eq!(component.references.len(), 1);
         assert!(component.renameable);
         assert_eq!(handler.name, "clicked");
-        assert_eq!(handler.definition.line, 8);
+        assert_eq!(handler.definition.line, 13);
         assert_eq!(handler.references.len(), 1);
         assert!(handler.renameable);
     }
@@ -685,7 +703,7 @@ mod tests {
     #[test]
     fn keeps_reused_test_target_aliases_scoped_to_their_test() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -704,9 +722,9 @@ mod tests {
             .iter()
             .find(|symbol| symbol.scope.as_deref() == Some("second") && symbol.name == "root")
             .unwrap();
-        assert_eq!(first_root.definition.line, 12);
+        assert_eq!(first_root.definition.line, 17);
         assert_eq!(first_root.references.len(), 3);
-        assert_eq!(second_root.definition.line, 17);
+        assert_eq!(second_root.definition.line, 22);
         assert_eq!(second_root.references.len(), 1);
         assert!(first_root.renameable);
         assert!(second_root.renameable);
@@ -715,7 +733,7 @@ mod tests {
     #[test]
     fn tracks_dynamic_test_target_key_aliases_in_every_target_context() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -729,13 +747,13 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(key.definition.line, 12);
+        assert_eq!(key.definition.line, 17);
         assert_eq!(
             key.references
                 .iter()
                 .map(|reference| reference.line)
                 .collect::<Vec<_>>(),
-            [13, 14, 15, 16]
+            [18, 19, 20, 21]
         );
     }
 
@@ -744,7 +762,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\nuse \"tests.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n",
+            "app Demo\nuse \"tests.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n",
         );
         fixture.write(
             "tests.ice",
@@ -779,7 +797,7 @@ mod tests {
     #[test]
     fn keeps_component_local_handlers_out_of_global_symbol_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle()\n  state\n    enabled = false\n  on changed(next)\n    enabled = next\n  checkbox \"Enabled\" checked=enabled -> changed _\non changed\nview\n  Toggle #toggle\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle()\n  state\n    enabled = false\n  on changed(next)\n    enabled = next\n  checkbox \"Enabled\" checked=enabled -> changed _\non changed\nview\n  Toggle #toggle\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -790,17 +808,17 @@ mod tests {
             .find(|symbol| symbol.kind == SymbolKind::Handler && symbol.name == "changed")
             .unwrap();
 
-        assert_eq!(changed.definition.line, 13);
+        assert_eq!(changed.definition.line, 18);
         assert!(changed.references.is_empty());
-        assert!(checked.symbol_at(Some(&app), 10, 6).is_none());
-        let route_column = root.lines().nth(11).unwrap().rfind("changed").unwrap() + 1;
-        assert!(checked.symbol_at(Some(&app), 12, route_column).is_none());
+        assert!(checked.symbol_at(Some(&app), 15, 6).is_none());
+        let route_column = root.lines().nth(16).unwrap().rfind("changed").unwrap() + 1;
+        assert!(checked.symbol_at(Some(&app), 17, route_column).is_none());
     }
 
     #[test]
     fn keeps_component_outputs_out_of_global_handler_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Choice() -> bool\n  checkbox \"Choice\" checked=false -> emit _\non emit(value)\non changed(value)\nview\n  col\n    Choice -> changed _\n    checkbox \"Global\" checked=false -> emit _\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Choice() -> bool\n  checkbox \"Choice\" checked=false -> emit _\non emit(value)\non changed(value)\nview\n  col\n    Choice -> changed _\n    checkbox \"Global\" checked=false -> emit _\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -810,17 +828,17 @@ mod tests {
             .iter()
             .find(|symbol| symbol.kind == SymbolKind::Handler && symbol.name == "emit")
             .unwrap();
-        let output_route = root.lines().nth(7).unwrap();
+        let output_route = root.lines().nth(12).unwrap();
         let output_column = output_route.rfind("emit").unwrap() + 1;
 
         assert_eq!(emit.references.len(), 1);
-        assert!(checked.symbol_at(Some(&app), 8, output_column).is_none());
+        assert!(checked.symbol_at(Some(&app), 13, output_column).is_none());
     }
 
     #[test]
     fn rejects_global_handler_routes_from_component_handlers() {
         let fixture = Fixture::new();
-        let root = "app Demo\nextern crate::backend\n  fetch() -> str\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Search()\n  on search\n    run fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n";
+        let root = "app Demo\nextern crate::backend\n  fetch() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Search()\n  on search\n    run fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n";
         fixture.write("app.ice", root);
 
         let error = analyze_file_with_source(fixture.path("app.ice"), root).unwrap_err();
@@ -835,14 +853,14 @@ mod tests {
     #[test]
     fn retains_handler_locations_in_named_route_properties() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  draft:str = \"\"\non submit\nview\n  input \"Draft\" <-> draft submit=submit\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  draft:str = \"\"\non submit\nview\n  input \"Draft\" <-> draft submit=submit\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
-        let route = root.lines().nth(10).unwrap();
+        let route = root.lines().nth(15).unwrap();
         let column = route.rfind("submit").unwrap() + 1;
-        let (handler, reference) = checked.symbol_at(Some(&app), 11, column).unwrap();
+        let (handler, reference) = checked.symbol_at(Some(&app), 16, column).unwrap();
 
         assert_eq!(handler.name, "submit");
         assert_eq!(reference.start_column, column);
@@ -852,7 +870,7 @@ mod tests {
     #[test]
     fn retains_recipe_locations_across_imports() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n  surface\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
         fixture.write("app.ice", root);
         fixture.write(
             "recipes.ice",
@@ -862,9 +880,9 @@ mod tests {
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
         let recipes = fixture.path("recipes.ice").canonicalize().unwrap();
-        let line = root.lines().nth(9).unwrap();
+        let line = root.lines().nth(15).unwrap();
         let column = line.find("panel").unwrap() + 1;
-        let (panel, reference) = checked.symbol_at(Some(&app), 10, column).unwrap();
+        let (panel, reference) = checked.symbol_at(Some(&app), 16, column).unwrap();
 
         assert_eq!(panel.kind, SymbolKind::Recipe);
         assert_eq!(panel.name, "panel");
@@ -888,7 +906,7 @@ mod tests {
     #[test]
     fn keeps_the_implicit_mount_hook_out_of_rename() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non mount\nview\n  text \"Ready\"\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non mount\nview\n  text \"Ready\"\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -905,15 +923,15 @@ mod tests {
     #[test]
     fn keeps_component_emit_out_of_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle() -> bool\n  checkbox \"Toggle\" checked=false -> emit _\non changed(value)\nview\n  Toggle -> changed _\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle() -> bool\n  checkbox \"Toggle\" checked=false -> emit _\non changed(value)\nview\n  Toggle -> changed _\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
-        let route = root.lines().nth(7).unwrap();
+        let route = root.lines().nth(12).unwrap();
         let column = route.find("emit").unwrap() + 1;
 
-        assert!(checked.symbol_at(Some(&app), 8, column).is_none());
+        assert!(checked.symbol_at(Some(&app), 13, column).is_none());
     }
 
     #[test]
@@ -921,13 +939,13 @@ mod tests {
         let fixture = Fixture::new();
         let indent = "\u{a0}\u{a0}";
         let root = format!(
-            "app Demo\ntheme\n{indent}bg #000000\n{indent}fg #ffffff\n{indent}primary #333333\n{indent}danger #ff0000\ncomponent Card()\n{indent}text \"Card\"\nview\n{indent}Card\n"
+            "app Demo\ntheme contract AppTheme\n{indent}bg\n{indent}fg\n{indent}primary\n{indent}danger\npalette app for AppTheme\n{indent}bg #000000\n{indent}fg #ffffff\n{indent}primary #333333\n{indent}danger #ff0000\ncomponent Card()\n{indent}text \"Card\"\nview\n{indent}Card\n"
         );
         fixture.write("app.ice", &root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), &root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
-        let (card, reference) = checked.symbol_at(Some(&app), 10, 3).unwrap();
+        let (card, reference) = checked.symbol_at(Some(&app), 15, 3).unwrap();
 
         assert_eq!(card.name, "Card");
         assert_eq!(reference.start_column, 3);
@@ -937,14 +955,14 @@ mod tests {
     #[test]
     fn retains_compact_canvas_routes_without_synthetic_references() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non pressed(button)\non canvas_event\nview\n  canvas\n    event mouse pressed -> pressed _\n    capture touch lost\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non pressed(button)\non canvas_event\nview\n  canvas\n    event mouse pressed -> pressed _\n    capture touch lost\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
         let app = fixture.path("app.ice").canonicalize().unwrap();
-        let route = root.lines().nth(10).unwrap();
+        let route = root.lines().nth(15).unwrap();
         let column = route.rfind("pressed").unwrap() + 1;
-        let (pressed, reference) = checked.symbol_at(Some(&app), 11, column).unwrap();
+        let (pressed, reference) = checked.symbol_at(Some(&app), 16, column).unwrap();
         let synthetic = checked
             .symbols()
             .iter()
@@ -994,7 +1012,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\n  font \"assets/Brand.ttf\"\n  window\n    icon-rgba \"assets/app.rgba\" 2 1\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+            "app Demo\n  font \"assets/Brand.ttf\"\n  window\n    icon-rgba \"assets/app.rgba\" 2 1\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
         );
         fixture.write("assets/Brand.ttf", "font bytes");
         fixture.write("assets/app.rgba", "RGBAABC\n");
@@ -1018,7 +1036,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\n  font \"assets/Missing.ttf\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+            "app Demo\n  font \"assets/Missing.ttf\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
         );
 
         let error = compile_file(fixture.path("app.ice")).unwrap_err();
@@ -1029,7 +1047,7 @@ mod tests {
 
         fixture.write(
             "app.ice",
-            "app Demo\n  window child\n    icon-rgba \"assets/missing.rgba\" 2 1\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+            "app Demo\n  window child\n    icon-rgba \"assets/missing.rgba\" 2 1\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
         );
         let error = compile_file(fixture.path("app.ice")).unwrap_err();
         assert_eq!(error.code, "E192");
@@ -1039,7 +1057,7 @@ mod tests {
         fixture.write("assets/wrong.rgba", "RGBA");
         fixture.write(
             "app.ice",
-            "app Demo\n  window\n    icon-rgba \"assets/wrong.rgba\" 2 1\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+            "app Demo\n  window\n    icon-rgba \"assets/wrong.rgba\" 2 1\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
         );
         let error = compile_file(fixture.path("app.ice")).unwrap_err();
         assert_eq!(error.code, "E193");

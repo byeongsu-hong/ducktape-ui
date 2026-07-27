@@ -496,7 +496,12 @@ fn checks_native_image_allocation_results_and_errors() {
 #[test]
 fn rejects_invalid_animation_boundaries_before_codegen() {
     let source = r#"app Motion
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -536,7 +541,12 @@ view
 #[test]
 fn checks_exit_is_a_final_native_task() {
     let source = r#"daemon Agent
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -564,7 +574,12 @@ fn exposes_the_current_window_only_to_daemon_views_and_callbacks() {
 extern crate::backend
   sync label(id:window-id) -> str
   sync scale(id:window-id) -> f64
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

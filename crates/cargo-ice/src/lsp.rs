@@ -1060,7 +1060,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
+    const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
 
     struct Fixture(PathBuf);
 
@@ -1347,14 +1347,14 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "method": "textDocument/didOpen",
-                "params": { "textDocument": { "uri": uri, "text": "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  wat\n" } },
+                "params": { "textDocument": { "uri": uri, "text": "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  wat\n" } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": { "uri": uri },
-                    "contentChanges": [{ "text": "app Demo\ntheme\n    bg #000000\n    fg #ffffff\n    primary #333333\n    danger #ff0000\nview\n    text \"Hi\"\n" }],
+                    "contentChanges": [{ "text": "app Demo\ntheme contract AppTheme\n    bg\n    fg\n    primary\n    danger\npalette app for AppTheme\n    bg #000000\n    fg #ffffff\n    primary #333333\n    danger #ff0000\nview\n    text \"Hi\"\n" }],
                 },
             }),
             json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
@@ -1377,8 +1377,8 @@ mod tests {
         assert_eq!(
             diagnostics[0]["params"]["diagnostics"][0]["range"],
             json!({
-                "start": { "line": 7, "character": 0 },
-                "end": { "line": 7, "character": 1 },
+                "start": { "line": 12, "character": 0 },
+                "end": { "line": 12, "character": 1 },
             })
         );
         assert!(
@@ -1628,7 +1628,7 @@ mod tests {
     #[test]
     fn formats_open_documents_and_completes_from_the_schema() {
         let uri = "file:///tmp/demo.ice";
-        let source = "app Demo\ntheme\n    bg #000000\n    fg #ffffff\n    primary #333333\n    danger #ff0000\nview\n    text \"😀\"";
+        let source = "app Demo\ntheme contract AppTheme\n    bg\n    fg\n    primary\n    danger\npalette app for AppTheme\n    bg #000000\n    fg #ffffff\n    primary #333333\n    danger #ff0000\nview\n    text \"😀\"";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -1649,7 +1649,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/completion",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 7, "character": 0 } },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 12, "character": 0 } },
             }),
             json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -1666,7 +1666,7 @@ mod tests {
             response(&messages, 2)["result"][0]["range"],
             json!({
                 "start": { "line": 0, "character": 0 },
-                "end": { "line": 7, "character": 13 },
+                "end": { "line": 12, "character": 13 },
             })
         );
         let completions = response(&messages, 3)["result"].as_array().unwrap();
@@ -1718,6 +1718,18 @@ mod tests {
             "target ${1:name} = #${2:id}"
         );
         assert_eq!(completion("expect")["insertText"], "expect ${1:condition}");
+        assert!(
+            completion("theme contract")["insertText"]
+                .as_str()
+                .unwrap()
+                .starts_with("theme contract ${1:Name}")
+        );
+        assert!(
+            completion("palette")["insertText"]
+                .as_str()
+                .unwrap()
+                .starts_with("palette ${1:light} for ${2:Name}")
+        );
         for label in [
             "preset", "viewport", "timeout", "mount", "click", "hover", "press", "release", "type",
             "key", "resize", "dispatch", "~=",
@@ -1739,7 +1751,7 @@ mod tests {
     #[test]
     fn defines_and_renames_handlers_referenced_by_tests() {
         let uri = "file:///tmp/test-navigation.ice";
-        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  count = 0\non increment\n  count = count + 1\nview\n  text count\ntest dispatches\n  dispatch increment\n";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  count = 0\non increment\n  count = count + 1\nview\n  text count\ntest dispatches\n  dispatch increment\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -1751,13 +1763,13 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 12 } },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 18, "character": 12 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 12 }, "newName": "bump" },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 18, "character": 12 }, "newName": "bump" },
             }),
             json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -1767,7 +1779,7 @@ mod tests {
         assert_eq!(response(&messages, 2)["result"]["uri"], uri);
         assert_eq!(
             response(&messages, 2)["result"]["range"]["start"],
-            json!({ "line": 8, "character": 3 })
+            json!({ "line": 13, "character": 3 })
         );
         let edits = response(&messages, 3)["result"]["changes"][uri]
             .as_array()
@@ -1779,14 +1791,14 @@ mod tests {
                 .iter()
                 .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            [8, 13]
+            [13, 18]
         );
     }
 
     #[test]
     fn test_target_rename_stays_inside_one_test_scope() {
         let uri = "file:///tmp/test-target-navigation.ice";
-        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non clicked\nview\n  col #root\n    button \"Go\" #action -> clicked\ntest first\n  target root = #root\n  target action = root/action\n  expect root.width == root.height\n  click action\ntest second\n  target root = #root\n  expect root.visible\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -1798,19 +1810,19 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 } },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 18, "character": 10 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 }, "newName": "surface" },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 18, "character": 10 }, "newName": "surface" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 13, "character": 10 }, "newName": "action" },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 18, "character": 10 }, "newName": "action" },
             }),
             json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -1819,7 +1831,7 @@ mod tests {
 
         assert_eq!(
             response(&messages, 2)["result"]["range"]["start"],
-            json!({ "line": 11, "character": 9 })
+            json!({ "line": 16, "character": 9 })
         );
         let edits = response(&messages, 3)["result"]["changes"][uri]
             .as_array()
@@ -1831,7 +1843,7 @@ mod tests {
                 .iter()
                 .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            [11, 12, 13, 13]
+            [16, 17, 18, 18]
         );
         assert_eq!(response(&messages, 4)["error"]["code"], -32602);
     }
@@ -1839,7 +1851,7 @@ mod tests {
     #[test]
     fn defines_and_renames_test_aliases_inside_dynamic_target_keys() {
         let uri = "file:///tmp/test-target-key-navigation.ice";
-        let source = "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col #root\n    text \"Key\" #key\n    text \"Item\" #item(\"Key\")\ntest dynamic_targets\n  target key = #root/key\n  target item = #root/item(key.value)\n  expect exists #root/item(key.value)\n  expect text \"Item\" within #root/item(key.value)\n  click #root/item(key.value)\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -1851,13 +1863,13 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 12, "character": 28 } },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 17, "character": 28 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": uri }, "position": { "line": 12, "character": 28 }, "newName": "lookup" },
+                "params": { "textDocument": { "uri": uri }, "position": { "line": 17, "character": 28 }, "newName": "lookup" },
             }),
             json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -1866,7 +1878,7 @@ mod tests {
 
         assert_eq!(
             response(&messages, 2)["result"]["range"]["start"],
-            json!({ "line": 11, "character": 9 })
+            json!({ "line": 16, "character": 9 })
         );
         let edits = response(&messages, 3)["result"]["changes"][uri]
             .as_array()
@@ -1878,15 +1890,15 @@ mod tests {
                 .iter()
                 .map(|edit| edit["range"]["start"]["line"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            [11, 12, 13, 14, 15]
+            [16, 17, 18, 19, 20]
         );
     }
 
     #[test]
     fn defines_and_safely_renames_checked_symbols_across_imports() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
-        let other = "app Other\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
+        let other = "app Other\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
         let part = "component Card()\n  emits\n    click\n  button \"😀\" -> emit click\ncomponent Panel()\n  text \"Other\"\non clicked\non mount\n";
         fixture.write("app.ice", root);
         fixture.write("other.ice", other);
@@ -1912,49 +1924,49 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 15, "character": 18 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Tile" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Tile" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 5,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Panel" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Panel" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 6,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 }, "newName": "activated" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 15, "character": 18 }, "newName": "activated" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 7,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "bad-name" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "bad-name" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 8,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "tile" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "tile" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 9,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 10, "character": 18 }, "newName": "mount" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 15, "character": 18 }, "newName": "mount" },
             }),
             json!({
                 "jsonrpc": "2.0",
@@ -1972,7 +1984,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 12,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Tile.Header" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Tile.Header" },
             }),
             json!({ "jsonrpc": "2.0", "id": 13, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -1991,8 +2003,8 @@ mod tests {
         assert_eq!(
             response(&messages, 3)["result"]["range"],
             json!({
-                "start": { "line": 10, "character": 15 },
-                "end": { "line": 10, "character": 22 },
+                "start": { "line": 15, "character": 15 },
+                "end": { "line": 15, "character": 22 },
             })
         );
         assert_eq!(
@@ -2049,7 +2061,7 @@ mod tests {
     #[test]
     fn renames_the_source_name_of_an_aliased_component() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\" as ui\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::Card\n";
+        let root = "app Demo\nuse \"part.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         fixture.write("app.ice", root);
         fixture.write("part.ice", part);
@@ -2073,13 +2085,13 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 6 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 6 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 6 }, "newName": "Tile" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 6 }, "newName": "Tile" },
             }),
             json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -2100,7 +2112,7 @@ mod tests {
     #[test]
     fn defines_and_renames_imported_style_recipes() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"recipes.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
+        let root = "app Demo\nuse \"recipes.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n  surface\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n  surface #111111\nview\n  box @panel\n    text \"Panel\"\n";
         let recipes = "recipe panel for box\n  @p-4 bg-surface rounded-md\n";
         fixture.write("app.ice", root);
         fixture.write("recipes.ice", recipes);
@@ -2124,13 +2136,13 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 15, "character": 8 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 }, "newName": "surface_panel" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 15, "character": 8 }, "newName": "surface_panel" },
             }),
             json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -2151,7 +2163,7 @@ mod tests {
     #[test]
     fn imported_rename_requires_an_initialized_workspace() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         fixture.write("app.ice", root);
         fixture.write("part.ice", part);
@@ -2163,7 +2175,7 @@ mod tests {
         ]);
         let params = json!({
             "textDocument": { "uri": root_uri },
-            "position": { "line": 8, "character": 3 },
+            "position": { "line": 13, "character": 3 },
         });
 
         let navigation = navigation_at(&documents, &[], &params).unwrap();
@@ -2175,7 +2187,7 @@ mod tests {
     #[test]
     fn imported_rename_accepts_a_new_root_inside_the_workspace() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("new.ice"));
@@ -2186,7 +2198,7 @@ mod tests {
         ]);
         let params = json!({
             "textDocument": { "uri": root_uri },
-            "position": { "line": 8, "character": 3 },
+            "position": { "line": 13, "character": 3 },
         });
 
         let navigation =
@@ -2202,8 +2214,8 @@ mod tests {
         let outside = fixture.path("outside");
         fs::create_dir_all(&workspace).unwrap();
         fs::create_dir_all(&outside).unwrap();
-        let workspace_app = "app Workspace\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Workspace\"\n";
-        let outside_app = "app Outside\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let workspace_app = "app Workspace\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Workspace\"\n";
+        let outside_app = "app Outside\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         fs::write(workspace.join("app.ice"), workspace_app).unwrap();
         fs::write(outside.join("app.ice"), outside_app).unwrap();
@@ -2216,7 +2228,7 @@ mod tests {
         ]);
         let params = json!({
             "textDocument": { "uri": root_uri },
-            "position": { "line": 8, "character": 3 },
+            "position": { "line": 13, "character": 3 },
         });
 
         let navigation = navigation_at(&documents, &[workspace], &params).unwrap();
@@ -2228,7 +2240,7 @@ mod tests {
     #[test]
     fn open_fragment_new_facts_participate_in_rename_checks() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\nuse \"extra.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\nuse \"extra.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         fixture.write("app.ice", root);
         fixture.write("part.ice", part);
@@ -2241,7 +2253,7 @@ mod tests {
         ]);
         let params = json!({
             "textDocument": { "uri": root_uri },
-            "position": { "line": 9, "character": 3 },
+            "position": { "line": 14, "character": 3 },
         });
 
         let navigation =
@@ -2255,7 +2267,7 @@ mod tests {
     #[test]
     fn renames_a_compound_component_family_together() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Dialog\n    Dialog.Header\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Dialog\n    Dialog.Header\n";
         let part =
             "component Dialog()\n  slot Header\ncomponent Dialog.Header()\n  text \"Header\"\n";
         fixture.write("app.ice", root);
@@ -2280,19 +2292,19 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Modal" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Modal" },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 14, "character": 8 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 9, "character": 8 }, "newName": "Modal.Header" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 14, "character": 8 }, "newName": "Modal.Header" },
             }),
             json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -2326,7 +2338,7 @@ mod tests {
     #[test]
     fn rename_waits_until_every_workspace_app_root_checks() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         let broken = "app Broken\nview\n  wat\n";
         fixture.write("app.ice", root);
@@ -2352,19 +2364,19 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Tile" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Tile" },
             }),
             json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -2379,7 +2391,7 @@ mod tests {
     #[test]
     fn uses_unsaved_import_ranges_for_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\nuse \"part.ice\"\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
         let part = "component Card()\n  text \"Card\"\n";
         let dirty_part = format!("// unsaved line\n{part}");
         fixture.write("app.ice", root);
@@ -2404,19 +2416,19 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "textDocument/definition",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/prepareRename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 } },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 } },
             }),
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "textDocument/rename",
-                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 3 }, "newName": "Tile" },
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 13, "character": 3 }, "newName": "Tile" },
             }),
             json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),

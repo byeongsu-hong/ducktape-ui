@@ -1,5 +1,6 @@
 //! Runtime support for the accessibility contract emitted by `ui-lang`.
 
+mod dynamic_themer;
 mod flex;
 mod resize_handle;
 mod selectable_text;
@@ -7,6 +8,7 @@ mod selectable_text;
 pub mod testing;
 mod zstack;
 
+pub use dynamic_themer::*;
 pub use flex::*;
 pub use resize_handle::*;
 pub use selectable_text::*;

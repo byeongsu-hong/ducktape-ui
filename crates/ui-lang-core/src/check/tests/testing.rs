@@ -2,7 +2,12 @@ use super::*;
 
 const VALID: &str = r#"app Demo
 
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #111111
   fg #eeeeee
   primary #3366ff
@@ -152,7 +157,12 @@ fn rejects_persistent_pane_ids_reused_across_test_mounts() {
 fn app_operations_can_target_widgets_and_panes_from_test_mounts() {
     analyze(
         r#"app MountOperations
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -186,7 +196,12 @@ view
 #[test]
 fn target_alias_keys_only_reference_earlier_aliases() {
     let source = r#"app TargetOrder
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -347,7 +362,12 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
 #[test]
 fn exposes_direct_leaf_ids_to_first_class_tests() {
     let source = r#"app Identified
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -411,7 +431,12 @@ extern crate::backend
   themer themed() -> unit
   shader shaded() -> unit
 qr code "https://example.com"
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -467,7 +492,12 @@ test leaf_ids
 fn exposes_the_daemon_window_in_tests() {
     analyze(
         r#"daemon Monitor
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

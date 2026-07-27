@@ -7,7 +7,12 @@ extern crate::backend
   sync title() -> str
 extern ducktape_ui::ice
   component native_switch(checked:bool) -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -31,7 +36,12 @@ fn lowers_component_outputs_through_emit_routes() {
     let source = r#"app Plugins
 extern crate::backend
   component native_switch(checked:bool) -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -55,7 +65,12 @@ view
 #[test]
 fn lowers_named_component_events_through_caller_routes() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -88,7 +103,12 @@ view
 #[test]
 fn lowers_single_ordered_payloads_through_component_outputs() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -108,7 +128,12 @@ view
 #[test]
 fn keeps_component_canvas_draw_callbacks_reusable() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -139,7 +164,12 @@ view
 #[test]
 fn lowers_qr_data_and_widget_options() {
     let source = r#"app Codes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -164,14 +194,20 @@ view
         "::iced::widget::qr_code(&self.automatic).cell_size(::ui_lang_runtime::bounded_spacing(5.0, 182))"
     ));
     assert!(generated.contains(
-        "::iced::widget::qr_code(&self.corrected).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(|theme|"
+        "::iced::widget::qr_code(&self.corrected).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
     ));
-    assert!(generated.contains("qr_code::Style { cell: ::iced::Color"));
+    assert!(generated.contains("qr_code::Style { cell: __ice_palette.colors[2]"));
 }
 #[test]
 fn lowers_nested_iced_themes() {
     let source = r#"app Themes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+  surface
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -189,12 +225,19 @@ view
       text "Default mode"
 "#;
     let generated = compile(source, "themes.ice").unwrap();
-    assert!(generated.contains("themer(::std::option::Option::Some(Self::__app_theme())"));
-    assert!(generated.contains("themer(::std::option::Option::Some(::iced::Theme::TokyoNight)"));
-    assert!(generated.contains(".text_color(|_| ::iced::Color"));
-    assert!(generated.contains(".background(|_| ::iced::Background::Color"));
-    assert!(generated.contains(".background(|_| ::iced::Background::from(::iced::gradient::Linear::new(1.57 as f32).add_stop(0.0 as f32"));
-    assert!(generated.contains("themer(::std::option::Option::None"));
+    assert!(
+        generated.contains("dynamic_themer(::std::option::Option::Some(__ice_app_theme.clone())")
+    );
+    assert!(
+        generated.contains("dynamic_themer(::std::option::Option::Some(::iced::Theme::TokyoNight)")
+    );
+    assert!(
+        generated
+            .contains("__theme_content, ::std::option::Option::Some(__ice_palette.colors[1]),")
+    );
+    assert!(generated.contains("::std::option::Option::Some(::iced::Background::Color"));
+    assert!(generated.contains("::std::option::Option::Some(::iced::Background::from(::iced::gradient::Linear::new(1.57 as f32).add_stop(0.0 as f32"));
+    assert!(generated.contains("dynamic_themer(::std::option::Option::None"));
 }
 
 #[test]
@@ -203,7 +246,12 @@ fn lowers_native_theme_factories() {
   theme native_theme(dark:bool)
 app Themes
   theme native_theme(dark)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -224,7 +272,7 @@ view
         )
     );
     assert!(generated.contains(
-        "themer(::std::option::Option::Some(crate::backend::native_theme((!self.dark)))"
+        "dynamic_themer(::std::option::Option::Some(crate::backend::native_theme((!self.dark)))"
     ));
 }
 
@@ -233,7 +281,12 @@ fn lowers_alternate_theme_subtrees() {
     let source = r#"extern crate::backend
   themer alternate_panel(active:bool) -> bool
 app Themes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -258,7 +311,12 @@ view
 #[test]
 fn lowers_component_children_and_slot_forwarding() {
     let source = r#"app Composition
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -286,7 +344,12 @@ view
 #[test]
 fn keeps_for_reconciliation_scopes_private_from_explicit_ids() {
     let source = r#"app Repeated
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -323,7 +386,12 @@ view
 #[test]
 fn lowers_named_slots_and_named_slot_forwarding() {
     let source = r#"app Composition
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -363,7 +431,12 @@ view
 #[test]
 fn preserves_component_and_slot_stack_boundaries() {
     let source = r#"app Composition
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -386,7 +459,12 @@ view
 #[test]
 fn lowers_compound_components_into_named_slots() {
     let source = r#"app Composition
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -420,7 +498,12 @@ fn lowers_fully_configured_keyed_columns() {
     let source = r#"app Keyed
 extern crate::backend
   Item(id:i64, name:str)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -452,7 +535,12 @@ view
 #[test]
 fn lowers_lazy_to_an_owned_static_subtree() {
     let source = r#"app LazyDemo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -466,9 +554,9 @@ view
       text len(cached)
 "#;
     let generated = compile(source, "lazy.ice").unwrap();
-    assert!(
-        generated.contains("::iced::widget::lazy((self.title.clone(), (\"LazyDemo\").to_owned())")
-    );
+    assert!(generated.contains(
+        "::iced::widget::lazy((self.title.clone(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
+    ));
     assert!(generated.contains("let cached: ::std::string::String = __dependency.0.clone()"));
     assert!(generated.contains("let __lazy_content: __IceElement<'static,"));
     assert!(generated.contains("let __lazy_scope = __dependency.1.clone()"));
@@ -480,7 +568,12 @@ fn lowers_parsed_markdown_with_complete_sizes_and_link_route() {
 font ui family=sans
 extern crate::backend
   markdown-viewer docs_viewer(prefix:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -545,7 +638,12 @@ fn lowers_structured_tables_with_complete_native_options() {
     let source = r#"app Rows
 extern crate::backend
   Item(name:str, done:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -594,7 +692,12 @@ view
 #[test]
 fn lowers_bound_text_editors_and_internal_actions() {
     let source = r#"app Notes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -643,7 +746,12 @@ extern crate::backend
   editor-binding editor_keys(readonly:bool) -> EditorCommand
   editor-highlighter editor_highlight(language:str)
   editor-style editor_surface(readonly:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -686,7 +794,12 @@ view
 #[test]
 fn lowers_bind_prop_forwarding_to_its_writable_origin() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -713,7 +826,12 @@ view
 #[test]
 fn lowers_component_scoped_state_and_match() {
     let source = r#"app Local
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -748,7 +866,12 @@ view
 #[test]
 fn lowers_missing_component_props_from_defaults() {
     let source = r#"app Defaults
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -770,7 +893,12 @@ view
 #[test]
 fn lowers_component_scoped_widget_operations() {
     let source = r#"app LocalFocus
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -802,7 +930,12 @@ fn lowers_component_latest_futures_with_a_scoped_generation() {
     let source = r#"app Search
 extern crate::backend
   fetch(query:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -822,15 +955,15 @@ view
   SearchBox #search
 "#;
     let generated = compile(source, "search.ice").unwrap();
-    assert!(generated.contains("__ice_latest_14: u64"));
-    assert!(generated.contains("__SearchBoxLatest14(::std::string::String, u64"));
-    assert!(generated.contains("__local.__ice_latest_14.wrapping_add(1)"));
-    assert!(generated.contains("__SearchMessage::__SearchBoxLatest14(__scope.clone()"));
-    assert!(generated.contains("__local.__ice_latest_14 == __generation"));
+    assert!(generated.contains("__ice_latest_19: u64"));
+    assert!(generated.contains("__SearchBoxLatest19(::std::string::String, u64"));
+    assert!(generated.contains("__local.__ice_latest_19.wrapping_add(1)"));
+    assert!(generated.contains("__SearchMessage::__SearchBoxLatest19(__scope.clone()"));
+    assert!(generated.contains("__local.__ice_latest_19 == __generation"));
     assert!(generated.contains("return self.__update(*__message)"));
 
     let ordinary = compile(&source.replace("run latest", "run"), "search.ice").unwrap();
-    assert!(!ordinary.contains("Latest14"));
+    assert!(!ordinary.contains("Latest19"));
     assert!(!ordinary.contains("wrapping_add(1)"));
 }
 
@@ -839,7 +972,12 @@ fn lowers_mounted_components_and_replace_futures() {
     let source = r#"app Search
 extern crate::backend
   fetch(query:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -861,14 +999,14 @@ view
 "#;
     let generated = compile(source, "search.ice").unwrap();
     assert!(generated.contains("::ui_lang_runtime::MountedComponentState<__IceSearchBoxState>"));
-    assert!(generated.contains("__ice_replace_14: ::std::option::Option<::iced::task::Handle>"));
-    assert!(generated.contains("__ice_latest_14: u64"));
+    assert!(generated.contains("__ice_replace_19: ::std::option::Option<::iced::task::Handle>"));
+    assert!(generated.contains("__ice_latest_19: u64"));
     assert!(generated.contains(".next_generation()"));
-    assert!(generated.contains(".__ice_replace_14.replace(__handle.abort_on_drop())"));
+    assert!(generated.contains(".__ice_replace_19.replace(__handle.abort_on_drop())"));
     assert!(generated.contains("__previous.abort()"));
     assert!(generated.contains("let (__task, __handle) = __task.abortable()"));
     assert!(generated.contains(".begin_render()"));
     assert!(generated.contains(".mount("));
     assert!(generated.contains(".finish_render(&__ice_root_scope)"));
-    assert!(generated.contains("SearchBoxLatest14"));
+    assert!(generated.contains("SearchBoxLatest19"));
 }

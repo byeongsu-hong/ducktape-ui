@@ -1,9 +1,56 @@
 use super::*;
 
 #[test]
+fn lowers_dynamic_palettes_into_runtime_theme_and_style_selection() {
+    let source = r#"app Demo
+  palette active_palette
+theme contract Ducktape
+  bg
+  fg
+  primary
+  danger
+  surface
+palette light for Ducktape
+  bg #ffffff
+  fg #111111
+  primary #3366ff
+  danger #cc3344
+  surface #f4f4f4
+palette dark for Ducktape
+  bg #111111
+  fg #ffffff
+  primary #88aaff
+  danger #ff6677
+  surface #222222
+state
+  active_palette = "light"
+view
+  box bg=surface
+    theme app
+      text "Theme" @text-fg
+"#;
+    let generated = compile(source, "dynamic_palette.ice").unwrap();
+
+    assert!(
+        generated
+            .contains("struct __IcePalette { name: &'static str, colors: [::iced::Color; 5] }")
+    );
+    assert!(generated.contains("let __palette_name = self.active_palette.clone()"));
+    assert!(generated.contains("\"light\" => __IcePalette"));
+    assert!(generated.contains("\"dark\" => __IcePalette"));
+    assert!(generated.contains("_ => __IcePalette"));
+    assert!(generated.contains("background: __ice_palette.colors[0]"));
+    assert!(generated.contains("text: __ice_palette.colors[1]"));
+    assert!(generated.contains("::iced::Background::Color(__ice_palette.colors[4])"));
+    assert!(
+        generated.contains("dynamic_themer(::std::option::Option::Some(__ice_app_theme.clone())")
+    );
+}
+
+#[test]
 fn keeps_distinct_handler_names_distinct_in_rust() {
     let generated = compile(
-        "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non foo_bar\non fooBar\nview\n  col\n    button \"one\" -> foo_bar\n    button \"two\" -> fooBar\n",
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non foo_bar\non fooBar\nview\n  col\n    button \"one\" -> foo_bar\n    button \"two\" -> fooBar\n",
         "handlers.ice",
     )
     .unwrap();
@@ -618,7 +665,12 @@ fn lowers_windowless_daemon_and_exit() {
 extern crate::backend
   sync label(id:window-id) -> str
   sync scale(id:window-id) -> f64
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -718,7 +770,12 @@ preset ready
     task seed() -> seeded _
 on seeded(value)
   ready = value
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -810,7 +867,12 @@ extern crate::backend
   Item(id:i64)
   AppError(message:str)
   load(id:i64) -> [Item] ! AppError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -836,7 +898,7 @@ view
 #[test]
 fn keeps_extern_struct_and_future_probe_names_distinct() {
     let generated = compile(
-        "app Demo\nextern crate::backend\n  Load()\n  load() -> unit\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ok\"\n",
+        "app Demo\nextern crate::backend\n  Load()\n  load() -> unit\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ok\"\n",
         "probes.ice",
     )
     .unwrap();
@@ -848,7 +910,12 @@ fn keeps_extern_struct_and_future_probe_names_distinct() {
 #[test]
 fn lowers_accessibility_into_the_runtime_bridge() {
     let source = r#"app Accessible
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -908,7 +975,7 @@ view
 fn defers_windows_show_state_until_native_adapter_setup() {
     let source = |window: &str| {
         format!(
-            "app Accessible\n  window\n    {window}\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Ready\"\n"
+            "app Accessible\n  window\n    {window}\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Ready\"\n"
         )
     };
 
@@ -945,7 +1012,12 @@ fn restores_only_the_initial_primary_window() {
   window child
     maximized true
     visible false
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -976,7 +1048,7 @@ view
 #[test]
 fn exposes_the_generated_program_to_in_crate_test_harnesses() {
     let generated = compile(
-        "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Ready\"\n",
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Ready\"\n",
         "app.ice",
     )
     .unwrap();
@@ -999,7 +1071,12 @@ on mount
   stream load() -> loaded _
 on loaded(value)
   ready = value
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1032,7 +1109,12 @@ fn snapshots_after_handlers_that_return_tasks_early() {
     let source = r#"extern crate::backend
   save() -> unit
 app Accessible
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

@@ -12,7 +12,8 @@ pub struct Document {
     pub enums: Vec<UiEnum>,
     pub functions: Vec<ExternFn>,
     pub subscriptions: Vec<Subscription>,
-    pub theme: BTreeMap<String, String>,
+    pub theme_contract: Option<ThemeContract>,
+    pub palettes: Vec<Palette>,
     pub fonts: Vec<FontDecl>,
     pub qr_codes: Vec<QrData>,
     pub states: Vec<State>,
@@ -32,6 +33,13 @@ pub struct Derived {
 }
 
 #[derive(Clone, Debug)]
+pub struct ThemeContract {
+    pub name: String,
+    pub tokens: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
 pub struct UiEnum {
     pub name: String,
     pub variants: Vec<UiEnumVariant>,
@@ -42,6 +50,14 @@ pub struct UiEnum {
 pub struct UiEnumVariant {
     pub name: String,
     pub payload: Option<Type>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct Palette {
+    pub name: String,
+    pub contract: String,
+    pub colors: BTreeMap<String, String>,
     pub span: Span,
 }
 
@@ -123,6 +139,7 @@ pub struct Preset {
 pub struct AppSettings {
     pub title: Option<AppExpression>,
     pub theme: Option<AppExpression>,
+    pub palette: Option<AppExpression>,
     pub background: Option<AppExpression>,
     pub text_color: Option<AppExpression>,
     pub id: Option<String>,

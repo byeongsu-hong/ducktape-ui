@@ -218,7 +218,11 @@ pub(in crate::check) fn valid_theme_color(value: &str, document: &Document) -> b
     let (name, opacity) = value
         .split_once('/')
         .map_or((value, None), |(name, opacity)| (name, Some(opacity)));
-    (["white", "black", "transparent"].contains(&name) || document.theme.contains_key(name))
+    (["white", "black", "transparent"].contains(&name)
+        || document
+            .theme_contract
+            .as_ref()
+            .is_some_and(|contract| contract.tokens.iter().any(|token| token == name)))
         && opacity.is_none_or(|opacity| opacity.parse::<u8>().is_ok_and(|opacity| opacity <= 100))
 }
 

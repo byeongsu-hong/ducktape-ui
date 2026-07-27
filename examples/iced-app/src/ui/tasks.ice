@@ -1,6 +1,7 @@
 app Tasks
   title window_title
   theme app_theme
+  palette active_palette
   bg app_background
   fg app_text
   id "dev.ducktape.ice.tasks"

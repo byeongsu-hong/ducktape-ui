@@ -6,7 +6,12 @@ fn infers_action_result_handler() {
 extern crate::backend
   Item(id:i64)
   load() -> [Item] ! Item
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -29,7 +34,12 @@ view
 #[test]
 fn checks_structured_task_groups() {
     let source = r#"app Grouped
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -74,7 +84,12 @@ view
 #[test]
 fn checks_native_task_cancellation() {
     let source = r#"app Cancel
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -117,7 +132,7 @@ view
         ))
         .unwrap_err();
     assert_eq!(error.code, "E143");
-    assert_eq!(error.line, 13);
+    assert_eq!(error.line, 18);
 
     let error = analyze(&source.replace("on loaded(next)", "  canceled = false\non loaded(next)"))
         .unwrap_err();
@@ -142,7 +157,12 @@ extern crate::backend
   stream fallible() -> str ! AppError
   recipe snapshot(value:i64) -> str
   event-filter raw_event() -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -235,7 +255,12 @@ extern crate::backend
   AppError(message:str)
   sip transfer(size:i64) progress=f64 -> bytes
   sip fallible() progress=i64 -> str ! AppError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -297,7 +322,12 @@ extern crate::backend
   task fallible(value:i64) -> i64 ! AppError
   task fallible_double(value:i64) -> i64 ! AppError
   task wrong_error(value:i64) -> i64 ! OtherError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -382,7 +412,12 @@ extern crate::backend
   AppError(message:str)
   sync normalize(error:NetworkError) -> AppError
   task request() -> i64 ! NetworkError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

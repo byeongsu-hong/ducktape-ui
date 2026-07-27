@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn parses_theme_contracts_palettes_and_active_palette_settings() {
+    let source = r#"app Demo
+  palette active_palette
+theme contract Ducktape
+  bg
+  fg
+  primary
+  danger
+  surface
+palette light for Ducktape
+  bg #ffffff
+  fg #111111
+  primary #3366ff
+  danger #cc3344
+  surface #f4f4f4
+palette dark for Ducktape
+  bg #111111
+  fg #ffffff
+  primary #88aaff
+  danger #ff6677
+  surface #222222
+state
+  active_palette = "light"
+view
+  box bg=surface
+    text "Theme"
+"#;
+    let document = parse(source).unwrap();
+
+    let contract = document.theme_contract.unwrap();
+    assert_eq!(contract.name, "Ducktape");
+    assert_eq!(
+        contract.tokens,
+        ["bg", "fg", "primary", "danger", "surface"]
+    );
+    assert_eq!(document.palettes.len(), 2);
+    assert_eq!(document.palettes[0].name, "light");
+    assert_eq!(document.palettes[0].contract, "Ducktape");
+    assert_eq!(document.palettes[1].colors["surface"], "#222222");
+    assert!(matches!(
+        document
+            .settings
+            .palette
+            .as_ref()
+            .map(|setting| &setting.value),
+        Some(Expr::Path(path)) if path.as_slice() == ["active_palette"]
+    ));
+}
+
+#[test]
+fn rejects_removed_concrete_theme_declarations() {
+    let error = parse(
+        "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Old\"\n",
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "E001");
+    assert!(error.message.contains("unknown"));
+    assert!(error.message.contains("theme"));
+}
+
+#[test]
+fn requires_pascal_case_theme_contract_names() {
+    let error = parse(
+        "app Demo\ntheme contract app_theme\n  bg\n  fg\n  primary\n  danger\npalette app for app_theme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Theme\"\n",
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "E072");
+    assert!(error.message.contains("invalid theme contract name"));
+}
+
+#[test]
 fn parses_checked_application_and_window_settings() {
     let source = SOURCE.replace(
         "app Demo",
@@ -220,7 +293,7 @@ fn rejects_host_independent_absolute_asset_paths() {
 #[test]
 fn rejects_redeclared_builtin_theme_colors() {
     for name in ["white", "black", "transparent"] {
-        let source = format!("app Demo\ntheme\n  {name} #123456\nview\n  text \"ok\"\n");
+        let source = format!("app Demo\ntheme contract AppTheme\n  {name}\nview\n  text \"ok\"\n");
         let error = parse(&source).unwrap_err();
 
         assert_eq!(error.code, "E012", "{name}");
@@ -245,7 +318,9 @@ fn parses_native_theme_factories() {
   theme native_theme(dark:bool)
 app Themes
   theme native_theme(dark)
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 state
   dark = true

@@ -3,7 +3,9 @@ use super::*;
 #[test]
 fn parses_dynamic_widget_operation_ids() {
     let source = r#"app Operations
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 state
   selected = 1

@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn rejects_a_utility_that_the_widget_would_ignore() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -21,7 +26,12 @@ fn names_an_undeclared_extern_type() {
     let source = r#"app Demo
 extern crate::backend
   load() -> [Missing]
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -39,7 +49,12 @@ fn requires_a_route_for_an_emitting_extern_component() {
     let source = r#"app Demo
 extern crate::backend
   component native_control() -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -58,7 +73,12 @@ fn checks_native_shader_programs() {
 extern crate::backend
   shader native_shader(value:f64) -> bool
   shader passive_shader() -> unit
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

@@ -183,6 +183,15 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_widget_selector_types(&mut out, document);
     generate_canvas_types(&mut out, document);
     generate_pane_types(&mut out, document)?;
+    let token_count = document
+        .theme_contract
+        .as_ref()
+        .map_or(0, |contract| contract.tokens.len());
+    writeln!(
+        out,
+        "#[derive(Clone, Copy)]\nstruct __IcePalette {{ name: &'static str, colors: [::iced::Color; {token_count}] }}"
+    )
+    .unwrap();
 
     for item in &document.enums {
         writeln!(

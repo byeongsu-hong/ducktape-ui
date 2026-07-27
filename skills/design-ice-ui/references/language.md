@@ -76,7 +76,8 @@ Top-level declarations are order-independent, but keep canonical order:
 app | daemon
 use
 extern
-theme
+theme contract
+palette
 recipe
 font / qr
 enum
@@ -108,7 +109,15 @@ extern crate::backend
   AppError(message:str)
   list_tasks() -> [Task] ! AppError
 
-theme
+theme contract ProductTheme
+  bg
+  fg
+  primary
+  danger
+  surface
+  muted
+
+palette dark for ProductTheme
   bg #0f172a
   fg #f8fafc
   primary #7c3aed

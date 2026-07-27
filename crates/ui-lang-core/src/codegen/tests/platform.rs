@@ -14,7 +14,12 @@ extern crate::backend
   task focus_next() -> unit
   task save() -> i64 ! Failure
   subscription events() -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -128,7 +133,12 @@ fn lowers_generic_event_values_to_all_native_listeners() {
 extern crate::backend
   sync event_name(value:event) -> str
   sync event_label(value:event) -> str?
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -326,7 +336,12 @@ fn lowers_native_padding_and_angles() {
 #[test]
 fn lowers_native_system_tasks_and_subscription() {
     let source = r#"app Diagnostics
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -363,7 +378,12 @@ preset inspect
   boot
     task system info -> inspected _
 on inspected(info)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -380,7 +400,12 @@ view
 #[test]
 fn emits_widget_target_type_for_declared_state() {
     let app_state = r#"app SelectorState
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -391,7 +416,12 @@ view
   text "Ready"
 "#;
     let canvas_state = r#"app SelectorCanvas
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -411,7 +441,12 @@ view
 #[test]
 fn lowers_native_clipboard_tasks() {
     let source = r#"app Clipboard
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -441,7 +476,12 @@ view
 #[test]
 fn lowers_native_runtime_font_loading() {
     let source = r#"app Fonts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -463,7 +503,12 @@ view
 #[test]
 fn lowers_all_static_widget_operations() {
     let source = r#"app Operations
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -536,7 +581,12 @@ view
 #[test]
 fn lowers_all_dynamic_widget_operations() {
     let source = r#"app DynamicOperations
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -661,7 +711,12 @@ fn checks_and_lowers_main_window_tasks() {
     position centered
 extern crate::backend
   window describe_window(prefix:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

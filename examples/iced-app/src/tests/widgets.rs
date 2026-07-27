@@ -141,9 +141,9 @@ mod component_state {
         let _ = app.__update(__ComponentStateMessage::__LoaderHandleLoad("loader".into()));
         let _ = app.__update(__ComponentStateMessage::__LoaderHandleLoad("loader".into()));
         assert!(app.__ice_component_loader["loader"].loading);
-        assert_eq!(app.__ice_component_loader["loader"].__ice_latest_53, 2);
+        assert_eq!(app.__ice_component_loader["loader"].__ice_latest_58, 2);
 
-        let stale = __ComponentStateMessage::__LoaderLatest53(
+        let stale = __ComponentStateMessage::__LoaderLatest58(
             "loader".into(),
             1,
             Box::new(__ComponentStateMessage::__LoaderHandleLoaded(
@@ -154,7 +154,7 @@ mod component_state {
         let _ = app.__update(stale);
         assert!(app.__ice_component_loader["loader"].loading);
 
-        let current = __ComponentStateMessage::__LoaderLatest53(
+        let current = __ComponentStateMessage::__LoaderLatest58(
             "loader".into(),
             2,
             Box::new(__ComponentStateMessage::__LoaderHandleLoaded(
@@ -180,7 +180,7 @@ mod component_lifecycle {
         ));
         assert!(app.__ice_component_search.values().contains_key(scope));
         let previous = app.__ice_component_search.values()[scope]
-            .__ice_replace_25
+            .__ice_replace_30
             .as_ref()
             .unwrap()
             .clone();
@@ -190,7 +190,7 @@ mod component_lifecycle {
         ));
         assert!(previous.is_aborted());
         assert_eq!(
-            app.__ice_component_search.values()[scope].__ice_latest_25,
+            app.__ice_component_search.values()[scope].__ice_latest_30,
             2
         );
 

@@ -28,22 +28,25 @@ pub(in crate::codegen) fn render_structure(
             ..
         } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __theme_content: __IceElement<'_, {message}> = {content}; ::iced::widget::themer({}, __theme_content)",
-                theme_preset_code(preset, env, document)?
-            );
-            if let Some(color) = text {
-                write!(code, ".text_color(|_| {})", theme_color(document, color)).unwrap();
-            }
-            if let Some(background) = background {
-                write!(
-                    code,
-                    ".background(|_| {})",
-                    background_code(background, env, document)?
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let preset = theme_preset_code(preset, env, document)?;
+            let text = text
+                .as_ref()
+                .map(|color| theme_color(document, color))
+                .map_or_else(
+                    || "::std::option::Option::None".into(),
+                    |color| format!("::std::option::Option::Some({color})"),
+                );
+            let background = background
+                .as_ref()
+                .map(|background| background_code(background, env, document))
+                .transpose()?
+                .map_or_else(
+                    || "::std::option::Option::None".into(),
+                    |background| format!("::std::option::Option::Some({background})"),
+                );
+            Ok(format!(
+                "{{ let __theme_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::dynamic_themer({preset}, __theme_content, {text}, {background}).into() }}"
+            ))
         }
         ViewNode::Float {
             scale,
@@ -269,7 +272,7 @@ pub(in crate::codegen) fn render_structure(
             )?;
             let dependency_rust = dependency_type.rust(&document.structs);
             Ok(format!(
-                "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned()), move |__dependency| {{ let {binding}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
+                "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))
         }
         _ => return Ok(None),

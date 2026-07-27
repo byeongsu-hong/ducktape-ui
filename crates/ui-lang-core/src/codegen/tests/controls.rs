@@ -6,7 +6,12 @@ fn reads_editor_text_and_replaces_content() {
     // String (to send/persist it), and assigning `editor("")` replaces/clears the
     // content — the two halves a multiline composer needs.
     let source = r#"app Composer
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -46,7 +51,12 @@ fn lowers_resize_handle_to_a_grabbing_widget() {
     // plus press/release, so a component can drive a bound width — something
     // `pane_grid` cannot do outside the app view.
     let source = r#"app Split
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -98,7 +108,12 @@ extern crate::backend
   slider-style dynamic_slider(active:bool)
   progress-style dynamic_progress(active:bool)
   radio-style dynamic_radio(highlight:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -264,7 +279,12 @@ fn lowers_extended_text_input_behavior() {
 extern crate::backend
   input-style dynamic_input(disabled:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -338,7 +358,12 @@ fn lowers_button_children_and_typed_properties() {
     let source = r#"app Actions
 extern crate::backend
   button-style dynamic_button(disabled:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -413,7 +438,12 @@ view
 #[test]
 fn cascades_active_style_into_interaction_states() {
     let source = r#"app Styles
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -439,7 +469,12 @@ fn lowers_complete_boolean_control_styles_and_typography() {
 extern crate::backend
   checkbox-style dynamic_checkbox(disabled:bool)
   toggler-style dynamic_toggler(disabled:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -539,7 +574,12 @@ view
 #[test]
 fn lowers_full_text_format() {
     let source = r#"app Typography
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -569,7 +609,12 @@ fn lowers_native_text_style_callbacks() {
     let source = r#"app Typography
 extern crate::backend
   text-style dynamic_text(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -603,7 +648,12 @@ view
 fn lowers_structured_rich_text_spans() {
     let source = r#"app Typography
 font ui family=sans weight=medium stretch=normal style=normal
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -639,7 +689,12 @@ view
 fn lowers_declared_font_descriptors_and_app_default() {
     let source = r#"app Typography
 font brand family="Inter" weight=semibold stretch=semi-expanded style=italic default=true
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -669,7 +724,12 @@ view
 #[test]
 fn lowers_builtin_and_opacity_text_color_utilities() {
     let source = r#"app Typography
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #336699
@@ -682,13 +742,20 @@ view
 "#;
     let generated = compile(source, "typography.ice").unwrap();
     assert!(generated.contains(".color(::iced::Color::from_rgba8(0, 0, 0, 0.000000))"));
-    assert!(generated.contains(".color(::iced::Color::from_rgba8(51, 102, 153, 0.500000))"));
+    assert!(generated.contains(
+        ".color({ let mut __color = __ice_palette.colors[2]; __color.a = 0.500000; __color })"
+    ));
 }
 
 #[test]
 fn identifies_leaf_widgets_at_their_native_bounds() {
     let source = r#"app Identified
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -749,7 +816,12 @@ extern crate::backend
   themer themed() -> unit
   shader shaded() -> unit
 qr code "https://example.com"
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -787,7 +859,12 @@ view
 #[test]
 fn retains_logical_paths_on_accessible_wrappers() {
     let source = r#"app LogicalIds
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

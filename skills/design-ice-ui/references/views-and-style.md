@@ -297,10 +297,19 @@ Use `lazy` only around a measurably expensive subtree. Do not use it as React
 
 ## Theme tokens and colors
 
-Declare semantic colors:
+Declare semantic names in a contract, then provide a complete palette:
 
 ```ice
-theme
+theme contract ProductTheme
+  bg
+  surface
+  fg
+  muted
+  primary
+  danger
+  border
+
+palette dark for ProductTheme
   bg #0f172a
   surface #111827
   fg #f8fafc
@@ -314,7 +323,7 @@ theme
 `transparent` are built in and cannot be redeclared. Add opacity with
 `token/0..100`, such as `black/40`.
 
-Use `#RRGGBB` or `#RRGGBBAA` in theme declarations. Dynamic application colors
+Use `#RRGGBB` or `#RRGGBBAA` in palette declarations. Dynamic application colors
 also accept 3/4/6/8 digit strings, but prefer checked theme tokens in views.
 
 Gradients use checked background forms, for example:

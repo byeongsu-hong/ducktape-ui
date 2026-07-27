@@ -22,29 +22,79 @@ pub(in crate::codegen) fn generate_theme(
     } else {
         ""
     };
-    let color = |name: &str, fallback: &str| {
-        color_code(
-            document
-                .theme
-                .get(name)
-                .map(String::as_str)
-                .unwrap_or(fallback),
-            None,
+    let contract = document
+        .theme_contract
+        .as_ref()
+        .expect("checker requires a theme contract");
+    let palette_code = |palette: &Palette| {
+        let colors = contract
+            .tokens
+            .iter()
+            .map(|token| {
+                color_code(
+                    palette
+                        .colors
+                        .get(token)
+                        .expect("checker requires complete palettes"),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "__IcePalette {{ name: {}, colors: [{colors}] }}",
+            rust_string(&palette.name)
         )
     };
-    writeln!(out, "fn __app_theme() -> ::iced::Theme {{").unwrap();
+    writeln!(out, "fn __palette(&self{callback_arg}) -> __IcePalette {{").unwrap();
+    if let Some(setting) = &document.settings.palette {
+        let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
+        writeln!(
+            out,
+            "let __palette_name = {value}; match __palette_name.as_str() {{"
+        )
+        .unwrap();
+        for palette in &document.palettes {
+            writeln!(
+                out,
+                "{} => {},",
+                rust_string(&palette.name),
+                palette_code(palette)
+            )
+            .unwrap();
+        }
+        writeln!(out, "_ => {},\n}}", palette_code(&document.palettes[0])).unwrap();
+    } else {
+        writeln!(out, "{}", palette_code(&document.palettes[0])).unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+
+    let palette_field = |name: &str| {
+        let index = contract
+            .tokens
+            .iter()
+            .position(|token| token == name)
+            .expect("checker requires native palette tokens");
+        format!("__ice_palette.colors[{index}]")
+    };
+    let callback_value = if document.daemon { "window" } else { "" };
     writeln!(
         out,
-        "::iced::Theme::custom(\"{}\", ::iced::theme::Palette {{",
-        document.app
+        "fn __app_theme(__ice_palette: __IcePalette) -> ::iced::Theme {{"
     )
     .unwrap();
-    writeln!(out, "background: {},", color("bg", "#000000")).unwrap();
-    writeln!(out, "text: {},", color("fg", "#ffffff")).unwrap();
-    writeln!(out, "primary: {},", color("primary", "#5865f2")).unwrap();
-    writeln!(out, "success: {},", color("primary", "#5865f2")).unwrap();
-    writeln!(out, "warning: {},", color("danger", "#c3423f")).unwrap();
-    writeln!(out, "danger: {},", color("danger", "#c3423f")).unwrap();
+    writeln!(
+        out,
+        "::iced::Theme::custom(::std::format!(\"{}/{{}}\", __ice_palette.name), ::iced::theme::Palette {{",
+        document.app,
+    )
+    .unwrap();
+    writeln!(out, "background: {},", palette_field("bg")).unwrap();
+    writeln!(out, "text: {},", palette_field("fg")).unwrap();
+    writeln!(out, "primary: {},", palette_field("primary")).unwrap();
+    writeln!(out, "success: {},", palette_field("primary")).unwrap();
+    writeln!(out, "warning: {},", palette_field("danger")).unwrap();
+    writeln!(out, "danger: {},", palette_field("danger")).unwrap();
     writeln!(out, "}})\n}}").unwrap();
     writeln!(out, "fn __theme(&self{callback_arg}) -> ::iced::Theme {{").unwrap();
     if let Some(setting) = &document.settings.theme {
@@ -63,15 +113,23 @@ pub(in crate::codegen) fn generate_theme(
         } else {
             let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
             writeln!(out, "match ({value}).as_str() {{").unwrap();
-            writeln!(out, "\"app\" => Self::__app_theme(),").unwrap();
+            writeln!(
+                out,
+                "\"app\" => Self::__app_theme(self.__palette({callback_value})),"
+            )
+            .unwrap();
             writeln!(out, "\"default\" => <::iced::Theme as ::iced::theme::Base>::default(::iced::theme::Mode::None),").unwrap();
             for name in BUILT_IN_THEMES {
                 writeln!(out, "\"{name}\" => ::iced::Theme::{},", pascal(name)).unwrap();
             }
-            writeln!(out, "_ => Self::__app_theme(),\n}}").unwrap();
+            writeln!(
+                out,
+                "_ => Self::__app_theme(self.__palette({callback_value})),\n}}"
+            )
+            .unwrap();
         }
     } else {
-        writeln!(out, "Self::__app_theme()").unwrap();
+        writeln!(out, "Self::__app_theme(self.__palette({callback_value}))").unwrap();
     }
     writeln!(out, "}}").unwrap();
     if let Some(setting) = &document.settings.title {

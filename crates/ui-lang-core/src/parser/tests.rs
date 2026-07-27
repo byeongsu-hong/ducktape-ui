@@ -218,7 +218,9 @@ extern crate::backend
   Item(id:i64, name:str)
   load() -> [Item] ! Item
 
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 
 qr docs "https://example.com/ice docs" correction=high version=normal(4)
