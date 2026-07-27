@@ -170,7 +170,8 @@ For end-to-end generated-app or component behavior, write a top-level Ice
 setup; declare `target` aliases for rendered descendant IDs; then drive widgets
 and assert app state, exact text, input values, computed bounds, or structured
 paint fields. A component call ID is only an identity scope, so target an
-identified rendered descendant such as `#card/root`. `cargo ice test` checks
+identified rendered descendant such as `#card/root`; later targets may use that
+alias as a descendant-path prefix. `cargo ice test` checks
 the source graphs and runs the generated tests. Do not register Rust wrappers,
 add a second case format, or mock Rust externs in Ice; deterministic extern
 behavior belongs behind `cfg(test)` or a named preset.

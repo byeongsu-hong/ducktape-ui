@@ -515,9 +515,10 @@ test counter_contract
 
 Optional `preset`, `viewport`, `timeout`, `mount`, and `target` declarations
 must precede actions. Target aliases are scoped to one test and may be reused
-in another. Actions drive the real rendered widgets and generated update/task/
-subscription path. Assertions can read app state, exact visible text/input
-content, post-layout geometry, and structured paint fields. Rust externs are
+in another. A later target may use an earlier alias as a path prefix, while a
+`#` path is always absolute. Actions drive the real rendered widgets and
+generated update/task/subscription path. Assertions can read app state, exact
+visible text/input content, post-layout geometry, and structured paint fields. Rust externs are
 real; deterministic variants belong behind a preset or `cfg(test)`, not an Ice
 mock. Finite tasks settle before the next step; subscriptions are re-established
 around simulated events, while intentionally infinite timer/I/O subscriptions
