@@ -21,6 +21,7 @@ app Music
 
 use "extern/mock_api.ice"
 use "theme.ice"
+use "recipes.ice" as music
 use "state.ice"
 use "components/common.ice"
 use "components/icons.ice"

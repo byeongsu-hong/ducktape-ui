@@ -17,18 +17,18 @@ component TrafficLights()
       hovered bg=go/80
       pressed bg=go/65
 
-component NavItem(icon:str, label:str, selected:bool)
+component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
   emits
-    navigate(str)
+    navigate(MusicSection)
   col #root w=fill
     if selected
-      button label=label #selected-control w=fill h=37.0 p=8.0 -> emit(navigate, trim(label))
+      button label=label #selected-control w=fill h=37.0 p=8.0 -> emit navigate target
         row w=fill gap=10.0 align=center
           text icon #selected-icon w=20.0 size=15.0 align-x=center @text-primary
           text label #selected-label size=13.0 @text-primary
         active bg=accent text=primary r=10.0
     if !selected
-      button label=label #control w=fill h=37.0 p=8.0 -> emit(navigate, trim(label))
+      button label=label #control w=fill h=37.0 p=8.0 -> emit navigate target
         row w=fill gap=10.0 align=center
           text icon #icon w=20.0 size=15.0 align-x=center @text-muted
           text label #label size=13.0 @text-fg
@@ -36,14 +36,14 @@ component NavItem(icon:str, label:str, selected:bool)
         hovered bg=surface/58 text=fg
         pressed bg=accent text=primary
 
-component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
+component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
   emits
     close_window
     minimize_window
     toggle_maximize_window
     drag_window
     search
-    navigate(str)
+    navigate(MusicSection)
     restart_current
     sign_in
     sign_out
@@ -88,13 +88,28 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
           disabled bg=surface/32 value=muted
           icon code="⌕" size=16.0 gap=8.0
         text "DISCOVER" #discover-label size=10.0 @text-muted font-bold
-        NavItem icon="⌂" label="Home" selected=(section == "Home") #home
+        NavItem #home
+          with
+            icon="⌂"
+            label="Home"
+            target=MusicSection.home
+            selected=(section == MusicSection.home)
           events
             navigate -> emit navigate _
-        NavItem icon="✦" label="New" selected=(section == "New") #new
+        NavItem #new
+          with
+            icon="✦"
+            label="New"
+            target=MusicSection.new
+            selected=(section == MusicSection.new)
           events
             navigate -> emit navigate _
-        NavItem icon="◉" label="Radio" selected=(section == "Radio") #radio
+        NavItem #radio
+          with
+            icon="◉"
+            label="Radio"
+            target=MusicSection.radio
+            selected=(section == MusicSection.radio)
           events
             navigate -> emit navigate _
         Separator
@@ -103,16 +118,32 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
           with
             icon="◷"
             label="Recently Added"
-            selected=(section == "Recently Added")
+            target=MusicSection.recently_added
+            selected=(section == MusicSection.recently_added)
           events
             navigate -> emit navigate _
-        NavItem icon="⌁" label="Artists" selected=(section == "Artists") #artists
+        NavItem #artists
+          with
+            icon="⌁"
+            label="Artists"
+            target=MusicSection.artists
+            selected=(section == MusicSection.artists)
           events
             navigate -> emit navigate _
-        NavItem icon="▣" label="Albums" selected=(section == "Albums") #albums
+        NavItem #albums
+          with
+            icon="▣"
+            label="Albums"
+            target=MusicSection.albums
+            selected=(section == MusicSection.albums)
           events
             navigate -> emit navigate _
-        NavItem icon="♫" label="Songs" selected=(section == "Songs") #songs
+        NavItem #songs
+          with
+            icon="♫"
+            label="Songs"
+            target=MusicSection.songs
+            selected=(section == MusicSection.songs)
           events
             navigate -> emit navigate _
         space w=fill h=fill
@@ -120,7 +151,7 @@ component Sidebar(bind query:str, section:str, signed_in:bool, profile_name:str,
           col w=fill gap=7.0
             text "NOW PLAYING" #mini-status size=10.0 @text-primary font-bold
             row w=fill gap=10.0 align=center
-              Cover source=current_cover size=42.0 radius=9.0 #mini-cover
+              Cover source=current_cover #mini-cover
               col w=fill gap=2.0
                 text current_title #mini-title size=13.0 wrap=none @text-fg font-bold
                 text current_artist #mini-artist size=10.0 wrap=none @text-muted

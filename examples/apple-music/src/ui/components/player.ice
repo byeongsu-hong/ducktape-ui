@@ -44,7 +44,7 @@ component QueuePanel(albums:[Album], current_title:str, current_artist:str, curr
           col gap=2.0
             text "Playing Next" #title size=18.0 line-h=1.0 @text-fg font-bold
             text "From your library" #subtitle size=10.0 @text-muted
-          button label="Close queue" #close p=7.0 style=text -> emit queue
+          button label="Close queue" #close style=text @music::icon_action -> emit queue
             text "×" size=18.0
         box #current w=fill p=11.0 bg=surface/58 border=white/76 border-w=1.0 r=14.0
           row w=fill gap=11.0 align=center
@@ -100,7 +100,7 @@ component LyricsPanel(title:str, artist:str, lines:[LyricLine])
               text title #track-title size=10.0 wrap=none @text-muted
               text "·" size=10.0 @text-muted
               text artist #track-artist size=10.0 wrap=none @text-muted
-          button label="Close lyrics" #close p=7.0 style=text -> emit lyrics
+          button label="Close lyrics" #close style=text @music::icon_action -> emit lyrics
             text "×" size=18.0
         Separator
         scroll #lines dir=vertical w=fill h=fill bar=hidden
@@ -146,23 +146,33 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
         box #transport flex=1.0,1.0,0.0 h=fill
           col #transport-content w=fill h=fill gap=5.0 align=center
             flex #controls w=fill h=36.0 dir=row gap=8.0 justify=center items=center
-              button label="Shuffle" #shuffle p=7.0 style=text -> emit shuffle
+              button label="Shuffle" #shuffle style=text @music::icon_action -> emit shuffle
                 ShuffleIcon
-              button label="Previous song" #previous p=7.0 style=text -> emit previous
+              button label="Previous song" #previous style=text @music::icon_action -> emit previous
                 PreviousIcon
               if active
-                button label="Pause" #pause w=36.0 h=36.0 p=8.0 -> emit toggle_playback
+                button #pause -> emit toggle_playback
+                  with
+                    label="Pause"
+                    w=36.0
+                    h=36.0
+                    @music::transport_action
                   PauseIcon #pause-glyph
                   active bg=primary text=white r=18.0 shadow=primary/28 shadow-y=3.0 shadow-blur=8.0
                   hovered bg=primary/88
                   pressed bg=primary/72
               if !active
-                button label="Play" #play w=36.0 h=36.0 p=8.0 -> emit toggle_playback
+                button #play -> emit toggle_playback
+                  with
+                    label="Play"
+                    w=36.0
+                    h=36.0
+                    @music::transport_action
                   PlayIcon #play-glyph
                   active bg=primary text=white r=18.0 shadow=primary/28 shadow-y=3.0 shadow-blur=8.0
                   hovered bg=primary/88
                   pressed bg=primary/72
-              button label="Next song" #next p=7.0 style=text -> emit next
+              button label="Next song" #next style=text @music::icon_action -> emit next
                 NextIcon
             row #timeline w=fill gap=8.0 align=center
               text playback_elapsed(playhead) #elapsed w=34.0 size=10.0 align-x=right @text-muted
@@ -174,10 +184,10 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
         box #utilities w=238.0 h=fill align-y=center
           row w=fill gap=7.0 align=center
             if loudness > 0.0
-              button label="Mute" #mute p=7.0 style=text -> emit toggle_mute
+              button label="Mute" #mute style=text @music::icon_action -> emit toggle_mute
                 VolumeIcon muted=false
             if loudness <= 0.0
-              button label="Unmute" #unmute p=7.0 style=text -> emit toggle_mute
+              button label="Unmute" #unmute style=text @music::icon_action -> emit toggle_mute
                 VolumeIcon muted=true
             slider loudness #volume -> emit volume_changed _
               with
@@ -191,17 +201,25 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
               dragged rail-start=primary handle=circle(5.0) handle-color=primary
             col #lyrics
               if lyrics_active
-                button label="Hide lyrics" #lyrics-active p=7.0 -> emit lyrics
+                button label="Hide lyrics" #lyrics-active @music::icon_action -> emit lyrics
                   LyricsIcon active=true
                   active bg=accent text=primary r=9.0
               if !lyrics_active
-                button label="Show lyrics" #lyrics-inactive p=7.0 style=text -> emit lyrics
+                button #lyrics-inactive -> emit lyrics
+                  with
+                    label="Show lyrics"
+                    style=text
+                    @music::icon_action
                   LyricsIcon active=false
             col #queue
               if queue_active
-                button label="Hide Playing Next" #queue-active p=7.0 -> emit queue
+                button label="Hide Playing Next" #queue-active @music::icon_action -> emit queue
                   QueueIcon active=true
                   active bg=accent text=primary r=9.0
               if !queue_active
-                button label="Show Playing Next" #queue-inactive p=7.0 style=text -> emit queue
+                button #queue-inactive -> emit queue
+                  with
+                    label="Show Playing Next"
+                    style=text
+                    @music::icon_action
                   QueueIcon active=false

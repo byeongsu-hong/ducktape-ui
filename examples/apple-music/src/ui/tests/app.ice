@@ -33,19 +33,19 @@ test music_surfaces
   expect drag_zone.visible
   expect home_title.font.family == family.named("Geist")
   expect text "Listen now"
-  dispatch navigate("New")
+  dispatch navigate(MusicSection.new)
   expect text "New & noteworthy"
-  dispatch navigate("Radio")
+  dispatch navigate(MusicSection.radio)
   expect text "After Hours Radio"
-  dispatch navigate("Recently Added")
+  dispatch navigate(MusicSection.recently_added)
   expect text "Latest additions"
-  dispatch navigate("Artists")
+  dispatch navigate(MusicSection.artists)
   expect text "Recently played artists"
-  dispatch navigate("Albums")
+  dispatch navigate(MusicSection.albums)
   expect text "All albums"
-  dispatch navigate("Songs")
+  dispatch navigate(MusicSection.songs)
   expect text "Every track in one focused, scannable list."
-  dispatch navigate("Search")
+  dispatch navigate(MusicSection.search)
   expect text "Nothing here yet"
   expect missing queue_panel
   expect missing lyrics_panel
@@ -70,12 +70,12 @@ test music_interactions
   target lyrics_close = #lyrics-panel/root/surface/header/close
   target queue_close = #queue-panel/root/surface/header/close
   dispatch search
-  expect section == "Home"
+  expect section == MusicSection.home
   click search_input
   type "nova"
   expect search_input.value == "nova"
   key enter
-  expect section == "Search"
+  expect section == MusicSection.search
   expect !empty(search_results)
   expect text "Liquid Light"
   click sign_in

@@ -1,9 +1,10 @@
-component Dialog()
-  box w=480.0 h=shrink max-w=720.0 p=24.0 border-w=1.0 r=10.0 @bg-surface border-border
+component Dialog(width:f64=480.0)
+  box w=width h=shrink max-w=720.0 p=24.0 border-w=1.0 r=10.0 @bg-surface border-border
     col gap=16.0 @w-full
       slot Header
       slot Body
-      slot Actions
+      if provided(Actions)
+        slot Actions?
 
 component Dialog.Header()
   row align=center @w-full

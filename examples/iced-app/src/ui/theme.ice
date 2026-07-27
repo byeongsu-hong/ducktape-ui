@@ -22,3 +22,12 @@ palette dark for AppTheme
   primary #8b5cf6
   danger #ef4444
   border #334155
+
+recipe task_action for button
+  @px-4 py-2 rounded-md
+
+recipe task_primary_action for button extends task_action
+  @bg-primary text-white
+
+recipe task_danger_action for button extends task_action
+  @bg-white text-danger

@@ -26,11 +26,12 @@ on sign_out
   profile_name = "Sign In"
 
 on search
-  return if empty(trim(query))
+  let search_query = normalized_query
+  return if !has_query
   loading = true
-  section = "Search"
+  section = MusicSection.search
   queue_open = false
-  run search_catalog(trim(query)) -> searched _ | failed _
+  run search_catalog(search_query) -> searched _ | failed _
 
 on searched(results)
   search_results = results

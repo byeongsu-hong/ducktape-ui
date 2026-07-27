@@ -12,8 +12,7 @@ app Showcase
 
 font geist family="Geist" default=true
 
-use "components.ice"
-use "../../../../crates/ui/src/ice/default.ice"
+use "components.ice" as demo
 use "adapters.ice"
 
 state
@@ -32,6 +31,7 @@ state
   catalog_query = ""
   catalog_sort = "none"
   catalog_page = 0
+  demo_page = 1
   otp = ""
   calendar:CalendarState = calendar_state()
   date_picker:DatePickerState = date_picker_state()
@@ -54,6 +54,10 @@ state
   dialog_open = false
   toast_visible = true
 
+derived
+  catalog_at_start = catalog_page <= 0
+  catalog_page_number = catalog_page + 1
+
 preset test
   state
     email = ""
@@ -66,6 +70,7 @@ preset test
     catalog_query = ""
     catalog_sort = "none"
     catalog_page = 0
+    demo_page = 1
     dialog_open = false
     toast_visible = false
 
@@ -176,19 +181,28 @@ on catalog_sort_changed
   catalog_page = 0
 
 on catalog_previous
-  return if catalog_page <= 0
+  return if catalog_at_start
   catalog_page = catalog_page - 1
 
 on catalog_next
   return if !data_table_can_next(catalog_query, catalog_page)
   catalog_page = catalog_page + 1
 
+on demo_page_previous
+  return if demo_page <= 1
+  demo_page = demo_page - 1
+
+on demo_page_next
+  return if demo_page >= 5
+  demo_page = demo_page + 1
+
 on message_scroller_changed(event)
   task message_scroller_apply(message_scroller, event) -> message_scroller_applied _
 
 on message_scroller_applied(result)
   message_scroller_update = result
-  message_scroller = message_scroller_result_state(message_scroller_update)
+  let next_state = message_scroller_result_state(message_scroller_update)
+  message_scroller = next_state
   task message_scroller_continue(message_scroller, message_scroller_update) -> message_scroller_applied _
 
 on native_popover_changed(event)
@@ -218,7 +232,7 @@ test app_behavior
   target fields = grid/fields/root
   target primary = buttons/primary
   target email_input = fields/work-email
-  target project_input = fields/project-url/root/project-slug
+  target project_input = fields/project-url/root/slug-editor/project-slug
   expect text "ducktape-ui"
   expect clicks == 0
   click primary
@@ -237,6 +251,26 @@ test app_behavior
   expect catalog_sort == "ascending"
   dispatch density_changed("compact")
   expect density == "compact"
+
+test language_feature_contracts
+  preset test
+  viewport 640 480
+  mount
+    col gap=12.0
+      demo::TabsDemo #tabs
+      demo::PaginationDemo page=demo_page #pagination
+        events
+          previous -> demo_page_previous
+          next -> demo_page_next
+      demo::AspectRatioDemo #aspect
+  target show_code = #tabs/show-code
+  target pagination_next = #pagination/next
+  click show_code
+  expect text "button \"Save\" @primary_action -> save"
+  expect demo_page == 1
+  click pagination_next
+  expect demo_page == 2
+  expect text "16 / 9"
 
 test catalog_layout
   preset test
@@ -281,93 +315,65 @@ view
     content
       box #app w=fill h=fill bg=bg
         scroll #catalog-scroll dir=vertical w=fill h=fill
-          col #page @page
+          col #page @demo::page
             row w=fill align=center
-              PageHeader
-                with
-                  title="ducktape-ui"
-                  description="Default iced components, composed and checked by Ice."
+              demo::PageHeader title="ducktape-ui" description="Default iced components, composed and checked by Ice."
               space w=fill h=1.0
-              Badge label="ui-lang"
+              demo::Badge label="ui-lang"
 
-            Alert
-              with
-                title="Ice is the source of truth"
-                description="Layout, state, routes, styles, and accessibility are generated from .ice files."
+            demo::Alert title="Ice is the source of truth" description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
             grid #catalog-grid gap=20.0 min-cell=500.0 @w-full
-              Panel #buttons
-                with
-                  title="Buttons"
-                  description="Clear defaults with native focus and disabled behavior."
+              demo::Panel #buttons title="Buttons" description="Clear defaults with native focus and disabled behavior."
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
-                    button "Primary" #primary @primary_action -> clicked
-                    button "Secondary" @secondary_action -> clicked
-                    button "Outline" @outline_action -> clicked
-                    button "Ghost" @ghost_action -> clicked
-                    button "Destructive" @danger_action -> clicked
-                    button "Disabled" disabled=true @secondary_action -> clicked
+                    button "Primary" #primary @demo::primary_action -> clicked
+                    button "Secondary" @demo::secondary_action -> clicked
+                    button "Outline" @demo::outline_action -> clicked
+                    button "Ghost" @demo::ghost_action -> clicked
+                    button "Destructive" @demo::danger_action -> clicked
+                    button "Disabled" disabled=true @demo::secondary_action -> clicked
                   row gap=8.0 align=center
                     text "Activated" size=12.0 @text-muted
                     text clicks size=13.0 @font-bold text-primary
-                    Badge.Secondary label="events"
+                    demo::Badge.Secondary label="events"
 
-              Panel #badges
-                with
-                  title="Badges & keyboard"
-                  description="Compact status and shortcut primitives."
+              demo::Panel #badges title="Badges & keyboard" description="Compact status and shortcut primitives."
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
-                    Badge label="Default"
-                    Badge.Secondary label="Secondary"
-                    Badge.Outline label="Outline"
-                    Badge.Destructive label="Danger"
-                    Badge.Success label="Success"
-                    Badge.Warning label="Warning"
+                    demo::Badge label="Default"
+                    demo::Badge.Secondary label="Secondary"
+                    demo::Badge.Outline label="Outline"
+                    demo::Badge.Destructive label="Danger"
+                    demo::Badge.Success label="Success"
+                    demo::Badge.Warning label="Warning"
                   row gap=6.0 align=center
                     text "Command palette" size=13.0 @text-fg
                     space w=fill h=1.0
-                    Kbd label="⌘"
-                    Kbd label="K"
+                    demo::Kbd label="⌘"
+                    demo::Kbd label="K"
 
-              Panel #fields
-                with
-                  title="Fields"
-                  description="Labels, help copy, validation, and native editing."
+              demo::Panel #fields title="Fields" description="Labels, help copy, validation, and native editing."
                 col w=fill gap=14.0
                   col w=fill gap=6.0
                     input "Work email" #work-email <-> email
                       with
                         description="We only use this address for product updates."
                         hint="you@example.com"
-                        @control
+                        @demo::control
                     text "We only use this address for product updates." size=12.0 @text-muted
-                  Field label="Framework" description="Pick the runtime you want to build on."
+                  demo::Field label="Framework" description="Pick the runtime you want to build on."
                     pick native_select_frameworks native_select_framework -> framework_changed _
                       with
                         hint="Choose a framework"
                         w=fill
                   if email != ""
                     text email size=12.0 @text-muted
-                    Alert.Success
-                      with
-                        title="Controlled input"
-                        description="The value is owned by Ice application state."
-                  InputGroup #project-url
-                    row w=fill gap=4.0 align=center
-                      text "https://ducktape.dev/" size=12.0 @text-muted
-                      input "" #project-slug <-> project_slug
-                        with
-                          label="Project slug"
-                          hint="ui-lang"
-                          w=fill
-                          p=6.0
-                        active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
-                        hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
-                        focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+                    demo::Alert.Success title="Controlled input" description="The value is owned by Ice application state."
+                  demo::InputGroup #project-url
+                    demo::ProjectSlugInput value<->project_slug #slug-editor
 
-              Panel title="Selection" description="Controlled values stay in the Ice state block."
+              demo::Panel title="Selection" description="Controlled values stay in the Ice state block."
                 col w=fill gap=14.0
                   checkbox "Accept the component contract" -> accepted_changed _
                     with
@@ -387,105 +393,69 @@ view
                       progress volume length=fill girth=5.0 style=progress_success_style()
                     text volume size=12.0 @text-muted
 
-              Panel
-                with
-                  title="Composition"
-                  description="Slots keep caller state and handlers in their original scope."
+              demo::Panel title="Composition" description="Slots keep caller state and handlers in their original scope."
                 col w=fill gap=12.0
-                  Item
-                    with
-                      title="Default components"
-                      description="One visual language across the application."
-                      meta="Ready"
-                    Avatar initials="UI"
-                  Attachment name="component-contract.ice" meta="4.2 KB · Ice source"
-                  Alert.Warning
-                    with
-                      title="Caller ownership stays explicit"
-                      description="Pass slots and events instead of hiding application behavior in a component."
+                  demo::Item title="Default components" description="One visual language across the application." meta="Ready"
+                    demo::Avatar initials="UI"
+                  demo::Attachment name="component-contract.ice" meta="4.2 KB · Ice source"
+                  demo::Alert.Warning title="Caller ownership stays explicit" description="Pass slots and events instead of hiding application behavior in a component."
 
-              Panel
-                with
-                  title="Foundations"
-                  description="The small pieces compose into application-specific surfaces."
+              demo::Panel title="Foundations" description="The small pieces compose into application-specific surfaces."
                 col w=fill gap=14.0
-                  Breadcrumb current="Components"
+                  demo::Breadcrumb current="Components"
                     row gap=8.0
                       text "Home" size=12.0 @text-primary
                       text "/" size=12.0 @text-muted
                       text "Library" size=12.0 @text-primary
-                  Card
-                    Card.Header
+                  demo::Card
+                    demo::Card.Header
                       col gap=3.0
-                        Typography.SectionTitle content="Default card"
-                        Typography.Caption content="Compound slots keep structure readable."
-                    Card.Body
-                      Surface
-                        Message
-                          with
-                            author="ducktape-ui"
-                            copy="Everything visible here is composed from Ice declarations."
-                            initials="UI"
-                            outgoing=false
-                    Card.Footer
+                        demo::Typography.SectionTitle content="Default card"
+                        demo::Typography.Caption content="Compound slots keep structure readable."
+                    demo::Card.Body
+                      demo::Surface
+                        demo::Message author="ducktape-ui" copy="Everything visible here is composed from Ice declarations." initials="UI" outgoing=false
+                    demo::Card.Footer
                       row w=fill gap=8.0 align=center
-                        Marker label="stable" active=true
-                        Marker label="native" active=false
+                        demo::Marker label="stable" active=true
+                        demo::Marker label="native" active=false
                         space w=fill h=1.0
-                        ButtonGroup
+                        demo::ButtonGroup
                           row
-                            button "Cancel" @ghost_action -> clicked
-                            button "Apply" @primary_action -> clicked
-                  Separator
-                  Bubble
-                    with
-                      copy="Incoming and outgoing content keep explicit alignment."
-                      outgoing=false
-                  Bubble copy="Caller state still owns the conversation." outgoing=true
+                            button "Cancel" @demo::ghost_action -> clicked
+                            button "Apply" @demo::primary_action -> clicked
+                  demo::Separator
+                  demo::Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
+                  demo::Bubble copy="Caller state still owns the conversation." outgoing=true
 
-              Panel
-                with
-                  title="Disclosure"
-                  description="Reusable components may own instance-scoped UI state."
+              demo::Panel title="Disclosure" description="Reusable components may own instance-scoped UI state."
                 col w=fill
-                  AccordionItem #state
-                    with
-                      question="Where does state live?"
-                      answer="Application state stays with the app. Small interaction state may live inside a reusable Ice component."
-                  AccordionItem #rust
-                    with
-                      question="What stays in Rust?"
-                      answer="Domain rules, I/O, and advanced native widget escape hatches."
-                  AccordionItem #accessibility
-                    with
-                      question="Is accessibility optional?"
-                      answer="No. Ice emits the semantic tree and keyboard focus contract with the view."
+                  demo::AccordionItem #state question="Where does state live?" answer="Application state stays with the app. Small interaction state may live inside a reusable Ice component."
+                  demo::AccordionItem #rust question="What stays in Rust?" answer="Domain rules, I/O, and advanced native widget escape hatches."
+                  demo::AccordionItem #accessibility question="Is accessibility optional?" answer="No. Ice emits the semantic tree and keyboard focus contract with the view."
 
-              Panel
-                with
-                  title="Stateful primitives"
-                  description="Disclosure, toggles, segments, and carousel state stay inside reusable Ice components."
+              demo::Panel title="Stateful primitives" description="Disclosure, toggles, segments, and carousel state stay inside reusable Ice components."
                 col w=fill gap=14.0
-                  CollapsibleDemo #collapsible
-                  Separator
+                  demo::CollapsibleDemo #collapsible
+                  demo::Separator
                   row w=fill gap=16.0 align=center
-                    ToggleDemo #toggle
+                    demo::ToggleDemo #toggle
                     space w=fill h=1.0
-                    ToggleGroupDemo #segments
-                  CarouselDemo #carousel
+                    demo::ToggleGroupDemo #segments
+                  demo::CarouselDemo #carousel
 
-              Panel title="Tabs" description="A self-contained default interaction."
+              demo::Panel #tabs-panel title="Tabs" description="A self-contained default interaction."
                 box w=fill
-                  TabsDemo #tabs
+                  demo::TabsDemo #tabs
 
-              Panel title="Pagination" description="Small local state, bounded at both ends."
+              demo::Panel #pagination-panel title="Pagination" description="Small local state, bounded at both ends."
                 box w=fill
-                  PaginationDemo #pagination
+                  demo::PaginationDemo page=demo_page #pagination
+                    events
+                      previous -> demo_page_previous
+                      next -> demo_page_next
 
-              Panel
-                with
-                  title="Native authoring"
-                  description="Search, rich editing, and tooltips use ui-lang primitives directly."
+              demo::Panel title="Native authoring" description="Search, rich editing, and tooltips use ui-lang primitives directly."
                 col w=fill gap=14.0
                   combo combobox_frameworks searched_framework "Search frameworks" -> searched_framework_changed _
                     with
@@ -505,23 +475,17 @@ view
                     focused border=primary border-w=2.0
                   row gap=8.0 align=center
                     text "Keyboard help" size=13.0 @text-fg
-                    Tooltip label="Open the command palette"
-                      button label="Command palette shortcut" @ghost_action -> clicked
+                    demo::Tooltip label="Open the command palette"
+                      button label="Command palette shortcut" @demo::ghost_action -> clicked
                         row gap=4.0
-                          Kbd label="⌘"
-                          Kbd label="K"
+                          demo::Kbd label="⌘"
+                          demo::Kbd label="K"
 
-              Panel
-                with
-                  title="Command palette"
-                  description="Ice owns query and active state; Rust retains native editing, navigation, and focus."
+              demo::Panel title="Command palette" description="Ice owns query and active state; Rust retains native editing, navigation, and focus."
                 box w=fill
                   extern command(command) -> command_changed _
 
-              Panel
-                with
-                  title="Advanced selection"
-                  description="Grouped options, typeahead, overlay collision, and focus remain controlled through Ice."
+              demo::Panel title="Advanced selection" description="Grouped options, typeahead, overlay collision, and focus remain controlled through Ice."
                 col w=fill gap=12.0
                   extern menubar(menubar) -> menubar_changed _
                   row gap=12.0 align=center
@@ -530,24 +494,23 @@ view
                   extern context_menu(context_menu) -> context_menu_changed _
                   extern hover_card()
 
-              Panel
-                with
-                  title="Layout & data"
-                  description="Aspect ratio, scrolling, and table layout compile from Ice."
+              demo::Panel title="Layout & data" description="Aspect ratio, scrolling, and table layout compile from Ice."
                 col w=fill gap=14.0
-                  AspectRatioDemo
-                    text "16 / 9" size=20.0 @font-bold text-primary
-                  ScrollAreaDemo
+                  demo::AspectRatioDemo
+                  demo::ScrollAreaDemo
                     col w=fill gap=4.0
-                      Item title="Button" description="Actions and focus" meta="Core"
-                        Avatar initials="B"
-                      Item title="Input" description="Controlled text" meta="Core"
-                        Avatar initials="I"
-                      Item title="Dialog" description="Overlay composition" meta="UI"
-                        Avatar initials="D"
+                      demo::Item title="Button" description="Actions and focus" meta="Core"
+                        demo::Avatar initials="B"
+                      demo::Item title="Input" description="Controlled text" meta="Core"
+                        demo::Avatar initials="I"
+                      demo::Item title="Dialog" description="Overlay composition" meta="UI"
+                        demo::Avatar initials="D"
                   row w=fill gap=8.0 align=center
-                    input "Filter components" <-> catalog_query hint="Filter components" @control
-                    button "Sort" @outline_action -> catalog_sort_changed
+                    input "Filter components" <-> catalog_query
+                      with
+                        hint="Filter components"
+                        @demo::control
+                    button "Sort" @demo::outline_action -> catalog_sort_changed
                     text catalog_sort size=11.0 @text-muted
                   table item in data_table_rows(catalog_query, catalog_sort, catalog_page)
                     with
@@ -567,23 +530,17 @@ view
                   row w=fill gap=8.0 align=center
                     button "Previous" -> catalog_previous
                       with
-                        disabled=(catalog_page <= 0)
-                        @secondary_action
-                    text (catalog_page + 1) size=12.0 @text-muted
+                        disabled=catalog_at_start
+                        @demo::secondary_action
+                    text catalog_page_number size=12.0 @text-muted
                     button "Next" -> catalog_next
                       with
                         disabled=(!data_table_can_next(catalog_query, catalog_page))
-                        @secondary_action
+                        @demo::secondary_action
 
-              Panel
-                with
-                  title="Identity & calendar"
-                  description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
+              demo::Panel title="Identity & calendar" description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
                 col w=fill gap=14.0
-                  Field
-                    with
-                      label="Verification code"
-                      description="Paste and keyboard editing stay inside one native focus target."
+                  demo::Field label="Verification code" description="Paste and keyboard editing stay inside one native focus target."
                     extern input_otp("showcase-otp", otp, false, false) -> otp_changed _
                   row w=fill gap=10.0 align=center
                     extern spinner(clicks, false)
@@ -591,96 +548,66 @@ view
                   extern date_picker(date_picker) -> date_picker_changed _
                   extern calendar(calendar) -> calendar_changed _
 
-              Panel
-                with
-                  title="Chart"
-                  description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
+              demo::Panel title="Chart" description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
                 box w=fill
                   extern chart(chart_hover) -> chart_hovered _
 
-              Panel
-                with
-                  title="Modal contracts"
-                  description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
+              demo::Panel title="Modal contracts" description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
                 box w=fill
                   extern alert_dialog(alert_dialog) -> alert_dialog_changed _
 
-              Panel
-                with
-                  title="Navigation"
-                  description="Sidebar collapse and active route remain controlled by Ice."
+              demo::Panel title="Navigation" description="Sidebar collapse and active route remain controlled by Ice."
                 col w=fill gap=16.0
                   extern navigation_menu(navigation_menu) -> navigation_menu_changed _
                   box w=fill h=240.0 clip=true
                     extern sidebar(sidebar) -> sidebar_changed _
 
-              Panel
-                with
-                  title="Notifications"
-                  description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
+              demo::Panel title="Notifications" description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
                 box w=fill h=220.0 clip=true
                   extern sonner(sonner) -> sonner_changed _
 
-              Panel
-                with
-                  title="Messages"
-                  description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
+              demo::Panel title="Messages" description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
                 box w=fill h=220.0 clip=true
                   extern message_scroller(message_scroller) -> message_scroller_changed _
 
-              Panel
-                with
-                  title="Edge panels"
-                  description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
+              demo::Panel title="Edge panels" description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
                 box w=fill h=160.0 clip=true
                   extern drawer(drawer) -> drawer_changed _
 
-              Panel title="Loading" description="Static placeholders remain reduced-motion safe."
+              demo::Panel title="Loading" description="Static placeholders remain reduced-motion safe."
                 box w=fill
-                  SkeletonDemo
+                  demo::SkeletonDemo
 
-              Panel
-                with
-                  title="Native escape hatches"
-                  description="Ice owns composition and state; advanced widgets cross one typed boundary."
+              demo::Panel title="Native escape hatches" description="Ice owns composition and state; advanced widgets cross one typed boundary."
                 col w=fill gap=14.0
                   extern resizable_demo(native_sizes) -> native_resized _
                   extern popover_demo(native_popover) -> native_popover_changed _
 
-              Panel
-                with
-                  title="Empty state"
-                  description="A useful default before application-specific actions."
+              demo::Panel title="Empty state" description="A useful default before application-specific actions."
                 box w=fill
-                  EmptyState
-                    with
-                      title="No components found"
-                      description="Try a different filter or create the first component."
+                  demo::EmptyState title="No components found" description="Try a different filter or create the first component."
 
             row w=fill gap=12.0 align=center
-              button "Open dialog" @primary_action -> open_dialog
+              button "Open dialog" @demo::primary_action -> open_dialog
               if !toast_visible
-                button "Show toast" @secondary_action -> show_toast
+                button "Show toast" @demo::secondary_action -> show_toast
               space w=fill h=1.0
               if toast_visible
-                Toast title="Migration active" description="This screen is generated by ui-lang."
-                  button "×" label="Dismiss toast" @ghost_action -> dismiss_toast
+                demo::Toast title="Migration active" description="This screen is generated by ui-lang."
+                  button "×" label="Dismiss toast" @demo::ghost_action -> dismiss_toast
     layer
-      Dialog
-        Dialog.Header
+      demo::Dialog
+        demo::Dialog.Header
           col gap=4.0
             text "Default dialog" size=20.0 @font-bold text-fg
             text "The overlay, dismissal route, and focusable controls are declared in Ice."
               with
                 size=13.0
                 @text-muted
-        Dialog.Body
-          Alert
-            with
-              title="No Rust view code"
-              description="The proc macro emits ordinary iced code at compile time."
-        Dialog.Actions
+        demo::Dialog.Body
+          demo::Alert title="No Rust view code" description="The proc macro emits ordinary iced code at compile time."
+        demo::Dialog.Actions
           row w=fill gap=8.0 align=end
             space w=fill h=1.0
-            button "Cancel" @secondary_action -> close_dialog
-            button "Continue" @primary_action -> close_dialog
+            button "Cancel" @demo::secondary_action -> close_dialog
+            button "Continue" @demo::primary_action -> close_dialog
