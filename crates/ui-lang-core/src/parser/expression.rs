@@ -114,8 +114,14 @@ pub(in crate::parser) fn parse_type(source: &str, line: &Line) -> Result<Type, E
         "widget-target" => Type::WidgetTarget,
         "task-handle" => Type::TaskHandle,
         "unit" => Type::Unit,
-        value if value.chars().next().is_some_and(char::is_uppercase) => {
-            Type::Named(identifier(value, line)?)
+        value
+            if value
+                .rsplit("::")
+                .next()
+                .and_then(|name| name.chars().next())
+                .is_some_and(char::is_uppercase) =>
+        {
+            Type::Named(line.qualify(&qualified_identifier(value, line)?))
         }
         _ => return Err(error("E023", line, format!("unknown type `{source}`"))),
     })
@@ -164,6 +170,7 @@ enum Token {
     RBracket,
     Comma,
     Dot,
+    Namespace,
     Not,
     Neg,
     Plus,
@@ -292,7 +299,18 @@ impl<'a> ExprParser<'a> {
             Token::Ident(name) if name == "false" => Ok(Expr::Bool(false)),
             Token::Ident(name) if name == "none" => Ok(Expr::None),
             Token::Ident(name) => {
-                let mut path = vec![name];
+                let mut qualified = name;
+                while self.peek() == Some(&Token::Namespace) {
+                    self.index += 1;
+                    match self.next() {
+                        Some(Token::Ident(segment)) => {
+                            qualified.push_str("::");
+                            qualified.push_str(&segment);
+                        }
+                        _ => return Err(error("E070", self.line, "expected name after `::`")),
+                    }
+                }
+                let mut path = vec![qualified];
                 while self.peek() == Some(&Token::Dot) {
                     self.index += 1;
                     match self.next() {
@@ -317,9 +335,17 @@ impl<'a> ExprParser<'a> {
                         return Err(error("E070", self.line, "missing closing `)`"));
                     }
                     return Ok(Expr::Call {
-                        name: path.join("."),
+                        name: self.line.qualify(&path.join(".")),
                         args,
                     });
+                }
+                if path[0]
+                    .rsplit("::")
+                    .next()
+                    .and_then(|name| name.chars().next())
+                    .is_some_and(char::is_uppercase)
+                {
+                    path[0] = self.line.qualify(&path[0]);
                 }
                 Ok(Expr::Path(path))
             }
@@ -464,6 +490,7 @@ fn lex_expr(source: &str, line: &Line) -> Result<Vec<Token>, Error> {
             ('>', Some('=')) => (Token::GtEq, 2),
             ('&', Some('&')) => (Token::And, 2),
             ('|', Some('|')) => (Token::Or, 2),
+            (':', Some(':')) => (Token::Namespace, 2),
             ('(', _) => (Token::LParen, 1),
             (')', _) => (Token::RParen, 1),
             ('[', _) => (Token::LBracket, 1),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::unqualified_name;
 
 pub(crate) fn expr_type(
     expr: &Expr,
@@ -44,7 +45,8 @@ pub(crate) fn expr_type(
                 check_call_args(function, args, env, document, span)?;
                 return Ok(function.output.clone());
             }
-            match name.as_str() {
+            let name = unqualified_name(name);
+            match name {
                 "color.default" | "color.black" | "color.white" | "color.transparent" => {
                     check_builtin_args(name, args, &[], env, document, span)?;
                     Ok(Type::Color)
@@ -1200,7 +1202,7 @@ pub(crate) fn expr_type(
                         document,
                         span,
                     )?;
-                    Ok(match name.as_str() {
+                    Ok(match name {
                         "rectangle.with_vertices" => Type::Rectangle,
                         "rectangle.vertices_rotation" => Type::F64,
                         _ => Type::Radians,
@@ -1411,7 +1413,7 @@ pub(crate) fn expr_type(
                 | "transform.rectangle"
                 | "transform.cursor"
                 | "transform.click" => {
-                    let value = match name.as_str() {
+                    let value = match name {
                         "transform.point" => Type::Point,
                         "transform.vector" => Type::Vector,
                         "transform.size" => Type::Size,
@@ -1597,7 +1599,7 @@ pub(crate) fn expr_type(
                             format!("{name} expects no arguments"),
                         ));
                     }
-                    Ok(match name.as_str() {
+                    Ok(match name {
                         "key.unidentified" => Type::Key,
                         "key.native_unidentified" => Type::PhysicalKey,
                         _ => Type::KeyModifiers,

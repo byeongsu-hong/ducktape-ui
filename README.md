@@ -58,6 +58,19 @@ them and include the offending source line and caret. Keep typed Rust boundary
 declarations in an `extern/` fragment so app and view files only need the
 one-line `use`.
 
+Use an alias when a component or design-system fragment needs an explicit
+namespace:
+
+```ice
+use "ducktape-ui/default.ice" as ui
+
+ui::Panel title="Settings"
+```
+
+Aliased components, recipes, extern functions/types, and fonts use `::`;
+theme tokens intentionally remain app-global. A bare `use` continues to merge
+one application fragment without qualification.
+
 The punctuation has one job each:
 
 - indentation is the tree;

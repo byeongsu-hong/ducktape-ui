@@ -37,13 +37,20 @@ pub enum SymbolKind {
 impl SymbolKind {
     pub fn accepts(self, name: &str) -> bool {
         match self {
-            Self::Component => name.split('.').all(|part| {
-                valid_identifier(part)
-                    && part
-                        .chars()
-                        .next()
-                        .is_some_and(|ch| ch.is_ascii_uppercase())
-            }),
+            Self::Component => {
+                let parts = name.split("::").collect::<Vec<_>>();
+                let Some((component, modules)) = parts.split_last() else {
+                    return false;
+                };
+                modules.iter().all(|module| valid_identifier(module))
+                    && component.split('.').all(|part| {
+                        valid_identifier(part)
+                            && part
+                                .chars()
+                                .next()
+                                .is_some_and(|ch| ch.is_ascii_uppercase())
+                    })
+            }
             Self::Handler => name != "mount" && valid_identifier(name),
             Self::Recipe | Self::TestTarget => valid_identifier(name),
         }
@@ -74,6 +81,10 @@ fn valid_identifier(name: &str) -> bool {
 fn canonical_snake(name: &str) -> bool {
     name.split('_')
         .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_lowercase()))
+}
+
+fn unqualified_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 fn has_windows_drive_prefix(path: &str) -> bool {

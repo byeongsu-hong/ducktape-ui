@@ -79,7 +79,7 @@ impl Document {
             if let Some(recipe) = self.style_recipe(style) {
                 self.expand_recipe(recipe, &mut expanded);
             } else {
-                expanded.push(style.clone());
+                expanded.push(crate::unqualified_name(style).to_owned());
             }
         }
         expanded

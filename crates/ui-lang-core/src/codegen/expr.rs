@@ -1,4 +1,5 @@
 use super::*;
+use crate::unqualified_name;
 
 pub(in crate::codegen) fn expr_list_code(
     values: &[Expr],
@@ -165,7 +166,8 @@ pub(in crate::codegen) fn expr_code(
                 let args = expr_list_code(args, env, document)?;
                 return Ok(format!("{}({args})", function.rust_path));
             }
-            match name.as_str() {
+            let name = unqualified_name(name);
+            match name {
             "color.default" => "::iced::Color::default()".into(),
             "color.black" => "::iced::Color::BLACK".into(),
             "color.white" => "::iced::Color::WHITE".into(),

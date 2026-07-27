@@ -409,7 +409,7 @@ pub(in crate::parser) fn parse_pane_contents(
     let mut controls = None;
     let mut compact_controls = None;
     for section in &line.children {
-        let (core, styles) = split_style_utilities(&section.text);
+        let (core, styles) = split_style_utilities(&section.text, section);
         let parts = split_words(core);
         let kind = parts.first().map(String::as_str).unwrap_or("");
         match kind {
@@ -543,7 +543,7 @@ pub(in crate::parser) fn parse_pane_configuration(
     splits: &mut std::collections::HashSet<String>,
     panes: &mut Vec<PaneView>,
 ) -> Result<PaneConfiguration, Error> {
-    let (core, styles) = split_style_utilities(&line.text);
+    let (core, styles) = split_style_utilities(&line.text, line);
     let parts = split_words(core);
     match parts.first().map(String::as_str) {
         Some("pane") if parts.len() >= 2 => Ok(PaneConfiguration::Pane(parse_pane_view(
@@ -635,7 +635,7 @@ pub(in crate::parser) fn parse_closed_pane(
     names: &mut std::collections::HashSet<String>,
     panes: &mut Vec<PaneView>,
 ) -> Result<(), Error> {
-    let (core, styles) = split_style_utilities(&line.text);
+    let (core, styles) = split_style_utilities(&line.text, line);
     let parts = split_words(core);
     if parts.len() < 3 || parts[0] != "pane" || parts[2] != "closed" {
         return Err(error(
@@ -652,7 +652,7 @@ pub(in crate::parser) fn parse_pane_template(
     line: &Line,
     names: &mut std::collections::HashSet<String>,
 ) -> Result<PaneTemplate, Error> {
-    let (core, styles) = split_style_utilities(&line.text);
+    let (core, styles) = split_style_utilities(&line.text, line);
     let parts = split_words(core);
     if parts.len() < 5 || parts[0] != "pane" || parts[2] != "in" {
         return Err(error(
@@ -690,7 +690,7 @@ pub(in crate::parser) fn parse_pane_template(
 }
 
 pub(in crate::parser) fn is_pane_template(line: &Line) -> bool {
-    let (core, _) = split_style_utilities(&line.text);
+    let (core, _) = split_style_utilities(&line.text, line);
     split_words(core).get(2).map(String::as_str) == Some("in")
 }
 

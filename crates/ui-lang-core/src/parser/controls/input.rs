@@ -606,6 +606,6 @@ pub(in crate::parser) fn parse_font_preset(source: &str, line: &Line) -> Result<
     Ok(match source {
         "default" => FontPreset::Default,
         "mono" => FontPreset::Monospace,
-        name => FontPreset::Named(identifier(name, line)?),
+        name => FontPreset::Named(line.qualify(&qualified_identifier(name, line)?)),
     })
 }

@@ -19,11 +19,23 @@ struct Line {
     indent: usize,
     text: String,
     children: Vec<Line>,
+    namespace: Option<String>,
     symbols: Rc<RefCell<Vec<ParsedSymbol>>>,
     track_symbols: bool,
 }
 
 impl Line {
+    fn qualify(&self, name: &str) -> String {
+        match &self.namespace {
+            Some(namespace)
+                if name != namespace && !name.starts_with(&format!("{namespace}::")) =>
+            {
+                format!("{namespace}::{name}")
+            }
+            _ => name.to_owned(),
+        }
+    }
+
     fn record_symbol(&self, kind: SymbolKind, name: &str, definition: bool, source: &str) {
         self.record_scoped_symbol(kind, None, name, definition, source);
     }
@@ -39,7 +51,8 @@ impl Line {
         if !self.track_symbols {
             return;
         }
-        let relative = source.find(name);
+        let source_name = name.rsplit("::").next().unwrap_or(name);
+        let relative = source.find(source_name);
         let line_start = self.text.as_ptr() as usize;
         let source_start = source.as_ptr() as usize;
         let direct = (source_start >= line_start
@@ -60,7 +73,7 @@ impl Line {
                 .match_indices(source)
                 .map(|(offset, _)| offset + relative)
                 .filter(|offset| {
-                    !used(*offset) && !self.text[*offset + name.len()..].starts_with('=')
+                    !used(*offset) && !self.text[*offset + source_name.len()..].starts_with('=')
                 })
                 .collect::<Vec<_>>();
             let assigned = candidates
@@ -83,7 +96,7 @@ impl Line {
                     path: None,
                     line: self.number,
                     start_column,
-                    end_column: start_column + name.chars().count(),
+                    end_column: start_column + source_name.chars().count(),
                 }
             });
         self.symbols.borrow_mut().push(ParsedSymbol {
@@ -99,11 +112,16 @@ impl Line {
         if !self.track_symbols {
             return;
         }
-        let range = self.text.starts_with(name).then(|| SourceRange {
+        let source_name = name.rsplit("::").next().unwrap_or(name);
+        let offset = self.text.find(source_name);
+        let range = offset.map(|offset| SourceRange {
             path: None,
             line: self.number,
-            start_column: self.indent + 1,
-            end_column: self.indent + 1 + name.chars().count(),
+            start_column: self.indent + self.text[..offset].chars().count() + 1,
+            end_column: self.indent
+                + self.text[..offset].chars().count()
+                + 1
+                + source_name.chars().count(),
         });
         self.symbols.borrow_mut().push(ParsedSymbol {
             kind: SymbolKind::Component,
@@ -272,7 +290,7 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     if utilities.is_empty() {
         return Err(error("E046", line, "recipe requires at least one utility"));
     }
-    let name = identifier(name, line)?;
+    let name = line.qualify(&identifier(name, line)?);
     line.record_symbol(SymbolKind::Recipe, &name, true, source);
     let base = base.map(|base| identifier(base, line)).transpose()?;
     if let Some(base) = &base {
@@ -288,8 +306,15 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
 }
 
 pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSymbol>), Error> {
+    parse_with_symbols_and_namespaces(source, &vec![None; source.lines().count()])
+}
+
+pub(crate) fn parse_with_symbols_and_namespaces(
+    source: &str,
+    namespaces: &[Option<String>],
+) -> Result<(Document, Vec<ParsedSymbol>), Error> {
     let symbols = Rc::new(RefCell::new(Vec::new()));
-    let lines = line_tree(source, Rc::clone(&symbols))?;
+    let lines = line_tree(source, namespaces, Rc::clone(&symbols))?;
     let mut app = None;
     let mut daemon = false;
     let mut settings = AppSettings::default();
@@ -309,6 +334,19 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let mut view = None;
 
     for line in &lines {
+        if line.namespace.is_some()
+            && !(line.text.starts_with("recipe ")
+                || line.text.starts_with("extern ")
+                || line.text == "theme"
+                || line.text.starts_with("font ")
+                || line.text.starts_with("component "))
+        {
+            return Err(error(
+                "E180",
+                line,
+                "aliased imports may declare components, recipes, extern items, fonts, and global theme tokens only",
+            ));
+        }
         let root = line
             .text
             .strip_prefix("app ")
@@ -619,9 +657,13 @@ pub(crate) fn parse_with_symbols(source: &str) -> Result<(Document, Vec<ParsedSy
     let shadows_image_constructor = |state: &State| {
         fn contains_shadowed_call(expr: &Expr, functions: &[ExternFn]) -> bool {
             match expr {
-                Expr::Call { name, .. } if matches!(name.as_str(), "encoded" | "rgba") => functions
-                    .iter()
-                    .any(|function| function.kind == ExternKind::Sync && function.name == *name),
+                Expr::Call { name, .. }
+                    if matches!(crate::unqualified_name(name), "encoded" | "rgba") =>
+                {
+                    functions
+                        .iter()
+                        .any(|function| function.kind == ExternKind::Sync && function.name == *name)
+                }
                 Expr::List(values) => values
                     .iter()
                     .any(|value| contains_shadowed_call(value, functions)),

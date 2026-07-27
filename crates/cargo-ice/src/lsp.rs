@@ -32,12 +32,21 @@ impl Navigation {
     }
 
     fn family_name(&self, name: &str, new_name: &str) -> String {
+        let namespace = self
+            .symbol
+            .name
+            .rsplit_once("::")
+            .map(|(namespace, _)| namespace);
+        let new_name = namespace.map_or_else(
+            || new_name.to_owned(),
+            |namespace| format!("{namespace}::{new_name}"),
+        );
         if self.symbol.kind == ui_lang_core::SymbolKind::Component
             && let Some(suffix) = name.strip_prefix(&self.symbol.name)
         {
             return format!("{new_name}{suffix}");
         }
-        new_name.to_owned()
+        new_name
     }
 
     fn collides(&self, new_name: &str) -> bool {
@@ -287,7 +296,12 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                                     source_range(&source, &navigation.occurrence).map(|range| {
                                         json!({
                                             "range": range,
-                                            "placeholder": navigation.symbol.name,
+                                            "placeholder": navigation
+                                                .symbol
+                                                .name
+                                                .rsplit("::")
+                                                .next()
+                                                .unwrap_or(&navigation.symbol.name),
                                         })
                                     })
                                 });
@@ -737,6 +751,8 @@ fn workspace_edit(
     let mut changes = BTreeMap::<String, Vec<Value>>::new();
     for symbol in &navigation.family {
         let renamed = navigation.family_name(&symbol.name, new_name);
+        let source_name = symbol.name.rsplit("::").next()?;
+        let source_renamed = renamed.rsplit("::").next()?;
         for range in std::iter::once(&symbol.definition).chain(&symbol.references) {
             let (uri, source) = range_document(documents, range, &navigation.root_uri)?;
             let start = range.start_column.checked_sub(1)?;
@@ -746,13 +762,13 @@ fn workspace_edit(
                 .chars()
                 .skip(start)
                 .take(length)
-                .eq(symbol.name.chars())
+                .eq(source_name.chars())
             {
                 return None;
             }
             changes.entry(uri).or_default().push(json!({
                 "range": source_range(&source, range)?,
-                "newText": renamed,
+                "newText": source_renamed,
             }));
         }
     }
@@ -2028,6 +2044,57 @@ mod tests {
         assert_eq!(response(&messages, 10)["result"], Value::Null);
         assert_eq!(response(&messages, 11)["error"]["code"], -32602);
         assert_eq!(response(&messages, 12)["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn renames_the_source_name_of_an_aliased_component() {
+        let fixture = Fixture::new();
+        let root = "app Demo\nuse \"part.ice\" as ui\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::Card\n";
+        let part = "component Card()\n  text \"Card\"\n";
+        fixture.write("app.ice", root);
+        fixture.write("part.ice", part);
+        let root_uri = file_path_uri(&fixture.path("app.ice"));
+        let part_uri = file_path_uri(&fixture.path("part.ice"));
+        let workspace_uri = file_path_uri(&fixture.0);
+
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": root_uri, "text": root } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": part_uri, "text": part } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/prepareRename",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 6 } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": root_uri }, "position": { "line": 8, "character": 6 }, "newName": "Tile" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        assert_eq!(response(&messages, 2)["result"]["placeholder"], "Card");
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&root_uri][0]["newText"],
+            "Tile"
+        );
+        assert_eq!(
+            response(&messages, 3)["result"]["changes"][&part_uri][0]["newText"],
+            "Tile"
+        );
     }
 
     #[test]
