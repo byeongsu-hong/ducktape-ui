@@ -128,14 +128,7 @@ mod tests {
 
     #[test]
     fn catalog_search_matches_titles_and_artists() {
-        let query = "nova";
-        let matches: Vec<_> = catalog()
-            .into_iter()
-            .filter(|album| {
-                album.title.to_lowercase().contains(query)
-                    || album.artist.to_lowercase().contains(query)
-            })
-            .collect();
+        let matches = iced::futures::executor::block_on(search_catalog(" NoVa ".into())).unwrap();
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].title, "Liquid Light");
@@ -143,14 +136,18 @@ mod tests {
 
     #[test]
     fn adjacent_tracks_wrap_at_both_ends() {
-        let albums = catalog();
+        let previous =
+            iced::futures::executor::block_on(adjacent_track("Velvet Sun".into(), -1)).unwrap();
+        let next =
+            iced::futures::executor::block_on(adjacent_track("Amber Signal".into(), 1)).unwrap();
+
+        assert_eq!(previous.title, "Amber Signal");
+        assert_eq!(next.title, "Velvet Sun");
         assert_eq!(
-            albums[adjacent_index(albums.len(), 0, -1)].title,
-            "Amber Signal"
-        );
-        assert_eq!(
-            albums[adjacent_index(albums.len(), albums.len() - 1, 1)].title,
-            "Velvet Sun"
+            iced::futures::executor::block_on(adjacent_track("Missing".into(), 1))
+                .unwrap_err()
+                .message,
+            "The current song is no longer in the mock catalog."
         );
     }
 

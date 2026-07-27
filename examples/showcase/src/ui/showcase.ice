@@ -18,6 +18,7 @@ use "adapters.ice"
 
 state
   email = ""
+  project_slug = ""
   clicks = 0
   accepted = false
   notifications = true
@@ -56,6 +57,7 @@ state
 preset test
   state
     email = ""
+    project_slug = ""
     clicks = 0
     accepted = false
     notifications = true
@@ -212,10 +214,14 @@ test app_behavior
   viewport 1120 820
   target primary = #buttons/primary
   target email_input = #fields/work-email
+  target project_input = #fields/project-url/project-slug
   expect text "ducktape-ui"
   expect clicks == 0
   click primary
   expect clicks == 1
+  click project_input
+  type "catalog"
+  expect project_input.value == "catalog"
   click email_input
   type "tester@example"
   expect email_input.value == "tester@example"
@@ -281,6 +287,13 @@ view
                   if email != ""
                     text email size=12.0 @text-muted
                     Alert.Success title="Controlled input" description="The value is owned by Ice application state."
+                  InputGroup #project-url
+                    row w=fill gap=4.0 align=center
+                      text "https://ducktape.dev/" size=12.0 @text-muted
+                      input "" #project-slug label="Project slug" <-> project_slug hint="ui-lang" w=fill p=6.0
+                        active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+                        hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
+                        focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
 
               Panel title="Selection" description="Controlled values stay in the Ice state block."
                 col w=fill gap=14.0

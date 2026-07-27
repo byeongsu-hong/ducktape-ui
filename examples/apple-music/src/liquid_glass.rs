@@ -6,10 +6,18 @@ use std::collections::HashMap;
 pub fn liquid_glass(layer: i64, blur: f64, refraction: f64, tint: f64, radius: f64) -> LiquidGlass {
     LiquidGlass {
         layer,
-        blur: blur.clamp(0.0, 32.0) as f32,
-        refraction: refraction.clamp(0.0, 12.0) as f32,
-        tint: tint.clamp(0.0, 1.0) as f32,
-        radius: radius.clamp(0.0, 64.0) as f32,
+        blur: clamped(blur, 32.0),
+        refraction: clamped(refraction, 12.0),
+        tint: clamped(tint, 1.0),
+        radius: clamped(radius, 64.0),
+    }
+}
+
+fn clamped(value: f64, max: f64) -> f32 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, max) as f32
     }
 }
 
@@ -410,6 +418,33 @@ mod tests {
         assert_eq!(
             (glass.blur, glass.refraction, glass.tint, glass.radius),
             (0.0, 12.0, 1.0, 64.0)
+        );
+        let glass = liquid_glass(8, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN);
+        assert_eq!(
+            (glass.blur, glass.refraction, glass.tint, glass.radius),
+            (0.0, 12.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn liquid_glass_shader_is_valid_wgsl() {
+        let module = iced::wgpu::naga::front::wgsl::parse_str(include_str!("liquid_glass.wgsl"))
+            .expect("liquid glass WGSL should parse");
+
+        iced::wgpu::naga::valid::Validator::new(
+            iced::wgpu::naga::valid::ValidationFlags::all(),
+            iced::wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("liquid glass WGSL should validate");
+
+        assert_eq!(
+            module
+                .entry_points
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["vertex", "glass_fragment", "composite_fragment"]
         );
     }
 }

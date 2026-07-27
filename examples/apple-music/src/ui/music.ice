@@ -436,7 +436,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
           box w=fill p=8.0 bg=surface border=border border-w=1.0 r=16.0
             col w=fill gap=2.0
               for album in top_picks
-                SongRow album=album
+                SongRow album=album #song(album.id)
         "Artists"
           PageTitle eyebrow="YOUR LIBRARY" title="Artists" description="The voices, producers, and bands shaping your collection." #artists-title
           SectionTitle title="Recently played artists" detail="A–Z"
@@ -455,7 +455,7 @@ component LibraryContent(section:str, query:str, loading:bool, error:str, top_pi
                 text "" w=25.0
               Separator
               for album in recently_played
-                SongRow album=album
+                SongRow album=album #song(album.id)
         "Search"
           PageTitle eyebrow="CATALOG" title="Search results" description=query #search-title
           if empty(search_results) && !loading
@@ -623,6 +623,8 @@ test music_interactions
   target next_track = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/next
   target queue_button = #app/shell/content/dock/player/root/surface/layout/utilities/queue
   target queue_close = #queue-panel/root/surface/header/close
+  dispatch search
+  expect section == "Home"
   click search_input
   type "nova"
   expect search_input.value == "nova"
@@ -647,6 +649,9 @@ test music_interactions
   expect current_title == "Soft Weather"
   expect current_artist == "Cloud House"
   expect position ~= 0.0
+  dispatch play("Missing", "Unknown", cover_path(1))
+  dispatch next
+  expect error == "The current song is no longer in the mock catalog."
 
 view
   overlay when=queue_open dismiss=queue backdrop=black/18 p=12.0 align-x=end align-y=center
