@@ -41,8 +41,8 @@ mod tests {
     use super::format_source;
 
     #[test]
-    fn formats_indentation_and_blank_lines_idempotently() {
-        let source = "app Demo\n\ntheme\n    bg #000000\nview\n    box w=fill p=8.0\n        text \"Hello\"\n";
+    fn collapses_repeated_blank_lines_and_formats_indentation_idempotently() {
+        let source = "app Demo\n\n\ntheme\n    bg #000000\nview\n    box w=fill p=8.0\n        text \"Hello\"\n";
         let formatted = format_source(source).unwrap();
         assert_eq!(
             formatted,
