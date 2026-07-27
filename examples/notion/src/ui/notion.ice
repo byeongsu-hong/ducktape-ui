@@ -1,6 +1,8 @@
 app Notion
   title "Notion"
   id "dev.ducktape.ice.notion"
+  font "../../../showcase/assets/fonts/Geist-Regular.ttf"
+  font "../../../showcase/assets/fonts/Geist-Bold.ttf"
   text-size 14
   antialiasing true
   window
@@ -8,7 +10,7 @@ app Notion
     min-size 860 600
     position centered
 
-font ui family=sans default=true
+font geist family="Geist" default=true
 
 extern crate::helpers
   sync page_matches(query:str, title:str) -> bool
@@ -17,7 +19,10 @@ extern crate::editor
   BlockEditorState()
   BlockEditorEvent()
   sync block_editor_state(template:str) -> BlockEditorState
-  task block_editor_apply(state:BlockEditorState, event:BlockEditorEvent) -> BlockEditorState
+  sync block_editor_apply(state:BlockEditorState, event:BlockEditorEvent) -> BlockEditorState
+  sync block_editor_pending_focus(state:BlockEditorState) -> i64
+  sync block_editor_clear_focus(state:BlockEditorState) -> BlockEditorState
+  task block_editor_focus(block:i64) -> bool
   component block_editor(state:&BlockEditorState) -> BlockEditorEvent
 
 theme
@@ -43,6 +48,7 @@ state
   favorite = true
   invite_email = ""
   invite_sent = false
+  pending_focus = 0
   home_title = "Building a home for your work"
   roadmap_title = "Product roadmap"
   launch_title = "Launch plan"
@@ -84,34 +90,42 @@ on send_invite
   invite_sent = true
 
 on home_editor_changed(event)
-  task block_editor_apply(home_document, event) -> home_editor_applied _
-
-on home_editor_applied(next)
-  home_document = next
+  home_document = block_editor_apply(home_document, event)
+  pending_focus = block_editor_pending_focus(home_document)
+  home_document = block_editor_clear_focus(home_document)
+  return if pending_focus <= 0
+  task block_editor_focus(pending_focus) -> editor_focused _
 
 on roadmap_editor_changed(event)
-  task block_editor_apply(roadmap_document, event) -> roadmap_editor_applied _
-
-on roadmap_editor_applied(next)
-  roadmap_document = next
+  roadmap_document = block_editor_apply(roadmap_document, event)
+  pending_focus = block_editor_pending_focus(roadmap_document)
+  roadmap_document = block_editor_clear_focus(roadmap_document)
+  return if pending_focus <= 0
+  task block_editor_focus(pending_focus) -> editor_focused _
 
 on launch_editor_changed(event)
-  task block_editor_apply(launch_document, event) -> launch_editor_applied _
-
-on launch_editor_applied(next)
-  launch_document = next
+  launch_document = block_editor_apply(launch_document, event)
+  pending_focus = block_editor_pending_focus(launch_document)
+  launch_document = block_editor_clear_focus(launch_document)
+  return if pending_focus <= 0
+  task block_editor_focus(pending_focus) -> editor_focused _
 
 on meeting_editor_changed(event)
-  task block_editor_apply(meeting_document, event) -> meeting_editor_applied _
-
-on meeting_editor_applied(next)
-  meeting_document = next
+  meeting_document = block_editor_apply(meeting_document, event)
+  pending_focus = block_editor_pending_focus(meeting_document)
+  meeting_document = block_editor_clear_focus(meeting_document)
+  return if pending_focus <= 0
+  task block_editor_focus(pending_focus) -> editor_focused _
 
 on untitled_editor_changed(event)
-  task block_editor_apply(untitled_document, event) -> untitled_editor_applied _
+  untitled_document = block_editor_apply(untitled_document, event)
+  pending_focus = block_editor_pending_focus(untitled_document)
+  untitled_document = block_editor_clear_focus(untitled_document)
+  return if pending_focus <= 0
+  task block_editor_focus(pending_focus) -> editor_focused _
 
-on untitled_editor_applied(next)
-  untitled_document = next
+on editor_focused(_focused)
+  pending_focus = 0
 
 component SidebarAction(icon:str, label:str)
   button label=label w=fill p=7.0 -> noop
@@ -212,12 +226,13 @@ component Topbar(favorite:bool)
 
 component Document(title:str, state:BlockEditorState, icon:str) -> BlockEditorEvent
   box w=fill h=fill px=28.0 align-x=center
-    col w=fill h=fill max-w=1120.0 pt=26.0
+    col w=fill h=fill max-w=920.0 pt=26.0
       text icon size=42.0 @text-fg
-      input "" label="Page title" <-> title hint="Untitled" w=fill p=0.0 text-size=36.0 font=ui
-        active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0 r=0.0
-        hovered bg=transparent border=transparent value=fg placeholder=faint border-w=0.0
-        focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
+      box w=fill px=30.0
+        input "" label="Page title" <-> title hint="Untitled" w=fill p=0.0 text-size=36.0 font=geist
+          active bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0 r=0.0
+          hovered bg=transparent border=transparent value=fg placeholder=faint border-w=0.0
+          focused bg=transparent border=transparent value=fg placeholder=faint selection=primary border-w=0.0
       extern block_editor(state) -> emit _
 
 component SearchDialog(search_query:str, selected_page:str, home_title:str, roadmap_title:str, launch_title:str, meeting_title:str)

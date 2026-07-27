@@ -1,6 +1,6 @@
 use iced::widget::{
-    Column, Stack, button, column, container, keyed_column, pin, responsive, row, scrollable, text,
-    text_input,
+    Column, Stack, button, column, container, keyed_column, mouse_area, pin, responsive, row,
+    scrollable, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Length, Shadow, Task, Theme, Vector, mouse};
 use ui_lang_runtime::resize_handle;
@@ -20,18 +20,6 @@ pub enum BlockKind {
 }
 
 impl BlockKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Paragraph => "Text",
-            Self::HeadingOne => "H1",
-            Self::HeadingTwo => "H2",
-            Self::Todo => "To-do",
-            Self::Bullet => "List",
-            Self::Quote => "Quote",
-            Self::Divider => "Divider",
-        }
-    }
-
     fn placeholder(self) -> &'static str {
         match self {
             Self::HeadingOne => "Heading 1",
@@ -100,9 +88,10 @@ pub struct BlockEditorState {
     next_block_id: u64,
     threads: Vec<CommentThread>,
     next_thread_id: u64,
-    selected_block: Option<u64>,
+    hovered_block: Option<u64>,
     dragged_block: Option<u64>,
     block_drag_y: f32,
+    focus_request: Option<u64>,
     composer_for: Option<u64>,
     comment_draft: String,
     replying_to: Option<u64>,
@@ -116,7 +105,7 @@ pub struct BlockEditorState {
 #[derive(Debug, Clone)]
 pub enum BlockEditorEvent {
     Edit(u64, String),
-    Select(u64),
+    Hover(Option<u64>),
     Add(BlockKind),
     AddAfter(u64, BlockKind),
     Delete(u64),
@@ -229,9 +218,10 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
         next_block_id,
         threads,
         next_thread_id: 2,
-        selected_block: None,
+        hovered_block: None,
         dragged_block: None,
         block_drag_y: 0.0,
+        focus_request: None,
         composer_for: None,
         comment_draft: String::new(),
         replying_to: None,
@@ -243,16 +233,28 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
     }
 }
 
-pub fn block_editor_apply(
-    state: BlockEditorState,
-    event: BlockEditorEvent,
-) -> Task<BlockEditorState> {
+pub fn block_editor_apply(state: BlockEditorState, event: BlockEditorEvent) -> BlockEditorState {
     let (state, focus) = reduce(state, event);
-    let task = Task::done(state);
-    match focus {
-        Some(id) => task.chain(iced::widget::operation::focus(block_widget_id(id))),
-        None => task,
+    BlockEditorState {
+        focus_request: focus,
+        ..state
     }
+}
+
+pub fn block_editor_pending_focus(state: BlockEditorState) -> i64 {
+    state.focus_request.map_or(0, |id| id as i64)
+}
+
+pub fn block_editor_clear_focus(mut state: BlockEditorState) -> BlockEditorState {
+    state.focus_request = None;
+    state
+}
+
+pub fn block_editor_focus(block: i64) -> Task<bool> {
+    let Ok(block) = u64::try_from(block) else {
+        return Task::done(false);
+    };
+    iced::widget::operation::focus(block_widget_id(block)).chain(Task::done(true))
 }
 
 fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorState, Option<u64>) {
@@ -263,9 +265,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 block.text = value;
             }
         }
-        BlockEditorEvent::Select(id) => {
-            state.selected_block = (state.selected_block != Some(id)).then_some(id);
-        }
+        BlockEditorEvent::Hover(block) => state.hovered_block = block,
         BlockEditorEvent::Add(kind) => {
             let id = state.push_block(kind, "");
             focus = Some(id);
@@ -281,7 +281,6 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 state.blocks.remove(index);
                 state.threads.retain(|thread| thread.block_id != id);
                 let next = index.saturating_sub(1).min(state.blocks.len() - 1);
-                state.selected_block = None;
                 focus = Some(state.blocks[next].id);
             }
         }
@@ -292,7 +291,6 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                     block.text.clear();
                 }
             }
-            state.selected_block = None;
             focus = Some(id);
         }
         BlockEditorEvent::ToggleTodo(id) => {
@@ -600,7 +598,7 @@ fn document(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
             .color(MUTED)
     ]
     .spacing(4)
-    .padding([8, 8])
+    .padding([8, 0])
     .max_width(920);
 
     scrollable(
@@ -615,23 +613,32 @@ fn document(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
 
 fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, BlockEditorEvent> {
     let id = block.id;
-    let grip = resize_handle(
-        container(
-            text("⠿")
-                .size(16)
-                .color(if state.dragged_block == Some(id) {
-                    PRIMARY
-                } else {
-                    FAINT
-                }),
+    let hovered = state.hovered_block == Some(id);
+    let grip: Element<'a, _> = if hovered {
+        resize_handle(
+            container(
+                text("⠿")
+                    .size(16)
+                    .color(if state.dragged_block == Some(id) {
+                        PRIMARY
+                    } else {
+                        FAINT
+                    }),
+            )
+            .center_x(24)
+            .center_y(block.kind.height()),
         )
-        .center_x(24)
-        .center_y(block.kind.height()),
-    )
-    .on_press(BlockEditorEvent::BlockDragStarted(id))
-    .on_drag(move |dx, dy| BlockEditorEvent::BlockDragged(id, dx, dy))
-    .on_release(BlockEditorEvent::BlockDragEnded)
-    .interaction(mouse::Interaction::Grabbing);
+        .on_press(BlockEditorEvent::BlockDragStarted(id))
+        .on_drag(move |dx, dy| BlockEditorEvent::BlockDragged(id, dx, dy))
+        .on_release(BlockEditorEvent::BlockDragEnded)
+        .interaction(mouse::Interaction::Grabbing)
+        .into()
+    } else {
+        container(text(""))
+            .center_x(24)
+            .center_y(block.kind.height())
+            .into()
+    };
 
     let content: Element<'a, _> = if block.kind == BlockKind::Divider {
         container(
@@ -672,26 +679,27 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
         content.push(input).width(Length::Fill).into()
     };
 
-    let actions = row![
-        button(text(block.kind.label()).size(10))
-            .on_press(BlockEditorEvent::Select(id))
-            .padding([4, 6])
-            .style(button::text),
-        button(text("+").size(14))
-            .on_press(BlockEditorEvent::AddAfter(id, BlockKind::Paragraph))
-            .padding([3, 6])
-            .style(button::text),
-        button(text("Comment").size(10))
-            .on_press(BlockEditorEvent::OpenCommentComposer(id))
-            .padding([4, 6])
-            .style(button::text),
-        button(text("×").size(14))
-            .on_press(BlockEditorEvent::Delete(id))
-            .padding([3, 6])
-            .style(button::text),
-    ]
-    .spacing(1)
-    .align_y(iced::Alignment::Center);
+    let actions: Element<'a, _> = if hovered {
+        row![
+            button(text("+").size(14))
+                .on_press(BlockEditorEvent::AddAfter(id, BlockKind::Paragraph))
+                .padding([3, 6])
+                .style(button::text),
+            button(text("Comment").size(10))
+                .on_press(BlockEditorEvent::OpenCommentComposer(id))
+                .padding([4, 6])
+                .style(button::text),
+            button(text("×").size(14))
+                .on_press(BlockEditorEvent::Delete(id))
+                .padding([3, 6])
+                .style(button::text),
+        ]
+        .spacing(1)
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        iced::widget::space().width(0).into()
+    };
 
     let mut block_column = column![
         row![grip, content, actions]
@@ -701,17 +709,21 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
     ]
     .width(Length::Fill);
 
-    if state.selected_block == Some(id) || block.text == "/" {
+    if block.text == "/" {
         block_column = block_column.push(kind_menu(id));
     }
     if state.composer_for == Some(id) {
         block_column = block_column.push(comment_composer(state));
     }
 
-    container(block_column)
-        .width(Length::Fill)
-        .style(move |_| block_surface(state.dragged_block == Some(id)))
-        .into()
+    mouse_area(
+        container(block_column)
+            .width(Length::Fill)
+            .style(move |_| block_surface(state.dragged_block == Some(id))),
+    )
+    .on_enter(BlockEditorEvent::Hover(Some(id)))
+    .on_exit(BlockEditorEvent::Hover(None))
+    .into()
 }
 
 fn kind_menu(id: u64) -> Element<'static, BlockEditorEvent> {
@@ -1056,6 +1068,28 @@ mod tests {
             iced::Size::new(1000.0, 620.0),
             block_editor(&state),
         );
+        assert!(screen.find("⠿").is_err(), "block grip starts hidden");
+        assert!(
+            screen.find("Comment").is_err(),
+            "block actions start hidden"
+        );
+        screen
+            .click("Type '/' for commands")
+            .expect("empty text block");
+        let events = screen.into_messages().collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, BlockEditorEvent::Hover(Some(1)))),
+            "hovering the block reveals its actions"
+        );
+
+        let state = events.into_iter().fold(state, apply);
+        let mut screen = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(1000.0, 620.0),
+            block_editor(&state),
+        );
         screen.click("Text").expect("add text block button");
         assert!(
             screen
@@ -1073,6 +1107,17 @@ mod tests {
             screen
                 .into_messages()
                 .any(|message| matches!(message, BlockEditorEvent::OpenCommentComposer(1)))
+        );
+    }
+
+    #[test]
+    fn insertion_requests_focus_only_after_the_new_block_exists() {
+        let state = block_editor_state("untitled".into());
+        let state = block_editor_apply(state, BlockEditorEvent::AddAfter(1, BlockKind::Paragraph));
+        assert_eq!(block_editor_pending_focus(state.clone()), 2);
+        assert_eq!(
+            block_editor_pending_focus(block_editor_clear_focus(state)),
+            0
         );
     }
 }
