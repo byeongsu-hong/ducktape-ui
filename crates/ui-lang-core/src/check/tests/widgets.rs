@@ -15,7 +15,12 @@ extern crate::backend
   input-style input_base()
   button-style button_base()
   text-style text_base()
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -231,7 +236,12 @@ view
 #[test]
 fn checks_exact_pixel_style_utilities() {
     let source = r#"app ExactUtilities
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -259,7 +269,12 @@ view
 #[test]
 fn checks_accessibility_names_descriptions_and_icon_buttons() {
     let source = r#"app Accessible
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

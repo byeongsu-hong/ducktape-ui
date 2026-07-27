@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn lowers_first_class_tests_to_headless_rust_tests() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #111111
   fg #eeeeee
   primary #3366ff
@@ -70,7 +75,12 @@ view
 fn lowers_the_daemon_test_window_from_the_driver() {
     let generated = compile(
         r#"daemon Monitor
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -96,7 +106,12 @@ fn wraps_sync_test_expressions_in_source_mapped_panic_context() {
         r#"app Demo
 extern crate::backend
   sync explode() -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -132,7 +147,12 @@ fn discovers_support_used_only_by_a_test_mount() {
         r#"app MountFeatures
 extern crate::backend
   themer panel(active:bool) -> unit
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

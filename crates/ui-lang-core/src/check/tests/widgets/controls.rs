@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn rejects_invalid_rule_style_values() {
     let source = r#"app Structure
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -33,7 +38,12 @@ extern crate::backend
   SliderNumber()
   sync slider_number(value:f64) -> SliderNumber
   slider-style dynamic_slider(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -114,7 +124,12 @@ fn checks_progress_options_and_rejects_invalid_style() {
     let source = r#"app Controls
 extern crate::backend
   progress-style dynamic_progress(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -163,7 +178,12 @@ fn checks_tooltip_style_and_rejects_invalid_values() {
     let source = r#"app Hints
 extern crate::backend
   box-style tooltip_surface(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -212,7 +232,12 @@ view
 #[test]
 fn rejects_a_negative_space_length() {
     let source = r#"app Structure
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -233,7 +258,12 @@ view
 #[test]
 fn rejects_a_non_positive_responsive_breakpoint() {
     let source = r#"app Structure
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -251,7 +281,12 @@ view
 #[test]
 fn infers_mouse_move_and_scroll_payloads() {
     let source = r#"app Pointer
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -281,7 +316,12 @@ view
 #[test]
 fn rejects_wrong_mouse_move_arity() {
     let source = r#"app Pointer
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -301,7 +341,12 @@ fn checks_scrollable_configuration_and_offsets() {
     let source = r#"app Scrolling
 extern crate::backend
   scroll-style dynamic_scroll(busy:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -376,7 +421,12 @@ view
 #[test]
 fn rejects_negative_scrollbar_size() {
     let source = r#"app Scrolling
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -396,7 +446,12 @@ fn checks_extended_text_input_routes_and_properties() {
 extern crate::backend
   input-style dynamic_input(disabled:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -441,7 +496,12 @@ view
 #[test]
 fn rejects_inline_input_icon_properties() {
     let source = r#"app Form
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -463,7 +523,12 @@ view
 #[test]
 fn rejects_negative_input_icon_spacing() {
     let source = r#"app Form
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -484,7 +549,12 @@ fn checks_button_child_and_typed_properties() {
     let source = r#"app Actions
 extern crate::backend
   button-style dynamic_button(disabled:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -527,7 +597,12 @@ view
 #[test]
 fn rejects_button_label_and_child_together() {
     let source = r#"app Actions
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -548,7 +623,12 @@ fn checks_complete_boolean_control_styles_and_typography() {
 extern crate::backend
   checkbox-style dynamic_checkbox(disabled:bool)
   toggler-style dynamic_toggler(disabled:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -652,7 +732,12 @@ fn checks_complete_radio_api_and_generic_values() {
 extern crate::backend
   Item(id:i64)
   radio-style dynamic_radio(highlight:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -720,7 +805,12 @@ view
 #[test]
 fn checks_text_format_options_and_rejects_zero_line_height() {
     let source = r#"app Typography
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -742,7 +832,12 @@ fn checks_native_text_style_callbacks() {
     let source = r#"app Typography
 extern crate::backend
   text-style dynamic_text(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -779,7 +874,12 @@ view
 fn checks_structured_rich_text_spans() {
     let source = r#"app Typography
 font ui family=sans weight=medium stretch=normal style=normal
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -830,7 +930,12 @@ font semibold family=mono weight=semibold stretch=semi-expanded style=normal
 font bold weight=bold stretch=expanded style=normal
 font extra_bold weight=extra-bold stretch=extra-expanded style=normal
 font black weight=black stretch=ultra-expanded style=normal
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -858,7 +963,12 @@ view
 #[test]
 fn rejects_checkbox_icon_options_without_icon() {
     let source = r#"app Preferences
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

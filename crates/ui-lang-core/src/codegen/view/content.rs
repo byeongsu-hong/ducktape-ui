@@ -66,7 +66,7 @@ pub(in crate::codegen) fn render_content(
                     .map(|value| theme_color(document, value));
                 write!(
                     code,
-                    ".style(|theme| {{ let default = ::iced::widget::qr_code::default(theme); ::iced::widget::qr_code::Style {{ cell: {}, background: {} }} }})",
+                    ".style(move |theme| {{ let default = ::iced::widget::qr_code::default(theme); ::iced::widget::qr_code::Style {{ cell: {}, background: {} }} }})",
                     cell.unwrap_or_else(|| "default.cell".into()),
                     background.unwrap_or_else(|| "default.background".into())
                 )

@@ -3,7 +3,12 @@ app ComponentOutput
 use "extern/component_output.ice"
 use "extern/plugin_backend.ice"
 
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #111111
   fg #eeeeee
   primary #3366ff

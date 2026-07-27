@@ -2,7 +2,12 @@ app Demo
 enum RequestState
     idle
     ready([str])
-theme
+theme contract AppTheme
+    bg
+    fg
+    primary
+    danger
+palette app for AppTheme
     bg #000000
     fg #ffffff
     primary #333333

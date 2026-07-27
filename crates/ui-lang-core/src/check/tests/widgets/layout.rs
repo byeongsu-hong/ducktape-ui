@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn checks_css_flexbox_container_and_items() {
     let source = r#"app Flexbox
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -31,7 +36,12 @@ view
 #[test]
 fn checks_complete_flex_layout_options() {
     let source = r#"app Layouts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -66,7 +76,12 @@ fn checks_complete_container_layout() {
     let source = r#"app Boxed
 extern crate::backend
   box-style dynamic_container(highlight:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -119,7 +134,12 @@ view
 #[test]
 fn checks_structured_overlays() {
     let source = r#"app Dialog
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -161,7 +181,12 @@ view
 #[test]
 fn checks_persistent_pane_grids() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -195,7 +220,12 @@ view
 #[test]
 fn checks_nested_pane_configurations_and_closed_templates() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -260,7 +290,12 @@ fn checks_runtime_pane_templates_and_keys() {
     let source = r#"app Workspace
 extern crate::backend
   Task(id:i64, title:str)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -317,7 +352,12 @@ fn checks_structured_pane_titles_and_controls() {
     let source = r#"app Workspace
 extern crate::backend
   panes-style dynamic_panes(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -431,7 +471,12 @@ view
 #[test]
 fn checks_pane_state_operations_and_queries() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -486,7 +531,12 @@ view
     assert!(error.message.contains("query requires a route"));
 
     let duplicate = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -520,7 +570,12 @@ view
 #[test]
 fn checks_complete_grid_sizing() {
     let source = r#"app Layouts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

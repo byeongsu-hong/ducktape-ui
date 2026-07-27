@@ -32,7 +32,9 @@ extern crate::backend
   stream fallible() -> str ! AppError
   recipe snapshot(id:i64) -> str
   event-filter raw_event() -> str
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 on start
   parallel
@@ -113,7 +115,12 @@ fn parses_generic_event_subscriptions() {
     let source = r#"app Events
 extern crate::backend
   sync event_name(value:event) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -159,7 +166,9 @@ extern crate::backend
   AppError(message:str)
   sip download(size:i64) progress=f64 -> bytes
   sip fallible() progress=i64 -> str ! AppError
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 on start
   parallel
@@ -205,7 +214,9 @@ fn parses_structured_task_flows() {
 extern crate::backend
   stream numbers(limit:i64) -> i64
   task double(value:i64) -> i64
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 on start
   flow
@@ -263,7 +274,9 @@ extern crate::backend
   AppError(message:str)
   sync normalize(error:NetworkError) -> AppError
   task request() -> i64 ! NetworkError
-theme
+theme contract AppTheme
+  bg
+palette app for AppTheme
   bg #000000
 state
   results:[result[i64,AppError]] = []

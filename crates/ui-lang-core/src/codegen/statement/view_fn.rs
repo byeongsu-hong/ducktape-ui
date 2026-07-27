@@ -37,16 +37,20 @@ pub(in crate::codegen) fn generate_view(
     } else {
         ""
     };
+    let callback_value = if document.daemon { "window" } else { "" };
+    let palette = format!(
+        "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
+    );
     if mounted.is_empty() && document.daemon {
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {rendered_root} }}"
+            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {rendered_root} }}"
         )
         .unwrap();
     } else if mounted.is_empty() {
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ let __ice_content: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
+            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
         )
         .unwrap();
     } else {
@@ -75,7 +79,7 @@ pub(in crate::codegen) fn generate_view(
         };
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ let __ice_root_scope = {root_scope_code}; {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {result} }}"
+            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_code}; {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {result} }}"
         )
         .unwrap();
     }

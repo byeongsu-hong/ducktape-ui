@@ -18,6 +18,99 @@ mod testing;
 #[path = "tests/widgets.rs"]
 mod widgets;
 
+const THEMED_APP: &str = r#"app Demo
+  palette active_palette
+theme contract Ducktape
+  bg
+  fg
+  primary
+  danger
+  surface
+palette light for Ducktape
+  bg #ffffff
+  fg #111111
+  primary #3366ff
+  danger #cc3344
+  surface #f4f4f4
+state
+  active_palette = "light"
+view
+  box bg=surface
+    text "Theme"
+"#;
+
+#[test]
+fn checks_complete_dynamic_palettes() {
+    analyze(THEMED_APP).unwrap();
+}
+
+#[test]
+fn rejects_invalid_theme_contracts_and_palettes() {
+    for (source, message) in [
+        (
+            THEMED_APP.replace("  danger\n  surface", "  surface"),
+            "missing `danger`",
+        ),
+        (
+            THEMED_APP.replace("palette light for Ducktape", "palette light for Other"),
+            "not `Ducktape`",
+        ),
+        (
+            THEMED_APP.replace("  surface #f4f4f4", "  accent #f4f4f4"),
+            "unknown token `accent`",
+        ),
+        (
+            THEMED_APP.replace("  surface #f4f4f4\nstate", "state"),
+            "missing token `surface`",
+        ),
+        (
+            THEMED_APP.replace("  active_palette = \"light\"", "  active_palette = true"),
+            "expected `str`, got `bool`",
+        ),
+        (
+            THEMED_APP.replace("palette active_palette", "palette \"missing\""),
+            "unknown palette `missing`",
+        ),
+    ] {
+        let error = analyze(&source).unwrap_err();
+        assert!(
+            error.message.contains(message),
+            "{}: {}",
+            error.code,
+            error.message
+        );
+    }
+}
+
+#[test]
+fn rejects_duplicate_or_non_color_palette_entries_during_parsing() {
+    for (source, message) in [
+        (
+            THEMED_APP.replace("  surface #f4f4f4", "  surface #f4f4f4\n  surface #eeeeee"),
+            "duplicate palette token `surface`",
+        ),
+        (
+            THEMED_APP.replace("  surface #f4f4f4", "  surface blue"),
+            "palette colors use #RRGGBB or #RRGGBBAA",
+        ),
+        (
+            THEMED_APP.replace(
+                "palette light for Ducktape",
+                "palette light for Ducktape\npalette light for Ducktape",
+            ),
+            "duplicate palette `light`",
+        ),
+    ] {
+        let error = analyze(&source).unwrap_err();
+        assert!(
+            error.message.contains(message),
+            "{}: {}",
+            error.code,
+            error.message
+        );
+    }
+}
+
 #[test]
 fn rejects_invalid_constant_integer_arithmetic() {
     for (expression, message) in [
@@ -35,7 +128,7 @@ fn rejects_invalid_constant_integer_arithmetic() {
     }
 
     let error = analyze(
-        "app Demo\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  value = 1\nview\n  text (value / (1 - 1))\n",
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  value = 1\nview\n  text (value / (1 - 1))\n",
     )
     .unwrap_err();
     assert_eq!(error.code, "E153");
@@ -46,7 +139,12 @@ fn rejects_invalid_constant_integer_arithmetic() {
 fn rejects_duplicate_handler_parameters() {
     for source in [
         r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -56,7 +154,12 @@ view
   button "ok" -> pressed(1, 2)
 "#,
         r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -84,7 +187,12 @@ fn checks_derived_values_and_immutable_handler_locals() {
 extern crate::backend
   sync normalize(value:str) -> str
   save(title:str) -> unit
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

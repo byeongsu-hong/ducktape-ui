@@ -51,7 +51,12 @@ fn declared_sync_calls_shadow_simple_builtins() {
     let source = r#"app Demo
 extern crate::backend
   sync len(value:str) -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

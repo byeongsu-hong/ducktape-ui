@@ -1,7 +1,54 @@
 use "recipes.ice"
 use "components.ice"
 
-theme
+theme contract AppTheme
+  bg
+  surface
+  fg
+  muted
+  muted_bg
+  primary
+  primary_fg
+  secondary
+  secondary_fg
+  accent
+  accent_fg
+  brand
+  brand_fg
+  brand_bg
+  brand_line
+  danger
+  danger_fg
+  danger_bg
+  danger_line
+  danger_dot
+  success
+  success_fg
+  success_bg
+  success_line
+  success_dot
+  warning
+  warning_fg
+  warning_bg
+  warning_line
+  warning_dot
+  avatar_bg
+  avatar_fg
+  toast_bg
+  toast_fg
+  border
+  control_line
+  input
+  ring
+  glass_thin
+  glass_regular
+  glass_sheet
+  shadow_popover
+  shadow_toast
+  shadow_modal
+  shadow_window
+  shadow_window_secondary
+palette app for AppTheme
   bg         #fdfdfb
   surface    #ffffff
   fg         #2c2b27

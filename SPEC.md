@@ -193,7 +193,8 @@ Top-level declarations are order-independent, but canonical source uses:
 app | daemon
 use
 extern
-theme
+theme contract
+palette
 recipe
 qr
 state
@@ -226,16 +227,18 @@ source_graph   = root_file imported_file*
 root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
 use_decl       = "use" string ("as" name)?
-declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
+declaration    = extern_decl | theme_contract_decl | palette_decl
+               | style_recipe_decl | font_decl
                | qr_decl | enum_decl | state_decl | derived_decl | preset_decl | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
-document       = root_decl extern_decl* theme_decl style_recipe_decl* qr_decl*
-                 enum_decl* state_decl? derived_decl? preset_decl* component_decl*
+document       = root_decl extern_decl* theme_contract_decl palette_decl+
+                 style_recipe_decl* qr_decl* enum_decl* state_decl? derived_decl?
+                 preset_decl* component_decl*
                  handler_decl*
                  subscribe_decl? view_decl test_decl*
 
 root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
-app_setting    = "title" expr | "theme" expr
+app_setting    = "title" expr | "theme" expr | "palette" expr
                | ("bg" | "fg") expr
                | "id" string | "font" string
                | ("executor" | "renderer") rust_path
@@ -376,7 +379,10 @@ extern_menu_style_sig
 extern_pane_grid_style_sig
                = "panes-style" name "(" field_list? ")"
 
-theme_decl     = "theme" INDENT color_entry+
+theme_contract_decl
+               = "theme" "contract" PascalName INDENT theme_token+
+theme_token    = name
+palette_decl   = "palette" name "for" PascalName INDENT color_entry+
 color_entry    = name color
 
 style_recipe_decl
@@ -1172,6 +1178,7 @@ callbacks accept state expressions directly:
 app Tasks
   title window_title
   theme app_theme
+  palette active_palette
   bg app_background
   fg app_text
   id "dev.ducktape.ice.tasks"
@@ -1212,18 +1219,21 @@ app Tasks
 state
   window_title = "Ice Tasks"
   app_theme = "app"
+  active_palette = "light"
   app_background = "#0f172a"
   app_text = "#f8fafc"
   ui_scale = 1.0
 ```
 
-`title`, `theme`, `bg`, `fg`, and `scale` are recomputed
+`title`, `theme`, `palette`, `bg`, `fg`, and `scale` are recomputed
 from current state through iced's native callbacks. Title/theme/style values are
 typed `str`; scale is `f64`. Theme accepts `app`, `default`, or any of iced's 22
-kebab-case built-ins. Application colors accept 3/4/6/8 digit hexadecimal
-strings. Invalid dynamic theme/color values safely retain the generated app
-theme or selected theme base style, and a non-positive dynamic scale is clamped
-to `f32::EPSILON`. Literal mistakes are rejected during analysis.
+kebab-case built-ins. Palette accepts a declared palette name; a literal unknown
+name is rejected, while an unknown dynamic value selects the first declaration.
+Application colors accept 3/4/6/8 digit hexadecimal strings. Invalid dynamic
+theme/color values safely retain the generated app theme or selected theme base
+style, and a non-positive dynamic scale is clamped to `f32::EPSILON`. Literal
+mistakes are rejected during analysis.
 
 The remaining application values lower to iced `Settings` and builder
 configuration. Generated `run` delegates to one internal typed program builder;
@@ -4397,19 +4407,41 @@ adapter.
 
 ## 10. Theme and style
 
-Theme colors are named tokens with `#RRGGBB` or `#RRGGBBAA` values:
+Themes separate a semantic token contract from one or more concrete palettes:
 
 ```ice
-theme
-  bg #0f172a
-  fg #f8fafc
-  primary    #7c3aed
-  danger     #dc2626
+theme contract Ducktape
+  bg
+  fg
+  primary
+  danger
+  surface
+
+palette light for Ducktape
+  bg #fdfdfb
+  fg #171717
+  primary #7c3aed
+  danger #dc2626
+  surface #ffffff
+
+palette dark for Ducktape
+  bg #161615
+  fg #f5f5f4
+  primary #a78bfa
+  danger #fb7185
+  surface #20201e
 ```
 
-`bg`, `fg`, `primary`, and `danger` are required. Other names
-are app-defined. `white`, `black`, and `transparent` are built in and cannot be
-redeclared. A color may carry opacity, such as `bg-primary/70`.
+`bg`, `fg`, `primary`, and `danger` are required contract tokens. Other names
+are app-defined. Every palette must target the declared contract and provide
+exactly one `#RRGGBB` or `#RRGGBBAA` value for every token; missing, unknown,
+duplicate, and invalid-color entries are errors. Palette declarations are
+ordered, and the first is the default. An app selects one from a checked `str`
+expression with `palette active_palette`; changing that state changes generated
+Iced theme fields and every semantic-token style on the next view. This is a
+small generated lookup, not a reactive theme graph. `white`, `black`, and
+`transparent` remain built in and cannot be redeclared. A color may carry
+opacity, such as `bg-primary/70`.
 
 Apps and nested subtrees may use `default`, `app`, or any of iced's 22 built-in
 default-renderer themes. A typed Rust factory covers arbitrary native

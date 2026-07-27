@@ -84,6 +84,39 @@ The punctuation has one job each:
 when read and create no runtime signal graph. Handler-local `let` bindings are
 immutable and scoped to that handler invocation.
 
+Themes declare semantic names once and fill them with one or more complete
+palettes. The app can select a palette from state; semantic token styles and the
+generated Iced theme change together.
+
+```ice
+app Tasks
+  palette active_palette
+
+theme contract ProductTheme
+  bg
+  fg
+  primary
+  danger
+  surface
+
+palette light for ProductTheme
+  bg #fdfdfb
+  fg #171717
+  primary #7c3aed
+  danger #dc2626
+  surface #ffffff
+
+palette dark for ProductTheme
+  bg #161615
+  fg #f5f5f4
+  primary #a78bfa
+  danger #fb7185
+  surface #20201e
+
+state
+  active_palette = "light"
+```
+
 Components may keep instance-scoped UI state and local handlers. A handler may
 end with `run` or a widget operation scoped to its own rendered subtree;
 `run latest` discards an older Future completion from the same component scope

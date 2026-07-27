@@ -100,6 +100,7 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
         match name {
             "title" => set!(title, app_expression(value, item)?),
             "theme" => set!(theme, app_expression(value, item)?),
+            "palette" => set!(palette, app_expression(value, item)?),
             "bg" => set!(background, app_expression(value, item)?),
             "fg" => set!(text_color, app_expression(value, item)?),
             "id" => set!(id, string_literal(value, item)?),

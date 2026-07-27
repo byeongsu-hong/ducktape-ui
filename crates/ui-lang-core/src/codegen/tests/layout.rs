@@ -11,7 +11,14 @@ recipe panel for box extends surface
   border border-border rounded-lg overflow-hidden
 recipe title for text
   text-22px leading-tight font-bold text-fg
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+  surface
+  border
+palette app for AppTheme
   bg #101010
   fg #f0f0f0
   primary #336699
@@ -76,7 +83,13 @@ recipe danger_action for button extends action
   bg-danger
 recipe caption for text
   text-12.5px text-fg
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  primary_fg
+  danger
+palette app for AppTheme
   bg #101010
   fg #f0f0f0
   primary #336699
@@ -132,7 +145,12 @@ recipe label for text
   text-10px font-mono font-semibold text-fg
 recipe strong for text
   font-bold text-fg
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #101010
   fg #f0f0f0
   primary #336699
@@ -155,7 +173,12 @@ view
 #[test]
 fn lowers_box_and_flex_sugar_to_native_layouts() {
     let source = r#"app Layouts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -193,7 +216,12 @@ view
 #[test]
 fn lowers_complete_css_flexbox() {
     let source = r#"app Flexbox
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -239,7 +267,12 @@ view
 #[test]
 fn lowers_complete_flex_layouts_and_wrapping() {
     let source = r#"app Layouts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -271,7 +304,12 @@ fn lowers_complete_container_layout() {
     let source = r#"app Boxed
 extern crate::backend
   box-style dynamic_container(highlight:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -303,7 +341,12 @@ view
 #[test]
 fn lowers_structured_overlays_to_native_overlay_widgets() {
     let source = r#"app Dialog
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -325,7 +368,7 @@ view
     assert!(generated.contains("::iced::widget::Stack::new()"));
     assert!(generated.contains("::iced::widget::float(__overlay_surface)"));
     assert!(generated.contains("::core::f32::EPSILON"));
-    assert!(generated.contains("::iced::Color::from_rgba8(0, 0, 0, 0.600000)"));
+    assert!(generated.contains("__color.a = 0.600000"));
     assert!(generated.contains(".on_press(__DialogMessage::Close)"));
     assert!(generated.contains(".align_x(::iced::alignment::Horizontal::Center)"));
     assert!(generated.contains(".align_y(::iced::alignment::Vertical::Bottom)"));
@@ -339,7 +382,12 @@ fn lowers_plain_stacks_to_union_sizing_zstack() {
     // iced's native `Stack` sizes to the first layer only, so plain stacks lower
     // to the union-sizing `ui_lang_runtime::zstack` instead.
     let source = r#"app Popover
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -372,7 +420,12 @@ view
 #[test]
 fn lowers_persistent_pane_grids() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -410,7 +463,12 @@ view
 #[test]
 fn lowers_nested_pane_configuration_and_closed_templates() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -457,7 +515,12 @@ fn lowers_runtime_pane_templates() {
     let source = r#"app Workspace
 extern crate::backend
   Task(id:i64, title:str)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -504,7 +567,12 @@ fn lowers_structured_pane_titles_and_dynamic_controls() {
     let source = r#"app Workspace
 extern crate::backend
   panes-style dynamic_panes(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -572,7 +640,12 @@ view
 #[test]
 fn lowers_pane_state_operations_and_queries() {
     let source = r#"app Workspace
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -627,7 +700,12 @@ extern crate::backend
   pick-list-style dynamic_pick(busy:bool)
   menu-style dynamic_menu(busy:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -707,7 +785,12 @@ extern crate::backend
   input-style dynamic_input(busy:bool)
   menu-style dynamic_menu(busy:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -784,7 +867,12 @@ view
 #[test]
 fn lowers_structural_widgets_and_size_events() {
     let source = r#"app Structure
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -830,7 +918,9 @@ view
             "(((__viewport.y as f64) + (__viewport.height as f64)) - (__original.y as f64)) - (__original.height as f64)"
         ));
     assert!(generated.contains("::iced::widget::float::Style::default()"));
-    assert!(generated.contains("__style.shadow.color = ::iced::Color::from_rgba8"));
+    assert!(generated.contains(
+        "__style.shadow.color = { let mut __color = ::iced::Color::from_rgba8(0, 0, 0, 1.000000);"
+    ));
     assert!(generated.contains("__style.shadow.offset.x = 1.0 as f32"));
     assert!(generated.contains("__style.shadow.offset.y = 2.0 as f32"));
     assert!(generated.contains("__style.shadow.blur_radius = 4.0 as f32"));
@@ -862,7 +952,12 @@ fn lowers_configured_scrollables_and_viewport_events() {
     let source = r#"app Scrolling
 extern crate::backend
   scroll-style dynamic_scroll(busy:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

@@ -156,7 +156,7 @@ pub(in crate::codegen) fn append_size(code: &mut String, style: &Style) {
 
 pub(in crate::codegen) fn container_style_code(style: &Style, document: &Document) -> String {
     container_style_value(style, document)
-        .map(|style| format!(".style(|_| {style})"))
+        .map(|style| format!(".style(move |_| {style})"))
         .unwrap_or_default()
 }
 
@@ -353,17 +353,25 @@ pub(in crate::codegen) fn theme_color(document: &Document, token: &str) -> Strin
         .map_or((token, None), |(name, opacity)| {
             (name, opacity.parse::<u8>().ok())
         });
-    let value = match name {
-        "white" => "#ffffff",
-        "black" => "#000000",
-        "transparent" => "#00000000",
-        name => document
-            .theme
-            .get(name)
-            .map(String::as_str)
-            .unwrap_or("#000000"),
+    let color = match name {
+        "white" => color_code("#ffffff", None),
+        "black" => color_code("#000000", None),
+        "transparent" => color_code("#00000000", None),
+        name => {
+            let index = document
+                .theme_contract
+                .as_ref()
+                .and_then(|contract| contract.tokens.iter().position(|token| token == name))
+                .expect("checker validates theme tokens");
+            format!("__ice_palette.colors[{index}]")
+        }
     };
-    color_code(value, opacity)
+    opacity.map_or(color.clone(), |opacity| {
+        format!(
+            "{{ let mut __color = {color}; __color.a = {:.6}; __color }}",
+            opacity as f32 / 100.0
+        )
+    })
 }
 
 pub(in crate::codegen) fn theme_preset_code(
@@ -373,7 +381,7 @@ pub(in crate::codegen) fn theme_preset_code(
 ) -> Result<String, Error> {
     Ok(match preset {
         ThemePreset::Default => "::std::option::Option::None".into(),
-        ThemePreset::App => "::std::option::Option::Some(Self::__app_theme())".into(),
+        ThemePreset::App => "::std::option::Option::Some(__ice_app_theme.clone())".into(),
         ThemePreset::BuiltIn(name) => format!(
             "::std::option::Option::Some(::iced::Theme::{})",
             pascal(name)

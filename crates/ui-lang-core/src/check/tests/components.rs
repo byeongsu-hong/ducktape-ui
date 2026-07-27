@@ -4,7 +4,12 @@ use crate::{EffectKind, FutureMode, Statement};
 #[test]
 fn checks_named_component_event_routes_and_payloads() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -59,7 +64,12 @@ view
 #[test]
 fn component_event_routes_use_caller_scope_and_components_are_closed() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -90,7 +100,12 @@ view
 fn requires_component_output_routes_and_matching_emit_values() {
     let missing_route = analyze(
         r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -106,7 +121,12 @@ view
 
     let wrong_output = analyze(
         r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -128,7 +148,12 @@ fn rejects_component_output_routes_from_handlers() {
         r#"app Demo
 extern crate::backend
   fetch() -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -151,7 +176,12 @@ view
 fn infers_single_ordered_component_output_payloads() {
     let document = analyze(
         r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -176,7 +206,12 @@ extern crate::backend
   pick-list-style dynamic_pick(busy:bool)
   menu-style dynamic_menu(busy:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -227,7 +262,12 @@ view
 #[test]
 fn rejects_a_non_optional_pick_selection() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -248,7 +288,12 @@ view
 #[test]
 fn checks_qr_declarations_and_references() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -281,7 +326,12 @@ view
 #[test]
 fn rejects_unknown_nested_theme_colors() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -306,7 +356,12 @@ view
 #[test]
 fn checks_component_slot_contracts() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -365,7 +420,12 @@ view
 #[test]
 fn checks_closed_component_prop_defaults() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -445,7 +505,12 @@ view
 #[test]
 fn checks_named_component_slots() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -504,7 +569,12 @@ view
 #[test]
 fn checks_compound_component_slots() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -558,7 +628,12 @@ fn checks_keyed_columns_and_copyable_keys() {
     let source = r#"app Demo
 extern crate::backend
   Item(id:i64, name:str)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -582,7 +657,12 @@ view
 #[test]
 fn checks_lazy_static_boundaries() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -626,7 +706,12 @@ fn checks_markdown_content_settings_and_links() {
 font ui family=sans
 extern crate::backend
   markdown-viewer docs_viewer(prefix:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -685,7 +770,12 @@ fn checks_structured_tables_and_metrics() {
     let source = r#"app Rows
 extern crate::backend
   Item(name:str, done:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -713,7 +803,12 @@ view
 #[test]
 fn checks_bound_text_editors_and_highlighting() {
     let source = r#"app Notes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -749,7 +844,12 @@ extern crate::backend
   editor-binding editor_keys(readonly:bool) -> EditorCommand
   editor-highlighter editor_highlight(language:str)
   editor-style editor_surface(readonly:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -797,7 +897,12 @@ view
 #[test]
 fn checks_explicit_component_bind_contracts() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -845,7 +950,12 @@ view
     );
 
     let read_only_operator = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -869,7 +979,12 @@ view
 #[test]
 fn checks_component_scoped_state_and_handlers() {
     let source = r#"app Local
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -911,7 +1026,12 @@ view
 #[test]
 fn checks_component_scoped_widget_operations() {
     let source = r#"app LocalFocus
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -947,7 +1067,12 @@ fn checks_component_scoped_futures_and_latest() {
 extern crate::backend
   AppError(message:str)
   fetch(query:str) -> str ! AppError
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -998,7 +1123,12 @@ view
     let global = r#"app GlobalLatest
 extern crate::backend
   fetch(query:str) -> str
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1021,7 +1151,12 @@ view
 #[test]
 fn rejects_slots_outside_components_and_duplicate_slots() {
     let outside = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1031,10 +1166,15 @@ view
 "#;
     let error = analyze(outside).unwrap_err();
     assert_eq!(error.code, "E124");
-    assert_eq!(error.line, 8);
+    assert_eq!(error.line, 13);
 
     let duplicate = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1062,7 +1202,12 @@ extern crate::backend
   input-style dynamic_input(busy:bool)
   menu-style dynamic_menu(busy:bool)
 font ui family=sans
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1116,7 +1261,12 @@ view
 #[test]
 fn replaces_combo_search_options_with_a_typed_list() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -1141,7 +1291,12 @@ view
 #[test]
 fn checks_structural_widget_routes_and_ranges() {
     let source = r#"app Structure
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

@@ -5,7 +5,12 @@ fn rejects_state_capture_in_subscription_routes() {
     let source = r#"app Demo
 extern crate::backend
   subscription events() -> bool
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -25,7 +30,12 @@ view
 #[test]
 fn checks_native_keyboard_payload_fields() {
     let source = r#"app Shortcuts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -112,7 +122,12 @@ view
 #[test]
 fn checks_native_system_tasks_and_theme_subscription() {
     let source = r#"app Diagnostics
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -156,7 +171,12 @@ view
 #[test]
 fn checks_native_clipboard_tasks() {
     let source = r#"app Clipboard
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -195,7 +215,12 @@ view
 #[test]
 fn checks_native_runtime_font_loading() {
     let source = r#"app Fonts
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -223,7 +248,12 @@ view
 #[test]
 fn checks_all_static_widget_operations() {
     let source = r#"app Operations
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -279,7 +309,12 @@ view
 #[test]
 fn checks_all_dynamic_widget_operations() {
     let source = r#"app DynamicOperations
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -434,7 +469,12 @@ fn rejects_comparisons_of_widget_selector_targets() {
 #[test]
 fn rejects_events_routed_to_mount() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -450,7 +490,12 @@ view
 #[test]
 fn rejects_invalid_media_options() {
     let source = r#"app Demo
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -507,7 +552,12 @@ fn checks_svg_style_calls() {
     let source = r#"app Demo
 extern crate::backend
   svg-style dynamic_svg(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -542,7 +592,12 @@ view
 #[test]
 fn rejects_invalid_canvas_programs() {
     let source = r#"app Drawing
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -623,7 +678,12 @@ view
 #[test]
 fn checks_canvas_local_state_and_event_blocks() {
     let source = r#"app Drawing
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

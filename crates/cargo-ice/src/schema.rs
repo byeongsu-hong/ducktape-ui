@@ -29,6 +29,16 @@ const COMPLETIONS: &[Completion] = &[
     Completion::new("app", "declaration", "app ${1:Name}\n  $0"),
     Completion::new("use", "declaration", "use \"${1:path}.ice\""),
     Completion::new(
+        "theme contract",
+        "declaration",
+        "theme contract ${1:Name}\n  bg\n  fg\n  primary\n  danger\n  ${2:surface}",
+    ),
+    Completion::new(
+        "palette",
+        "declaration",
+        "palette ${1:light} for ${2:Name}\n  bg ${3:#ffffff}\n  fg ${4:#111111}\n  primary ${5:#3366ff}\n  danger ${6:#cc3344}",
+    ),
+    Completion::new(
         "recipe",
         "declaration",
         "recipe ${1:panel} for ${2:box}\n  @${3:w-full p-5}",
@@ -513,6 +523,22 @@ fn construct_schema(item: &Completion) -> Value {
             &["document"],
             "use \"<relative-path>.ice\"",
             leaf(),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
+        "theme contract" => details(
+            &["document"],
+            "theme contract <Name>\n  <token> ...",
+            child_shape(4, None, "theme-token-name"),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        ),
+        "palette" => details(
+            &["document"],
+            "palette <name> for <ThemeContract>\n  <token> <#RRGGBB|#RRGGBBAA> ...",
+            child_shape(4, None, "palette-token-color"),
             no_binding(),
             no_route(),
             Vec::new(),
@@ -1749,7 +1775,7 @@ pub fn document() -> Value {
                 "version": UI_LANG_RUNTIME_VERSION,
                 "generatedRustPath": "::ui_lang_runtime",
                 "publicApi": [
-                    "accessible", "navigation", "snapshot", "Bridge", "Role", "StableId",
+                    "accessible", "dynamic_themer", "navigation", "snapshot", "Bridge", "Role", "StableId",
                     "testing::Location", "testing::Config", "testing::Driver", "testing::Target",
                     "testing::step",
                 ],
@@ -1843,11 +1869,11 @@ pub fn document() -> Value {
                 "unmountEffects": false,
             },
             "documentPrelude": {
-                "syntax": "app <Name>\ntheme\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
-                "requiredDeclarations": ["app", "theme", "view"],
-                "theme": {
+                "syntax": "app <Name>\ntheme contract <Contract>\n  bg\n  fg\n  primary\n  danger\npalette <name> for <Contract>\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
+                "requiredDeclarations": ["app", "theme contract", "palette", "view"],
+                "themeContract": {
                     "required": true,
-                    "syntax": "theme",
+                    "syntax": "theme contract <Contract>",
                     "tokens": [
                         { "name": "bg", "type": "color", "required": true },
                         { "name": "fg", "type": "color", "required": true },
@@ -1855,6 +1881,16 @@ pub fn document() -> Value {
                         { "name": "danger", "type": "color", "required": true },
                     ],
                     "additionalTokens": true,
+                },
+                "palettes": {
+                    "required": true,
+                    "min": 1,
+                    "syntax": "palette <name> for <Contract>",
+                    "complete": true,
+                    "unknownTokens": false,
+                    "duplicateNames": false,
+                    "valueType": "color",
+                    "selection": "app setting `palette <str-expression>`; defaults to the first declared palette",
                 },
             },
             "types": {
@@ -1986,6 +2022,8 @@ mod tests {
         const CORE_CONTRACT: &[&str] = &[
             "app",
             "use",
+            "theme contract",
+            "palette",
             "recipe",
             "state",
             "derived",
@@ -2383,7 +2421,7 @@ mod tests {
     #[test]
     fn prelude_and_accessibility_schema_match_accepted_source() {
         let schema = document();
-        let tokens = schema["core"]["documentPrelude"]["theme"]["tokens"]
+        let tokens = schema["core"]["documentPrelude"]["themeContract"]["tokens"]
             .as_array()
             .unwrap();
         assert_eq!(
@@ -2392,6 +2430,10 @@ mod tests {
                 .map(|token| token["name"].as_str().unwrap())
                 .collect::<Vec<_>>(),
             ["bg", "fg", "primary", "danger"]
+        );
+        assert_eq!(
+            schema["core"]["documentPrelude"]["palettes"]["selection"],
+            "app setting `palette <str-expression>`; defaults to the first declared palette"
         );
 
         let constructs = schema["core"]["constructs"].as_array().unwrap();
@@ -2430,7 +2472,12 @@ mod tests {
         assert_eq!(image_description["forbiddenWhen"], "label is absent");
 
         let source = r#"app Accessible
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

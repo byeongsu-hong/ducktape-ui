@@ -6,7 +6,12 @@ fn checks_native_theme_factories() {
   theme native_theme(dark:bool)
 app Themes
   theme native_theme(dark)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -33,7 +38,12 @@ fn checks_alternate_theme_subtrees() {
     let source = r#"extern crate::backend
   themer alternate_panel(active:bool) -> bool
 app Themes
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -69,7 +79,12 @@ fn checks_generic_event_values_and_filters() {
 extern crate::backend
   sync event_name(value:event) -> str
   sync event_label(value:event) -> str?
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333

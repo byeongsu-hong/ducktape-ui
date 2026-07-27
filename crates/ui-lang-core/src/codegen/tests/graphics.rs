@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn lowers_native_canvas_geometry_cache_and_events() {
     let source = r#"app Drawing
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #0f172a
   fg #f8fafc
   primary #7c3aed
@@ -47,6 +52,7 @@ view
 "#;
     let generated = compile(source, "drawing.ice").unwrap();
     assert!(generated.contains("offset: usize::try_from(1).unwrap_or(0)"));
+    assert!(generated.contains("Hash::hash(&(__ice_palette.name, self.cached)"));
     for expected in [
         "impl<State, Message, Draw, Update, Interaction> ::iced::widget::canvas::Program<Message>",
         "__state.cache.get_or_init",
@@ -141,7 +147,12 @@ fn lowers_media_tooltip_and_pointer_events() {
 extern crate::backend
   svg-style dynamic_svg(active:bool)
   box-style dynamic_tooltip(active:bool)
-theme
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
@@ -198,8 +209,10 @@ view
     ));
     assert!(generated.contains("crate::backend::dynamic_svg(__theme, __status, self.active)"));
     assert!(generated.contains("fn __ui_lang_check_svg_style_dynamic_svg"));
-    assert!(generated.contains("svg::Status::Idle => __style.color = Some(::iced::Color"));
-    assert!(generated.contains("svg::Status::Hovered => __style.color = Some(::iced::Color"));
+    assert!(generated.contains("svg::Status::Idle => __style.color = Some(__ice_palette.colors"));
+    assert!(
+        generated.contains("svg::Status::Hovered => __style.color = Some(__ice_palette.colors")
+    );
     assert!(generated.contains("svg::Status::Hovered => __style.color = None"));
     let default_svg = compile(
         &source.replace(" style=dynamic_svg(active)", ""),

@@ -4,7 +4,11 @@ use super::{__TasksMessage, Tasks};
 fn resolves_application_callbacks_from_state() {
     let (mut app, _) = Tasks::__boot();
     assert_eq!(Tasks::__title(&app), "Ice Tasks");
-    assert_eq!(Tasks::__theme(&app), Tasks::__app_theme());
+    assert_eq!(Tasks::__theme(&app), Tasks::__app_theme(app.__palette()));
+    let dark_theme = Tasks::__theme(&app);
+
+    app.active_palette = "app".into();
+    assert_ne!(Tasks::__theme(&app), dark_theme);
 
     app.window_title = "Renamed".into();
     app.app_theme = "dark".into();
@@ -19,9 +23,10 @@ fn resolves_application_callbacks_from_state() {
     assert_eq!(Tasks::__scale_factor(&app), 1.5);
 
     app.app_theme = "unknown".into();
+    app.active_palette = "missing".into();
     app.app_background = "invalid".into();
     let base = <iced::Theme as iced::theme::Base>::base(&iced::Theme::Dark);
-    assert_eq!(Tasks::__theme(&app), Tasks::__app_theme());
+    assert_eq!(Tasks::__theme(&app), Tasks::__app_theme(app.__palette()));
     assert_eq!(
         Tasks::__style(&app, &iced::Theme::Dark).background_color,
         base.background_color
