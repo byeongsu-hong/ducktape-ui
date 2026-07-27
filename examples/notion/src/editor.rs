@@ -3,7 +3,7 @@ use iced::widget::{
     scrollable, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Length, Shadow, Task, Theme, Vector, mouse};
-use ui_lang_runtime::resize_handle;
+use ui_lang_runtime::{Role, StableId, accessible, resize_handle};
 
 const CARD_WIDTH: f32 = 292.0;
 const BLOCK_DRAG_STEP: f32 = 34.0;
@@ -78,8 +78,6 @@ struct CommentThread {
     block_id: u64,
     messages: Vec<CommentMessage>,
     resolved: bool,
-    offset_x: f32,
-    offset_y: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -92,12 +90,13 @@ pub struct BlockEditorState {
     dragged_block: Option<u64>,
     block_drag_y: f32,
     focus_request: Option<u64>,
+    page_hovered: bool,
+    menu_for: Option<u64>,
     composer_for: Option<u64>,
     comment_draft: String,
     replying_to: Option<u64>,
     reply_draft: String,
     comments_open: bool,
-    floating_comments: bool,
     show_resolved: bool,
     scroll_y: f32,
 }
@@ -106,26 +105,27 @@ pub struct BlockEditorState {
 pub enum BlockEditorEvent {
     Edit(u64, String),
     Hover(Option<u64>),
-    Add(BlockKind),
     AddAfter(u64, BlockKind),
     Delete(u64),
     SetKind(u64, BlockKind),
     ToggleTodo(u64),
+    MoveUp(u64),
+    MoveDown(u64),
     BlockDragStarted(u64),
     BlockDragged(u64, f64, f64),
     BlockDragEnded,
+    HoverPage(bool),
+    ToggleBlockMenu(u64),
     OpenCommentComposer(u64),
     CloseCommentComposer,
     CommentDraftChanged(String),
     SubmitComment,
-    Reply(u64),
-    ReplyDraftChanged(String),
+    ReplyDraftChanged(u64, String),
     SubmitReply(u64),
+    JumpToBlock(u64),
     Resolve(u64),
     Reopen(u64),
-    CommentDragged(u64, f64, f64),
     ToggleComments,
-    ToggleFloating,
     ToggleResolved,
     Scrolled(f32),
 }
@@ -171,19 +171,31 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
         ],
         "untitled" => vec![(BlockKind::Paragraph, "")],
         _ => vec![
-            (BlockKind::HeadingOne, "Welcome to your workspace."),
+            (BlockKind::HeadingOne, "Build a calmer place to work."),
             (
                 BlockKind::Paragraph,
-                "This is a calm place to write, plan, and keep the details that matter.",
+                "Keep decisions, plans, and their context in one clear place.",
             ),
-            (BlockKind::HeadingTwo, "A few things to try"),
-            (BlockKind::Todo, "Rename this page"),
-            (BlockKind::Todo, "Drag a block by its handle"),
-            (BlockKind::Todo, "Add a comment to any block"),
+            (BlockKind::HeadingTwo, "Principles"),
             (
-                BlockKind::Quote,
-                "Your work stays connected to its context.",
+                BlockKind::Bullet,
+                "Show the next useful action, not every possible action",
             ),
+            (
+                BlockKind::Bullet,
+                "Keep decisions beside the work that informed them",
+            ),
+            (
+                BlockKind::Bullet,
+                "Make collaboration visible without interrupting writing",
+            ),
+            (BlockKind::HeadingTwo, "This quarter"),
+            (
+                BlockKind::Todo,
+                "Validate the editor with five product teams",
+            ),
+            (BlockKind::Todo, "Connect customer research to the roadmap"),
+            (BlockKind::Quote, "Clarity beats more surface area."),
         ],
     }
     .into_iter()
@@ -203,12 +215,10 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
             block_id: 2,
             messages: vec![CommentMessage {
                 author: "Mina",
-                body: "Can we add the customer research notes here?".into(),
+                body: "Can we link the customer research notes here?".into(),
                 time: "18m",
             }],
             resolved: false,
-            offset_x: 0.0,
-            offset_y: 0.0,
         })
         .into_iter()
         .collect();
@@ -222,12 +232,13 @@ pub fn block_editor_state(template: String) -> BlockEditorState {
         dragged_block: None,
         block_drag_y: 0.0,
         focus_request: None,
+        page_hovered: false,
+        menu_for: None,
         composer_for: None,
         comment_draft: String::new(),
         replying_to: None,
         reply_draft: String::new(),
-        comments_open: true,
-        floating_comments: true,
+        comments_open: false,
         show_resolved: false,
         scroll_y: 0.0,
     }
@@ -250,6 +261,15 @@ pub fn block_editor_clear_focus(mut state: BlockEditorState) -> BlockEditorState
     state
 }
 
+pub fn block_editor_toggle_comments(mut state: BlockEditorState) -> BlockEditorState {
+    state.comments_open = !state.comments_open;
+    state
+}
+
+pub fn block_editor_comments_open(state: BlockEditorState) -> bool {
+    state.comments_open
+}
+
 pub fn block_editor_focus(block: i64) -> Task<bool> {
     let Ok(block) = u64::try_from(block) else {
         return Task::done(false);
@@ -266,10 +286,6 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
             }
         }
         BlockEditorEvent::Hover(block) => state.hovered_block = block,
-        BlockEditorEvent::Add(kind) => {
-            let id = state.push_block(kind, "");
-            focus = Some(id);
-        }
         BlockEditorEvent::AddAfter(id, kind) => {
             let id = state.insert_after(id, kind, "");
             focus = Some(id);
@@ -280,6 +296,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
             {
                 state.blocks.remove(index);
                 state.threads.retain(|thread| thread.block_id != id);
+                state.menu_for = None;
                 let next = index.saturating_sub(1).min(state.blocks.len() - 1);
                 focus = Some(state.blocks[next].id);
             }
@@ -291,11 +308,28 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                     block.text.clear();
                 }
             }
+            state.menu_for = None;
             focus = Some(id);
         }
         BlockEditorEvent::ToggleTodo(id) => {
             if let Some(block) = state.block_mut(id) {
                 block.checked = !block.checked;
+            }
+        }
+        BlockEditorEvent::MoveUp(id) => {
+            if let Some(index) = state.index_of(id)
+                && index > 0
+            {
+                state.blocks.swap(index, index - 1);
+                focus = Some(id);
+            }
+        }
+        BlockEditorEvent::MoveDown(id) => {
+            if let Some(index) = state.index_of(id)
+                && index + 1 < state.blocks.len()
+            {
+                state.blocks.swap(index, index + 1);
+                focus = Some(id);
             }
         }
         BlockEditorEvent::BlockDragStarted(id) => {
@@ -326,10 +360,15 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
             state.dragged_block = None;
             state.block_drag_y = 0.0;
         }
+        BlockEditorEvent::HoverPage(hovered) => state.page_hovered = hovered,
+        BlockEditorEvent::ToggleBlockMenu(id) => {
+            state.menu_for = (state.menu_for != Some(id)).then_some(id);
+            state.composer_for = None;
+        }
         BlockEditorEvent::OpenCommentComposer(id) => {
             state.composer_for = Some(id);
             state.comment_draft.clear();
-            state.comments_open = true;
+            state.menu_for = None;
         }
         BlockEditorEvent::CloseCommentComposer => {
             state.composer_for = None;
@@ -349,19 +388,19 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                         time: "now",
                     }],
                     resolved: false,
-                    offset_x: -16.0 * state.threads.len() as f32,
-                    offset_y: 12.0 * state.threads.len() as f32,
                 });
                 state.next_thread_id += 1;
                 state.comment_draft.clear();
                 state.composer_for = None;
             }
         }
-        BlockEditorEvent::Reply(id) => {
-            state.replying_to = Some(id);
-            state.reply_draft.clear();
+        BlockEditorEvent::ReplyDraftChanged(id, value) => {
+            if state.replying_to != Some(id) {
+                state.replying_to = Some(id);
+                state.reply_draft.clear();
+            }
+            state.reply_draft = value;
         }
-        BlockEditorEvent::ReplyDraftChanged(value) => state.reply_draft = value,
         BlockEditorEvent::SubmitReply(id) => {
             let reply = state.reply_draft.trim().to_owned();
             if !reply.is_empty()
@@ -376,6 +415,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 state.replying_to = None;
             }
         }
+        BlockEditorEvent::JumpToBlock(id) => focus = Some(id),
         BlockEditorEvent::Resolve(id) => {
             if let Some(thread) = state.thread_mut(id) {
                 thread.resolved = true;
@@ -386,17 +426,7 @@ fn reduce(mut state: BlockEditorState, event: BlockEditorEvent) -> (BlockEditorS
                 thread.resolved = false;
             }
         }
-        BlockEditorEvent::CommentDragged(id, dx, dy) => {
-            if let Some(thread) = state.thread_mut(id) {
-                thread.offset_x = (thread.offset_x + dx as f32).clamp(-900.0, 180.0);
-                thread.offset_y = (thread.offset_y + dy as f32).clamp(-500.0, 900.0);
-            }
-        }
         BlockEditorEvent::ToggleComments => state.comments_open = !state.comments_open,
-        BlockEditorEvent::ToggleFloating => {
-            state.comments_open = true;
-            state.floating_comments = !state.floating_comments;
-        }
         BlockEditorEvent::ToggleResolved => state.show_resolved = !state.show_resolved,
         BlockEditorEvent::Scrolled(y) => state.scroll_y = y,
     }
@@ -415,18 +445,6 @@ impl BlockEditorState {
 
     fn thread_mut(&mut self, id: u64) -> Option<&mut CommentThread> {
         self.threads.iter_mut().find(|thread| thread.id == id)
-    }
-
-    fn push_block(&mut self, kind: BlockKind, value: &str) -> u64 {
-        let id = self.next_block_id;
-        self.next_block_id += 1;
-        self.blocks.push(Block {
-            id,
-            kind,
-            text: value.into(),
-            checked: false,
-        });
-        id
     }
 
     fn insert_after(&mut self, after: u64, kind: BlockKind, value: &str) -> u64 {
@@ -448,7 +466,10 @@ impl BlockEditorState {
     }
 
     fn block_y(&self, id: u64) -> f32 {
-        52.0 + self
+        if id == 0 {
+            return 8.0;
+        }
+        38.0 + self
             .blocks
             .iter()
             .take_while(|block| block.id != id)
@@ -473,6 +494,22 @@ impl BlockEditorState {
     pub fn thread_count(&self) -> usize {
         self.threads.len()
     }
+
+    #[cfg(test)]
+    pub fn thread_message_count(&self, id: u64) -> usize {
+        self.threads
+            .iter()
+            .find(|thread| thread.id == id)
+            .map_or(0, |thread| thread.messages.len())
+    }
+
+    #[cfg(test)]
+    pub fn thread_resolved(&self, id: u64) -> bool {
+        self.threads
+            .iter()
+            .find(|thread| thread.id == id)
+            .is_some_and(|thread| thread.resolved)
+    }
 }
 
 pub fn block_editor(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
@@ -484,9 +521,15 @@ fn block_editor_for_size(
     width: f32,
     height: f32,
 ) -> Element<'_, BlockEditorEvent> {
-    let document = document(state);
-    let docked = state.comments_open && !state.floating_comments;
-    let base: Element<'_, _> = if docked {
+    let compact_comments = width < 720.0;
+    let open_inline_comments = state
+        .threads
+        .iter()
+        .filter(|thread| thread.block_id != 0 && !thread.resolved)
+        .count();
+    let has_inline_comments = !state.comments_open && !compact_comments && open_inline_comments > 0;
+    let document = document(state, has_inline_comments);
+    let base: Element<'_, _> = if state.comments_open && !compact_comments {
         row![document, comments_panel(state)]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -500,18 +543,16 @@ fn block_editor_for_size(
         .height(Length::Fill)
         .push(base);
 
-    if state.comments_open && state.floating_comments {
+    if !state.comments_open && !compact_comments {
         for (thread_index, thread) in state
             .threads
             .iter()
-            .filter(|thread| !thread.resolved || state.show_resolved)
+            .filter(|thread| thread.block_id != 0 && !thread.resolved)
             .enumerate()
         {
-            let x = (width - CARD_WIDTH - 14.0 + thread.offset_x)
-                .clamp(8.0, (width - CARD_WIDTH).max(8.0));
-            let anchor = state.block_y(thread.block_id) - state.scroll_y
-                + thread.offset_y
-                + thread_index as f32 * 8.0;
+            let x = (width - CARD_WIDTH - 14.0).clamp(8.0, (width - CARD_WIDTH).max(8.0));
+            let anchor =
+                state.block_y(thread.block_id) - state.scroll_y + thread_index as f32 * 8.0;
             let y = anchor.clamp(8.0, (height - 220.0).max(8.0));
             layers = layers.push(
                 pin(thread_card(state, thread, true))
@@ -523,65 +564,52 @@ fn block_editor_for_size(
         }
     }
 
+    if !state.comments_open && compact_comments && open_inline_comments > 0 {
+        let first = state
+            .threads
+            .iter()
+            .find(|thread| thread.block_id != 0 && !thread.resolved)
+            .expect("open inline comment count was positive");
+        let y =
+            (state.block_y(first.block_id) - state.scroll_y).clamp(8.0, (height - 40.0).max(8.0));
+        let event = BlockEditorEvent::ToggleComments;
+        layers = layers.push(
+            pin(semantic_button(
+                button(text(format!("☵ {open_inline_comments}")).size(11))
+                    .on_press(event.clone())
+                    .padding([5, 7])
+                    .style(button::text),
+                "notion-compact-comments",
+                format!("Open {open_inline_comments} comments"),
+                Some(event),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .x((width - 48.0).max(8.0))
+            .y(y),
+        );
+    }
+
+    if state.comments_open && compact_comments {
+        layers = layers.push(
+            pin(comments_panel(state))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .x((width - 340.0).max(0.0))
+                .y(0.0),
+        );
+    }
+
     container(layers)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
 }
 
-fn document(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
-    let comments = state
-        .threads
-        .iter()
-        .filter(|thread| !thread.resolved)
-        .count();
-    let words = state
-        .blocks
-        .iter()
-        .map(|block| block.text.split_whitespace().count())
-        .sum::<usize>();
-
-    let toolbar = row![
-        text("BLOCKS").size(10).color(MUTED),
-        tool_button("Text", BlockEditorEvent::Add(BlockKind::Paragraph)),
-        tool_button("H1", BlockEditorEvent::Add(BlockKind::HeadingOne)),
-        tool_button("H2", BlockEditorEvent::Add(BlockKind::HeadingTwo)),
-        tool_button("To-do", BlockEditorEvent::Add(BlockKind::Todo)),
-        tool_button("List", BlockEditorEvent::Add(BlockKind::Bullet)),
-        tool_button("Quote", BlockEditorEvent::Add(BlockKind::Quote)),
-        tool_button("Divider", BlockEditorEvent::Add(BlockKind::Divider)),
-        iced::widget::space().width(Length::Fill),
-        tool_button(
-            if state.comments_open {
-                "Hide comments"
-            } else {
-                "Comments"
-            },
-            BlockEditorEvent::ToggleComments,
-        ),
-        tool_button(
-            if state.floating_comments {
-                "Float: on"
-            } else {
-                "Float: off"
-            },
-            BlockEditorEvent::ToggleFloating,
-        ),
-        tool_button(
-            if state.show_resolved {
-                "Hide resolved"
-            } else {
-                "Resolved"
-            },
-            BlockEditorEvent::ToggleResolved,
-        ),
-        text(format!("{comments} threads · {words} words"))
-            .size(11)
-            .color(MUTED),
-    ]
-    .spacing(4)
-    .align_y(iced::Alignment::Center);
-
+fn document(
+    state: &BlockEditorState,
+    reserve_comment_margin: bool,
+) -> Element<'_, BlockEditorEvent> {
     let blocks = keyed_column(
         state
             .blocks
@@ -590,55 +618,81 @@ fn document(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     )
     .width(Length::Fill);
 
-    let content = column![
-        toolbar,
-        blocks,
-        text("Press Enter or use the toolbar to add blocks")
-            .size(11)
-            .color(MUTED)
-    ]
-    .spacing(4)
-    .padding([8, 0])
-    .max_width(920);
+    let page_comment: Element<'_, _> = if let Some(thread) = state
+        .threads
+        .iter()
+        .find(|thread| thread.block_id == 0 && !thread.resolved)
+    {
+        thread_card(state, thread, false)
+    } else if state.composer_for == Some(0) {
+        comment_composer(state)
+    } else if state.page_hovered {
+        let event = BlockEditorEvent::OpenCommentComposer(0);
+        semantic_button(
+            button(text("Add comment").size(12).color(MUTED))
+                .on_press(event.clone())
+                .padding([4, 6])
+                .style(button::text),
+            "notion-page-comment",
+            "Add page comment",
+            Some(event),
+        )
+    } else {
+        iced::widget::space().height(26).into()
+    };
 
-    scrollable(
+    let page_comment = mouse_area(container(page_comment).width(Length::Fill).height(34))
+        .on_enter(BlockEditorEvent::HoverPage(true))
+        .on_exit(BlockEditorEvent::HoverPage(false));
+
+    let content = column![page_comment, blocks].spacing(2).max_width(920);
+
+    let content: Element<'_, _> = if reserve_comment_margin {
+        row![
+            container(content).width(Length::Fill),
+            iced::widget::space().width(CARD_WIDTH + 20.0),
+        ]
+        .width(Length::Fill)
+        .into()
+    } else {
         container(content)
             .width(Length::Fill)
-            .center_x(Length::Fill),
-    )
-    .height(Length::Fill)
-    .on_scroll(|viewport| BlockEditorEvent::Scrolled(viewport.absolute_offset().y))
-    .into()
+            .center_x(Length::Fill)
+            .into()
+    };
+
+    scrollable(content)
+        .height(Length::Fill)
+        .on_scroll(|viewport| BlockEditorEvent::Scrolled(viewport.absolute_offset().y))
+        .into()
 }
 
 fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, BlockEditorEvent> {
     let id = block.id;
     let hovered = state.hovered_block == Some(id);
-    let grip: Element<'a, _> = if hovered {
-        resize_handle(
-            container(
-                text("⠿")
-                    .size(16)
-                    .color(if state.dragged_block == Some(id) {
-                        PRIMARY
-                    } else {
-                        FAINT
-                    }),
-            )
-            .center_x(24)
-            .center_y(block.kind.height()),
-        )
-        .on_press(BlockEditorEvent::BlockDragStarted(id))
-        .on_drag(move |dx, dy| BlockEditorEvent::BlockDragged(id, dx, dy))
-        .on_release(BlockEditorEvent::BlockDragEnded)
-        .interaction(mouse::Interaction::Grabbing)
-        .into()
-    } else {
-        container(text(""))
-            .center_x(24)
-            .center_y(block.kind.height())
-            .into()
-    };
+    let grip = resize_handle(
+        container(text(if hovered { "⠿" } else { "" }).size(16).color(
+            if state.dragged_block == Some(id) {
+                PRIMARY
+            } else {
+                FAINT
+            },
+        ))
+        .center_x(24)
+        .center_y(block.kind.height()),
+    )
+    .on_press(BlockEditorEvent::BlockDragStarted(id))
+    .on_drag(move |dx, dy| BlockEditorEvent::BlockDragged(id, dx, dy))
+    .on_release(BlockEditorEvent::BlockDragEnded)
+    .interaction(mouse::Interaction::Grabbing);
+    let grip: Element<'a, _> = accessible(
+        grip,
+        StableId::new(format!("notion-block-{id}-actions")),
+        Role::Button,
+    )
+    .label("Block actions")
+    .on_activate(BlockEditorEvent::ToggleBlockMenu(id))
+    .into();
 
     let content: Element<'a, _> = if block.kind == BlockKind::Divider {
         container(
@@ -656,23 +710,39 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
             BlockKind::Quote => "▎",
             _ => "",
         };
+        let focus_id = block_widget_id(id);
         let input = text_input(block.kind.placeholder(), &block.text)
-            .id(block_widget_id(id))
+            .id(focus_id.clone())
             .on_input(move |value| BlockEditorEvent::Edit(id, value))
             .on_submit(BlockEditorEvent::AddAfter(id, block.kind.after_enter()))
             .padding([5, 6])
             .size(block.kind.text_size())
             .width(Length::Fill)
             .style(block_input_style);
+        let input = semantic_text_input(
+            input,
+            format!("notion-block-{id}-input"),
+            "Block text",
+            block.text.clone(),
+            focus_id,
+        );
 
         let mut content = row![].align_y(iced::Alignment::Center);
         if block.kind == BlockKind::Todo {
-            content = content.push(
+            let event = BlockEditorEvent::ToggleTodo(id);
+            content = content.push(semantic_button(
                 button(text(if block.checked { "☑" } else { "☐" }).size(18))
-                    .on_press(BlockEditorEvent::ToggleTodo(id))
+                    .on_press(event.clone())
                     .padding(3)
                     .style(button::text),
-            );
+                format!("notion-block-{id}-todo"),
+                if block.checked {
+                    "Mark to-do incomplete"
+                } else {
+                    "Mark to-do complete"
+                },
+                Some(event),
+            ));
         } else if !prefix.is_empty() {
             content = content.push(text(prefix).size(19).color(MUTED));
         }
@@ -681,18 +751,24 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
 
     let actions: Element<'a, _> = if hovered {
         row![
-            button(text("+").size(14))
-                .on_press(BlockEditorEvent::AddAfter(id, BlockKind::Paragraph))
-                .padding([3, 6])
-                .style(button::text),
-            button(text("Comment").size(10))
-                .on_press(BlockEditorEvent::OpenCommentComposer(id))
-                .padding([4, 6])
-                .style(button::text),
-            button(text("×").size(14))
-                .on_press(BlockEditorEvent::Delete(id))
-                .padding([3, 6])
-                .style(button::text),
+            tool_button_with_label(
+                format!("notion-block-{id}-add"),
+                "+",
+                "Add block after",
+                BlockEditorEvent::AddAfter(id, BlockKind::Paragraph),
+            ),
+            tool_button_with_label(
+                format!("notion-block-{id}-comment"),
+                "☵",
+                "Add block comment",
+                BlockEditorEvent::OpenCommentComposer(id),
+            ),
+            tool_button_with_label(
+                format!("notion-block-{id}-menu"),
+                "•••",
+                "Open block actions",
+                BlockEditorEvent::ToggleBlockMenu(id),
+            ),
         ]
         .spacing(1)
         .align_y(iced::Alignment::Center)
@@ -712,6 +788,9 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
     if block.text == "/" {
         block_column = block_column.push(kind_menu(id));
     }
+    if state.menu_for == Some(id) {
+        block_column = block_column.push(block_menu(id));
+    }
     if state.composer_for == Some(id) {
         block_column = block_column.push(comment_composer(state));
     }
@@ -728,20 +807,70 @@ fn block_view<'a>(state: &'a BlockEditorState, block: &'a Block) -> Element<'a, 
 
 fn kind_menu(id: u64) -> Element<'static, BlockEditorEvent> {
     container(
-        row![
-            text("TURN INTO").size(10).color(MUTED),
-            kind_button(id, "Text", BlockKind::Paragraph),
-            kind_button(id, "H1", BlockKind::HeadingOne),
-            kind_button(id, "H2", BlockKind::HeadingTwo),
-            kind_button(id, "To-do", BlockKind::Todo),
-            kind_button(id, "List", BlockKind::Bullet),
-            kind_button(id, "Quote", BlockKind::Quote),
-            kind_button(id, "Divider", BlockKind::Divider),
+        column![
+            text("BASIC BLOCKS").size(10).color(MUTED),
+            row![
+                kind_button(id, "Text", BlockKind::Paragraph),
+                kind_button(id, "Heading 1", BlockKind::HeadingOne),
+                kind_button(id, "Heading 2", BlockKind::HeadingTwo),
+                kind_button(id, "To-do", BlockKind::Todo),
+            ]
+            .spacing(3),
+            row![
+                kind_button(id, "Bulleted list", BlockKind::Bullet),
+                kind_button(id, "Quote", BlockKind::Quote),
+                kind_button(id, "Divider", BlockKind::Divider),
+            ]
+            .spacing(3),
         ]
-        .spacing(3)
-        .align_y(iced::Alignment::Center),
+        .spacing(4),
     )
-    .padding([3, 28])
+    .padding([8, 28])
+    .style(|_| comment_surface(false, false))
+    .into()
+}
+
+fn block_menu(id: u64) -> Element<'static, BlockEditorEvent> {
+    container(
+        column![
+            text("BLOCK ACTIONS").size(10).color(MUTED),
+            row![
+                kind_button(id, "Text", BlockKind::Paragraph),
+                kind_button(id, "Heading 1", BlockKind::HeadingOne),
+                kind_button(id, "Heading 2", BlockKind::HeadingTwo),
+                kind_button(id, "To-do", BlockKind::Todo),
+                kind_button(id, "List", BlockKind::Bullet),
+                kind_button(id, "Quote", BlockKind::Quote),
+            ]
+            .spacing(3),
+            row![
+                tool_button(
+                    format!("notion-block-{id}-action-comment"),
+                    "Comment",
+                    BlockEditorEvent::OpenCommentComposer(id),
+                ),
+                tool_button(
+                    format!("notion-block-{id}-action-move-up"),
+                    "Move up",
+                    BlockEditorEvent::MoveUp(id),
+                ),
+                tool_button(
+                    format!("notion-block-{id}-action-move-down"),
+                    "Move down",
+                    BlockEditorEvent::MoveDown(id),
+                ),
+                tool_button(
+                    format!("notion-block-{id}-action-delete"),
+                    "Delete",
+                    BlockEditorEvent::Delete(id),
+                ),
+            ]
+            .spacing(3),
+        ]
+        .spacing(4),
+    )
+    .padding([8, 28])
+    .style(|_| comment_surface(false, false))
     .into()
 }
 
@@ -750,26 +879,53 @@ fn kind_button(
     label: &'static str,
     kind: BlockKind,
 ) -> Element<'static, BlockEditorEvent> {
-    tool_button(label, BlockEditorEvent::SetKind(id, kind)).into()
+    tool_button(
+        format!("notion-block-{id}-kind-{label}"),
+        label,
+        BlockEditorEvent::SetKind(id, kind),
+    )
 }
 
 fn comment_composer(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
+    let target = state.composer_for.unwrap_or(0);
+    let input_key = format!("notion-comment-{target}-input");
+    let input_focus: iced::widget::Id = input_key.clone().into();
+    let input = text_input("Write a comment…", &state.comment_draft)
+        .id(input_focus.clone())
+        .on_input(BlockEditorEvent::CommentDraftChanged)
+        .on_submit(BlockEditorEvent::SubmitComment)
+        .padding(8)
+        .width(Length::Fill);
+    let submit =
+        (!state.comment_draft.trim().is_empty()).then_some(BlockEditorEvent::SubmitComment);
+    let submit_control = button("Comment")
+        .on_press_maybe(submit.clone())
+        .style(button::primary);
+    let cancel = BlockEditorEvent::CloseCommentComposer;
+
     container(
         row![
-            text_input("Write a comment…", &state.comment_draft)
-                .on_input(BlockEditorEvent::CommentDraftChanged)
-                .on_submit(BlockEditorEvent::SubmitComment)
-                .padding(8)
-                .width(Length::Fill),
-            button("Comment")
-                .on_press_maybe(
-                    (!state.comment_draft.trim().is_empty())
-                        .then_some(BlockEditorEvent::SubmitComment)
-                )
-                .style(button::primary),
-            button("Cancel")
-                .on_press(BlockEditorEvent::CloseCommentComposer)
-                .style(button::text),
+            semantic_text_input(
+                input,
+                input_key,
+                "Comment text",
+                state.comment_draft.clone(),
+                input_focus,
+            ),
+            semantic_button(
+                submit_control,
+                format!("notion-comment-{target}-submit"),
+                "Submit comment",
+                submit,
+            ),
+            semantic_button(
+                button("Cancel")
+                    .on_press(cancel.clone())
+                    .style(button::text),
+                format!("notion-comment-{target}-cancel"),
+                "Cancel comment",
+                Some(cancel),
+            ),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center),
@@ -784,16 +940,25 @@ fn comments_panel(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
     for thread in state
         .threads
         .iter()
-        .filter(|thread| !thread.resolved || state.show_resolved)
+        .rev()
+        .filter(|thread| thread.resolved == state.show_resolved)
     {
         threads = threads.push(thread_card(state, thread, false));
     }
-    if state
+    if !state
         .threads
         .iter()
-        .all(|thread| thread.resolved && !state.show_resolved)
+        .any(|thread| thread.resolved == state.show_resolved)
     {
-        threads = threads.push(text("No open comments").size(13).color(MUTED));
+        threads = threads.push(
+            text(if state.show_resolved {
+                "No resolved comments"
+            } else {
+                "No open comments"
+            })
+            .size(13)
+            .color(MUTED),
+        );
     }
 
     container(
@@ -802,14 +967,20 @@ fn comments_panel(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
                 text("Comments").size(16),
                 iced::widget::space().width(Length::Fill),
                 tool_button(
+                    "notion-comments-filter",
                     if state.show_resolved {
-                        "Hide resolved"
+                        "Resolved ▾"
                     } else {
-                        "Resolved"
+                        "Open ▾"
                     },
                     BlockEditorEvent::ToggleResolved,
                 ),
-                tool_button("×", BlockEditorEvent::ToggleComments),
+                tool_button_with_label(
+                    "notion-comments-close",
+                    "×",
+                    "Close comments",
+                    BlockEditorEvent::ToggleComments,
+                ),
             ]
             .align_y(iced::Alignment::Center),
             scrollable(threads).height(Length::Fill),
@@ -817,7 +988,7 @@ fn comments_panel(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
         .spacing(12),
     )
     .padding(14)
-    .width(312)
+    .width(340)
     .height(Length::Fill)
     .style(|_| {
         container::Style::default()
@@ -834,104 +1005,192 @@ fn comments_panel(state: &BlockEditorState) -> Element<'_, BlockEditorEvent> {
 fn thread_card<'a>(
     state: &'a BlockEditorState,
     thread: &'a CommentThread,
-    floating: bool,
+    inline: bool,
 ) -> Element<'a, BlockEditorEvent> {
     let id = thread.id;
-    let header_content = container(
-        row![
-            text(if floating { "⠿" } else { "●" })
-                .size(13)
-                .color(PRIMARY),
-            text(format!("Thread {}", thread.id)).size(12).color(MUTED),
-            iced::widget::space().width(Length::Fill),
-            text(format!(
-                "{} replies",
-                thread.messages.len().saturating_sub(1)
-            ))
-            .size(10)
-            .color(FAINT),
-        ]
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([5, 2])
-    .width(Length::Fill);
-    let header: Element<'a, _> = if floating {
-        resize_handle(header_content)
-            .on_drag(move |dx, dy| BlockEditorEvent::CommentDragged(id, dx, dy))
-            .interaction(mouse::Interaction::Grabbing)
+    let context = if thread.block_id == 0 {
+        "Page discussion"
+    } else {
+        state
+            .blocks
+            .iter()
+            .find(|block| block.id == thread.block_id)
+            .map_or("Deleted block", |block| block.text.as_str())
+    };
+
+    let context: Element<'a, _> = if thread.block_id == 0 || inline {
+        text(context)
+            .size(11)
+            .color(MUTED)
+            .width(Length::Fill)
             .into()
     } else {
-        header_content.into()
+        let event = BlockEditorEvent::JumpToBlock(thread.block_id);
+        semantic_button(
+            button(text(format!("↳ {context}")).size(11).color(MUTED))
+                .on_press(event.clone())
+                .padding(0)
+                .width(Length::Fill)
+                .style(button::text),
+            format!("notion-thread-{id}-context"),
+            "Jump to commented block",
+            Some(event),
+        )
     };
+
+    let header = row![
+        context,
+        if thread.resolved {
+            tool_button(
+                format!("notion-thread-{id}-reopen"),
+                "Reopen",
+                BlockEditorEvent::Reopen(id),
+            )
+        } else {
+            tool_button_with_label(
+                format!("notion-thread-{id}-resolve"),
+                if inline { "✓" } else { "Resolve" },
+                "Resolve comment",
+                BlockEditorEvent::Resolve(id),
+            )
+        },
+    ]
+    .align_y(iced::Alignment::Center);
 
     let mut messages = Column::new().spacing(8);
     for message in &thread.messages {
         messages = messages.push(
-            column![
-                text(format!("{} · {}", message.author, message.time))
-                    .size(10)
-                    .color(MUTED),
-                text(&message.body).size(13),
+            row![
+                container(text(message.author.chars().next().unwrap_or('?').to_string()).size(11))
+                    .center_x(24)
+                    .center_y(24)
+                    .style(|_| soft_surface()),
+                column![
+                    text(format!("{} · {}", message.author, message.time))
+                        .size(11)
+                        .color(MUTED),
+                    text(&message.body).size(13),
+                ]
+                .spacing(2),
             ]
-            .spacing(2),
+            .spacing(8),
         );
     }
 
-    let mut card = column![header, messages].spacing(8);
-    if state.replying_to == Some(id) {
-        card = card.push(
-            row![
-                text_input("Reply…", &state.reply_draft)
-                    .on_input(BlockEditorEvent::ReplyDraftChanged)
-                    .on_submit(BlockEditorEvent::SubmitReply(id))
-                    .padding(7)
-                    .width(Length::Fill),
-                button("Send")
-                    .on_press_maybe(
-                        (!state.reply_draft.trim().is_empty())
-                            .then_some(BlockEditorEvent::SubmitReply(id))
-                    )
-                    .style(button::primary),
-            ]
-            .spacing(5),
-        );
-    }
-    card = card.push(
+    let active_reply = state.replying_to == Some(id);
+    let reply = if active_reply {
+        state.reply_draft.as_str()
+    } else {
+        ""
+    };
+    let reply_key = format!("notion-thread-{id}-reply");
+    let reply_focus: iced::widget::Id = reply_key.clone().into();
+    let reply_input = text_input("Reply…", reply)
+        .id(reply_focus.clone())
+        .on_input(move |value| BlockEditorEvent::ReplyDraftChanged(id, value))
+        .on_submit(BlockEditorEvent::SubmitReply(id))
+        .padding(7)
+        .width(Length::Fill);
+    let submit_reply = (active_reply && !state.reply_draft.trim().is_empty())
+        .then_some(BlockEditorEvent::SubmitReply(id));
+    let card = column![
+        header,
+        messages,
         row![
-            button("Reply")
-                .on_press(BlockEditorEvent::Reply(id))
-                .padding([4, 7])
-                .style(button::text),
-            if thread.resolved {
-                button("Reopen")
-                    .on_press(BlockEditorEvent::Reopen(id))
-                    .padding([4, 7])
-                    .style(button::text)
-            } else {
-                button("Resolve")
-                    .on_press(BlockEditorEvent::Resolve(id))
-                    .padding([4, 7])
-                    .style(button::text)
-            },
+            semantic_text_input(
+                reply_input,
+                reply_key,
+                "Reply to comment",
+                reply,
+                reply_focus,
+            ),
+            semantic_button(
+                button("↑").on_press_maybe(submit_reply.clone()).style(
+                    move |theme: &Theme, status| {
+                        let mut style = button::text(theme, status);
+                        style.text_color = if active_reply && !state.reply_draft.trim().is_empty() {
+                            PRIMARY
+                        } else {
+                            FAINT
+                        };
+                        style
+                    }
+                ),
+                format!("notion-thread-{id}-reply-submit"),
+                "Send reply",
+                submit_reply,
+            ),
         ]
-        .spacing(4),
-    );
+        .spacing(5),
+    ]
+    .spacing(8);
 
     container(card)
         .padding(12)
-        .width(CARD_WIDTH)
-        .style(move |_| comment_surface(thread.resolved, floating))
+        .width(if inline {
+            Length::Fixed(CARD_WIDTH)
+        } else {
+            Length::Fill
+        })
+        .style(move |_| comment_surface(thread.resolved, inline))
+        .into()
+}
+
+fn semantic_button<'a>(
+    control: iced::widget::Button<'a, BlockEditorEvent>,
+    key: impl Into<String>,
+    label: impl Into<String>,
+    event: Option<BlockEditorEvent>,
+) -> Element<'a, BlockEditorEvent> {
+    let key = key.into();
+    accessible(control, StableId::new(&key), Role::Button)
+        .logical_id(key)
+        .label(label)
+        .disabled(event.is_none())
+        .on_activate_maybe(event)
+        .into()
+}
+
+fn semantic_text_input<'a>(
+    input: iced::widget::TextInput<'a, BlockEditorEvent>,
+    key: impl Into<String>,
+    label: impl Into<String>,
+    value: impl Into<String>,
+    focus_id: iced::widget::Id,
+) -> Element<'a, BlockEditorEvent> {
+    let key = key.into();
+    accessible(input, StableId::new(&key), Role::TextInput)
+        .logical_id(key)
+        .focus_id(focus_id)
+        .label(label)
+        .value(value)
         .into()
 }
 
 fn tool_button(
-    label: &'static str,
+    key: impl Into<String>,
+    label: impl Into<String>,
     event: BlockEditorEvent,
-) -> iced::widget::Button<'static, BlockEditorEvent> {
-    button(text(label).size(11))
-        .on_press(event)
-        .padding([4, 7])
-        .style(button::text)
+) -> Element<'static, BlockEditorEvent> {
+    let label = label.into();
+    tool_button_with_label(key, label.clone(), label, event)
+}
+
+fn tool_button_with_label(
+    key: impl Into<String>,
+    visible: impl Into<String>,
+    label: impl Into<String>,
+    event: BlockEditorEvent,
+) -> Element<'static, BlockEditorEvent> {
+    semantic_button(
+        button(text(visible.into()).size(11))
+            .on_press(event.clone())
+            .padding([4, 7])
+            .style(button::text),
+        key,
+        label,
+        Some(event),
+    )
 }
 
 fn block_widget_id(id: u64) -> iced::widget::Id {
@@ -986,19 +1245,15 @@ fn comment_surface(resolved: bool, floating: bool) -> container::Style {
             Color::WHITE
         })),
         border: Border {
-            color: if resolved {
-                BORDER
-            } else {
-                Color::from_rgb8(196, 218, 245)
-            },
+            color: BORDER,
             width: 1.0,
             radius: 9.0.into(),
         },
         shadow: if floating {
             Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.16),
-                offset: Vector::new(0.0, 6.0),
-                blur_radius: 18.0,
+                color: Color::from_rgba8(0, 0, 0, 0.08),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 10.0,
             }
         } else {
             Shadow::default()
@@ -1023,20 +1278,59 @@ mod tests {
         reduce(state, event).0
     }
 
+    fn accessibility_snapshot(
+        state: &BlockEditorState,
+        size: iced::Size,
+    ) -> ui_lang_runtime::Snapshot<BlockEditorEvent> {
+        use iced::advanced::renderer::Headless;
+        use iced_test::futures::futures::StreamExt;
+
+        let mut renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(iced::Font::DEFAULT, iced::Pixels(16.0), None),
+        )
+        .expect("headless renderer");
+        let mut ui = iced_test::runtime::UserInterface::build(
+            block_editor(state),
+            size,
+            iced_test::runtime::user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let task = ui_lang_runtime::snapshot::<BlockEditorEvent>("Notion editor");
+        let mut stream = iced_test::runtime::task::into_stream(task).expect("snapshot task");
+        let action = iced_test::futures::futures::executor::block_on(stream.next())
+            .expect("widget operation");
+        let iced_test::runtime::Action::Widget(mut operation) = action else {
+            panic!("snapshot task must begin with a widget operation");
+        };
+        ui.operate(&renderer, operation.as_mut());
+        let _ = operation.finish();
+        let output = iced_test::futures::futures::executor::block_on(stream.next())
+            .expect("snapshot output");
+        let iced_test::runtime::Action::Output(snapshot) = output else {
+            panic!("snapshot operation must produce a tree");
+        };
+        snapshot
+    }
+
     #[test]
     fn blocks_are_dynamic_and_reorder_by_drag() {
         let state = block_editor_state("untitled".into());
-        let state = apply(state, BlockEditorEvent::Add(BlockKind::HeadingOne));
+        let state = apply(state, BlockEditorEvent::AddAfter(1, BlockKind::HeadingOne));
         let state = apply(state, BlockEditorEvent::Edit(2, "A real heading".into()));
         assert_eq!(state.block_count(), 2);
         assert_eq!(state.block_text(2), Some("A real heading"));
+
+        let state = apply(state, BlockEditorEvent::MoveUp(2));
+        assert_eq!(state.blocks[0].id, 2);
+        let state = apply(state, BlockEditorEvent::MoveDown(2));
+        assert_eq!(state.blocks[1].id, 2);
 
         let state = apply(state, BlockEditorEvent::BlockDragStarted(2));
         let state = apply(state, BlockEditorEvent::BlockDragged(2, 0.0, -40.0));
         assert_eq!(state.blocks[0].id, 2);
 
-        let state = apply(state, BlockEditorEvent::Add(BlockKind::Paragraph));
-        let state = apply(state, BlockEditorEvent::Add(BlockKind::Paragraph));
+        let state = apply(state, BlockEditorEvent::AddAfter(1, BlockKind::Paragraph));
+        let state = apply(state, BlockEditorEvent::AddAfter(3, BlockKind::Paragraph));
         let state = apply(state, BlockEditorEvent::BlockDragStarted(4));
         let state = apply(state, BlockEditorEvent::BlockDragged(4, 0.0, -120.0));
         assert_eq!(state.blocks[0].id, 4);
@@ -1051,8 +1345,10 @@ mod tests {
         assert_eq!(state.thread_count(), 1);
 
         let id = state.threads[0].id;
-        state = apply(state, BlockEditorEvent::Reply(id));
-        state = apply(state, BlockEditorEvent::ReplyDraftChanged("Reply".into()));
+        state = apply(
+            state,
+            BlockEditorEvent::ReplyDraftChanged(id, "Reply".into()),
+        );
         state = apply(state, BlockEditorEvent::SubmitReply(id));
         assert_eq!(state.threads[0].messages.len(), 2);
 
@@ -1090,11 +1386,12 @@ mod tests {
             iced::Size::new(1000.0, 620.0),
             block_editor(&state),
         );
-        screen.click("Text").expect("add text block button");
+        screen.click("+").expect("add text block button");
         assert!(
-            screen
-                .into_messages()
-                .any(|message| matches!(message, BlockEditorEvent::Add(BlockKind::Paragraph)))
+            screen.into_messages().any(|message| matches!(
+                message,
+                BlockEditorEvent::AddAfter(1, BlockKind::Paragraph)
+            ))
         );
 
         let mut screen = iced_test::Simulator::with_size(
@@ -1102,12 +1399,33 @@ mod tests {
             iced::Size::new(1000.0, 620.0),
             block_editor(&state),
         );
-        screen.click("Comment").expect("block comment button");
+        screen.click("☵").expect("block comment button");
         assert!(
             screen
                 .into_messages()
                 .any(|message| matches!(message, BlockEditorEvent::OpenCommentComposer(1)))
         );
+    }
+
+    #[test]
+    fn editor_controls_expose_semantic_names() {
+        let state = block_editor_state("home".into());
+        let snapshot = accessibility_snapshot(&state, iced::Size::new(640.0, 620.0));
+        let mut nodes = snapshot.update.nodes.iter().map(|(_, node)| node);
+
+        assert!(
+            nodes.clone().any(|node| {
+                node.role() == Role::TextInput && node.label() == Some("Block text")
+            })
+        );
+        assert!(
+            nodes.clone().any(|node| {
+                node.role() == Role::Button && node.label() == Some("Block actions")
+            })
+        );
+        assert!(nodes.any(|node| {
+            node.role() == Role::Button && node.label() == Some("Open 1 comments")
+        }));
     }
 
     #[test]
@@ -1119,5 +1437,37 @@ mod tests {
             block_editor_pending_focus(block_editor_clear_focus(state)),
             0
         );
+    }
+
+    #[test]
+    fn compact_editor_uses_a_minimal_comment_indicator() {
+        let state = block_editor_state("home".into());
+        let mut screen = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(640.0, 620.0),
+            block_editor(&state),
+        );
+        assert!(
+            screen
+                .find("Can we link the customer research notes here?")
+                .is_err(),
+            "compact mode keeps the thread out of the writing surface"
+        );
+        if let Ok(path) = std::env::var("NOTION_COMPACT_SNAPSHOT") {
+            let snapshot = screen.snapshot(&Theme::Light).expect("render snapshot");
+            assert!(snapshot.matches_image(path).expect("write snapshot"));
+        }
+        screen.click("☵ 1").expect("minimal comment indicator");
+        let state = screen.into_messages().fold(state, apply);
+
+        let mut screen = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(640.0, 620.0),
+            block_editor(&state),
+        );
+        screen.find("Comments").expect("compact comments pane");
+        screen
+            .find("Can we link the customer research notes here?")
+            .expect("thread in compact comments pane");
     }
 }
