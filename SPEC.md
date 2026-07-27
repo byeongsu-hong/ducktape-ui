@@ -180,8 +180,12 @@ version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
 - Strings use double quotes and support `\n`, `\r`, `\t`, `\"`, and `\\`.
 - A top-level `use "relative/file.ice"` includes declarations relative to the
   importing file. Paths must end in `.ice`, use `/`, and cannot be absolute.
+- `use "relative/file.ice" as ui` imports components, recipes, extern items,
+  fonts, and named types under `ui::`. Theme tokens remain app-global. Bare
+  imports keep the fragment-merging behavior above.
 - Imports may be nested. Re-importing the same canonical file is idempotent;
-  import cycles and missing files are errors.
+  aliased instances are unique by canonical file and namespace. Import cycles
+  and missing files are errors.
 
 Top-level declarations are order-independent, but canonical source uses:
 
@@ -204,7 +208,9 @@ test
 An Ice source graph has exactly one `app` or `daemon` root and one `view`.
 It may have multiple `extern` namespaces; imported plugin fragments can
 therefore bind their own Rust modules beside the application's backend.
-Extern type and function names remain graph-global and duplicates are errors.
+Bare extern type and function names remain graph-global and duplicates are
+errors. Aliased imports retain their namespace identity instead of flattening
+those declarations into the graph-global name set.
 The root file declares the app and normally the view; imported fragments may
 hold any other top-level declarations. The graph may have multiple components,
 handlers, and graph-unique tests. The view and each component have exactly one
@@ -219,7 +225,7 @@ defined in section 6.
 source_graph   = root_file imported_file*
 root_file      = (root_decl | use_decl | declaration)*
 imported_file  = (use_decl | declaration)*
-use_decl       = "use" string
+use_decl       = "use" string ("as" name)?
 declaration    = extern_decl | theme_decl | style_recipe_decl | font_decl
                | qr_decl | state_decl | derived_decl | preset_decl | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
@@ -308,10 +314,11 @@ type           = "bool" | "i64" | "f64" | "str" | "bytes" | "image"
                | "window-attention"
                | "widget-id" | "widget-target"
                | "task-handle" | "unit"
-               | PascalName
+               | qualified_type
                | "[" type "]" | type "?" | "result[" type "," type "]"
                | "combo[" type "]"
-               | "animation[" ("bool" | "f64" | PascalName) "]"
+               | "animation[" ("bool" | "f64" | qualified_type) "]"
+qualified_type = PascalName | name ("::" name)* "::" PascalName
 function_sig   = name "(" field_list? ")" "->" type ("!" type)?
 extern_component_sig
                = "component" name "(" extern_component_field_list? ")" "->" type

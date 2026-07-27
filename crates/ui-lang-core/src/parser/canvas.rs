@@ -370,7 +370,7 @@ pub(in crate::parser) fn parse_canvas_command(line: &Line) -> Result<CanvasComma
             span: Span::line(line.number),
         });
     }
-    let (core, styles) = split_style_utilities(&line.text);
+    let (core, styles) = split_style_utilities(&line.text, line);
     if !styles.is_empty() {
         return Err(error(
             "E190",

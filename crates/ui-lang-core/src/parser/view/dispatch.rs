@@ -95,14 +95,24 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
         .map_or((line.text.as_str(), None), |(left, right)| {
             (left, Some(right))
         });
-    let (core, styles) = split_style_utilities(without_route);
+    let (core, styles) = split_style_utilities(without_route, line);
     for style in &styles {
-        line.record_symbol(SymbolKind::Recipe, style, false, style);
+        line.record_symbol(
+            SymbolKind::Recipe,
+            style,
+            false,
+            crate::unqualified_name(style),
+        );
     }
     let parts = split_words(core);
     let Some(kind) = parts.first().map(String::as_str) else {
         return Err(error("E061", line, "empty view node"));
     };
+    let component_like = kind
+        .rsplit("::")
+        .next()
+        .and_then(|name| name.chars().next())
+        .is_some_and(char::is_uppercase);
     if route_source.is_some()
         && !matches!(
             kind,
@@ -120,7 +130,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 | "themer"
                 | "shader"
         )
-        && !kind.chars().next().is_some_and(char::is_uppercase)
+        && !component_like
     {
         return Err(error(
             "E081",
@@ -230,7 +240,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
         "pin" => parse_pin(&parts, styles, line),
         "sensor" => parse_sensor(&parts, styles, line),
         "responsive" => parse_responsive(&parts, styles, line),
-        _ if kind.chars().next().is_some_and(char::is_uppercase) => {
+        _ if component_like => {
             if !styles.is_empty() {
                 return Err(error(
                     "E040",

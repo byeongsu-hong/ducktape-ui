@@ -564,20 +564,21 @@ pub(in crate::parser) fn config_position(
 pub(in crate::parser) fn parse_font(source: &str, line: &Line) -> Result<FontDecl, Error> {
     ensure_leaf(line)?;
     let parts = split_words(source);
-    let name = identifier(
+    let source_name = identifier(
         parts
             .first()
             .ok_or_else(|| error("E013", line, "font requires a name"))?,
         line,
     )?;
-    if matches!(name.as_str(), "default" | "mono") {
+    let name = line.qualify(&source_name);
+    if matches!(source_name.as_str(), "default" | "mono") {
         return Err(error(
             "E013",
             line,
-            format!("font name `{name}` is built in and cannot be redeclared"),
+            format!("font name `{source_name}` is built in and cannot be redeclared"),
         ));
     }
-    let mut family = FontFamily::Named(name.clone());
+    let mut family = FontFamily::Named(source_name);
     let mut weight = FontWeight::Normal;
     let mut stretch = FontStretch::Normal;
     let mut style = FontStyle::Normal;

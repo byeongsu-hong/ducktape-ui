@@ -1,12 +1,18 @@
 use super::*;
 
-pub(crate) fn split_style_utilities(source: &str) -> (&str, Vec<String>) {
+pub(in crate::parser) fn split_style_utilities<'a>(
+    source: &'a str,
+    line: &Line,
+) -> (&'a str, Vec<String>) {
     split_top_marker(source, "@").map_or_else(
         || (source.trim(), Vec::new()),
         |(core, styles)| {
             (
                 core.trim(),
-                styles.split_whitespace().map(str::to_owned).collect(),
+                styles
+                    .split_whitespace()
+                    .map(|style| line.qualify(style))
+                    .collect(),
             )
         },
     )

@@ -5,7 +5,8 @@ pub(in crate::parser) fn parse_extern_struct(
     namespace: &str,
 ) -> Result<ExternStruct, Error> {
     ensure_leaf(line)?;
-    let (name, fields) = parse_signature(&line.text, line)?;
+    let (source_name, fields) = parse_local_signature(&line.text, line)?;
+    let name = line.qualify(&source_name);
     let mut parsed_fields = Vec::new();
     if !fields.trim().is_empty() {
         for field in split_top(&fields, ',') {
@@ -16,7 +17,7 @@ pub(in crate::parser) fn parse_extern_struct(
         }
     }
     Ok(ExternStruct {
-        rust_path: format!("{namespace}::{name}"),
+        rust_path: format!("{namespace}::{source_name}"),
         name,
         fields: parsed_fields,
         span: Span::line(line.number),
@@ -31,8 +32,9 @@ pub(in crate::parser) fn parse_extern_fn(
 ) -> Result<ExternFn, Error> {
     ensure_leaf(line)?;
     let close = matching_paren(source, line)?;
-    let name = identifier(source[..source.find('(').unwrap_or(0)].trim(), line)?;
-    if kind == ExternKind::Sync && name == "bytes" {
+    let source_name = identifier(source[..source.find('(').unwrap_or(0)].trim(), line)?;
+    let name = line.qualify(&source_name);
+    if kind == ExternKind::Sync && source_name == "bytes" {
         return Err(error(
             "E021",
             line,
@@ -136,7 +138,7 @@ pub(in crate::parser) fn parse_extern_fn(
     }
     Ok(ExternFn {
         kind,
-        rust_path: format!("{namespace}::{name}"),
+        rust_path: format!("{namespace}::{source_name}"),
         name,
         params,
         borrowed,
@@ -655,7 +657,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
 pub(in crate::parser) fn parse_handler(header: &str, line: &Line) -> Result<Handler, Error> {
     let header = header.trim();
     let (name, params) = if header.contains('(') {
-        let (name, params) = parse_signature(header, line)?;
+        let (name, params) = parse_local_signature(header, line)?;
         let params = if params.trim().is_empty() {
             Vec::new()
         } else {

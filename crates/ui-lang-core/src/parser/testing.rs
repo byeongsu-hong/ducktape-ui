@@ -250,7 +250,7 @@ fn parse_test_step(
     } else if let Some(call) = line.text.strip_prefix("dispatch ") {
         let call = call.trim();
         let (handler, args) = if call.contains('(') {
-            let (handler, args) = parse_signature(call, line)?;
+            let (handler, args) = parse_local_signature(call, line)?;
             let parsed = parse_expr_list(&args, line)?;
             let open = call.find('(').expect("signature parser requires `(`");
             let close = matching_paren(call, line)?;

@@ -22,6 +22,13 @@ counts toward the row below.
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
 
+Source graphs support both bare fragment imports and aliased module imports.
+Aliases preserve checked `::` identity for components, recipes, extern
+functions/types, and fonts, including nested imports and repeated imports of
+one canonical file under distinct aliases. Theme tokens remain the single
+app-global contract. Definition and rename operate on the source spelling while
+retaining the namespace prefix at each call site.
+
 Core view control includes checked `if`, `for`, and first-match `match` arms.
 Top-level derived values are checked, cycle-free pure expressions over app
 state and other derived values; generated getters keep them read-only without a

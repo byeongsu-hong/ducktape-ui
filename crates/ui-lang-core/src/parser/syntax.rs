@@ -2,8 +2,16 @@ use super::*;
 
 pub(in crate::parser) fn line_tree(
     source: &str,
+    namespaces: &[Option<String>],
     symbols: std::rc::Rc<std::cell::RefCell<Vec<ParsedSymbol>>>,
 ) -> Result<Vec<Line>, Error> {
+    if namespaces.len() != source.lines().count() {
+        return Err(Error::new(
+            "E000",
+            &Span::line(1),
+            "internal source namespace map does not match the document",
+        ));
+    }
     let mut flat = Vec::new();
     for (index, raw) in source.lines().enumerate() {
         if raw.contains('\t') {
@@ -24,6 +32,7 @@ pub(in crate::parser) fn line_tree(
             indent,
             text: trimmed.into(),
             children: Vec::new(),
+            namespace: namespaces[index].clone(),
             symbols: std::rc::Rc::clone(&symbols),
             track_symbols: true,
         });
@@ -71,6 +80,14 @@ pub(in crate::parser) fn parse_signature(
     line: &Line,
 ) -> Result<(String, String), Error> {
     let (name, args) = signature_parts(source, line)?;
+    Ok((line.qualify(&qualified_identifier(name, line)?), args))
+}
+
+pub(in crate::parser) fn parse_local_signature(
+    source: &str,
+    line: &Line,
+) -> Result<(String, String), Error> {
+    let (name, args) = signature_parts(source, line)?;
     Ok((identifier(name, line)?, args))
 }
 
@@ -79,7 +96,7 @@ pub(in crate::parser) fn parse_component_signature(
     line: &Line,
 ) -> Result<(String, String), Error> {
     let (name, args) = signature_parts(source, line)?;
-    Ok((component_identifier(name, line)?, args))
+    Ok((line.qualify(&component_identifier(name, line)?), args))
 }
 
 pub(in crate::parser) fn signature_parts<'a>(
@@ -248,7 +265,9 @@ pub(in crate::parser) fn literal_type(expr: &Expr) -> Option<Type> {
         Expr::F64(_) => Type::F64,
         Expr::Str(_) => Type::Str,
         Expr::Bytes(_) => Type::Bytes,
-        Expr::Call { name, .. } if matches!(name.as_str(), "encoded" | "rgba") => Type::Image,
+        Expr::Call { name, .. } if matches!(crate::unqualified_name(name), "encoded" | "rgba") => {
+            Type::Image
+        }
         Expr::EmptyList => return None,
         Expr::List(values) => {
             let first = values.first().and_then(literal_type)?;
@@ -281,6 +300,18 @@ pub(in crate::parser) fn identifier(source: &str, line: &Line) -> Result<String,
             "E072",
             line,
             format!("invalid identifier `{source}`"),
+        ))
+    }
+}
+
+pub(in crate::parser) fn qualified_identifier(source: &str, line: &Line) -> Result<String, Error> {
+    if !source.is_empty() && source.split("::").all(crate::valid_identifier) {
+        Ok(source.into())
+    } else {
+        Err(error(
+            "E072",
+            line,
+            format!("invalid qualified identifier `{source}`"),
         ))
     }
 }

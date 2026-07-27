@@ -5,7 +5,7 @@ pub(in crate::parser) fn parse_component_call(
     line: &Line,
 ) -> Result<(String, Vec<ComponentArg>, Option<Id>), Error> {
     let head = &parts[0];
-    let name = component_identifier(head, line)?;
+    let name = line.qualify(&component_identifier(head, line)?);
     line.record_component_reference(&name);
     let mut args = Vec::new();
     let mut id = None;

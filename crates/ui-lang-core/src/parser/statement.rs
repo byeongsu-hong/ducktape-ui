@@ -659,7 +659,7 @@ pub(in crate::parser) fn parse_pane_reference(
     if !source.contains('(') {
         return Ok(PaneReference::Static(identifier(source, line)?));
     }
-    let (template, args) = parse_signature(source, line)
+    let (template, args) = parse_local_signature(source, line)
         .map_err(|_| error("E188", line, "dynamic pane references use `template(key)`"))?;
     let mut args = parse_expr_list(&args, line)?;
     if args.len() != 1 {

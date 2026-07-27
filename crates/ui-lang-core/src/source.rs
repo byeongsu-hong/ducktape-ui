@@ -13,6 +13,7 @@ pub struct FileCompilation {
 struct Origin {
     path: PathBuf,
     line: usize,
+    namespace: Option<String>,
 }
 
 #[derive(Debug)]
@@ -76,8 +77,14 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
 }
 
 fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
+    let namespaces = loaded
+        .origins
+        .iter()
+        .map(|origin| origin.namespace.clone())
+        .collect::<Vec<_>>();
     let (document, symbols) =
-        parser::parse_with_symbols(&loaded.source).map_err(|error| remap_error(error, loaded))?;
+        parser::parse_with_symbols_and_namespaces(&loaded.source, &namespaces)
+            .map_err(|error| remap_error(error, loaded))?;
     let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
     check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
     Ok(document
@@ -238,8 +245,8 @@ fn load_with_overlays<S: AsRef<str>>(
     let mut stack = Vec::new();
     load_into(
         &root,
-        &root,
-        1,
+        (&root, 1),
+        None,
         &overlays,
         &mut loaded,
         &mut included,
@@ -250,11 +257,11 @@ fn load_with_overlays<S: AsRef<str>>(
 
 fn load_into(
     path: &Path,
-    imported_from: &Path,
-    import_line: usize,
+    imported_from: (&Path, usize),
+    namespace: Option<String>,
     overlays: &HashMap<PathBuf, &str>,
     loaded: &mut LoadedSource,
-    included: &mut HashSet<PathBuf>,
+    included: &mut HashSet<(PathBuf, Option<String>)>,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
     if let Some(start) = stack.iter().position(|entry| entry == path) {
@@ -265,17 +272,19 @@ fn load_into(
         cycle.push(path.display().to_string());
         return Err(file_error(
             "E182",
-            imported_from,
-            import_line,
+            imported_from.0,
+            imported_from.1,
             format!("cyclic `use`: {}", cycle.join(" -> ")),
         ));
     }
-    if !included.insert(path.to_owned()) {
+    if !included.insert((path.to_owned(), namespace.clone())) {
         return Ok(());
     }
 
     stack.push(path.to_owned());
-    loaded.dependencies.push(path.to_owned());
+    if !loaded.dependencies.contains(&path.to_owned()) {
+        loaded.dependencies.push(path.to_owned());
+    }
     let disk_source;
     let source = if let Some(source) = overlays.get(path) {
         *source
@@ -288,23 +297,42 @@ fn load_into(
     for (index, raw) in source.lines().enumerate() {
         let line = index + 1;
         if raw.len() == raw.trim_start().len() && raw.starts_with("use ") {
-            let relative = parse_use(raw, path, line)?;
+            let import = parse_use(raw, path, line)?;
             let target = resolve(
                 &path
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
-                    .join(relative),
+                    .join(import.path),
                 path,
                 line,
                 overlays,
             )?;
-            load_into(&target, path, line, overlays, loaded, included, stack)?;
+            let child_namespace =
+                import.alias.map_or_else(
+                    || namespace.clone(),
+                    |alias| {
+                        Some(namespace.as_ref().map_or_else(
+                            || alias.to_owned(),
+                            |parent| format!("{parent}::{alias}"),
+                        ))
+                    },
+                );
+            load_into(
+                &target,
+                (path, line),
+                child_namespace,
+                overlays,
+                loaded,
+                included,
+                stack,
+            )?;
         } else {
             loaded.source.push_str(raw);
             loaded.source.push('\n');
             loaded.origins.push(Origin {
                 path: path.to_owned(),
                 line,
+                namespace: namespace.clone(),
             });
         }
     }
@@ -312,20 +340,49 @@ fn load_into(
     Ok(())
 }
 
-fn parse_use<'a>(source: &'a str, path: &Path, line: usize) -> Result<&'a str, Error> {
+#[derive(Debug)]
+struct Import<'a> {
+    path: &'a str,
+    alias: Option<&'a str>,
+}
+
+fn parse_use<'a>(source: &'a str, path: &Path, line: usize) -> Result<Import<'a>, Error> {
     let value = source[4..].trim();
-    if value.len() < 2 || !value.starts_with('"') || !value.ends_with('"') {
+    let Some(value) = value.strip_prefix('"') else {
         return Err(file_error(
             "E180",
             path,
             line,
-            "imports use `use \"relative/file.ice\"`",
+            "imports use `use \"relative/file.ice\"` or `use \"relative/file.ice\" as name`",
         ));
-    }
-    let value = &value[1..value.len() - 1];
-    let import = Path::new(value);
-    if value.contains('\\')
-        || crate::has_windows_drive_prefix(value)
+    };
+    let Some(end) = value.find('"') else {
+        return Err(file_error(
+            "E180",
+            path,
+            line,
+            "imports use `use \"relative/file.ice\"` or `use \"relative/file.ice\" as name`",
+        ));
+    };
+    let import_path = &value[..end];
+    let rest = value[end + 1..].trim();
+    let alias = if rest.is_empty() {
+        None
+    } else if let Some(alias) = rest.strip_prefix("as ").map(str::trim)
+        && crate::valid_identifier(alias)
+    {
+        Some(alias)
+    } else {
+        return Err(file_error(
+            "E180",
+            path,
+            line,
+            "an import alias uses `use \"relative/file.ice\" as name`",
+        ));
+    };
+    let import = Path::new(import_path);
+    if import_path.contains('\\')
+        || crate::has_windows_drive_prefix(import_path)
         || import.is_absolute()
         || import.extension().and_then(|ext| ext.to_str()) != Some("ice")
     {
@@ -336,7 +393,10 @@ fn parse_use<'a>(source: &'a str, path: &Path, line: usize) -> Result<&'a str, E
             "import paths must be relative `/` paths ending in `.ice`",
         ));
     }
-    Ok(value)
+    Ok(Import {
+        path: import_path,
+        alias,
+    })
 }
 
 fn resolve(
@@ -394,8 +454,8 @@ fn file_error(code: &'static str, path: &Path, line: usize, message: impl Into<S
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_file_with_overlays, analyze_file_with_source, compile_file, parse_use,
-        source_is_app,
+        analyze_file, analyze_file_with_overlays, analyze_file_with_source, compile_file,
+        parse_use, source_is_app,
     };
     use crate::SymbolKind;
     use std::collections::HashMap;
@@ -457,6 +517,72 @@ mod tests {
         assert_eq!(compiled.dependencies.len(), 3);
         assert!(compiled.rust.contains("struct Demo"));
         assert_eq!(compiled.rust.matches("include_str!").count(), 3);
+    }
+
+    #[test]
+    fn aliases_the_same_module_into_distinct_checked_namespaces() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"ui.ice\" as first\nuse \"ui.ice\" as second\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  first_data:first::Data = first::data(\"A\")\n  second_data:second::Data = second::data(\"B\")\nview\n  row\n    first::Badge value=first_data\n    second::Badge value=second_data\n",
+        );
+        fixture.write(
+            "ui.ice",
+            "extern crate::helpers\n  Data(value:str)\n  sync data(value:str) -> Data\n  sync label(value:str) -> str\nrecipe panel for box\n  @p-4\nfont body family=\"Inter\"\ncomponent Badge(value:Data)\n  box @panel\n    text label(trim(value.value)) font=body\n",
+        );
+
+        let document = analyze_file(fixture.path("app.ice")).unwrap();
+        assert_eq!(
+            document
+                .components
+                .iter()
+                .map(|component| component.name.as_str())
+                .collect::<Vec<_>>(),
+            ["first::Badge", "second::Badge"]
+        );
+        assert!(
+            document
+                .recipes
+                .iter()
+                .any(|recipe| recipe.name == "first::panel")
+        );
+        assert!(
+            document
+                .fonts
+                .iter()
+                .any(|font| font.name == "second::body")
+        );
+        assert!(
+            document
+                .structs
+                .iter()
+                .any(|item| item.name == "first::Data")
+        );
+        assert!(
+            document
+                .functions
+                .iter()
+                .any(|function| function.name == "second::label")
+        );
+
+        let compiled = compile_file(fixture.path("app.ice")).unwrap();
+        assert!(compiled.rust.contains("crate::helpers::label"));
+        assert_eq!(compiled.dependencies.len(), 2);
+    }
+
+    #[test]
+    fn nests_import_aliases() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"ui.ice\" as ui\ntheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  ui::parts::Badge\n",
+        );
+        fixture.write("ui.ice", "use \"parts.ice\" as parts\n");
+        fixture.write("parts.ice", "component Badge()\n  text \"Badge\"\n");
+
+        let document = analyze_file(fixture.path("app.ice")).unwrap();
+
+        assert_eq!(document.components[0].name, "ui::parts::Badge");
     }
 
     #[test]
