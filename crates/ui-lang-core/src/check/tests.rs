@@ -401,6 +401,13 @@ on act(value, ignored)
   return if true
   total = 1
 on tick(now)
+on intentionally_ignored(_event)
+component Worker()
+  on press(detail)
+  button "Press" -> press 1
+component Hidden()
+  on press(unused_unreachable)
+  button "Hidden" -> press 1
 subscribe
   every 1s -> tick _
   every 1s -> tick _
@@ -408,13 +415,22 @@ view
   col
     text shown
     button "Act" -> act 1 2
+    button "Ignore" -> intentionally_ignored 1
+    Worker
     if false
       text "Dead"
 "#,
     ))
     .unwrap();
     let warnings = document.warnings();
-    for name in ["abandoned", "value", "ignored", "discarded", "now"] {
+    for name in [
+        "abandoned",
+        "value",
+        "ignored",
+        "discarded",
+        "now",
+        "detail",
+    ] {
         assert!(
             warnings.iter().any(|warning| {
                 warning.code == "W011" && warning.message.contains(&format!("`{name}`"))
@@ -424,7 +440,7 @@ view
     }
     assert!(warnings.iter().all(|warning| {
         warning.code != "W011"
-            || !["base", "shown", "next"]
+            || !["base", "shown", "next", "_event", "unused_unreachable"]
                 .iter()
                 .any(|name| warning.message.contains(&format!("`{name}`")))
     }));
