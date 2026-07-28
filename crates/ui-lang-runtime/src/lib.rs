@@ -3,6 +3,8 @@
 mod dashed_border;
 mod dynamic_themer;
 mod flex;
+#[doc(hidden)]
+pub mod live;
 mod qr;
 mod resize_handle;
 mod selectable_text;

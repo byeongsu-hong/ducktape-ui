@@ -6,7 +6,12 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
+use std::thread;
+use std::time::Duration;
+use ui_lang_core::{
+    LivePlan, LiveReloadDecision, evaluate_live_reload, live_plan, live_program_contract,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -44,7 +49,7 @@ fn run() -> Result<(), String> {
         "lsp" => return lsp::run_stdio(),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | schema | lsp>"
             );
             return Ok(());
         }
@@ -53,6 +58,16 @@ fn run() -> Result<(), String> {
 
     let root = env::current_dir().map_err(|error| error.to_string())?;
     match command {
+        "dev" => {
+            let requested = trailing.first().ok_or_else(|| {
+                "cargo ice dev <file.ice> [-- cargo-build-args... [-- app-args...]]".to_owned()
+            })?;
+            let cargo_args = trailing
+                .get(2..)
+                .filter(|_| trailing.get(1).is_some_and(|arg| arg == "--"))
+                .unwrap_or_default();
+            return run_dev(&root, &root.join(requested), cargo_args);
+        }
         "expand" => {
             let requested = args
                 .get(1)
@@ -131,11 +146,319 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
     match command {
         "fmt" => trailing.is_empty() || trailing == ["--check"],
         "expand" => trailing.len() == 1,
+        "dev" => {
+            trailing.len() == 1
+                || trailing.len() >= 2 && trailing.get(1).is_some_and(|arg| arg == "--")
+        }
         "test" => true,
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }
         _ => true,
+    }
+}
+
+struct DevCompilation {
+    plan: LivePlan,
+    dependencies: Vec<PathBuf>,
+    lowering_error: Option<String>,
+}
+
+fn run_dev(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(), String> {
+    let source = source
+        .canonicalize()
+        .map_err(|error| format!("cannot open {}: {error}", source.display()))?;
+    let plan_dir = root.join("target/ice-live");
+    fs::create_dir_all(&plan_dir).map_err(|error| error.to_string())?;
+    let plan_path = plan_dir.join(format!(
+        "{}-{}.json",
+        source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("app"),
+        std::process::id()
+    ));
+    let mut revision = 1;
+    let mut current = compile_dev(&source, revision)?;
+    if let Some(error) = &current.lowering_error {
+        eprintln!("ice live: {error}; using build-and-restart fallback");
+    }
+    write_plan(&plan_path, &current.plan)?;
+    let executable = cargo_build(root, cargo_args)?
+        .ok_or_else(|| "ice live: initial app build failed".to_owned())?;
+    let mut app = ChildGuard::spawn(root, &executable, runtime_args(cargo_args), &plan_path)?;
+    let mut ice_stamp = ice_source_stamp(root, &current.dependencies)?;
+    let mut rust_stamp = rust_source_stamp(root)?;
+    println!(
+        "ice live: watching {} Ice file(s); plan {}",
+        ice_stamp.len(),
+        plan_path.display()
+    );
+
+    loop {
+        if let Some(status) = app.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("ice live: app exited with {status}"))
+            };
+        }
+        thread::sleep(Duration::from_millis(100));
+        let next_ice_stamp = ice_source_stamp(root, &current.dependencies)?;
+        let next_rust_stamp = rust_source_stamp(root)?;
+        let rust_changed = next_rust_stamp != rust_stamp;
+        if next_ice_stamp == ice_stamp && !rust_changed {
+            continue;
+        }
+        thread::sleep(Duration::from_millis(50));
+        revision = revision.wrapping_add(1);
+        let next = match compile_dev(&source, revision) {
+            Ok(next) => next,
+            Err(error) => {
+                eprintln!("{error}");
+                ice_stamp = ice_source_stamp(root, &current.dependencies)?;
+                rust_stamp = rust_source_stamp(root)?;
+                continue;
+            }
+        };
+        let decision = evaluate_live_reload(&current.plan.contract, &next.plan.contract);
+        let can_reload = !rust_changed
+            && next.lowering_error.is_none()
+            && matches!(decision, LiveReloadDecision::Reload { .. });
+        if can_reload {
+            write_plan(&plan_path, &next.plan)?;
+            println!("ice live: published revision {revision}");
+            current = next;
+            ice_stamp = ice_source_stamp(root, &current.dependencies)?;
+            rust_stamp = next_rust_stamp;
+            continue;
+        }
+
+        if rust_changed {
+            eprintln!("ice live: Rust or Cargo input changed; rebuilding with the app open");
+        } else if let Some(error) = &next.lowering_error {
+            eprintln!("ice live: {error}; rebuilding with the app open");
+        } else if let LiveReloadDecision::RestartRequired { reasons } = &decision {
+            eprintln!(
+                "ice live: revision {revision} requires restart: {}",
+                reasons
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if let Some(executable) = cargo_build(root, cargo_args)? {
+            app.restart(
+                root,
+                &executable,
+                runtime_args(cargo_args),
+                &plan_path,
+                &next.plan,
+            )?;
+            println!("ice live: restarted on revision {revision}");
+            current = next;
+        } else {
+            eprintln!("ice live: build failed; keeping the current app open");
+        }
+        ice_stamp = ice_source_stamp(root, &current.dependencies)?;
+        rust_stamp = rust_source_stamp(root)?;
+    }
+}
+
+fn compile_dev(source: &Path, revision: u64) -> Result<DevCompilation, String> {
+    let analysis = ui_lang_core::analyze_file_graph(source)
+        .map_err(|error| error.render(&source.display().to_string()))?;
+    let contract = live_program_contract(&analysis.document);
+    match live_plan(&analysis.document, revision) {
+        Ok(plan) => Ok(DevCompilation {
+            plan,
+            dependencies: analysis.dependencies,
+            lowering_error: None,
+        }),
+        Err(error) => Ok(DevCompilation {
+            plan: LivePlan {
+                revision,
+                contract,
+                view: None,
+            },
+            dependencies: analysis.dependencies,
+            lowering_error: Some(error.to_string()),
+        }),
+    }
+}
+
+fn write_plan(path: &Path, plan: &LivePlan) -> Result<(), String> {
+    let payload = serde_json::to_vec(plan).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension(format!("{}.next", std::process::id()));
+    fs::write(&temporary, payload).map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| error.to_string())?;
+    }
+    fs::rename(&temporary, path).map_err(|error| error.to_string())
+}
+
+fn stamp_files(files: &[PathBuf]) -> Result<Vec<(PathBuf, u64)>, String> {
+    let mut files = files.to_vec();
+    files.sort();
+    files.dedup();
+    files
+        .into_iter()
+        .map(|path| {
+            let hash = match fs::read(&path) {
+                Ok(bytes) => stable_hash(&bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(error) => return Err(error.to_string()),
+            };
+            Ok((path, hash))
+        })
+        .collect()
+}
+
+fn ice_source_stamp(root: &Path, dependencies: &[PathBuf]) -> Result<Vec<(PathBuf, u64)>, String> {
+    let mut files = dependencies.to_vec();
+    files.extend(ice_files(root)?);
+    stamp_files(&files)
+}
+
+fn rust_source_stamp(root: &Path) -> Result<Vec<(PathBuf, u64)>, String> {
+    let mut files = Vec::new();
+    visit_rust_sources(root, &mut files)?;
+    stamp_files(&files)
+}
+
+fn visit_rust_sources(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if !ignored_dir(&path)
+                && path.file_name().and_then(|name| name.to_str()) != Some("vendor")
+            {
+                visit_rust_sources(&path, output)?;
+            }
+        } else if file_type.is_file()
+            && (path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+                || matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("Cargo.toml" | "Cargo.lock")
+                ))
+        {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+fn cargo_build(root: &Path, cargo_args: &[String]) -> Result<Option<PathBuf>, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let build_args = cargo_args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .collect::<Vec<_>>();
+    let mut child = Command::new(cargo)
+        .arg("build")
+        .args(build_args)
+        .arg("--message-format=json-render-diagnostics")
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().expect("piped cargo stdout");
+    let mut executables = Vec::new();
+    for line in BufReader::new(stdout).lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+            println!("{line}");
+            continue;
+        };
+        if message["reason"] == "compiler-artifact"
+            && message["target"]["kind"].as_array().is_some_and(|kinds| {
+                kinds
+                    .iter()
+                    .any(|kind| matches!(kind.as_str(), Some("bin" | "example")))
+            })
+            && let Some(executable) = message["executable"].as_str()
+        {
+            executables.push(PathBuf::from(executable));
+        }
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Ok(None);
+    }
+    executables.sort();
+    executables.dedup();
+    match executables.as_slice() {
+        [executable] => Ok(Some(executable.clone())),
+        [] => Err("ice live: cargo build produced no runnable binary".into()),
+        _ => Err(format!(
+            "ice live: cargo build produced multiple binaries; select one with `--bin`: {}",
+            executables
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+fn runtime_args(cargo_args: &[String]) -> &[String] {
+    cargo_args
+        .iter()
+        .position(|arg| arg == "--")
+        .and_then(|separator| cargo_args.get(separator + 1..))
+        .unwrap_or_default()
+}
+
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn spawn(root: &Path, executable: &Path, args: &[String], plan: &Path) -> Result<Self, String> {
+        Command::new(executable)
+            .args(args)
+            .env("ICE_LIVE_PLAN", plan)
+            .current_dir(root)
+            .spawn()
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+
+    fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>, String> {
+        self.0.try_wait().map_err(|error| error.to_string())
+    }
+
+    fn restart(
+        &mut self,
+        root: &Path,
+        executable: &Path,
+        args: &[String],
+        plan_path: &Path,
+        plan: &LivePlan,
+    ) -> Result<(), String> {
+        self.0.kill().map_err(|error| error.to_string())?;
+        self.0.wait().map_err(|error| error.to_string())?;
+        write_plan(plan_path, plan)?;
+        *self = Self::spawn(root, executable, args, plan_path)?;
+        Ok(())
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -449,6 +772,15 @@ mod tests {
         ));
         assert!(valid_command_args("expand", &["app.ice".into()]));
         assert!(!valid_command_args("expand", &[]));
+        assert!(valid_command_args("dev", &["app.ice".into()]));
+        assert!(valid_command_args(
+            "dev",
+            &["app.ice".into(), "--".into(), "-p".into(), "demo".into()]
+        ));
+        assert!(!valid_command_args(
+            "dev",
+            &["app.ice".into(), "-p".into(), "demo".into()]
+        ));
     }
 
     #[test]

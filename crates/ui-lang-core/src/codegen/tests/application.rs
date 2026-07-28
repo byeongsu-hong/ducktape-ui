@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn installs_the_live_runtime_without_replacing_the_aot_fallback() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "AOT fallback"
+"#;
+    let generated = compile(source, "live.ice").unwrap();
+
+    for expected in [
+        "const __ICE_LIVE_CONTRACT: &str",
+        "__ice_live: ::ui_lang_runtime::live::LiveRuntime",
+        "__IceLiveTick",
+        "self.__ice_live.subscription().map(|_| __DemoMessage::__IceLiveTick)",
+        "self.__ice_live.poll_and_report()",
+        "self.__ice_live.render::<__DemoMessage, ::iced::Theme, __IceRenderer, _>",
+        "\"AOT fallback\"",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn bridges_primitive_state_and_live_events_to_aot_handlers() {
+    let source = r#"app Counter
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+  label = "Count"
+on increment
+  count = count + 1
+on add(amount)
+  count = count + amount
+view
+  col
+    text label
+    text count
+    button "+1" -> increment
+    button "+10" -> add 10
+"#;
+    let generated = compile(source, "counter.ice").unwrap();
+
+    for expected in [
+        "fn __ice_live_values(&self)",
+        "LiveValue::I64(self.count)",
+        "LiveValue::String((self.label).clone())",
+        "__IceLiveEvent(::ui_lang_runtime::live::LiveEvent)",
+        "\"increment\" => if __args.is_empty()",
+        "LiveValue::I64(amount)",
+        "self.__update(__CounterMessage::Add(amount))",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
 fn lowers_dynamic_palettes_into_runtime_theme_and_style_selection() {
     let source = r#"app Demo
   theme native_theme(dark)

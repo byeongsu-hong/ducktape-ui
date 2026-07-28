@@ -9,6 +9,12 @@ pub struct FileCompilation {
     pub dependencies: Vec<PathBuf>,
 }
 
+#[derive(Debug)]
+pub struct FileAnalysis {
+    pub document: CheckedDocument,
+    pub dependencies: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug)]
 struct Origin {
     path: PathBuf,
@@ -31,8 +37,17 @@ pub fn source_is_app(source: &str) -> bool {
 }
 
 pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
+    Ok(analyze_file_graph(path)?.document)
+}
+
+/// Analyzes one root and returns the complete canonical source dependency graph.
+pub fn analyze_file_graph(path: impl AsRef<Path>) -> Result<FileAnalysis, Error> {
     let loaded = load(path.as_ref())?;
-    analyze_loaded(&loaded)
+    let document = analyze_loaded(&loaded)?;
+    Ok(FileAnalysis {
+        document,
+        dependencies: loaded.dependencies,
+    })
 }
 
 /// Analyze an unsaved root buffer while resolving its `use` graph from disk.
