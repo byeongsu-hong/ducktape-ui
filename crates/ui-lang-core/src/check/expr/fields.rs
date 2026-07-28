@@ -360,12 +360,26 @@ pub(in crate::check) fn field_type(
             _ => None,
         },
         Type::TestTarget => match field {
-            "kind" | "value" => Some(Type::Str),
-            "visible" => Some(Type::Bool),
+            "kind"
+            | "value"
+            | "accessibility_role"
+            | "accessibility_name"
+            | "accessibility_description"
+            | "accessibility_value" => Some(Type::Str),
+            "visible"
+            | "pixel_aligned"
+            | "focused"
+            | "accessibility_checked"
+            | "accessibility_disabled"
+            | "accessibility_supports_activate"
+            | "accessibility_supports_focus" => Some(Type::Bool),
+            "surface_count" | "text_count" | "image_count" => Some(Type::I64),
             "x" | "y" | "width" | "height" | "left" | "top" | "right" | "bottom" | "center_x"
             | "center_y" | "visible_x" | "visible_y" | "visible_width" | "visible_height"
             | "content_x" | "content_y" | "content_width" | "content_height" | "scroll_x"
-            | "scroll_y" | "translation_x" | "translation_y" | "text_size" => Some(Type::F64),
+            | "scroll_y" | "translation_x" | "translation_y" | "text_size" | "text_x"
+            | "text_y" | "text_width" | "text_height" | "text_baseline" | "image_x" | "image_y"
+            | "image_width" | "image_height" => Some(Type::F64),
             "background" => Some(Type::Background),
             "border" => Some(Type::Border),
             "shadow" => Some(Type::Shadow),

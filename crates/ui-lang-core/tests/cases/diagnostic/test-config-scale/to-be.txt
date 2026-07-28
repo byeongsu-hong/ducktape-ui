@@ -1,0 +1,2 @@
+E194
+test scale must be a positive finite number in the f32 range

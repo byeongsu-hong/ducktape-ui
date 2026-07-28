@@ -102,9 +102,47 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
         .iter()
         .find_map(|step| {
             let uses_paint = match &step.kind {
-                TestStepKind::Type(value) => expr_uses_test_paint(value, test),
-                TestStepKind::Resize(width, height) => {
+                TestStepKind::Type(value)
+                | TestStepKind::Replace(value)
+                | TestStepKind::Cursor(value)
+                | TestStepKind::Rescale(value)
+                | TestStepKind::FileHover(value)
+                | TestStepKind::FileDrop(value) => expr_uses_test_paint(value, test),
+                TestStepKind::Select(width, height)
+                | TestStepKind::WindowMove(width, height)
+                | TestStepKind::Resize(width, height) => {
                     expr_uses_test_paint(width, test) || expr_uses_test_paint(height, test)
+                }
+                TestStepKind::ClickAt { x, y, .. } | TestStepKind::Wheel { x, y, .. } => {
+                    expr_uses_test_paint(x, test) || expr_uses_test_paint(y, test)
+                }
+                TestStepKind::Scroll { target, x, y, .. } => {
+                    target_ref_uses_test_paint(target, test)
+                        || expr_uses_test_paint(x, test)
+                        || expr_uses_test_paint(y, test)
+                }
+                TestStepKind::Snap { target, x, y } => {
+                    target_ref_uses_test_paint(target, test)
+                        || expr_uses_test_paint(x, test)
+                        || expr_uses_test_paint(y, test)
+                }
+                TestStepKind::Move(TestPointerPosition::Point(x, y)) => {
+                    expr_uses_test_paint(x, test) || expr_uses_test_paint(y, test)
+                }
+                TestStepKind::Repeat { count, .. } => expr_uses_test_paint(count, test),
+                TestStepKind::Touch { id, x, y, .. } => {
+                    expr_uses_test_paint(id, test)
+                        || expr_uses_test_paint(x, test)
+                        || expr_uses_test_paint(y, test)
+                }
+                TestStepKind::Composition(TestComposition::Update { value, selection }) => {
+                    expr_uses_test_paint(value, test)
+                        || selection.as_ref().is_some_and(|(start, end)| {
+                            expr_uses_test_paint(start, test) || expr_uses_test_paint(end, test)
+                        })
+                }
+                TestStepKind::Composition(TestComposition::Commit(value)) => {
+                    expr_uses_test_paint(value, test)
                 }
                 TestStepKind::Dispatch { args, .. } => {
                     args.iter().any(|value| expr_uses_test_paint(value, test))
@@ -114,20 +152,57 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                     TestExpectation::Approx { left, right } => {
                         expr_uses_test_paint(left, test) || expr_uses_test_paint(right, test)
                     }
-                    TestExpectation::Text { value, within, .. } => {
-                        expr_uses_test_paint(value, test)
-                            || within
-                                .as_ref()
-                                .is_some_and(|target| target_ref_uses_test_paint(target, test))
-                    }
+                    TestExpectation::Text { .. } => true,
                     TestExpectation::Exists(target) | TestExpectation::Missing(target) => {
                         target_ref_uses_test_paint(target, test)
                     }
+                    TestExpectation::Accessibility { target, property } => {
+                        target_ref_uses_test_paint(target, test)
+                            || accessibility_property_expr(property)
+                                .is_some_and(|value| expr_uses_test_paint(value, test))
+                    }
                 },
-                TestStepKind::Click(target)
+                TestStepKind::Click { target, .. }
                 | TestStepKind::Hover(target)
-                | TestStepKind::Press(target) => target_ref_uses_test_paint(target, test),
-                TestStepKind::Release | TestStepKind::Key(_) => false,
+                | TestStepKind::Enter(target)
+                | TestStepKind::Move(TestPointerPosition::Target(target))
+                | TestStepKind::Press { target, .. }
+                | TestStepKind::Drop(target)
+                | TestStepKind::Focus(target)
+                | TestStepKind::SnapEnd(target)
+                | TestStepKind::Tap { target, .. }
+                | TestStepKind::Accessibility { target, .. } => {
+                    target_ref_uses_test_paint(target, test)
+                }
+                TestStepKind::Drag { from, to } => {
+                    target_ref_uses_test_paint(from, test) || target_ref_uses_test_paint(to, test)
+                }
+                TestStepKind::Release(_)
+                | TestStepKind::Leave
+                | TestStepKind::Blur
+                | TestStepKind::FocusNext
+                | TestStepKind::FocusPrevious
+                | TestStepKind::WindowFocus(_)
+                | TestStepKind::Clear
+                | TestStepKind::SelectAll
+                | TestStepKind::CursorFront
+                | TestStepKind::CursorEnd
+                | TestStepKind::Composition(TestComposition::Start | TestComposition::Cancel)
+                | TestStepKind::Key(_)
+                | TestStepKind::KeyDown(_)
+                | TestStepKind::KeyUp(_)
+                | TestStepKind::Modifiers(_)
+                | TestStepKind::Chord { .. }
+                | TestStepKind::WindowClose
+                | TestStepKind::WindowOpened
+                | TestStepKind::WindowClosed
+                | TestStepKind::Redraw
+                | TestStepKind::SystemTheme(_)
+                | TestStepKind::FileLeave
+                | TestStepKind::Wait(_)
+                | TestStepKind::Advance(_)
+                | TestStepKind::Idle
+                | TestStepKind::Capture(_) => false,
             };
             uses_paint.then_some(&step.span)
         })
@@ -137,6 +212,20 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                     .then_some(&target.span)
             })
         })
+}
+
+fn accessibility_property_expr(property: &TestAccessibilityProperty) -> Option<&Expr> {
+    match property {
+        TestAccessibilityProperty::Role(value)
+        | TestAccessibilityProperty::Name(value)
+        | TestAccessibilityProperty::Value(value)
+        | TestAccessibilityProperty::Checked(value)
+        | TestAccessibilityProperty::Disabled(value)
+        | TestAccessibilityProperty::Focused(value)
+        | TestAccessibilityProperty::Action {
+            expected: value, ..
+        } => Some(value),
+    }
 }
 
 fn target_ref_uses_test_paint(target: &TestTargetRef, test: &TestDecl) -> bool {
@@ -188,6 +277,18 @@ fn expr_uses_test_paint_inner(expr: &Expr, test: &TestDecl, visited: &mut HashSe
                             | "text_size"
                             | "font"
                             | "line_height"
+                            | "surface_count"
+                            | "text_count"
+                            | "image_count"
+                            | "text_x"
+                            | "text_y"
+                            | "text_width"
+                            | "text_height"
+                            | "text_baseline"
+                            | "image_x"
+                            | "image_y"
+                            | "image_width"
+                            | "image_height"
                     )
                 }) || alias_uses_test_paint(name, test, visited))
         }
@@ -227,16 +328,123 @@ fn check_test_step(
     ids: &TestWidgetIds,
 ) -> Result<(), Error> {
     match &step.kind {
-        TestStepKind::Click(target) | TestStepKind::Hover(target) | TestStepKind::Press(target) => {
+        TestStepKind::Click { target, .. }
+        | TestStepKind::Hover(target)
+        | TestStepKind::Enter(target)
+        | TestStepKind::Move(TestPointerPosition::Target(target))
+        | TestStepKind::Press { target, .. }
+        | TestStepKind::Drop(target)
+        | TestStepKind::Focus(target)
+        | TestStepKind::Tap { target, .. }
+        | TestStepKind::Accessibility { target, .. } => {
             check_test_target_ref(target, env, test, document, ids, &step.span)?;
         }
-        TestStepKind::Release | TestStepKind::Key(_) => {}
-        TestStepKind::Type(value) => {
+        TestStepKind::Drag { from, to } => {
+            check_test_target_ref(from, env, test, document, ids, &step.span)?;
+            check_test_target_ref(to, env, test, document, ids, &step.span)?;
+        }
+        TestStepKind::Scroll { target, x, y, .. } => {
+            check_test_target_ref(target, env, test, document, ids, &step.span)?;
+            require_test_number(
+                x,
+                env,
+                document,
+                &step.span,
+                "horizontal scroll delta",
+                false,
+            )?;
+            require_test_number(y, env, document, &step.span, "vertical scroll delta", false)?;
+        }
+        TestStepKind::Snap { target, x, y } => {
+            check_test_target_ref(target, env, test, document, ids, &step.span)?;
+            require_test_number(
+                x,
+                env,
+                document,
+                &step.span,
+                "horizontal snap offset",
+                false,
+            )?;
+            require_test_number(y, env, document, &step.span, "vertical snap offset", false)?;
+        }
+        TestStepKind::SnapEnd(target) => {
+            check_test_target_ref(target, env, test, document, ids, &step.span)?;
+        }
+        TestStepKind::ClickAt { x, y, .. }
+        | TestStepKind::Wheel { x, y, .. }
+        | TestStepKind::Move(TestPointerPosition::Point(x, y))
+        | TestStepKind::WindowMove(x, y) => {
+            require_test_number(x, env, document, &step.span, "test x coordinate", false)?;
+            require_test_number(y, env, document, &step.span, "test y coordinate", false)?;
+        }
+        TestStepKind::Release(_)
+        | TestStepKind::Leave
+        | TestStepKind::Blur
+        | TestStepKind::FocusNext
+        | TestStepKind::FocusPrevious
+        | TestStepKind::WindowFocus(_)
+        | TestStepKind::Clear
+        | TestStepKind::SelectAll
+        | TestStepKind::CursorFront
+        | TestStepKind::CursorEnd
+        | TestStepKind::Composition(TestComposition::Start | TestComposition::Cancel)
+        | TestStepKind::Key(_)
+        | TestStepKind::KeyDown(_)
+        | TestStepKind::KeyUp(_)
+        | TestStepKind::Modifiers(_)
+        | TestStepKind::Chord { .. }
+        | TestStepKind::WindowClose
+        | TestStepKind::WindowOpened
+        | TestStepKind::WindowClosed
+        | TestStepKind::Redraw
+        | TestStepKind::SystemTheme(_)
+        | TestStepKind::FileLeave
+        | TestStepKind::Wait(_)
+        | TestStepKind::Advance(_)
+        | TestStepKind::Idle
+        | TestStepKind::Capture(_) => {}
+        TestStepKind::Type(value)
+        | TestStepKind::Replace(value)
+        | TestStepKind::Composition(TestComposition::Commit(value))
+        | TestStepKind::FileHover(value)
+        | TestStepKind::FileDrop(value) => {
             require_type(
                 &expr_type(value, env, document, &step.span)?,
                 &Type::Str,
                 &step.span,
             )?;
+        }
+        TestStepKind::Composition(TestComposition::Update { value, selection }) => {
+            require_type(
+                &expr_type(value, env, document, &step.span)?,
+                &Type::Str,
+                &step.span,
+            )?;
+            if let Some((start, end)) = selection {
+                require_test_index(
+                    start,
+                    env,
+                    document,
+                    &step.span,
+                    "composition selection start",
+                )?;
+                require_test_index(end, env, document, &step.span, "composition selection end")?;
+            }
+        }
+        TestStepKind::Select(start, end) => {
+            require_test_index(start, env, document, &step.span, "selection start")?;
+            require_test_index(end, env, document, &step.span, "selection end")?;
+        }
+        TestStepKind::Cursor(index) => {
+            require_test_index(index, env, document, &step.span, "cursor index")?;
+        }
+        TestStepKind::Repeat { count, .. } => {
+            require_test_positive_integer(count, env, document, &step.span, "repeat count")?;
+        }
+        TestStepKind::Touch { id, x, y, .. } => {
+            require_test_index(id, env, document, &step.span, "touch id")?;
+            require_test_number(x, env, document, &step.span, "touch x coordinate", false)?;
+            require_test_number(y, env, document, &step.span, "touch y coordinate", false)?;
         }
         TestStepKind::Resize(width, height) => {
             for (value, label) in [
@@ -245,6 +453,16 @@ fn check_test_step(
             ] {
                 require_test_number(value, env, document, &step.span, label, true)?;
             }
+        }
+        TestStepKind::Rescale(value) => {
+            require_test_number(
+                value,
+                env,
+                document,
+                &step.span,
+                "window scale factor",
+                true,
+            )?;
         }
         TestStepKind::Dispatch { handler, args } => {
             if handler == "mount" {
@@ -310,7 +528,66 @@ fn check_test_step(
                     check_test_target_ref(target, env, test, document, ids, &step.span)?;
                 }
             }
+            TestExpectation::Accessibility { target, property } => {
+                check_test_target_ref(target, env, test, document, ids, &step.span)?;
+                let (value, ty) = match property {
+                    TestAccessibilityProperty::Role(value)
+                    | TestAccessibilityProperty::Name(value)
+                    | TestAccessibilityProperty::Value(value) => (value, Type::Str),
+                    TestAccessibilityProperty::Checked(value)
+                    | TestAccessibilityProperty::Disabled(value)
+                    | TestAccessibilityProperty::Focused(value)
+                    | TestAccessibilityProperty::Action {
+                        expected: value, ..
+                    } => (value, Type::Bool),
+                };
+                require_type(
+                    &expr_type(value, env, document, &step.span)?,
+                    &ty,
+                    &step.span,
+                )?;
+            }
         },
+    }
+    Ok(())
+}
+
+fn require_test_index(
+    value: &Expr,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+    label: &str,
+) -> Result<(), Error> {
+    require_type(&expr_type(value, env, document, span)?, &Type::I64, span)?;
+    if let Expr::I64(value) = value
+        && *value < 0
+    {
+        return Err(Error::new(
+            TEST_ERROR,
+            span,
+            format!("{label} must be non-negative"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_test_positive_integer(
+    value: &Expr,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+    label: &str,
+) -> Result<(), Error> {
+    require_type(&expr_type(value, env, document, span)?, &Type::I64, span)?;
+    if let Expr::I64(value) = value
+        && *value <= 0
+    {
+        return Err(Error::new(
+            TEST_ERROR,
+            span,
+            format!("{label} must be positive"),
+        ));
     }
     Ok(())
 }

@@ -1,0 +1,100 @@
+Config::new("semantic_driver")
+.theme(::ui_lang_runtime::testing::ThemeMode::Dark)
+.scale_factor(2.0f32)
+.locale("ko-KR")
+.platform(::ui_lang_runtime::testing::Platform::Linux)
+.reduced_motion(true)
+perform_action(::ui_lang_runtime::testing::Action::
+Action::MoveTo(
+Action::Enter(
+Action::Leave,
+Action::MoveToPoint(
+Action::Click {
+Action::ClickAt {
+Action::Press {
+Action::Release(
+Action::Wheel(
+WheelDelta::Pixels
+WheelDelta::Lines
+Action::ScrollTo {
+Action::ScrollBy {
+Action::Snap {
+Action::SnapEnd(
+Action::Drag {
+Action::DropAt(
+Action::Focus(
+Action::FocusNext,
+Action::FocusPrevious,
+Action::Blur,
+Action::WindowFocus(true)
+Action::WindowFocus(false)
+Action::Type(
+Action::Clear,
+Action::Replace(
+Action::Select {
+Action::SelectAll,
+Action::Cursor(
+Action::CursorFront,
+Action::CursorEnd,
+Action::Composition(
+CompositionPhase::Start
+CompositionPhase::Update
+CompositionPhase::Commit
+CompositionPhase::Cancel
+Action::Key(
+Action::KeyDown {
+Action::KeyUp {
+KeyMetadata {
+Action::Modifiers(
+Action::Chord {
+Action::Repeat {
+Action::Tap {
+Action::Touch {
+TouchPhase::Down
+TouchPhase::Move
+TouchPhase::Up
+TouchPhase::Cancel
+Action::WindowMove(
+Action::Resize(
+Action::Rescale(
+Action::Redraw,
+Action::WindowOpened,
+Action::WindowClosed,
+Action::SystemTheme(
+Action::FileHover(
+Action::FileDrop(
+Action::FileLeave,
+Action::Wait(
+Action::Advance(
+Action::Idle,
+Action::Capture(
+Action::Accessibility {
+AccessibilityAction::Focus
+AccessibilityAction::Click
+check_accessibility_str
+check_accessibility_bool
+check_accessibility_action
+surface_count()
+text_count()
+image_count()
+text_x()
+text_y()
+text_width()
+text_height()
+text_baseline()
+image_x()
+image_y()
+image_width()
+image_height()
+pixel_aligned()
+focused()
+accessibility_role_name()
+accessibility_name()
+accessibility_description()
+accessibility_value()
+accessibility_checked()
+accessibility_disabled()
+accessibility_supports_activate()
+accessibility_supports_focus()
+.dispatch(__message
+Action::CloseRequested,

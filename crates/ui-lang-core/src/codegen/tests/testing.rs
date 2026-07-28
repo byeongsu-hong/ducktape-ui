@@ -60,10 +60,11 @@ view
         ").background()",
         "__test.check_exists",
         "__test.check_text",
-        "__test.click",
-        "__test.typewrite",
+        "Action::Click",
+        "Action::Type",
         "Named::Enter",
-        "__test.resize",
+        "Action::Resize",
+        "__test.perform_action",
         "__test.dispatch",
         "Location::new(\"contract.ice\"",
     ] {
@@ -98,6 +99,150 @@ test window_context
 
     assert!(generated.contains("(__test.window()).to_string()"));
     assert!(generated.contains("__test.check_text"));
+}
+
+#[test]
+fn lowers_expanded_semantic_test_actions_to_the_runtime_driver() {
+    let source = r#"app Semantic
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+view
+  col #root
+    input "Draft" #field <-> draft
+test semantic_actions
+  theme dark
+  scale 1.5
+  locale "ko-KR"
+  platform linux
+  reduced-motion true
+  target root = #root
+  target field = root/field
+  enter field
+  leave
+  move field
+  move 10 20
+  double-click field right
+  click-at 10 20 middle
+  press field back
+  release back
+  wheel lines 0 -1
+  scroll-to root 0 100
+  scroll-by root 0 -20
+  snap root 0.0 0.5
+  snap-end root
+  drag field root
+  press field
+  drop root
+  focus field
+  focus-next
+  focus-previous
+  blur
+  window focus
+  clear
+  replace "value"
+  select 0 2
+  select-all
+  cursor 1
+  cursor front
+  cursor end
+  composition update "ime" 0 3
+  key arrow-left
+  key TVInputHDMI1
+  key-down "a" modified="A" location=left physical=KeyA text="a" repeat=true
+  key-up shift location=right physical=ShiftRight
+  modifiers shift control
+  chord control "p"
+  repeat backspace 2
+  tap field 2
+  touch down 1 10 20
+  window move -10 20
+  window resize 800 600
+  window rescale 2.0
+  window close-request
+  window opened
+  window closed
+  window redraw
+  system-theme none
+  file-hover "/tmp/file.txt"
+  file-drop "/tmp/file.txt"
+  file-leave
+  wait 10ms
+  advance 16ms
+  idle
+  capture semantic_controls
+  a11y activate field
+  a11y focus field
+  expect a11y field role "text_input"
+  expect a11y field disabled false
+  expect a11y field action click
+  expect root.surface_count >= 0
+  expect root.text_baseline >= 0.0
+  expect root.pixel_aligned
+  expect root.accessibility_role != ""
+"#;
+
+    let generated = compile(source, "semantic.ice").unwrap();
+    for expected in [
+        ".theme(::ui_lang_runtime::testing::ThemeMode::Dark)",
+        ".scale_factor(1.5f32)",
+        ".locale(\"ko-KR\")",
+        ".platform(::ui_lang_runtime::testing::Platform::Linux)",
+        ".reduced_motion(true)",
+        "Action::Enter",
+        "Action::Leave",
+        "Action::MoveTo",
+        "Action::MoveToPoint",
+        "Action::Click",
+        "Action::ClickAt",
+        "MouseButton::Middle",
+        "WheelDelta::Lines",
+        "Action::ScrollTo",
+        "Action::ScrollBy",
+        "Action::Snap",
+        "Action::SnapEnd",
+        "Action::FocusNext",
+        "Action::FocusPrevious",
+        "Action::SelectAll",
+        "Action::CursorFront",
+        "Action::CursorEnd",
+        "CompositionPhase::Update",
+        "Named::ArrowLeft",
+        "Named::TVInputHDMI1",
+        "Code::KeyA",
+        "Action::KeyDown",
+        "Action::KeyUp",
+        "Action::Chord",
+        "Action::Repeat",
+        "Action::Touch",
+        "Action::WindowMove",
+        "Action::CloseRequested",
+        "Action::WindowOpened",
+        "Action::WindowClosed",
+        "ThemeMode::None",
+        "Action::FileDrop",
+        "Action::Advance",
+        "Action::Capture",
+        "Action::Accessibility",
+        "__test.check_accessibility_str",
+        "__test.check_accessibility_bool",
+        "__test.check_accessibility_action",
+        ").surface_count()",
+        ").text_baseline()",
+        ").pixel_aligned()",
+        ").accessibility_role_name()",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
 }
 
 #[test]
