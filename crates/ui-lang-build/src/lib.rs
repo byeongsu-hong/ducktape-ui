@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
+const COMPILER_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct Error(String);
@@ -27,19 +28,28 @@ where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
 {
-    let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
-    let out_dir = cargo_path("OUT_DIR")?;
-    for path in paths {
-        compile_one(&manifest, &out_dir, path.as_ref())?;
-    }
-    Ok(())
+    let paths = paths
+        .into_iter()
+        .map(|path| path.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    compiler_thread(move || {
+        let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
+        let out_dir = cargo_path("OUT_DIR")?;
+        for path in paths {
+            compile_one(&manifest, &out_dir, &path)?;
+        }
+        Ok(())
+    })
 }
 
 /// Compiles every app or daemon root below a manifest-relative directory.
 pub fn compile_dir(path: impl AsRef<Path>) -> Result<(), Error> {
-    let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
-    let out_dir = cargo_path("OUT_DIR")?;
-    compile_dir_at(&manifest, &out_dir, path.as_ref())
+    let path = path.as_ref().to_owned();
+    compiler_thread(move || {
+        let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
+        let out_dir = cargo_path("OUT_DIR")?;
+        compile_dir_at(&manifest, &out_dir, &path)
+    })
 }
 
 /// Returns the generated Rust path used by both the build script and proc macro.
@@ -60,6 +70,25 @@ fn cargo_path(name: &str) -> Result<PathBuf, Error> {
     std::env::var_os(name)
         .map(PathBuf::from)
         .ok_or_else(|| Error(format!("ui-lang-build: Cargo did not provide {name}")))
+}
+
+fn compiler_thread<T>(
+    operation: impl FnOnce() -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error>
+where
+    T: Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("ui-lang-build".to_owned())
+        .stack_size(COMPILER_STACK_SIZE)
+        .spawn(operation)
+        .map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot start compiler thread: {error}"
+            ))
+        })?
+        .join()
+        .map_err(|_| Error("ui-lang-build: compiler thread panicked".to_owned()))?
 }
 
 fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<(), Error> {
