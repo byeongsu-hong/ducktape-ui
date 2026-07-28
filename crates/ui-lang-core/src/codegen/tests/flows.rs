@@ -34,7 +34,7 @@ view
     assert!(generated.contains("fn __ice_derived_normalized(&self) -> ::std::string::String"));
     assert!(generated.contains("fn __ice_derived_can_submit(&self) -> bool"));
     assert!(generated.contains("let title = Self::__ice_derived_normalized(self);"));
-    assert!(generated.contains("crate::backend::save(title.clone())"));
+    assert!(generated.contains("crate::backend::save(title.to_owned())"));
 }
 
 #[test]

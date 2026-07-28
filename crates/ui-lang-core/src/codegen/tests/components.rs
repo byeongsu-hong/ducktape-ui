@@ -97,7 +97,7 @@ view
     assert!(generated.contains(
         "move |__event_0, __event_1| __DemoMessage::FavoriteChanged(__event_0, __event_1)"
     ));
-    assert!(generated.contains(")(self.page.clone(), __value)"));
+    assert!(generated.contains(")(self.page.to_owned(), __value)"));
 }
 
 #[test]
@@ -267,9 +267,10 @@ view
     assert!(generated.contains("qr_code::Data::new(&(self.invite))"));
     assert!(generated.contains(".ok()).cell_size(::ui_lang_runtime::bounded_spacing(5.0, 182))"));
     assert!(generated.contains(
-        ".ok()).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
+        ".ok()).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |_theme|"
     ));
     assert!(generated.contains("qr_code::Style { cell: __ice_palette.colors[2]"));
+    assert!(!generated.contains("let default = ::iced::widget::qr_code::default(_theme)"));
     // The matrix is built where it is rendered, never cached in app state.
     assert!(!generated.contains("qr_code::Data,"));
 }
@@ -717,7 +718,7 @@ view
 "#;
     let generated = compile(source, "lazy.ice").unwrap();
     assert!(generated.contains(
-        "::iced::widget::lazy((self.title.clone(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
+        "::iced::widget::lazy((self.title.to_owned(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
     ));
     assert!(generated.contains("let cached: ::std::string::String = __dependency.0.clone()"));
     assert!(generated.contains("let __lazy_content: __IceElement<'static,"));
@@ -827,6 +828,7 @@ view
     assert!(generated.contains("let __table_row_count = __table_rows.len().saturating_add(1);"));
     assert!(generated.contains("__table_rows.into_iter().enumerate()"));
     assert!(generated.contains("move |(__row, row): (usize, crate::backend::Item)|"));
+    assert!(generated.contains("let _ = &row; let __table_cell"));
     assert!(generated.contains(
         ".width(::ui_lang_runtime::bounded_fill_length(::iced::Length::FillPortion(2), 1))"
     ));
@@ -944,7 +946,7 @@ view
     assert!(generated.contains("__ice_map_editor_binding"));
     assert!(generated.contains("__NotesMessage::Command(__event_0)"));
     assert!(generated.contains("crate::backend::editor_highlight("));
-    assert!(generated.contains(", self.language.clone())"));
+    assert!(generated.contains(", self.language.to_owned())"));
     assert!(generated.contains("fn __ui_lang_check_editor_binding_editor_keys"));
     assert!(generated.contains("fn __ui_lang_check_editor_highlighter_editor_highlight"));
     assert!(generated.contains("fn __ui_lang_check_editor_style_editor_surface"));
@@ -1048,7 +1050,8 @@ view
 "#;
     let generated = compile(source, "defaults.ice").unwrap();
 
-    assert!(generated.contains("(\"Untitled\".clone()).to_string()"));
+    assert!(generated.contains("(\"Untitled\".to_owned()).to_string()"));
+    assert!(!generated.contains("\"Untitled\".clone()"));
     assert!(generated.contains("Selected"));
     assert!(!generated.contains("if true"));
 }

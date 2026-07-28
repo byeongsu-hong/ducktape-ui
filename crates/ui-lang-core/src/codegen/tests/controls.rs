@@ -298,6 +298,17 @@ view
             "radio::Status::{status} {{ is_selected: {selected} }}"
         )));
     }
+    let radio_tail = generated
+        .split_once("radio::Status::Hovered { is_selected: false }")
+        .unwrap()
+        .1;
+    assert!(
+        !radio_tail
+            .split_once("__style })")
+            .unwrap()
+            .0
+            .contains("_ => {}")
+    );
     assert!(generated.contains("__style.background = ::iced::Background::from"));
     assert!(generated.contains("__style.dot_color ="));
     assert!(generated.contains("__style.border_width = 2.0 as f32"));
@@ -603,6 +614,17 @@ view
             "checkbox::Status::{status} {{ is_checked: {checked} }}"
         )));
     }
+    let checkbox_tail = generated
+        .split_once("checkbox::Status::Disabled { is_checked: false }")
+        .unwrap()
+        .1;
+    assert!(
+        !checkbox_tail
+            .split_once("__style })")
+            .unwrap()
+            .0
+            .contains("_ => {}")
+    );
     assert!(generated.contains("::iced::gradient::Linear::new(1.57 as f32)"));
     assert!(generated.contains("__style.icon_color ="));
     assert!(generated.contains("__style.text_color = ::std::option::Option::Some"));
@@ -633,6 +655,17 @@ view
             "toggler::Status::{status} {{ is_toggled: {checked} }}"
         )));
     }
+    let toggler_tail = generated
+        .split_once("toggler::Status::Disabled { is_toggled: false }")
+        .unwrap()
+        .1;
+    assert!(
+        !toggler_tail
+            .split_once("__style })")
+            .unwrap()
+            .0
+            .contains("_ => {}")
+    );
     assert!(generated.contains("__style.background_border_width = 1.0 as f32"));
     assert!(generated.contains("__style.foreground = ::iced::Background"));
     assert!(generated.contains("__style.foreground_border_width = 2.0 as f32"));

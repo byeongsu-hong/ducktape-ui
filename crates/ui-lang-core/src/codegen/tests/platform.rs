@@ -75,7 +75,10 @@ view
     assert!(generated.contains("native_meter(self.amount).map"));
     assert!(generated.contains("borrowed_meter(::std::convert::AsRef::as_ref(&(self.label)), ::std::convert::AsRef::as_ref(&(self.values)), ::std::borrow::Borrow::borrow(&(self.seen))).map"));
     assert!(generated.contains("passive().map(move |__value| __InteropMessage::__ExternNoop)"));
-    assert!(generated.contains("focus_next().map(|value| __InteropMessage::Focused)"));
+    assert!(
+        generated
+            .contains("focus_next().map(|value| { let _ = &value; __InteropMessage::Focused })")
+    );
     assert!(generated.contains("save().map(|result| match result"));
     assert!(generated.contains("Result::Err(error) => __InteropMessage::Failed(error)"));
 }

@@ -98,6 +98,11 @@ view
 fn lowers_every_canvas_event_and_redraw_action() {
     let source = example!("canvas_events.ice");
     let generated = compile(source, "canvas_events.ice").unwrap();
+    assert!(
+        generated.contains(
+            "#[allow(dead_code)]\n#[derive(Debug, Clone)]\npub(crate) struct __IceKeyPress"
+        )
+    );
     for expected in [
         "Event::InputMethod",
         "Event::Keyboard",
@@ -217,6 +222,7 @@ view
         generated.contains("svg::Status::Hovered => __style.color = Some(__ice_palette.colors")
     );
     assert!(generated.contains("svg::Status::Hovered => __style.color = None"));
+    assert!(!generated.contains("svg::Status::Hovered => __style.color = None, _ => {}"));
     let default_svg = compile(
         &source.replace(" style=dynamic_svg(active)", ""),
         "media.ice",
@@ -276,7 +282,7 @@ view
     let generated = compile(source, "media.ice").unwrap();
 
     assert!(
-        generated.contains("svg::Handle::from_memory((\"<svg/>\".clone()).as_bytes().to_vec())")
+        generated.contains("svg::Handle::from_memory((\"<svg/>\".to_owned()).as_bytes().to_vec())")
     );
     assert!(!generated.contains(".into_bytes()"));
 }

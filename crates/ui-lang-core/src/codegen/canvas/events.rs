@@ -162,6 +162,11 @@ pub(in crate::codegen) fn canvas_update_code(
             [binding] => format!("let {binding} = __value;"),
             bindings => format!("let ({}) = __value;", bindings.join(", ")),
         };
+        let consumed_bindings = event
+            .bindings
+            .iter()
+            .map(|binding| format!("let _ = &{binding};"))
+            .collect::<String>();
         let mut updates = event
             .updates
             .iter()
@@ -209,7 +214,7 @@ pub(in crate::codegen) fn canvas_update_code(
         };
         write!(
             code,
-            " if {pointer_guard}let ::std::option::Option::Some(__value) = {filter} {{ let _ = &__value; {bindings} {updates} return {result}; }}"
+            " if {pointer_guard}let ::std::option::Option::Some(__value) = {filter} {{ let _ = &__value; {bindings} {consumed_bindings} {updates} return {result}; }}"
         )
         .unwrap();
     }

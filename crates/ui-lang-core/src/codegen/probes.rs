@@ -110,14 +110,14 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
         writeln!(out, "{}", source_marker(&item.span)).unwrap();
         writeln!(
             out,
-            "#[allow(dead_code, non_snake_case)] fn __ui_lang_check_{}(value: &{}) {{",
+            "#[allow(dead_code, non_snake_case)] fn __ui_lang_check_{}(_value: &{}) {{",
             item.name, item.rust_path
         )
         .unwrap();
         for (field, ty) in &item.fields {
             writeln!(
                 out,
-                "let _: &{} = &value.{field};",
+                "let _: &{} = &_value.{field};",
                 ty.rust(&document.structs)
             )
             .unwrap();
