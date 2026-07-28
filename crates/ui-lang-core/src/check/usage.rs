@@ -108,6 +108,9 @@ impl UsageSession {
         {
             collect_handler_bindings(None, handler, &mut bindings);
         }
+        for preset in &document.presets {
+            collect_handler_bindings(None, &preset_handler(preset), &mut bindings);
+        }
         for component in document
             .components
             .iter()

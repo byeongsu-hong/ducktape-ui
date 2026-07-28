@@ -553,8 +553,9 @@ handler bindings, constant no-ops and dead gates, unreachable statements, and
 duplicate subscriptions are diagnosed at their Ice source lines. Component and
 handler reachability is combined across every discovered app root, subscription,
 preset, implicit mount, and first-class test mount or dispatch, so shared
-libraries are warned only when no root uses the definition. The same warnings
-appear in the LSP. Generated Rust diagnostics from `cargo ice check` and
+libraries are warned only when no root uses the definition. All language-checker
+warnings appear in the LSP; the workspace-orphan `W010` remains `cargo ice`-only.
+Generated Rust diagnostics from `cargo ice check` and
 `clippy` are mapped back to the responsible root or imported `.ice` syntax;
 `test` and `compat` run the same source-mapped check preflight before invoking
 Cargo's normal test runner. The
@@ -565,8 +566,9 @@ diagnostics at their responsible `.ice` URI, line, and column; ordinary Rust
 diagnostics remain owned by the Rust language server. The action publishes
 error-level generated diagnostics, including type and extern-contract failures.
 Warning-level Rust and Clippy findings from backend output are omitted because
-they are not actionable Ice diagnostics; Ice's own W001-W004 warnings continue
-to appear directly from the language checker.
+they are not actionable Ice diagnostics; Ice's non-CLI-only semantic warnings
+(`W001-W009` and `W011-W014`) continue to appear directly from the language
+checker.
 
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:

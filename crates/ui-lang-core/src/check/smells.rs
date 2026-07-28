@@ -7,6 +7,9 @@ pub(in crate::check) fn semantic_smell_warnings(
     reachable_handlers: &HandlerReachability,
 ) -> Vec<Warning> {
     let mut warnings = Vec::new();
+    for preset in &document.presets {
+        statement_smells(&preset.statements, &mut warnings);
+    }
     for handler in document
         .handlers
         .iter()
@@ -97,6 +100,9 @@ fn statement_smells(statements: &[Statement], warnings: &mut Vec<Warning>) {
 fn duplicate_subscription_warnings(document: &Document, warnings: &mut Vec<Warning>) {
     let mut seen = std::collections::HashMap::<String, usize>::new();
     for subscription in &document.subscriptions {
+        if matches!(subscription.condition, Some(Expr::Bool(false))) {
+            continue;
+        }
         let key = format!(
             "{:?}",
             (

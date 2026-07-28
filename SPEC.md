@@ -5061,12 +5061,15 @@ not orphans; standalone files that no root imports are.
 
 `W011` follows transitive derived-value dependencies and ignores unreachable
 handlers. Prefixing an intentionally ignored handler parameter or local with
-`_` suppresses it. `W012` reports self-assignment, literal `return if false`,
-literal `if true`/`if false` gates, and repetitions over a literal empty list.
-`W013` reports the first unreachable statement after a constant-true return.
+`_` suppresses it. Preset boot locals and statements participate in the same
+`W011-W013` analysis as application handlers. `W012` reports self-assignment,
+literal `return if false`, literal `if true`/`if false` gates, and repetitions
+over a literal empty list. `W013` reports the first unreachable statement after
+a constant-true return.
 `W014` compares the full subscription identity, context, filter, condition, event status,
-payload arguments, and route; it therefore warns only when an external event
-would be delivered twice with identical semantics.
+payload arguments, and route; statically disabled `when false` subscriptions are
+excluded, so it warns only when an external event would be delivered twice with
+identical semantics.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
@@ -5091,8 +5094,9 @@ provenance remain with the Rust language server. The command is explicit so
 normal edit-time parser and semantic diagnostics do not wait for Cargo.
 The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
-output rather than actionable Ice syntax and remain CLI-only; W001-W004 Ice
-warnings continue to come directly from the language checker.
+output rather than actionable Ice syntax and remain CLI-only; Ice's non-CLI-only
+semantic warnings (`W001-W009` and `W011-W014`) continue to come directly from
+the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.
