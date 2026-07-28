@@ -15,7 +15,6 @@ pub struct Document {
     pub theme_contract: Option<ThemeContract>,
     pub palettes: Vec<Palette>,
     pub fonts: Vec<FontDecl>,
-    pub qr_codes: Vec<QrData>,
     pub states: Vec<State>,
     pub derived: Vec<Derived>,
     pub components: Vec<Component>,
@@ -305,21 +304,6 @@ pub enum FontStyle {
     Normal,
     Italic,
     Oblique,
-}
-
-#[derive(Clone, Debug)]
-pub struct QrData {
-    pub name: String,
-    pub data: QrPayload,
-    pub correction: Option<QrCorrection>,
-    pub version: Option<QrVersion>,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum QrPayload {
-    Text(String),
-    Bytes(Vec<u8>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -208,29 +208,29 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-qr automatic "one"
-qr corrected "two" correction=quartile
-qr fixed "three" correction=low version=micro(4)
-qr binary bytes(00 ff a4)
+state
+  invite = "https://example.com/invite"
 view
   col
-    qr automatic cell-size=5.0
-    qr corrected size=120.0 cell=primary bg=white
-    qr fixed
-    qr binary
+    qr "one" cell-size=5.0
+    qr "two" correction=quartile size=120.0 cell=primary bg=white
+    qr "three" correction=low version=micro(4)
+    qr bytes(00 ff a4)
+    qr invite
 "#;
     let generated = compile(source, "codes.ice").unwrap();
-    assert!(generated.contains("qr_code::Data::new(\"one\")"));
-    assert!(generated.contains("qr_code::Data::with_error_correction(\"two\", ::iced::widget::qr_code::ErrorCorrection::Quartile)"));
-    assert!(generated.contains("qr_code::Data::with_version(\"three\", ::iced::widget::qr_code::Version::Micro(4), ::iced::widget::qr_code::ErrorCorrection::Low)"));
-    assert!(generated.contains("qr_code::Data::new(&[0x00u8, 0xffu8, 0xa4u8][..])"));
+    assert!(generated.contains("qr_code::Data::new(&(\"one\"))"));
+    assert!(generated.contains("qr_code::Data::with_error_correction(&(\"two\"), ::iced::widget::qr_code::ErrorCorrection::Quartile)"));
+    assert!(generated.contains("qr_code::Data::with_version(&(\"three\"), ::iced::widget::qr_code::Version::Micro(4), ::iced::widget::qr_code::ErrorCorrection::Low)"));
+    assert!(generated.contains("qr_code::Data::new(&(::std::vec![0x00u8, 0xffu8, 0xa4u8]))"));
+    assert!(generated.contains("qr_code::Data::new(&(self.invite))"));
+    assert!(generated.contains(".ok()).cell_size(::ui_lang_runtime::bounded_spacing(5.0, 182))"));
     assert!(generated.contains(
-        "::iced::widget::qr_code(&self.automatic).cell_size(::ui_lang_runtime::bounded_spacing(5.0, 182))"
-    ));
-    assert!(generated.contains(
-        "::iced::widget::qr_code(&self.corrected).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
+        ".ok()).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
     ));
     assert!(generated.contains("qr_code::Style { cell: __ice_palette.colors[2]"));
+    // The matrix is built where it is rendered, never cached in app state.
+    assert!(!generated.contains("qr_code::Data,"));
 }
 #[test]
 fn lowers_nested_iced_themes() {

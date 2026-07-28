@@ -621,10 +621,12 @@ pub(in crate::parser) fn parse_qr_code(
     if !styles.is_empty() {
         return Err(error("E093", line, "qr does not accept `@` utilities"));
     }
-    let data = parts
+    let payload = parts
         .get(1)
-        .ok_or_else(|| error("E093", line, "qr needs a declared data name"))?;
+        .ok_or_else(|| error("E093", line, "qr needs one payload expression"))?;
     let mut id = None;
+    let mut correction = None;
+    let mut version = None;
     let mut cell_size = None;
     let mut total_size = None;
     let mut cell = None;
@@ -632,6 +634,22 @@ pub(in crate::parser) fn parse_qr_code(
     for part in &parts[2..] {
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E093", "qr")?;
+        } else if let Some(value) = part.strip_prefix("correction=") {
+            correction = Some(match value {
+                "low" => QrCorrection::Low,
+                "medium" => QrCorrection::Medium,
+                "quartile" => QrCorrection::Quartile,
+                "high" => QrCorrection::High,
+                _ => {
+                    return Err(error(
+                        "E093",
+                        line,
+                        "qr correction must be low, medium, quartile, or high",
+                    ));
+                }
+            });
+        } else if let Some(value) = part.strip_prefix("version=") {
+            version = Some(parse_qr_version(value, line)?);
         } else if let Some(value) = part.strip_prefix("cell-size=") {
             cell_size = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("size=") {
@@ -652,12 +670,28 @@ pub(in crate::parser) fn parse_qr_code(
         ));
     }
     Ok(ViewNode::QrCode {
-        data: identifier(data, line)?,
+        payload: parse_expr(payload, line)?,
         id,
+        correction,
+        version,
         cell_size,
         total_size,
         cell,
         background,
         span: Span::line(line.number),
     })
+}
+
+fn parse_qr_version(source: &str, line: &Line) -> Result<QrVersion, Error> {
+    let invalid = || error("E093", line, "qr version uses normal(1..40) or micro(1..4)");
+    let (kind, number) = source
+        .split_once('(')
+        .and_then(|(kind, number)| number.strip_suffix(')').map(|number| (kind, number)))
+        .ok_or_else(invalid)?;
+    let number = number.parse::<u8>().map_err(|_| invalid())?;
+    match kind {
+        "normal" => Ok(QrVersion::Normal(number)),
+        "micro" => Ok(QrVersion::Micro(number)),
+        _ => Err(invalid()),
+    }
 }

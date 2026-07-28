@@ -445,7 +445,6 @@ pub(crate) fn parse_with_symbols_and_namespaces(
     let mut theme_contract = None;
     let mut palettes = Vec::new();
     let mut fonts = Vec::new();
-    let mut qr_codes = Vec::new();
     let mut states = Vec::new();
     let mut derived = Vec::new();
     let mut components = Vec::new();
@@ -731,8 +730,6 @@ pub(crate) fn parse_with_symbols_and_namespaces(
             }
         } else if let Some(source) = line.text.strip_prefix("font ") {
             fonts.push(parse_font(source, line)?);
-        } else if line.text == "qr" || line.text.starts_with("qr ") {
-            qr_codes.push(parse_qr_data(line.text[2..].trim(), line)?);
         } else if let Some(header) = line.text.strip_prefix("component ") {
             components.push(parse_component(header, line)?);
         } else if let Some(header) = line.text.strip_prefix("on ") {
@@ -828,7 +825,6 @@ pub(crate) fn parse_with_symbols_and_namespaces(
         theme_contract,
         palettes,
         fonts,
-        qr_codes,
         states,
         derived,
         components,

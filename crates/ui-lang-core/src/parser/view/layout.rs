@@ -65,6 +65,15 @@ pub(in crate::parser) fn parse_container(
             options.flex_item.margin.bottom = Some(parse_flex_margin(value, line)?);
         } else if let Some(value) = part.strip_prefix("ml=") {
             options.flex_item.margin.left = Some(parse_flex_margin(value, line)?);
+        } else if let Some(value) = part.strip_prefix("border-dash=") {
+            options.border_dash = parse_expr_list(strip_wrapping_parens(value), line)?;
+            if options.border_dash.is_empty() {
+                return Err(error(
+                    "E184",
+                    line,
+                    "border dash needs at least one segment length",
+                ));
+            }
         } else if let Some(value) = part.strip_prefix("style=") {
             options.custom_style = Some(parse_extern_call(
                 value,

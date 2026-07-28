@@ -34,14 +34,17 @@ pub(in crate::codegen) fn render_content(
             Ok(format!("{code}.into()"))
         }
         ViewNode::QrCode {
-            data,
+            payload,
+            correction,
+            version,
             cell_size,
             total_size,
             cell,
             background,
             ..
         } => {
-            let mut code = format!("::iced::widget::qr_code(&self.{data})");
+            let data = qr_data_code(payload, *correction, *version, env, document)?;
+            let mut code = format!("::ui_lang_runtime::qr_code({data}.ok())");
             // QR v40 has 177 cells plus four quiet-zone cells; spacing counts gaps.
             if let Some(value) = cell_size {
                 write!(

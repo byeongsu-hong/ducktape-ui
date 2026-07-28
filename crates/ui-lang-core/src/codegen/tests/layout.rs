@@ -339,6 +339,61 @@ view
 }
 
 #[test]
+fn lowers_dashed_borders_to_a_stroke_over_the_surface() {
+    let source = r#"app Boxed
+extern crate::backend
+  box-style dynamic_container()
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  col
+    box #draft style=dynamic_container() p=8.0 bg=primary border=fg border-w=1.5 border-dash=(4.0, 3.0) r=6.0 r-tl=2.0
+      text "Draft"
+    box #final p=8.0 bg=primary border=fg border-w=1.5 r=6.0
+      text "Final"
+"#;
+    let generated = compile(source, "boxed.ice").unwrap();
+    assert!(generated.contains("::ui_lang_runtime::dashed_border(::iced::widget::container("));
+    assert!(generated.contains(
+        ", __ice_palette.colors[1], ((1.5) as f32).max(0.0).min(f32::MAX), ::iced::border::Radius { top_left: ((2.0) as f32)"
+    ));
+    assert!(generated.contains(
+        "::std::vec![((4.0) as f32).max(0.0).min(f32::MAX), ((3.0) as f32).max(0.0).min(f32::MAX)]"
+    ));
+    // The dash replaces the solid border instead of adding to it, and only for
+    // the box that asked: the solid box keeps the border iced can draw.
+    assert_eq!(
+        generated
+            .matches("__style.border.width = 1.5 as f32;")
+            .count(),
+        1
+    );
+    assert_eq!(
+        generated
+            .matches("__style.border.color = __ice_palette.colors[1];")
+            .count(),
+        1
+    );
+    assert_eq!(
+        generated
+            .matches("::ui_lang_runtime::dashed_border(")
+            .count(),
+        1
+    );
+    // The final reset happens after custom and typed styles are composed, so
+    // a custom style cannot leave its own solid border under the dash.
+    assert!(generated.contains("__style }; __style.border.width = 0.0; __style }"));
+}
+
+#[test]
 fn lowers_structured_overlays_to_native_overlay_widgets() {
     let source = r#"app Dialog
 theme contract AppTheme
@@ -765,7 +820,7 @@ view
     assert!(generated.contains(".menu_style(move |__theme|"));
     assert!(generated.contains("__style.selected_background"));
     assert!(generated.contains("__style.shadow.blur_radius = 4.0 as f32"));
-    assert!(generated.contains("self.selected = ::std::option::Option::Some(next);"));
+    assert!(generated.contains("self.selected = ::std::option::Option::Some(next.clone());"));
     let defaults = compile(
         &source.replace(
             " style=dynamic_pick(busy) menu-style=dynamic_menu(busy)",

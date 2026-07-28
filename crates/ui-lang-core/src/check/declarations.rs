@@ -341,15 +341,6 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
         }
     }
     let mut fields = HashSet::new();
-    for qr in &document.qr_codes {
-        if !fields.insert(&qr.name) {
-            return Err(Error::new(
-                "E100",
-                &qr.span,
-                format!("duplicate qr data `{}`", qr.name),
-            ));
-        }
-    }
     for state in &document.states {
         if document.daemon && state.name == "window" {
             return Err(

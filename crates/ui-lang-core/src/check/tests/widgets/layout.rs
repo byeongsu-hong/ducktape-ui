@@ -132,6 +132,45 @@ view
 }
 
 #[test]
+fn checks_dashed_borders() {
+    let source = r#"app Boxed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  box #draft p=8.0 border=fg border-w=1.0 border-dash=(4.0, 3.0) r=6.0
+    text "Draft"
+"#;
+    analyze(source).unwrap();
+
+    // The stroke draws the border color, so it needs one to draw.
+    let error = analyze(&source.replace("border=fg ", "")).unwrap_err();
+    assert_eq!(error.code, "E176");
+    assert!(error.message.contains("dashed border needs `border=`"));
+
+    let error =
+        analyze(&source.replace("border-dash=(4.0, 3.0)", "border-dash=(4.0, -3.0)")).unwrap_err();
+    assert_eq!(error.code, "E128");
+    assert!(error.message.contains("border dash segment"));
+
+    let error = analyze(&source.replace("border-dash=(4.0, 3.0)", "border-dash=()")).unwrap_err();
+    assert_eq!(error.code, "E184");
+    assert!(error.message.contains("at least one segment"));
+
+    let error =
+        analyze(&source.replace("border-dash=(4.0, 3.0)", "border-dash=(0.0, 0.0)")).unwrap_err();
+    assert_eq!(error.code, "E176");
+    assert!(error.message.contains("at least one positive segment"));
+}
+
+#[test]
 fn checks_structured_overlays() {
     let source = r#"app Dialog
 theme contract AppTheme

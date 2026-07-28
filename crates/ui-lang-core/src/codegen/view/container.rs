@@ -20,7 +20,20 @@ pub(in crate::codegen) fn render_container(
         |id| id_code(id, scope, env, document),
     )?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
-    let style = Style::parse(styles, document);
+    let mut style = Style::parse(styles, document);
+    let mut surface = options.style.clone();
+    // A dashed border replaces the solid one rather than adding to it: iced
+    // can only draw a solid quad border, so both style lanes drop theirs and
+    // the dash is stroked over the same rectangle instead.
+    let dash = (!options.border_dash.is_empty())
+        .then(|| border_dash_code(options, &style, env, document))
+        .transpose()?;
+    if dash.is_some() {
+        surface.border_color = None;
+        surface.border_width = None;
+        style.border_color = None;
+        style.border_width = 0;
+    }
     let mut code = String::from("::iced::widget::container(__container_content)");
     if let Some(id) = id {
         write!(
@@ -81,14 +94,24 @@ pub(in crate::codegen) fn render_container(
         )
         .unwrap();
     }
-    if let Some(surface) = container_surface_style_value(
+    if let Some(mut surface) = container_surface_style_value(
         &style,
-        &options.style,
+        &surface,
         options.custom_style.as_ref(),
         env,
         document,
     )? {
+        // A custom style can return its own solid border. Clear that final
+        // value too, after every style lane has been composed, so the dash is
+        // always a replacement instead of an overlay on a solid stroke.
+        if dash.is_some() {
+            surface =
+                format!("{{ let mut __style = {surface}; __style.border.width = 0.0; __style }}");
+        }
         write!(code, ".style(move |__theme| {surface})").unwrap();
+    }
+    if let Some(dash) = dash {
+        code = format!("::ui_lang_runtime::dashed_border({code}, {dash})");
     }
     let code = if style.self_center {
         format!("::iced::widget::container({code}).width(::iced::Fill).center_x(::iced::Fill)")
@@ -97,6 +120,52 @@ pub(in crate::codegen) fn render_container(
     };
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {code}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+    ))
+}
+
+/// Builds the arguments of the dashed-border stroke: the colour, width and
+/// radius the surface would have drawn its solid border with, plus the dash
+/// pattern. Corner radii come from the same typed/utility pair the quad reads,
+/// so the stroke traces the surface it replaces, per corner.
+fn border_dash_code(
+    options: &ContainerOptions,
+    style: &Style,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+) -> Result<String, Error> {
+    let color = options
+        .style
+        .border_color
+        .as_ref()
+        .expect("checker requires `border=` on a dashed box");
+    let width = options
+        .style
+        .border_width
+        .as_ref()
+        .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", env, document))
+        .transpose()?
+        .unwrap_or_else(|| format!("{}.0", style.border_width.max(1)));
+    let radius = radius_code(
+        options.style.radius.as_ref(),
+        [
+            options.style.radius_top_left.as_ref(),
+            options.style.radius_top_right.as_ref(),
+            options.style.radius_bottom_right.as_ref(),
+            options.style.radius_bottom_left.as_ref(),
+        ],
+        env,
+        document,
+    )?
+    .unwrap_or_else(|| format!("::iced::border::Radius::from({}.0)", style.radius));
+    let segments = options
+        .border_dash
+        .iter()
+        .map(|segment| clamped_f32_code(segment, "0.0", "f32::MAX", env, document))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(format!(
+        "{}, {width}, {radius}, ::std::vec![{segments}]",
+        theme_color(document, color)
     ))
 }
 

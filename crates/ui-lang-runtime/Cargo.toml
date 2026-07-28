@@ -7,9 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 accesskit = "=0.24.1"
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "thread-pool", "tiny-skia", "wgpu", "x11"] }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code", "thread-pool", "tiny-skia", "wgpu", "x11"] }
 iced_test = "=0.14.0"
 iced_tiny_skia = { version = "=0.14.0", default-features = false }
+unicode-segmentation = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 accesskit_unix = "=0.22.1"

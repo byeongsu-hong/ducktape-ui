@@ -440,41 +440,42 @@ pub(in crate::codegen) fn theme_factory_code(
     Ok(format!("{}({args})", function.rust_path))
 }
 
-pub(in crate::codegen) fn qr_data_code(qr: &QrData) -> String {
+/// Encodes a QR payload where it is rendered, never once in application state:
+/// the payload is an expression, so a matrix built at startup would be stale
+/// the moment the expression changes.
+pub(in crate::codegen) fn qr_data_code(
+    payload: &Expr,
+    correction: Option<QrCorrection>,
+    version: Option<QrVersion>,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+) -> Result<String, Error> {
     let module = "::iced::widget::qr_code";
-    let data = match &qr.data {
-        QrPayload::Text(value) => rust_string(value),
-        QrPayload::Bytes(values) => format!(
-            "&[{}][..]",
-            values
-                .iter()
-                .map(|value| format!("0x{value:02x}u8"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    };
-    let correction = |value| match value {
+    let data = format!(
+        "&({})",
+        expr_code(payload, env, document, ValueMode::Borrowed)?
+    );
+    let correction_code = |value| match value {
         QrCorrection::Low => format!("{module}::ErrorCorrection::Low"),
         QrCorrection::Medium => format!("{module}::ErrorCorrection::Medium"),
         QrCorrection::Quartile => format!("{module}::ErrorCorrection::Quartile"),
         QrCorrection::High => format!("{module}::ErrorCorrection::High"),
     };
-    let constructor = if let Some(version) = qr.version {
+    Ok(if let Some(version) = version {
         let version = match version {
             QrVersion::Normal(value) => format!("{module}::Version::Normal({value})"),
             QrVersion::Micro(value) => format!("{module}::Version::Micro({value})"),
         };
-        let correction = correction(qr.correction.unwrap_or(QrCorrection::Medium));
+        let correction = correction_code(correction.unwrap_or(QrCorrection::Medium));
         format!("{module}::Data::with_version({data}, {version}, {correction})")
-    } else if let Some(value) = qr.correction {
+    } else if let Some(value) = correction {
         format!(
             "{module}::Data::with_error_correction({data}, {})",
-            correction(value)
+            correction_code(value)
         )
     } else {
         format!("{module}::Data::new({data})")
-    };
-    format!("{constructor}.expect(\"invalid qr data `{}`\")", qr.name)
+    })
 }
 
 pub(in crate::codegen) fn color_code(value: &str, opacity: Option<u8>) -> String {

@@ -1,15 +1,19 @@
 //! Runtime support for the accessibility contract emitted by `ui-lang`.
 
+mod dashed_border;
 mod dynamic_themer;
 mod flex;
+mod qr;
 mod resize_handle;
 mod selectable_text;
 #[doc(hidden)]
 pub mod testing;
 mod zstack;
 
+pub use dashed_border::*;
 pub use dynamic_themer::*;
 pub use flex::*;
+pub use qr::*;
 pub use resize_handle::*;
 pub use selectable_text::*;
 pub use zstack::*;
@@ -1484,6 +1488,15 @@ pub fn bounded_padding(top: f64, right: f64, bottom: f64, left: f64) -> Padding 
         bottom: bounded_nonnegative_f32(bottom).min(f32::MAX - top),
         left,
     }
+}
+
+/// Splits text into the units a tracked `text` renders one widget per.
+///
+/// Grapheme clusters, never `char`s: tracking already gives up shaping and
+/// kerning, but splitting inside a cluster would separate a combining mark or
+/// an emoji sequence from its base and render mojibake rather than wide text.
+pub fn graphemes(value: &str) -> impl Iterator<Item = &str> {
+    unicode_segmentation::UnicodeSegmentation::graphemes(value, true)
 }
 
 /// Bounds one table padding/separator metric across an entire row or column.

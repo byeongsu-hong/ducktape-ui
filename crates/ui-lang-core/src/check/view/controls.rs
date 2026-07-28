@@ -514,8 +514,10 @@ pub(in crate::check) fn infer_controls_group(
             check_styles(styles, document, span, StyleTarget::Rule)?;
         }
         ViewNode::QrCode {
-            data,
+            payload,
             id,
+            correction,
+            version,
             cell_size,
             total_size,
             cell,
@@ -523,12 +525,11 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            if !document.qr_codes.iter().any(|item| item.name == *data) {
-                return Err(
-                    Error::new("E136", span, format!("unknown qr data `{data}`"))
-                        .hint(format!("declare `qr {data} \"...\"` before the view")),
-                );
+            let ty = expr_type(payload, env, document, span)?;
+            if !matches!(ty, Type::Str | Type::Bytes) {
+                return Err(type_error(span, &Type::Str, &ty).hint("qr accepts str or bytes"));
             }
+            check_qr_payload(payload, *correction, *version, span)?;
             for (value, label) in [
                 (cell_size.as_ref(), "qr cell size"),
                 (total_size.as_ref(), "qr total size"),

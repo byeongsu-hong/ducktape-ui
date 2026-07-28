@@ -828,6 +828,49 @@ view
 }
 
 #[test]
+fn checks_text_tracking_lowering_limits() {
+    let source = r#"app Typography
+extern crate::backend
+  text-style dynamic_text(active:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+  label = "SECTION"
+view
+  col
+    text "SECTION" size=12.0 tracking=1.2 align-x=center
+    text label size=12.0 tracking=1.2
+"#;
+    analyze(source).unwrap();
+
+    // A row of graphemes has no line to wrap, justify, or restyle per glyph.
+    for (property, replacement) in [
+        ("align-x=center", "wrap=word"),
+        ("align-x=center", "align-x=justified"),
+        ("align-x=center", "style=dynamic_text(active)"),
+    ] {
+        let error = analyze(&source.replace(property, replacement)).unwrap_err();
+        assert_eq!(error.code, "E174", "{replacement}");
+    }
+
+    // Literal content that shaping would ruin is rejected; runtime content
+    // cannot be proven either way and is the author's contract.
+    let error =
+        analyze(&source.replace("\"SECTION\" size=12.0", "\"섹션\" size=12.0")).unwrap_err();
+    assert_eq!(error.code, "E175");
+    assert!(error.message.contains("latin"));
+}
+
+#[test]
 fn checks_native_text_style_callbacks() {
     let source = r#"app Typography
 extern crate::backend

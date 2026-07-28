@@ -38,6 +38,8 @@ pub(in crate::parser) fn parse_text(
             options.shaping = Some(parse_text_shaping(value, line, "E063")?);
         } else if let Some(value) = part.strip_prefix("wrap=") {
             options.wrapping = Some(parse_text_wrapping(value, line, "E063")?);
+        } else if let Some(value) = part.strip_prefix("tracking=") {
+            options.tracking = Some(parse_text_tracking(value, line)?);
         } else if let Some(value) = part.strip_prefix("style=") {
             options.custom_style = Some(parse_extern_call(
                 value,
@@ -61,6 +63,26 @@ pub(in crate::parser) fn parse_text(
         styles,
         span: Span::line(line.number),
     })
+}
+
+/// Tracking is a plain literal, never an expression: the lowering has to know
+/// at compile time whether any tracking is asked for at all, because a text
+/// without it must stay one text widget.
+fn parse_text_tracking(source: &str, line: &Line) -> Result<f64, Error> {
+    let invalid = || {
+        error(
+            "E063",
+            line,
+            "text tracking must be a non-negative number literal",
+        )
+    };
+    let Expr::F64(value) = parse_expr(strip_wrapping_parens(source), line)? else {
+        return Err(invalid());
+    };
+    if !value.is_finite() || value < 0.0 {
+        return Err(invalid());
+    }
+    Ok(value)
 }
 
 pub(in crate::parser) fn parse_rich_text(
