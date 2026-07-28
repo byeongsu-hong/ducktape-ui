@@ -12,10 +12,11 @@ members = [
     "examples/showcase",
     "conformance/ice",
 ]
-exclude = ["vendor/iced_wgpu", "vendor/iced_winit"]
+exclude = ["vendor/block", "vendor/iced_wgpu", "vendor/iced_winit"]
 resolver = "3"
 
 [patch.crates-io]
+block = { path = "vendor/block" }
 iced_wgpu = { path = "vendor/iced_wgpu" }
 iced_winit = { path = "vendor/iced_winit" }
 
