@@ -357,16 +357,11 @@ fn checks_native_length_values_and_widget_passage() {
     assert_eq!(error.code, "E152");
     assert!(error.message.contains("0..=65535"));
 
-    let error = analyze(&source.replace(
-        "col w=fill_length h=shrink_length",
-        "col w=true h=shrink_length",
-    ))
-    .unwrap_err();
+    let error = analyze(&source.replace("w=fill_length", "w=true")).unwrap_err();
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("expected `f64` or `length`"));
 
-    let error =
-        analyze(&source.replace("grid cols=1 w=96.0", "grid cols=1 w=round_trip")).unwrap_err();
+    let error = analyze(&source.replace("w=96.0", "w=round_trip")).unwrap_err();
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("expected `f64`"));
     assert!(error.message.contains("got `length`"));

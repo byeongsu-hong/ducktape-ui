@@ -129,6 +129,7 @@ pub enum Type {
     WidgetTarget,
     TestTarget,
     TaskHandle,
+    Palette(String),
     Named(String),
     Unit,
     Unknown,
@@ -227,6 +228,7 @@ impl Type {
             Self::WidgetTarget => "__IceWidgetTarget".into(),
             Self::TestTarget => "::ui_lang_runtime::testing::Target".into(),
             Self::TaskHandle => "::iced::task::Handle".into(),
+            Self::Palette(contract) => generated_named_rust(contract),
             Self::Named(name) => structs
                 .iter()
                 .find(|item| item.name == *name)
@@ -321,6 +323,7 @@ impl Type {
             Self::WidgetTarget => "widget-target".into(),
             Self::TestTarget => "test-target".into(),
             Self::TaskHandle => "task-handle".into(),
+            Self::Palette(contract) => format!("palette[{contract}]"),
             Self::Named(name) => name.clone(),
             Self::Unit => "unit".into(),
             Self::Unknown => "unknown".into(),

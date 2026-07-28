@@ -7,7 +7,11 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         .map(|item| item.name.as_str())
         .chain(document.enums.iter().map(|item| item.name.as_str()))
         .collect::<HashSet<_>>();
-    let check = |ty: &Type, span: &Span| check_declared_type(ty, span, &known);
+    let palette_contract = document
+        .theme_contract
+        .as_ref()
+        .map(|item| item.name.as_str());
+    let check = |ty: &Type, span: &Span| check_declared_type(ty, span, &known, palette_contract);
     let reject_debug_span = |ty: &Type, span: &Span| {
         if contains_debug_span(ty) {
             Err(Error::new(
@@ -202,18 +206,19 @@ pub(in crate::check) fn check_declared_type(
     ty: &Type,
     span: &Span,
     known: &HashSet<&str>,
+    palette_contract: Option<&str>,
 ) -> Result<(), Error> {
     match ty {
         Type::List(inner) | Type::Option(inner) | Type::Combo(inner) => {
-            check_declared_type(inner, span, known)
+            check_declared_type(inner, span, known, palette_contract)
         }
         Type::Result(output, error) => {
-            check_declared_type(output, span, known)?;
-            check_declared_type(error, span, known)
+            check_declared_type(output, span, known, palette_contract)?;
+            check_declared_type(error, span, known, palette_contract)
         }
         Type::Animation(inner) if matches!(inner.as_ref(), Type::Bool | Type::F64) => Ok(()),
         Type::Animation(inner) if matches!(inner.as_ref(), Type::Named(_)) => {
-            check_declared_type(inner, span, known)
+            check_declared_type(inner, span, known, palette_contract)
         }
         Type::Animation(inner) => Err(Error::new(
             "E103",
@@ -230,6 +235,11 @@ pub(in crate::check) fn check_declared_type(
                 )),
             )
         }
+        Type::Palette(contract) if Some(contract.as_str()) != palette_contract => Err(Error::new(
+            "E103",
+            span,
+            format!("unknown theme contract `{contract}`"),
+        )),
         _ => Ok(()),
     }
 }

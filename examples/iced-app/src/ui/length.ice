@@ -50,8 +50,18 @@ on inspect
   equal = fixed_length == round_trip
 
 view
-  col w=fill_length h=shrink_length gap=8.0 p=16.0
+  col
+    with
+      w=fill_length
+      h=shrink_length
+      gap=8.0
+      p=16.0
     button "Inspect" w=from_f64 h=fixed_length -> inspect
-    grid cols=1 w=96.0 h=portion_length gap=2.0
+    grid
+      with
+        cols=1
+        w=96.0
+        h=portion_length
+        gap=2.0
       text kind w=enclosed_length h=shrink_length
     space w=from_pixels h=fluid_length

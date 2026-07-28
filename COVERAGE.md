@@ -6,7 +6,7 @@ resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
 This is an implementation inventory, not a roadmap. A partial or missing row does
 not imply planned Ice syntax; uncommon behavior should use an existing typed
 Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-Language revision 2.0 and the workspace's pre-1.0 package version `0.1.0`
+The implemented 2.0 Preview candidate and the workspace's pre-1.0 package version `0.1.0`
 are intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
@@ -49,10 +49,14 @@ Components expose closed checked contracts: named events carry zero or more
 ordered typed payloads, every call site routes each event in caller scope, and
 direct app-handler references from component bodies are rejected. The single
 typed `->` output remains the default-event shorthand.
+An explicit `forward` block accepts only outer events with the exact same name
+and payload signature; wildcard and verbose identity forwarding are rejected.
 Component contracts also support required and optional slots; missing optional
 slots lower to no child, and `provided(Name)` is folded at each call site.
-First-child `with` metadata blocks preserve long checked property and utility
-lists without changing the view tree.
+Canonical `with` metadata blocks preserve long checked property and utility
+lists without changing the view tree; the formatter alone decides inline versus
+wrapped form and orders metadata before events, forwarding, slots/statuses, and
+content.
 `run replace` uses native abort handles to cancel and replace prior work at the
 same component scope and call site. `lifetime mounted` prunes disappeared
 scopes, dropping local state, generation counters, and abort-on-drop handles;
@@ -76,7 +80,7 @@ participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 
-The LSP contract is covered by focused protocol tests for cursor-scoped
+The LSP contract uses the core error-tolerant cursor-context model and is covered by focused protocol tests for cursor-scoped
 completion, checked component and extern signatures, base-first recipe hover,
 and direct workspace-edit code actions for bindings, named events, handlers,
 fallible routes, accessibility labels, repeated-utility recipe extraction,
@@ -95,8 +99,9 @@ capture errors, and mutable-value rejection.
 Theme contracts and dynamic palettes are native Core declarations in 2.0.
 The checker requires the four Iced base tokens, rejects incomplete or
 contract-mismatched palettes and unknown/duplicate/non-color entries, and type
-checks the app's active palette expression as `str`. Generated code selects one
-complete color table per view and uses it for both the custom Iced theme and all
+checks the app's active palette expression as the nominal `palette[Contract]`
+type. Generated exhaustive code selects one complete color table per view with
+no string fallback and uses it for both the custom Iced theme and all
 semantic-token style callbacks. Parser, checker, codegen, schema/LSP, formatter,
 example, and workspace compilation tests provide the executable evidence.
 
@@ -109,7 +114,7 @@ content, computed layout bounds, and unambiguous structured tiny-skia paint
 output. Absolute and earlier-alias-relative test targets, definition, and rename
 stay within one test, and generated runtime failures retain imported `.ice`
 paths and lines. Parser, checker,
-formatter, codegen, runtime, schema/LSP, migrated examples, and invalid/runtime
+formatter, codegen, runtime, schema/LSP, reference examples, and invalid/runtime
 failure tests provide direct evidence. There is no legacy external ICE-test
 parser or adapter.
 
@@ -178,7 +183,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 2.0 has thirty-three checked Rust boundaries:
+Ice 2.0 Preview has thirty-three checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |

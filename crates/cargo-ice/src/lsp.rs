@@ -4,6 +4,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use ui_lang_core::{
+    CursorContext, STYLE_STATUS_NAMES as STATUS_NAMES, SourcePosition,
+    editor_ancestor_lines as ancestor_lines, editor_block_end as child_block_end,
+    editor_component_name as component_name_on_line, editor_first_word as first_word,
+    editor_indentation as indentation,
+};
 
 struct DiagnosticReport {
     target: String,
@@ -529,139 +535,6 @@ fn checked_document(
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CompletionContext {
-    TopLevel,
-    Handler,
-    Status(Option<String>),
-    View,
-    Match(usize),
-    Component(String),
-    ThemeContract,
-    Test,
-}
-
-const STATUS_NAMES: &[&str] = &[
-    "active",
-    "hovered",
-    "pressed",
-    "disabled",
-    "focused",
-    "focused-hovered",
-    "opened",
-    "opened-hovered",
-    "dragged",
-];
-
-fn indentation(line: &str) -> usize {
-    line.len() - line.trim_start().len()
-}
-
-fn ancestor_lines<'a>(lines: &'a [&str], line: usize) -> Vec<(usize, &'a str)> {
-    let indent = lines.get(line).map_or(0, |line| indentation(line));
-    let mut limit = indent;
-    let mut ancestors = Vec::new();
-    for (index, candidate) in lines[..line.min(lines.len())].iter().enumerate().rev() {
-        if candidate.trim().is_empty() || indentation(candidate) >= limit {
-            continue;
-        }
-        limit = indentation(candidate);
-        ancestors.push((index, *candidate));
-        if limit == 0 {
-            break;
-        }
-    }
-    ancestors
-}
-
-fn first_word(line: &str) -> Option<&str> {
-    line.trim().split_ascii_whitespace().next()
-}
-
-fn component_name_on_line(line: &str, document: Option<&ui_lang_core::Document>) -> Option<String> {
-    let name = first_word(line)?;
-    document?
-        .components
-        .iter()
-        .any(|component| component.name == name)
-        .then(|| name.to_owned())
-}
-
-fn completion_context(
-    source: &str,
-    line: usize,
-    document: Option<&ui_lang_core::Document>,
-) -> CompletionContext {
-    let lines = source.split('\n').collect::<Vec<_>>();
-    let current = lines.get(line).copied().unwrap_or("");
-    if indentation(current) == 0 && !current.trim().is_empty() {
-        return CompletionContext::TopLevel;
-    }
-    let ancestors = ancestor_lines(&lines, line);
-    if ancestors.iter().any(|(_, line)| {
-        indentation(line) == 0
-            && (line.trim_start().starts_with("on ") || line.trim() == "on mount")
-    }) {
-        return CompletionContext::Handler;
-    }
-    if ancestors
-        .iter()
-        .any(|(_, line)| indentation(line) == 0 && line.trim_start().starts_with("test "))
-    {
-        return CompletionContext::Test;
-    }
-    if ancestors
-        .iter()
-        .any(|(_, line)| indentation(line) == 0 && line.trim_start().starts_with("theme contract "))
-    {
-        return CompletionContext::ThemeContract;
-    }
-    if first_word(current).is_some_and(|word| STATUS_NAMES.contains(&word)) {
-        return CompletionContext::Status(
-            ancestors
-                .first()
-                .and_then(|(_, line)| first_word(line))
-                .map(str::to_owned),
-        );
-    }
-    if ancestors
-        .first()
-        .and_then(|(_, line)| first_word(line))
-        .is_some_and(|word| STATUS_NAMES.contains(&word))
-    {
-        return CompletionContext::Status(
-            ancestors
-                .get(1)
-                .and_then(|(_, line)| first_word(line))
-                .map(str::to_owned),
-        );
-    }
-    if let Some((match_line, parent)) = ancestors
-        .iter()
-        .find(|(_, candidate)| candidate.trim_start().starts_with("match "))
-        && indentation(current) == indentation(parent) + 2
-    {
-        return CompletionContext::Match(*match_line);
-    }
-    if let Some(name) = component_name_on_line(current, document) {
-        return CompletionContext::Component(name);
-    }
-    for (_, ancestor) in &ancestors {
-        if ancestor.trim() == "events" {
-            continue;
-        }
-        if let Some(name) = component_name_on_line(ancestor, document) {
-            return CompletionContext::Component(name);
-        }
-        break;
-    }
-    if indentation(current) == 0 {
-        CompletionContext::TopLevel
-    } else {
-        CompletionContext::View
-    }
-}
-
 fn completion_items_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
@@ -672,28 +545,35 @@ fn completion_items_at(documents: &HashMap<String, String>, params: &Value) -> O
         .then(|| ui_lang_core::parse(source).ok())
         .flatten();
     let document = checked.as_deref().or(parsed.as_ref());
-    let context = completion_context(source, line, document);
+    let context = ui_lang_core::cursor_context(
+        source,
+        SourcePosition {
+            line,
+            column: usize::try_from(params["position"]["character"].as_u64()?).ok()?,
+        },
+        document,
+    );
     let items = match context {
-        CompletionContext::TopLevel => schema::completion_items_for(&["declaration"]),
-        CompletionContext::Handler => {
+        CursorContext::TopLevel => schema::completion_items_for(&["declaration"]),
+        CursorContext::HandlerBody => {
             let mut items = schema::completion_items_for(&["statement"]);
             if let Some(document) = document {
                 items.extend(effect_completions(document));
             }
             items
         }
-        CompletionContext::Status(parent) => status_completions(parent.as_deref()),
-        CompletionContext::View => {
+        CursorContext::StyleStatus { target } => status_completions(target.as_deref()),
+        CursorContext::ViewNode | CursorContext::NodeMetadata { .. } => {
             let mut items = schema::completion_items_for(&["layout", "widget", "control"]);
             if let Some(document) = document {
                 items.extend(document.components.iter().map(component_node_completion));
             }
             items
         }
-        CompletionContext::Match(match_line) => document
+        CursorContext::MatchArms { match_line } => document
             .map(|document| match_arm_completions(document, match_line))
             .unwrap_or_default(),
-        CompletionContext::Component(name) => document
+        CursorContext::ComponentCall { component: name } => document
             .and_then(|document| {
                 document
                     .components
@@ -702,8 +582,23 @@ fn completion_items_at(documents: &HashMap<String, String>, params: &Value) -> O
             })
             .map(component_contract_completions)
             .unwrap_or_default(),
-        CompletionContext::ThemeContract => Vec::new(),
-        CompletionContext::Test => schema::completion_items_for(&[
+        CursorContext::PaletteValue { contract } => document
+            .map(|document| palette_value_completions(document, &contract))
+            .unwrap_or_default(),
+        CursorContext::ComponentEvents {
+            component: name,
+            forwarding,
+        } => document
+            .and_then(|document| {
+                document
+                    .components
+                    .iter()
+                    .find(|component| component.name == name)
+            })
+            .map(|component| component_event_completions(component, forwarding))
+            .unwrap_or_default(),
+        CursorContext::ThemeContract => Vec::new(),
+        CursorContext::TestBody => schema::completion_items_for(&[
             "test configuration",
             "test statement",
             "test interaction",
@@ -721,6 +616,22 @@ fn component_node_completion(component: &ui_lang_core::Component) -> Value {
         "detail": "Ice component",
         "insertText": component.name,
     })
+}
+
+fn palette_value_completions(document: &ui_lang_core::Document, contract: &str) -> Vec<Value> {
+    document
+        .palettes
+        .iter()
+        .map(|palette| {
+            let value = format!("{contract}.{}", palette.name);
+            json!({
+                "label": value,
+                "kind": 20,
+                "detail": format!("{} palette", contract),
+                "insertText": value,
+            })
+        })
+        .collect()
 }
 
 fn component_contract_completions(component: &ui_lang_core::Component) -> Vec<Value> {
@@ -754,16 +665,32 @@ fn component_contract_completions(component: &ui_lang_core::Component) -> Vec<Va
             "insertTextFormat": 2,
         })
     }));
-    items.extend(component.events.iter().map(|event| {
-        json!({
-            "label": event.name,
-            "kind": 23,
-            "detail": component_event_signature(event),
-            "insertText": format!("{} -> ${{1:handler}}", event.name),
-            "insertTextFormat": 2,
-        })
-    }));
+    items.extend(component_event_completions(component, false));
     items
+}
+
+fn component_event_completions(
+    component: &ui_lang_core::Component,
+    forwarding: bool,
+) -> Vec<Value> {
+    component
+        .events
+        .iter()
+        .map(|event| {
+            let insert = if forwarding {
+                event.name.clone()
+            } else {
+                format!("{} -> ${{1:handler}}", event.name)
+            };
+            json!({
+                "label": event.name,
+                "kind": 23,
+                "detail": component_event_signature(event),
+                "insertText": insert,
+                "insertTextFormat": 2,
+            })
+        })
+        .collect()
 }
 
 fn status_completions(parent: Option<&str>) -> Vec<Value> {
@@ -1037,6 +964,12 @@ fn missing_match_patterns(
                     .collect()
             })
             .unwrap_or_default(),
+        Type::Palette(contract) => document
+            .palettes
+            .iter()
+            .filter(|palette| !covered.contains(&palette.name))
+            .map(|palette| format!("{contract}.{}", palette.name))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -1064,6 +997,17 @@ fn match_patterns_fit_type(
             .find(|item| item.name == *name)
             .and_then(|item| item.variants.iter().find(|item| item.name == *variant))
             .is_some_and(|variant| variant.payload.is_some() == binding.is_some()),
+        (
+            Type::Palette(contract),
+            MatchPattern::Enum {
+                enum_name,
+                variant,
+                binding,
+            },
+        ) if contract == enum_name && binding.is_none() => document
+            .palettes
+            .iter()
+            .any(|palette| palette.name == *variant),
         _ => false,
     })
 }
@@ -1715,9 +1659,13 @@ fn component_handler_event_action(
     let route_start = arrow + 2;
     let handler_start =
         route_start + current[route_start..].len() - current[route_start..].trim_start().len();
+    let emitted = std::iter::once(handler_name.as_str())
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut edits = vec![edit(
-        line_range(source, line, route_start, handler_start),
-        " emit ",
+        line_range(source, line, handler_start, current.len()),
+        format!("emit({emitted})"),
     )];
     if component
         .events
@@ -1958,15 +1906,6 @@ fn component_call_actions(
         uri,
         vec![block_insertion(source, lines, at, text)],
     ));
-}
-
-fn child_block_end(lines: &[&str], line: usize, indent: usize) -> usize {
-    for (index, candidate) in lines.iter().enumerate().skip(line + 1) {
-        if !candidate.trim().is_empty() && indentation(candidate) <= indent {
-            return index;
-        }
-    }
-    lines.len()
 }
 
 fn block_insertion(source: &str, lines: &[&str], at: usize, text: String) -> Value {
@@ -3523,7 +3462,7 @@ mod tests {
     #[test]
     fn completion_uses_cursor_and_checked_contract_context() {
         let uri = "file:///tmp/context.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\n  task save(value:str) -> bool\n  stream changes() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  title = \"Draft\"\non submit\n  return if true\ncomponent Card(bind title:str, tone:str=\"quiet\")\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit select title\n      text title\n      active bg=primary\nview\n  Card title<->title\n    events\n      select -> selected _\n";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\n  task save(value:str) -> bool\n  stream changes() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  title = \"Draft\"\non submit\n  return if true\ncomponent Card(bind title:str, tone:str=\"quiet\")\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit(select, title)\n      text title\n      active bg=primary\nview\n  Card title<->title\n    events\n      select -> selected _\n";
         assert!(
             ui_lang_core::parse(source).is_ok(),
             "{:?}",
@@ -3658,9 +3597,51 @@ mod tests {
     }
 
     #[test]
+    fn completes_nominal_palette_values_and_match_arms() {
+        let uri = "file:///tmp/palette-context.ice";
+        let source = "app Demo\n  palette active_palette\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette light for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #3366ff\n  danger #cc3344\npalette dark for AppTheme\n  bg #111111\n  fg #ffffff\n  primary #88aaff\n  danger #ff6677\nstate\n  active_palette:palette[AppTheme] = AppTheme.light\nview\n  match active_palette\n    AppTheme.light\n      text \"Light\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let complete = |line| {
+            completion_items_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": 8 },
+                }),
+            )
+            .unwrap()
+        };
+        let state_line = source
+            .lines()
+            .position(|line| line.contains("active_palette:palette"))
+            .unwrap();
+        let values = complete(state_line);
+        assert!(values.iter().any(|item| item["label"] == "AppTheme.light"));
+        assert!(values.iter().any(|item| item["label"] == "AppTheme.dark"));
+
+        let arm_line = source.lines().count();
+        let source = format!("{source}    \n");
+        let documents = HashMap::from([(uri.to_owned(), source)]);
+        let patterns = completion_items_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": arm_line, "character": 4 },
+            }),
+        )
+        .unwrap();
+        assert!(patterns.iter().any(|item| item["label"] == "AppTheme.dark"));
+        assert!(
+            !patterns
+                .iter()
+                .any(|item| item["label"] == "AppTheme.light")
+        );
+    }
+
+    #[test]
     fn hover_shows_component_contract_and_flattened_recipe() {
         let uri = "file:///tmp/hover.ice";
-        let source = "app Demo\nrecipe action for button\n  @px-4 rounded-md\nrecipe danger for button extends action\n  @bg-danger\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Card(bind title:str, tone:str=\"quiet\") -> bool\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit select title\n      text title\nview\n  text \"Demo\"\n";
+        let source = "app Demo\nrecipe action for button\n  @px-4 rounded-md\nrecipe danger for button extends action\n  @bg-danger\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Card(bind title:str, tone:str=\"quiet\") -> bool\n  emits\n    select(str)\n  col\n    slot Header\n    button label=title -> emit(select, title)\n      text title\nview\n  text \"Demo\"\n";
         assert!(
             ui_lang_core::analyze(source).is_ok(),
             "{:?}",
@@ -3883,6 +3864,47 @@ mod tests {
     }
 
     #[test]
+    fn code_action_uses_an_unsaved_import_fragment() {
+        let fixture = Fixture::new();
+        let source = "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n";
+        fixture.write("app.ice", source);
+        fixture.write("ui.ice", "component Saved()\n  text \"Saved\"\n");
+        let root = fixture.path("app.ice");
+        let part = fixture.path("ui.ice");
+        let uri = file_path_uri(&root);
+        let part_uri = file_path_uri(&part);
+        let documents = HashMap::from([
+            (uri.clone(), source.to_owned()),
+            (
+                part_uri,
+                "component Card()\n  text \"Unsaved\"\n".to_owned(),
+            ),
+        ]);
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 13, "character": 6 },
+                    "end": { "line": 13, "character": 6 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let action = actions
+            .iter()
+            .find(|action| action["title"] == "Qualify `Card` as `ui::Card`")
+            .unwrap_or_else(|| panic!("missing qualification from unsaved import: {actions:?}"));
+        let output = apply_action(source, action, &uri);
+        let overlays = HashMap::from([
+            (root.clone(), output),
+            (part, "component Card()\n  text \"Unsaved\"\n".to_owned()),
+        ]);
+        ui_lang_core::analyze_file_with_overlays(root, &overlays).unwrap();
+    }
+
+    #[test]
     fn code_action_omits_ambiguous_import_qualification() {
         let fixture = Fixture::new();
         fixture.write("ui.ice", "component Card()\n  text \"Card\"\n");
@@ -4041,7 +4063,7 @@ mod tests {
 
         let output = apply_action(source, action, uri);
         assert!(output.contains("component Nav(page:str)\n  emits\n    navigate(str)"));
-        assert!(output.contains("button \"Open\" -> emit navigate page"));
+        assert!(output.contains("button \"Open\" -> emit(navigate, page)"));
         assert!(output.contains("events\n      navigate -> navigate _"));
         ui_lang_core::analyze(&output).unwrap();
 
@@ -4278,7 +4300,7 @@ mod tests {
         let fixture = Fixture::new();
         let root = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
         let other = "app Other\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n    events\n      click -> clicked\n";
-        let part = "component Card()\n  emits\n    click\n  button \"😀\" -> emit click\ncomponent Panel()\n  text \"Other\"\non clicked\non mount\n";
+        let part = "component Card()\n  emits\n    click\n  button \"😀\" -> emit(click)\ncomponent Panel()\n  text \"Other\"\non clicked\non mount\n";
         fixture.write("app.ice", root);
         fixture.write("other.ice", other);
         fixture.write("part.ice", part);

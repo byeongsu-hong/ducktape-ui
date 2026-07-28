@@ -34,6 +34,12 @@ pub(in crate::parser) fn parse_type(source: &str, line: &Line) -> Result<Type, E
     {
         return Ok(Type::Animation(Box::new(parse_type(inner, line)?)));
     }
+    if let Some(contract) = source
+        .strip_prefix("palette[")
+        .and_then(|source| source.strip_suffix(']'))
+    {
+        return Ok(Type::Palette(qualified_identifier(contract.trim(), line)?));
+    }
     if source.starts_with('[') && source.ends_with(']') {
         return Ok(Type::List(Box::new(parse_type(
             &source[1..source.len() - 1],

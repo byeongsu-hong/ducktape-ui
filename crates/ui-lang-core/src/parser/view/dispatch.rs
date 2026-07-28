@@ -12,13 +12,17 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 "with is metadata for a widget or component call",
             ));
         }
-        let Some(metadata) = line.children.first().filter(|child| child.text == "with") else {
-            return Err(error(
-                "E040",
-                line,
-                "with must be the first metadata child of a node",
-            ));
-        };
+        let mut metadata_blocks = line
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| child.text == "with");
+        let (metadata_index, metadata) = metadata_blocks
+            .next()
+            .expect("a with block was found above");
+        if metadata_blocks.next().is_some() {
+            return Err(error("E040", line, "node has duplicate with blocks"));
+        }
         if metadata.children.is_empty() {
             return Err(error("E040", metadata, "with cannot be empty"));
         }
@@ -61,7 +65,13 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
             expanded.text.push_str(" -> ");
             expanded.text.push_str(route);
         }
-        expanded.children = line.children[1..].to_vec();
+        expanded.children = line
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != metadata_index)
+            .map(|(_, child)| child.clone())
+            .collect();
         return parse_view(&expanded);
     }
     if let Some(value) = line.text.strip_prefix("match ") {

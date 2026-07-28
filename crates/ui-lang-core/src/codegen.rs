@@ -187,6 +187,18 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         .theme_contract
         .as_ref()
         .map_or(0, |contract| contract.tokens.len());
+    if let Some(contract) = &document.theme_contract {
+        writeln!(
+            out,
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum {} {{",
+            generated_named_rust(&contract.name)
+        )
+        .unwrap();
+        for palette in &document.palettes {
+            writeln!(out, "{},", pascal(&palette.name)).unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+    }
     writeln!(
         out,
         "#[derive(Clone, Copy)]\nstruct __IcePalette {{ name: &'static str, colors: [::iced::Color; {token_count}] }}"

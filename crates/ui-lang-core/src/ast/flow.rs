@@ -474,6 +474,6 @@ pub struct ComponentSlot {
 #[derive(Clone, Debug)]
 pub struct ComponentEventRoute {
     pub name: String,
-    pub route: Route,
+    pub route: Option<Route>,
     pub span: Span,
 }

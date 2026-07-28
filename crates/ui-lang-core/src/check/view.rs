@@ -58,6 +58,7 @@ pub(in crate::check) fn lazy_hashable(ty: &Type) -> bool {
         | Type::Alignment
         | Type::HorizontalAlignment
         | Type::VerticalAlignment
+        | Type::Palette(_)
         | Type::Named(_) => true,
         Type::List(inner) | Type::Option(inner) => lazy_hashable(inner),
         Type::Result(output, error) => lazy_hashable(output) && lazy_hashable(error),

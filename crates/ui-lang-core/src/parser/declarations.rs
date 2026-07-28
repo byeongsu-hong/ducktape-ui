@@ -659,7 +659,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
             for event in &child.children {
                 ensure_leaf(event)?;
                 let (name, payloads) = if event.text.contains('(') {
-                    let (name, payloads) = parse_signature(&event.text, event)?;
+                    let (name, payloads) = parse_local_signature(&event.text, event)?;
                     let payloads = if payloads.trim().is_empty() {
                         Vec::new()
                     } else {
@@ -780,6 +780,13 @@ pub(in crate::parser) fn parse_handler(header: &str, line: &Line) -> Result<Hand
 pub(in crate::parser) fn parse_route(source: &str, line: &Line) -> Result<Route, Error> {
     let source = source.trim();
     let line = line.origin_for(source);
+    if source == "emit" || source.starts_with("emit ") {
+        return Err(error(
+            "E052",
+            line,
+            "emit uses function syntax such as `emit(event, value)`",
+        ));
+    }
     if let Some(open) = source.find('(') {
         let close = matching_paren(source, line)?;
         if !source[close + 1..].trim().is_empty() {
@@ -788,6 +795,9 @@ pub(in crate::parser) fn parse_route(source: &str, line: &Line) -> Result<Route,
         let handler = identifier(source[..open].trim(), line)?;
         line.record_symbol(SymbolKind::Handler, &handler, false, source);
         let args_source = &source[open + 1..close];
+        if handler == "emit" && args_source.trim().is_empty() {
+            return Err(error("E052", line, "emit requires an output or event"));
+        }
         let args = if args_source.trim().is_empty() {
             Vec::new()
         } else {

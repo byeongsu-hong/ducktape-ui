@@ -3,7 +3,10 @@ use super::*;
 #[test]
 fn lowers_dynamic_palettes_into_runtime_theme_and_style_selection() {
     let source = r#"app Demo
+  theme native_theme(dark)
   palette active_palette
+extern crate::backend
+  theme native_theme(dark:bool)
 theme contract Ducktape
   bg
   fg
@@ -23,7 +26,8 @@ palette dark for Ducktape
   danger #ff6677
   surface #222222
 state
-  active_palette = "light"
+  dark = false
+  active_palette:palette[Ducktape] = Ducktape.light
 view
   box bg=surface
     theme app
@@ -35,10 +39,11 @@ view
         generated
             .contains("struct __IcePalette { name: &'static str, colors: [::iced::Color; 5] }")
     );
-    assert!(generated.contains("let __palette_name = self.active_palette.clone()"));
-    assert!(generated.contains("\"light\" => __IcePalette"));
-    assert!(generated.contains("\"dark\" => __IcePalette"));
-    assert!(generated.contains("_ => __IcePalette"));
+    assert!(generated.contains("enum Ducktape"));
+    assert!(generated.contains("Ducktape::Light => __IcePalette"));
+    assert!(generated.contains("Ducktape::Dark => __IcePalette"));
+    assert!(!generated.contains("_ => __IcePalette"));
+    assert!(generated.contains("crate::backend::native_theme(self.dark)"));
     assert!(generated.contains("background: __ice_palette.colors[0]"));
     assert!(generated.contains("text: __ice_palette.colors[1]"));
     assert!(generated.contains("::iced::Background::Color(__ice_palette.colors[4])"));
@@ -686,8 +691,8 @@ component AgentWindow(id:window-id)
     quit
   col
     text label(id)
-    button "Open" -> emit open
-    button "Quit" -> emit quit
+    button "Open" -> emit(open)
+    button "Quit" -> emit(quit)
 view
   AgentWindow id=window
     events

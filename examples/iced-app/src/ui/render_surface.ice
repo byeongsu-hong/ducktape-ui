@@ -29,7 +29,11 @@ state
   surface_state:SurfaceState = SurfaceState.idle
 
 component Slotted()
-  box #frame w=240.0 h=32.0 @bg-surface
+  box #frame
+    with
+      w=240.0
+      h=32.0
+      @bg-surface
     slot
 
 on clicked
@@ -71,7 +75,11 @@ on hidden
 on canvas_pressed
 
 view
-  col #root w=720.0 gap=8.0 p=8.0
+  col #root
+    with
+      w=720.0
+      gap=8.0
+      p=8.0
     text "Render surface" #text size=16.0
     rich-text #rich-text
       span "Rendered rich text"
@@ -89,16 +97,28 @@ view
     space #space w=24.0 h=8.0
     row #row w=fill gap=4.0
       text "Row child"
-    flex #flex w=fill gap=4.0 justify=space-between
+    flex #flex
+      with
+        w=fill
+        gap=4.0
+        justify=space-between
       text "Flex start"
       text "Flex end"
-    grid #grid cols=2 w=704.0 gap=4.0
+    grid #grid
+      with
+        cols=2
+        w=704.0
+        gap=4.0
       text "Grid one"
       text "Grid two"
     stack #stack w=fill h=24.0
       text "Stack base"
       text "Stack layer"
-    box #box w=fill h=24.0 @bg-surface
+    box #box
+      with
+        w=fill
+        h=24.0
+        @bg-surface
       text "Box child"
     scroll #scroll w=fill h=40.0
       col h=80.0
@@ -145,11 +165,24 @@ view
       text "Nested theme"
     float #float x=2.0 y=3.0
       text "Float child"
-    pin #pin w=64.0 h=24.0 x=2.0 y=3.0
+    pin #pin
+      with
+        w=64.0
+        h=24.0
+        x=2.0
+        y=3.0
       text "Pin child"
-    sensor #sensor show=measured resize=measured hide=hidden
+    sensor #sensor
+      with
+        show=measured
+        resize=measured
+        hide=hidden
       text "Sensor child"
-    responsive #responsive size=(available_width, available_height) w=fill h=24.0
+    responsive #responsive
+      with
+        size=(available_width, available_height)
+        w=fill
+        h=24.0
       text available_width
     panes #panes w=fill h=80.0
       pane first

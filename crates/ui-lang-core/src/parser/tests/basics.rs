@@ -137,7 +137,7 @@ view
 #[test]
 fn parses_named_component_events_and_route_maps() {
     let document = parse(
-        "app Demo\ncomponent Menu()\n  emits\n    close\n    select(str, bool)\n  button \"Close\" -> emit close\non closed\non selected(value, active)\nview\n  Menu\n    events\n      close -> closed\n      select -> selected _ _\n",
+        "app Demo\ncomponent Menu()\n  emits\n    close\n    select(str, bool)\n  button \"Close\" -> emit(close)\non closed\non selected(value, active)\nview\n  Menu\n    events\n      close -> closed\n      select -> selected _ _\n",
     )
     .unwrap();
     assert_eq!(document.components[0].events[0].name, "close");
@@ -151,7 +151,31 @@ fn parses_named_component_events_and_route_maps() {
     };
     assert_eq!(events.len(), 2);
     assert_eq!(events[1].name, "select");
-    assert_eq!(events[1].route.args.len(), 2);
+    assert_eq!(events[1].route.as_ref().unwrap().args.len(), 2);
+}
+
+#[test]
+fn parses_explicit_component_event_forwarding() {
+    let document = parse(
+        "app Demo\ncomponent Leaf()\n  emits\n    select(str)\n  button \"Open\" -> emit(select, \"page\")\ncomponent Shell()\n  emits\n    select(str)\n  Leaf\n    forward\n      select\nview\n  Shell\n",
+    )
+    .unwrap();
+    let ViewNode::Component { events, .. } = &document.components[1].root else {
+        panic!("expected component call");
+    };
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].name, "select");
+    assert!(events[0].route.is_none());
+}
+
+#[test]
+fn rejects_non_function_emit_syntax() {
+    let error = parse(
+        "app Demo\ncomponent Card() -> bool\n  button \"Go\" -> emit _\nview\n  text \"Demo\"\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E052");
+    assert!(error.message.contains("function syntax"));
 }
 
 #[test]

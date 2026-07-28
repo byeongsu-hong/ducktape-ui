@@ -573,6 +573,27 @@ mod tests {
     }
 
     #[test]
+    fn checks_bind_props_and_named_events_across_an_alias() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  draft = \"Draft\"\non changed(value)\n  draft = value\nview\n  ui::Field value<->draft\n    events\n      change -> changed _\n",
+        );
+        fixture.write(
+            "ui.ice",
+            "component Field(bind value:str)\n  emits\n    change(str)\n  col\n    input \"Value\" <-> value\n    button \"Apply\" -> emit(change, value)\n",
+        );
+
+        let compiled = compile_file(fixture.path("app.ice")).unwrap();
+        assert!(compiled.rust.contains("__BindDraft"));
+        assert!(
+            compiled
+                .rust
+                .contains("move |__event_0| __DemoMessage::Changed(__event_0)")
+        );
+    }
+
+    #[test]
     fn nests_import_aliases() {
         let fixture = Fixture::new();
         fixture.write(
@@ -610,11 +631,11 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "app.ice",
-            "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col\n    ui::Card\n    ui::Card\n      Footer:\n        text \"Footer\"\n",
+            "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col\n    ui::Card\n    ui::Card\n      ui::Card.Footer\n        text \"Footer\"\n",
         );
         fixture.write(
             "ui.ice",
-            "component Card()\n  col\n    text \"Body\"\n    if provided(Footer)\n      slot Footer?\n",
+            "component Card()\n  col\n    text \"Body\"\n    if provided(Footer)\n      slot Footer?\ncomponent Card.Footer()\n  box\n    slot\n",
         );
 
         let compiled = compile_file(fixture.path("app.ice")).unwrap();
@@ -712,7 +733,7 @@ mod tests {
         fixture.write("app.ice", root);
         fixture.write(
             "part.ice",
-            "component Card()\n  emits\n    click\n  button \"Go\" -> emit click\n",
+            "component Card()\n  emits\n    click\n  button \"Go\" -> emit(click)\n",
         );
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -850,7 +871,7 @@ mod tests {
     #[test]
     fn keeps_component_outputs_out_of_global_handler_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Choice() -> bool\n  checkbox \"Choice\" checked=false -> emit _\non emit(value)\non changed(value)\nview\n  col\n    Choice -> changed _\n    checkbox \"Global\" checked=false -> emit _\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Choice() -> bool\n  checkbox \"Choice\" checked=false -> emit(_)\non emit(value)\non changed(value)\nview\n  col\n    Choice -> changed _\n    checkbox \"Global\" checked=false -> emit(_)\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();
@@ -983,7 +1004,7 @@ mod tests {
     #[test]
     fn keeps_component_emit_out_of_navigation() {
         let fixture = Fixture::new();
-        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle() -> bool\n  checkbox \"Toggle\" checked=false -> emit _\non changed(value)\nview\n  Toggle -> changed _\n";
+        let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle() -> bool\n  checkbox \"Toggle\" checked=false -> emit(_)\non changed(value)\nview\n  Toggle -> changed _\n";
         fixture.write("app.ice", root);
 
         let checked = analyze_file_with_source(fixture.path("app.ice"), root).unwrap();

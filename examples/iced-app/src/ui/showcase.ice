@@ -70,8 +70,16 @@ derived
 component TaskRow(task:Task, loading:bool)
   emits
     toggle(i64, bool)
-  row #root p=16.0 align=center @w-full bg-surface border border-border rounded-lg
-    checkbox task.title -> emit toggle task.id _
+  row #root
+    with
+      p=16.0
+      align=center
+      @w-full
+      @bg-surface
+      @border
+      @border-border
+      @rounded-lg
+    checkbox task.title -> emit(toggle, task.id, _)
       with
         checked=task.done
         disabled=loading
@@ -94,7 +102,7 @@ component EditorPanel(bind content:editor, bind heading:str, busy:bool)
     editor_command(EditorCommand)
   col gap=8.0
     input "Editor heading" <-> heading hint="Editor heading" disabled=busy
-    editor #notes <-> content -> emit editor_command _
+    editor #notes <-> content -> emit(editor_command, _)
       with
         hint="Write notes"
         w=640.0
@@ -439,9 +447,24 @@ subscribe
   system theme -> system_theme_changed _
 
 view
-  col gap=24.0 p=24.0 @w-full h-full bg-bg
-    row gap=12.0 align=center @w-full
-      text "Tasks" font=ui style=summary_text(loading) size=24.0 @font-bold
+  col
+    with
+      gap=24.0
+      p=24.0
+      @w-full
+      @h-full
+      @bg-bg
+    row
+      with
+        gap=12.0
+        align=center
+        @w-full
+      text "Tasks"
+        with
+          font=ui
+          style=summary_text(loading)
+          size=24.0
+          @font-bold
       lazy tasks as cached_tasks
         text len(cached_tasks) size=14.0 @text-muted
       text last_key size=14.0 @text-muted
@@ -460,7 +483,11 @@ view
       if draft_focused
         text "draft focused" size=14.0 @text-muted
 
-    row gap=12.0 align=center @w-full
+    row
+      with
+        gap=12.0
+        align=center
+        @w-full
       input "New task" #new-task <-> draft
         with
           hint="What needs doing?"
@@ -510,7 +537,14 @@ view
           @disabled:opacity-50
 
     if has_error
-      row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
+      row
+        with
+          gap=16.0
+          p=16.0
+          align=center
+          @w-full
+          @bg-danger
+          @rounded-lg
         text error size=14.0 @text-white
         button "Retry" -> retry
           with
@@ -526,7 +560,15 @@ view
       text "Working..." size=14.0 @text-muted
 
     if empty(tasks) && !loading
-      col p=24.0 align=center @w-full bg-surface border border-border rounded-lg
+      col
+        with
+          p=24.0
+          align=center
+          @w-full
+          @bg-surface
+          @border
+          @border-border
+          @rounded-lg
         text "No tasks yet." size=14.0 @text-muted
 
     box #summary
@@ -552,10 +594,29 @@ view
         px-snap=true
       text "A native box owns one structured child tree." size=14.0 @text-muted
 
-    rule horizontal thickness=1.0 style=weak fill=pad(12,4) color=border r=2.0 snap=true
+    rule horizontal
+      with
+        thickness=1.0
+        style=weak
+        fill=pad(12,4)
+        color=border
+        r=2.0
+        snap=true
 
-    grid gap=16.0 w=640.0 h=aspect(16.0,9.0) max-cell=280.0 @w-full
-      col gap=8.0 p=16.0 @w-full bg-surface rounded-lg
+    grid
+      with
+        gap=16.0
+        w=640.0
+        h=aspect(16.0,9.0)
+        max-cell=280.0
+        @w-full
+      col
+        with
+          gap=8.0
+          p=16.0
+          @w-full
+          @bg-surface
+          @rounded-lg
         text "Controls"
           with
             w=fill
@@ -570,7 +631,11 @@ view
             @font-bold
             @text-fg
         theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)
-          qr project_code size=112.0 cell=fg bg=surface
+          qr project_code
+            with
+              size=112.0
+              cell=fg
+              bg=surface
         toggler "Notifications" -> notifications_changed _
           with
             checked=notifications
@@ -650,8 +715,19 @@ view
             clip=false
             wrap-gap=8.0
             wrap-align=start
-          image "examples/iced-app/assets/checker.ppm" w=48.0 h=48.0 fit=cover filter=nearest r=8.0
-          image encoded_image w=24.0 h=48.0 fit=cover filter=nearest
+          image "examples/iced-app/assets/checker.ppm"
+            with
+              w=48.0
+              h=48.0
+              fit=cover
+              filter=nearest
+              r=8.0
+          image encoded_image
+            with
+              w=24.0
+              h=48.0
+              fit=cover
+              filter=nearest
           image memory_image
             with
               w=48.0
@@ -688,7 +764,12 @@ view
               h=16.0
               color=fg
               hover=primary
-          svg bytes(3c 73 76 67 2f 3e) memory w=16.0 h=16.0 color=fg hover=primary
+          svg bytes(3c 73 76 67 2f 3e) memory
+            with
+              w=16.0
+              h=16.0
+              color=fg
+              hover=primary
           tooltip
             with
               position=bottom
@@ -717,7 +798,11 @@ view
                 scroll=native_scroll
                 cursor=pointer
               text "Native pointer area" size=14.0 @text-fg
-            col p=8.0 @bg-surface rounded-md
+            col
+              with
+                p=8.0
+                @bg-surface
+                @rounded-md
               text "Native tooltip" size=14.0 @text-fg
               if native_hover
                 text "Pointer is inside" size=12.0 @text-muted
@@ -735,7 +820,11 @@ view
           wrap-align=start
           @bg-surface
           @rounded-lg
-        text "View mode" size=18.0 @font-bold text-fg
+        text "View mode"
+          with
+            size=18.0
+            @font-bold
+            @text-fg
         markdown help -> docs_link _
           with
             text-size=14.0
@@ -830,7 +919,11 @@ view
             key=mode_query
             anticipate=16.0
             delay=10
-          responsive size=(available_width, available_height) w=fill h=32.0
+          responsive
+            with
+              size=(available_width, available_height)
+              w=fill
+              h=32.0
             col gap=8.0
               if available_width < 360.0
                 text "Compact responsive view" size=12.0 @text-muted
@@ -850,9 +943,19 @@ view
             shadow-blur=4.0
             r=4.0
           text "Floating label" size=12.0 @text-fg
-        pin w=fill h=28.0 x=4.0 y=4.0
+        pin
+          with
+            w=fill
+            h=28.0
+            x=4.0
+            y=4.0
           text "Pinned label" size=12.0 @text-muted
-        pin w=fill(2) h=shrink x=8.0 y=6.0
+        pin
+          with
+            w=fill(2)
+            h=shrink
+            x=8.0
+            y=6.0
           text "Pinned with flexible bounds" size=12.0 @text-muted
         radio "List" -> view_mode_changed _
           with
@@ -863,19 +966,49 @@ view
         for mode in display_modes
           text mode size=12.0 @text-muted
         resize-handle drag=render_coverage_resized cursor=resize-horizontal
-          box w=8.0 h=24.0 @bg-primary rounded-md
+          box
+            with
+              w=8.0
+              h=24.0
+              @bg-primary
+              @rounded-md
             text "Resize handle" size=1.0 @text-primary
-        grid cols=2 h=shrink gap=4.0 @w-full
+        grid
+          with
+            cols=2
+            h=shrink
+            gap=4.0
+            @w-full
           text "Even" size=12.0 @text-muted
           text "height" size=12.0 @text-muted
-        grid cols=1 h=fill @w-full
+        grid
+          with
+            cols=1
+            h=fill
+            @w-full
           text "Fill height" size=12.0 @text-muted
-        grid cols=1 h=fill(2) @w-full
+        grid
+          with
+            cols=1
+            h=fill(2)
+            @w-full
           text "Fill portion height" size=12.0 @text-muted
-        grid cols=1 h=24.0 @w-full
+        grid
+          with
+            cols=1
+            h=24.0
+            @w-full
           text "Fixed height" size=12.0 @text-muted
         space w=fill(2) h=8.0
-        stack clip=true w=fill h=shrink under=1 @p-4 bg-bg rounded-lg
+        stack
+          with
+            clip=true
+            w=fill
+            h=shrink
+            under=1
+            @p-4
+            @bg-bg
+            @rounded-lg
           text "Stack underlay" size=14.0 @text-muted
           text "Stack base" size=14.0 @text-muted
           text "Stack overlay" size=14.0 @text-fg
@@ -933,7 +1066,15 @@ view
         auto=true
         viewport=task_list_scrolled
         style=task_scroll(loading)
-      keyed task in tasks by=task.id w=fill h=shrink gap=8.0 p=4.0 pl=8.0 max-w=720.0 align=center
+      keyed task in tasks by=task.id
+        with
+          w=fill
+          h=shrink
+          gap=8.0
+          p=4.0
+          pl=8.0
+          max-w=720.0
+          align=center
         TaskRow task=task loading=loading
           events
             toggle -> toggle _ _
@@ -950,7 +1091,15 @@ view
       dragged y-dragged=true y-disabled=false
         y-scroller bg=danger
 
-    table task in tasks w=fill p=4.0 px=8.0 py=6.0 sep=1.0 sep-x=2.0 sep-y=1.0
+    table task in tasks
+      with
+        w=fill
+        p=4.0
+        px=8.0
+        py=6.0
+        sep=1.0
+        sep-x=2.0
+        sep-y=1.0
       col w=fill align-x=left align-y=center
         header
           text "Task" @font-bold text-fg

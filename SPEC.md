@@ -1,6 +1,6 @@
-# Ice Language Specification 2.0
+# Ice Language Specification 2.0 Preview
 
-Status: implemented reference slice
+Status: implemented candidate
 
 Ice is a small frontend language with an iced backend. It is not Rust syntax,
 JSX, or a token shortcut around a procedural macro. A frontend parses `.ice`
@@ -8,7 +8,7 @@ source, resolves names and types, checks UI semantics, and lowers a typed tree
 to backend code.
 
 This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted 2.0 syntax.
+marked “planned” is a design constraint, not accepted candidate syntax.
 
 ## 1. Design contract
 
@@ -49,11 +49,13 @@ checkbox, and image widgets; bindings, routes, payloads, scoped IDs, typed
 extern calls, and basic async success/failure routing.
 
 A new Core construct must be common UI authoring, have one canonical source
-form, and not fit an existing typed Rust boundary. Core vocabulary is frozen
-for revision 2.0, with one canonical spelling for each construct. Spellings
-removed in this revision are syntax errors and the formatter never translates
-old vocabulary. Future additions or changes require an explicit language
-design and a new revision; future removals require deprecation and migration.
+form, and not fit an existing typed Rust boundary. The implemented 2.0
+vocabulary is a stabilization candidate, not yet frozen. Spellings removed in
+this revision are syntax errors and the formatter never translates old
+vocabulary. After the reference applications and cross-feature fixtures settle,
+the candidate becomes 2.0 stable. Later vocabulary changes require an explicit
+language design and revision; removed forms and their callers are deleted in
+the same change rather than retained behind compatibility paths.
 
 Canvas paths, complete PaneGrid mutation, raw window/platform values, shaders,
 custom renderers, task-composition variants, and exhaustive native status styles
@@ -1220,7 +1222,7 @@ app Tasks
 state
   window_title = "Ice Tasks"
   app_theme = "app"
-  active_palette = "light"
+  active_palette:palette[ProductTheme] = ProductTheme.light
   app_background = "#0f172a"
   app_text = "#f8fafc"
   ui_scale = 1.0
@@ -1229,8 +1231,10 @@ state
 `title`, `theme`, `palette`, `bg`, `fg`, and `scale` are recomputed
 from current state through iced's native callbacks. Title/theme/style values are
 typed `str`; scale is `f64`. Theme accepts `app`, `default`, or any of iced's 22
-kebab-case built-ins. Palette accepts a declared palette name; a literal unknown
-name is rejected, while an unknown dynamic value selects the first declaration.
+kebab-case built-ins. Palette accepts only `palette[Contract]`; each declared
+palette is a compiler-generated `Contract.name` variant. Unknown names and
+values from a different contract are compile-time errors, and generated
+selection is exhaustive with no runtime fallback.
 Application colors accept 3/4/6/8 digit hexadecimal strings. Invalid dynamic
 theme/color values safely retain the generated app theme or selected theme base
 style, and a non-positive dynamic scale is clamped to `f32::EPSILON`. Literal
@@ -1423,8 +1427,9 @@ field. Without `change=`, typing writes the bound state directly. With
 `change=handler _`, the handler receives the new text and owns that assignment,
 which lets one state transition also launch validation or autosave. A disabled
 input suppresses typing, submit, paste, and accessibility focus together. The
-old inline `icon=`, `icon-font=`, `icon-size=`,
-`icon-gap=`, and `icon-side=` properties remain accepted as compact syntax.
+canonical icon form is the `icon` child block shown below. Removed inline
+`icon=`, `icon-font=`, `icon-size=`, `icon-gap=`, and `icon-side=` spellings are
+errors; there is no compatibility alias.
 
 ```ice
 input "Search" #query <-> query hint="Find anything" font=ui
@@ -3188,15 +3193,18 @@ input "New task" #new-task <-> draft
   focused border=primary
 ```
 
-Only one `with` block is allowed and it must be the node's first metadata
-child. Formatter indentation preserves each property on its own source line.
+Only one non-empty `with` block is allowed. The formatter owns its canonical
+shape: at most two short metadata entries stay inline; longer metadata moves
+to the first block, one property or utility per line, followed by `events`,
+`forward`, slots/statuses, and content. Positional arguments and bindings stay
+on the node's first line.
 
 Components may expose one typed output. Route that output at every call site;
 inside the component view, `emit` forwards the value:
 
 ```ice
 component Toggle(checked:bool) -> bool
-  extern native_toggle(checked) -> emit _
+  extern native_toggle(checked) -> emit(_)
 
 Toggle checked=checked -> changed _
 ```
@@ -3217,14 +3225,29 @@ component PageItem(page:str)
     select(str)
     favorite(str, bool)
   col
-    button "Open" -> emit select page
-    checkbox "Favorite" checked=false -> emit favorite page _
+    button "Open" -> emit(select, page)
+    checkbox "Favorite" checked=false -> emit(favorite, page, _)
 
 PageItem page="roadmap"
   events
     select -> navigate _
     favorite -> favorite_changed _ _
 ```
+
+Exact same-name, same-signature forwarding has one explicit shorthand:
+
+```ice
+component PageMenu(page:str)
+  emits
+    select(str)
+  PageItem page=page
+    forward
+      select
+```
+
+`forward select` is exactly `select -> emit(select, _)` without an intermediate
+message. The outer event must exist with the identical payload signature;
+wildcard forwarding and verbose identity routes are errors.
 
 A component route resolves only local component handlers and declared event
 emissions. Direct references to app-global handlers are errors, so reusable
@@ -4471,12 +4494,14 @@ palette dark for Ducktape
 are app-defined. Every palette must target the declared contract and provide
 exactly one `#RRGGBB` or `#RRGGBBAA` value for every token; missing, unknown,
 duplicate, and invalid-color entries are errors. Palette declarations are
-ordered, and the first is the default. An app selects one from a checked `str`
-expression with `palette active_palette`; changing that state changes generated
-Iced theme fields and every semantic-token style on the next view. This is a
-small generated lookup, not a reactive theme graph. `white`, `black`, and
-`transparent` remain built in and cannot be redeclared. A color may carry
-opacity, such as `bg-primary/70`.
+ordered, and the first is the initial default. The declarations generate the
+nominal `palette[Ducktape]` type with variants such as `Ducktape.light` and
+`Ducktape.dark`. An app selects one with `palette active_palette`; changing that
+state changes generated Iced theme fields and every semantic-token style on the
+next view. Unknown variants and contract mismatches are compile-time errors.
+Selection is an exhaustive generated match, not a string lookup or reactive
+theme graph. `white`, `black`, and `transparent` remain built in and cannot be
+redeclared. A color may carry opacity, such as `bg-primary/70`.
 
 Apps and nested subtrees may use `default`, `app`, or any of iced's 22 built-in
 default-renderer themes. A typed Rust factory covers arbitrary native

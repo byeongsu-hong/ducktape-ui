@@ -27,6 +27,21 @@ pub(crate) fn expr_type(
         }
         Expr::None => Ok(Type::Option(Box::new(Type::Unknown))),
         Expr::Path(path) => {
+            if let [contract, palette] = path.as_slice()
+                && document
+                    .theme_contract
+                    .as_ref()
+                    .is_some_and(|item| item.name == *contract)
+            {
+                if document.palettes.iter().any(|item| item.name == *palette) {
+                    return Ok(Type::Palette(contract.clone()));
+                }
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    format!("theme contract `{contract}` has no palette `{palette}`"),
+                ));
+            }
             if let [enum_name, variant_name] = path.as_slice()
                 && let Some((_, variant)) = ui_enum_variant(document, enum_name, variant_name)
             {

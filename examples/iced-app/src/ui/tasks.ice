@@ -51,13 +51,40 @@ preset seeded
     run list_tasks() -> loaded _ | failed _
 
 view
-  overlay when=about_open dismiss=close_about backdrop=black/60 p=24.0 align-x=center align-y=center
+  overlay
+    with
+      when=about_open
+      dismiss=close_about
+      backdrop=black/60
+      p=24.0
+      align-x=center
+      align-y=center
     content
-      col gap=24.0 p=24.0 @w-full h-full bg-bg
-        flex w=fill gap=12.0 justify=space-between items=center
-          text "Tasks" size=24.0 @font-bold text-fg
+      col
+        with
+          gap=24.0
+          p=24.0
+          @w-full
+          @h-full
+          @bg-bg
+        flex
+          with
+            w=fill
+            gap=12.0
+            justify=space-between
+            items=center
+          text "Tasks"
+            with
+              size=24.0
+              @font-bold
+              @text-fg
           text len(tasks) size=14.0 @text-muted
-          toggler "About" checked=about_open disabled=loading size=18.0 gap=8.0 -> about_toggled _
+          toggler "About" -> about_toggled _
+            with
+              checked=about_open
+              disabled=loading
+              size=18.0
+              gap=8.0
             active checked bg=linear(1.57, primary@0.0, surface@1.0) bg-border=primary bg-border-w=1.0 fg=linear(0.0, fg@0.0, primary@1.0) fg-border=fg fg-border-w=1.0 text=fg r=7.0 r-tl=6.0 r-tr=7.0 r-br=8.0 r-bl=9.0 p-ratio=0.125
             active unchecked bg=surface fg=fg text=muted
             hovered checked bg=primary fg=fg text=fg
@@ -71,20 +98,32 @@ view
           text "×" size=14.0 @text-muted
           text child_height size=14.0 @text-muted
 
-        row gap=12.0 align=center @w-full
+        row
+          with
+            gap=12.0
+            align=center
+            @w-full
           button "Capture window" style=secondary -> capture_window
           button "Change icon" style=subtle -> set_window_icon
           button "Inspect handle" style=subtle -> inspect_window_handle
           button "Read raw ID" style=subtle -> read_raw_window_id
           text raw_window_id size=14.0 @text-muted
           if snapshot_ready
-            image window_snapshot w=160.0 h=90.0 fit=contain
+            image window_snapshot
+              with
+                w=160.0
+                h=90.0
+                fit=contain
             text snapshot_width size=14.0 @text-muted
             text "×" size=14.0 @text-muted
             text snapshot_height size=14.0 @text-muted
             text snapshot_scale size=14.0 @text-muted
 
-        row gap=12.0 align=center @w-full
+        row
+          with
+            gap=12.0
+            align=center
+            @w-full
           input "New task" <-> draft
             with
               hint="What needs doing?"
@@ -97,16 +136,33 @@ view
               @border
               @border-border
               @rounded-lg
-          button "Add" disabled=!can_submit style=success @px-4 py-3 disabled:opacity-50 -> submit
+          button "Add" -> submit
+            with
+              disabled=!can_submit
+              style=success
+              @px-4
+              @py-3
+              @disabled:opacity-50
             active bg=linear(1.57, primary@0.0, surface@1.0) text=white border=primary border-w=1.0 r=8.0 shadow=black/25 shadow-y=2.0 shadow-blur=4.0 px-snap=true
             hovered bg=linear(1.57, surface@0.0, primary@1.0) text=white r=10.0
             pressed bg=primary/80 text=white r=10.0
             disabled bg=surface text=muted r=10.0
 
         if has_error
-          row gap=16.0 p=16.0 align=center @w-full bg-danger rounded-lg
+          row
+            with
+              gap=16.0
+              p=16.0
+              align=center
+              @w-full
+              @bg-danger
+              @rounded-lg
             text error size=14.0 @text-white
-            button "Retry" disabled=loading style=danger @task_danger_action -> retry
+            button "Retry" -> retry
+              with
+                disabled=loading
+                style=danger
+                @task_danger_action
 
         lazy loading as busy
           col
@@ -124,24 +180,40 @@ view
           split vertical ratio=0.7
             pane tasks bg=linear(1.57, surface@0.0, bg@1.0) shadow=black/50 shadow-y=2.0 shadow-blur=8.0 px-snap=true border-w=1.0 r=10.0 @border-border
               title p=12.0 always-controls bg=linear(1.57, bg@0.0, surface@1.0) border=border border-w=1.0 r-tl=8.0 r-tr=8.0 shadow=black/25 shadow-y=1.0 shadow-blur=3.0 px-snap=true
-                text "Task list" size=18.0 @font-bold text-fg
+                text "Task list"
+                  with
+                    size=18.0
+                    @font-bold
+                    @text-fg
               controls
                 button "Inspect" style=secondary -> inspect_adjacent
               compact
                 button "?" style=subtle -> inspect_adjacent
-              scroll #task-list dir=vertical w=fill h=fill
+              scroll #task-list
+                with
+                  dir=vertical
+                  w=fill
+                  h=fill
                 keyed task in tasks by=task.id w=fill gap=8.0
                   TaskRow task=task loading=loading
                     events
                       toggle -> toggle _ _
             pane details border-w=1.0 r=10.0 @bg-surface border-border
               title p=12.0 always-controls border-w=1.0 @bg-bg border-border
-                text "Details" size=18.0 @font-bold text-fg
+                text "Details"
+                  with
+                    size=18.0
+                    @font-bold
+                    @text-fg
               controls
                 button "Maximize" style=bg -> maximize_details
               compact
                 button "↗" style=warning -> maximize_details
-              box w=fill h=fill p=16.0
+              box
+                with
+                  w=fill
+                  h=fill
+                  p=16.0
                 col gap=12.0
                   text "Drag, resize, or arrange this pane." size=14.0 @text-muted
                   canvas
@@ -206,19 +278,36 @@ view
                     button "Open preview" -> open_preview
           pane preview closed border-w=1.0 r=10.0 @bg-surface border-border
             title p=12.0 always-controls border-w=1.0 @bg-bg border-border
-              text "Preview" size=18.0 @font-bold text-fg
+              text "Preview"
+                with
+                  size=18.0
+                  @font-bold
+                  @text-fg
             controls
               button "Close" -> close_preview
             compact
               button "×" -> close_preview
-            box w=fill h=fill p=16.0
+            box
+              with
+                w=fill
+                h=fill
+                p=16.0
               text "This pane was opened dynamically." size=14.0 @text-muted
     layer
       modal::Dialog
         modal::Dialog.Header
-          text "About Ice Tasks" size=20.0 @font-bold text-fg
+          text "About Ice Tasks"
+            with
+              size=20.0
+              @font-bold
+              @text-fg
         modal::Dialog.Body
-          rich-text w=fill wrap=word size=14.0 @text-muted -> about_link _
+          rich-text -> about_link _
+            with
+              w=fill
+              wrap=word
+              size=14.0
+              @text-muted
             span "This dialog is a structured overlay written entirely in "
             span ".ice" link="https://github.com/byeongsu-hong/ducktape-ui-lang" bg=linear(1.57, primary/20@0.0, surface@1.0) p=2.0 r=2.0 underline @font-bold text-primary
             span "."

@@ -47,9 +47,9 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 component PluginSwitch(checked:bool) -> bool
-  extern native_switch(checked) -> emit _
+  extern native_switch(checked) -> emit(_)
 component NestedSwitch(checked:bool) -> bool
-  PluginSwitch checked=checked -> emit _
+  PluginSwitch checked=checked -> emit(_)
 state
   checked = false
 on changed(next)
@@ -82,8 +82,8 @@ component Actions(page:str)
     cancel
     favorite(str, bool)
   col
-    button "Cancel" -> emit cancel
-    checkbox "Favorite" checked=false -> emit favorite page _
+    button "Cancel" -> emit(cancel)
+    checkbox "Favorite" checked=false -> emit(favorite, page, _)
 on canceled
 on favorite_changed(page, next)
 view
@@ -101,6 +101,40 @@ view
 }
 
 #[test]
+fn lowers_exact_component_event_forwarding_without_an_intermediate_message() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Item()
+  emits
+    select(str)
+  button "Open" -> emit(select, "roadmap")
+component List()
+  emits
+    select(str)
+  Item
+    forward
+      select
+on selected(page)
+view
+  List
+    events
+      select -> selected _
+"#;
+    let generated = compile(source, "event-forwarding.ice").unwrap();
+    assert!(generated.contains("move |__event_0| __DemoMessage::Selected(__event_0)"));
+    assert!(!generated.contains("__DemoMessage::ListSelect"));
+}
+
+#[test]
 fn lowers_single_ordered_payloads_through_component_outputs() {
     let source = r#"app Demo
 theme contract AppTheme
@@ -115,7 +149,7 @@ palette app for AppTheme
   danger #ff0000
 component PointerCapture() -> mouse-button
   canvas w=fill h=120.0
-    event mouse pressed -> emit _
+    event mouse pressed -> emit(_)
     circle x=60.0 y=60.0 r=24.0 fill=primary
 on changed(value)
 view
@@ -853,7 +887,7 @@ component EditorPanel(bind content:editor, bind heading:str, readonly:bool, synt
     command(EditorCommand)
   col
     input "Title" <-> heading
-    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit command _
+    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit(command, _)
 on command(value)
 view
   EditorPanel content<->body heading<->title readonly=locked syntax=language
@@ -1080,10 +1114,11 @@ component SearchBox()
     query = value
   button "Search" -> search
 on ignored
+state
+  scopes = [1, 2]
 view
-  col
-    if true
-      SearchBox #search
+  keyed scope in scopes by=scope
+    SearchBox #search(scope)
 "#;
     let generated = compile(source, "search.ice").unwrap();
     assert!(generated.contains("::ui_lang_runtime::MountedComponentState<__IceSearchBoxState>"));
@@ -1097,4 +1132,6 @@ view
     assert!(generated.contains(".mount("));
     assert!(generated.contains(".finish_render(__ice_root_scope_ref)"));
     assert!(generated.contains("SearchBoxLatest19"));
+    assert!(generated.contains("::iced::widget::keyed_column(__children)"));
+    assert!(generated.contains("format!(\"{}/key({})\""));
 }

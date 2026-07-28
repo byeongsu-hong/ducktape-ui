@@ -37,9 +37,23 @@ use "../../../../crates/ui/src/ice/components.ice"
 font geist family="Geist" default=true
 
 view
-  overlay when=lyrics_open dismiss=lyrics backdrop=transparent p=12.0 align-x=end align-y=center
+  overlay
+    with
+      when=lyrics_open
+      dismiss=lyrics
+      backdrop=transparent
+      p=12.0
+      align-x=end
+      align-y=center
     content
-      overlay when=queue_open dismiss=queue backdrop=black/18 p=12.0 align-x=end align-y=center
+      overlay
+        with
+          when=queue_open
+          dismiss=queue
+          backdrop=black/18
+          p=12.0
+          align-x=end
+          align-y=center
         content
           box #app
             with
@@ -51,10 +65,14 @@ view
               border=white/78
               border-w=1.0
               r=26.0
-            flex #shell w=fill h=fill dir=row gap=10.0
-              Sidebar #sidebar
+            flex #shell
+              with
+                w=fill
+                h=fill
+                dir=row
+                gap=10.0
+              Sidebar #sidebar query<->query
                 with
-                  query<->query
                   section=section
                   signed_in=signed_in
                   profile_name=profile_name
@@ -90,7 +108,11 @@ view
                       restart_current -> restart_current
                       queue -> queue
                       play -> play _ _ _
-                  box #dock w=fill px=16.0 pb=16.0
+                  box #dock
+                    with
+                      w=fill
+                      px=16.0
+                      pb=16.0
                     PlayerBar #player
                       with
                         title=current_title

@@ -373,6 +373,50 @@ fn infer_match_arms(
                     (None, None) => None,
                 }
             }
+            (
+                Type::Palette(contract),
+                MatchPattern::Enum {
+                    enum_name,
+                    variant,
+                    binding,
+                },
+            ) => {
+                if enum_name != contract {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!(
+                            "expected `{contract}` palette pattern, got `{enum_name}.{variant}`"
+                        ),
+                    ));
+                }
+                if binding.is_some() {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!("`{contract}.{variant}` has no payload to bind"),
+                    ));
+                }
+                if !document
+                    .palettes
+                    .iter()
+                    .any(|palette| palette.name == *variant)
+                {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!("unknown `{contract}` palette `{variant}`"),
+                    ));
+                }
+                if !covered.insert(variant.clone()) {
+                    return Err(Error::new(
+                        "E195",
+                        &arm.span,
+                        format!("duplicate `{contract}.{variant}` match arm"),
+                    ));
+                }
+                None
+            }
             (_, MatchPattern::Wildcard) => None,
             _ => return Err(pattern_type_error(value_ty, &arm.span)),
         };
@@ -409,6 +453,12 @@ fn infer_match_arms(
             .filter(|variant| !covered.contains(&variant.name))
             .map(|variant| format!("{name}.{}", variant.name))
             .collect(),
+        Type::Palette(contract) => document
+            .palettes
+            .iter()
+            .filter(|palette| !covered.contains(&palette.name))
+            .map(|palette| format!("{contract}.{}", palette.name))
+            .collect(),
         _ => return Err(pattern_type_error(value_ty, span)),
     };
     if missing.is_empty() {
@@ -427,7 +477,7 @@ fn pattern_type_error(ty: &Type, span: &Span) -> Error {
         "E195",
         span,
         format!(
-            "typed match patterns require option, result, or UI enum; got `{}`",
+            "typed match patterns require option, result, UI enum, or palette; got `{}`",
             ty.display()
         ),
     )

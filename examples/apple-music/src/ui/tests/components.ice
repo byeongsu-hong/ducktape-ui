@@ -7,9 +7,8 @@ test component_sidebar_contract
   preset test
   viewport 420 760
   mount
-    Sidebar #sidebar
+    Sidebar #sidebar query<->query
       with
-        query<->query
         section=section
         signed_in=signed_in
         profile_name=profile_name
@@ -92,7 +91,12 @@ test component_titles_and_hero_contract
   preset test
   viewport 920 520
   mount
-    col #stage w=fill h=fill p=20.0 gap=18.0
+    col #stage
+      with
+        w=fill
+        h=fill
+        p=20.0
+        gap=18.0
       PageTitle #page
         with
           eyebrow="FOR YOU"
@@ -157,7 +161,11 @@ test component_card_contracts
   preset test
   viewport 920 760
   mount
-    scroll #stage w=fill h=fill bar=hidden
+    scroll #stage
+      with
+        w=fill
+        h=fill
+        bar=hidden
       col #content w=fill p=20.0
         for album in top_picks
           if album.id == 1
@@ -232,8 +240,16 @@ test component_collection_contracts
   preset test
   viewport 1180 860
   mount
-    scroll #stage w=fill h=fill bar=hidden
-      col #content w=fill p=20.0 gap=16.0
+    scroll #stage
+      with
+        w=fill
+        h=fill
+        bar=hidden
+      col #content
+        with
+          w=fill
+          p=20.0
+          gap=16.0
         AlbumStrip albums=top_picks featured=true #featured-strip
           events
             play -> play _ _ _
@@ -278,7 +294,12 @@ test component_player_and_queue_contract
   preset test
   viewport 1200 800
   mount
-    col #stage w=fill h=fill p=12.0 gap=12.0
+    col #stage
+      with
+        w=fill
+        h=fill
+        p=12.0
+        gap=12.0
       PlayerBar #player
         with
           title=current_title
@@ -299,7 +320,11 @@ test component_player_and_queue_contract
           volume_changed -> volume_changed _
           lyrics -> lyrics
           queue -> queue
-      row #lower w=fill h=fill gap=12.0
+      row #lower
+        with
+          w=fill
+          h=fill
+          gap=12.0
         QueuePanel #queue-panel
           with
             albums=recently_played
@@ -309,7 +334,12 @@ test component_player_and_queue_contract
           events
             queue -> queue
             play -> play _ _ _
-        box w=fill h=fill bg=bg r=22.0
+        box
+          with
+            w=fill
+            h=fill
+            bg=bg
+            r=22.0
           text "Queue detail surface" @text-muted
   target player = #stage/player/root
   target player_surface = #stage/player/root/surface

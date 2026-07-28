@@ -33,7 +33,12 @@ on divider_dragged(dx, dy)
 
 view
   row w=fill h=fill
-    box w=left_width h=fill bg=surface p=12.0
+    box
+      with
+        w=left_width
+        h=fill
+        bg=surface
+        p=12.0
       text "Sidebar" size=14.0 @text-fg
     resize-handle
       with
@@ -41,9 +46,18 @@ view
         press=drag_started
         release=drag_ended
         cursor=resize-horizontal
-      box w=6.0 h=fill bg=border
+      box
+        with
+          w=6.0
+          h=fill
+          bg=border
         text ""
-    box w=fill h=fill bg=bg p=12.0
+    box
+      with
+        w=fill
+        h=fill
+        bg=bg
+        p=12.0
       col gap=8.0
         text "Main" size=14.0 @text-fg
         text left_width size=12.0 @text-muted

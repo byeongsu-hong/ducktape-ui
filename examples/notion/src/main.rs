@@ -1,12 +1,9 @@
 ui_lang::include_app!("src/ui/notion.ice");
 
 mod editor;
+mod pages;
 
 mod helpers {
-    pub fn page_matches(query: String, title: String) -> bool {
-        title.to_lowercase().contains(&query.trim().to_lowercase())
-    }
-
     pub fn page_link(page: String) -> String {
         format!("https://notion.local/{page}")
     }
@@ -42,25 +39,13 @@ mod tests {
     #[test]
     fn navigation_keeps_a_retained_editor_per_page() {
         let (mut app, _) = Notion::__boot();
-        assert_eq!(app.selected_page, "home");
-        assert!(app.home_document.block_count() > 1);
+        assert_eq!(app.pages.selected_id(), "home");
+        assert!(app.pages.document("home").block_count() > 1);
 
         let _ = app.__update(__NotionMessage::Navigate("launch".into()));
-        assert_eq!(app.selected_page, "launch");
-        assert!(app.launch_document.block_count() > 1);
-        assert!(app.home_document.thread_count() > 0);
-    }
-
-    #[test]
-    fn page_search_is_case_insensitive() {
-        assert!(helpers::page_matches(
-            "road".into(),
-            "Product Roadmap".into()
-        ));
-        assert!(!helpers::page_matches(
-            "road".into(),
-            "Meeting Notes".into()
-        ));
+        assert_eq!(app.pages.selected_id(), "launch");
+        assert!(app.pages.document("launch").block_count() > 1);
+        assert!(app.pages.document("home").thread_count() > 0);
     }
 
     #[test]
@@ -100,10 +85,11 @@ mod tests {
         for message in screen.into_messages() {
             let _ = app.__update(message);
         }
-        assert_eq!(app.selected_page, "launch");
+        assert_eq!(app.pages.selected_id(), "launch");
 
         assert!(
-            app.launch_document
+            app.pages
+                .document("launch")
                 .markdown()
                 .contains("Finalize announcement")
         );
@@ -138,12 +124,12 @@ mod tests {
         let (mut app, _) = Notion::__boot();
         let viewport = iced::Size::new(1280.0, 800.0);
         assert!(!crate::editor::block_editor_comments_open(
-            app.home_document.clone()
+            app.pages.document("home").clone()
         ));
 
-        let _ = app.__update(__NotionMessage::HomeCommentsToggled);
+        let _ = app.__update(__NotionMessage::CommentsToggled);
         assert!(crate::editor::block_editor_comments_open(
-            app.home_document.clone()
+            app.pages.document("home").clone()
         ));
         let mut screen =
             iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
@@ -170,7 +156,7 @@ mod tests {
         for message in screen.into_messages() {
             let _ = app.__update(message);
         }
-        assert_eq!(app.home_document.thread_message_count(1), 2);
+        assert_eq!(app.pages.document("home").thread_message_count(1), 2);
 
         let mut screen =
             iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
@@ -181,7 +167,7 @@ mod tests {
         for message in screen.into_messages() {
             let _ = app.__update(message);
         }
-        assert!(app.home_document.thread_resolved(1));
+        assert!(app.pages.document("home").thread_resolved(1));
 
         let mut screen =
             iced_test::Simulator::with_size(iced::Settings::default(), viewport, app.__view());
@@ -200,7 +186,7 @@ mod tests {
         for message in screen.into_messages() {
             let _ = app.__update(message);
         }
-        assert!(!app.home_document.thread_resolved(1));
+        assert!(!app.pages.document("home").thread_resolved(1));
     }
 
     #[test]

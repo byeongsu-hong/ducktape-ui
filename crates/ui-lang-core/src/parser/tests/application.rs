@@ -23,7 +23,7 @@ palette dark for Ducktape
   danger #ff6677
   surface #222222
 state
-  active_palette = "light"
+  active_palette:palette[Ducktape] = Ducktape.light
 view
   box bg=surface
     text "Theme"
@@ -40,6 +40,7 @@ view
     assert_eq!(document.palettes[0].name, "light");
     assert_eq!(document.palettes[0].contract, "Ducktape");
     assert_eq!(document.palettes[1].colors["surface"], "#222222");
+    assert_eq!(document.states[0].ty, Type::Palette("Ducktape".into()));
     assert!(matches!(
         document
             .settings

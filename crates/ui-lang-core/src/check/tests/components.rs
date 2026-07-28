@@ -22,9 +22,9 @@ component Choice(page:str)
     select(str)
     favorite(str, bool)
   col
-    button "Confirm" -> emit confirm
-    button "Select" -> emit select "roadmap"
-    checkbox "Favorite" checked=false -> emit favorite page _
+    button "Confirm" -> emit(confirm)
+    button "Select" -> emit(select, "roadmap")
+    checkbox "Favorite" checked=false -> emit(favorite, page, _)
 on confirmed
 on selected(page)
 on favorite_changed(page, next)
@@ -62,6 +62,105 @@ view
 }
 
 #[test]
+fn carries_ui_enum_payloads_through_named_events_into_exhaustive_matches() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+enum Selection
+  idle
+  page(str)
+state
+  selection:Selection = Selection.idle
+component Picker()
+  emits
+    choose(Selection)
+  button "Roadmap" -> emit(choose, Selection.page("roadmap"))
+on chosen(next)
+  selection = next
+view
+  col
+    Picker
+      events
+        choose -> chosen _
+    match selection
+      Selection.idle
+        text "None"
+      Selection.page(page)
+        text page
+"#;
+
+    let document = analyze(source).unwrap();
+    assert_eq!(
+        document.components[0].events[0].payloads,
+        vec![Type::Named("Selection".into())]
+    );
+}
+
+#[test]
+fn forwards_only_matching_component_events() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Item()
+  emits
+    select(str)
+  button "Open" -> emit(select, "roadmap")
+component List()
+  emits
+    select(str)
+  Item
+    forward
+      select
+on selected(page)
+view
+  List
+    events
+      select -> selected _
+"#;
+    analyze(source).unwrap();
+
+    let verbose = source.replace(
+        "    forward\n      select",
+        "    events\n      select -> emit(select, _)",
+    );
+    let error = analyze(&verbose).unwrap_err();
+    assert_eq!(error.code, "E127");
+    assert!(error.message.contains("exact component event forward"));
+
+    let app_forward = source.replace(
+        "  List\n    events\n      select -> selected _",
+        "  Item\n    forward\n      select",
+    );
+    let error = analyze(&app_forward).unwrap_err();
+    assert_eq!(error.code, "E127");
+    assert!(error.message.contains("only valid inside a component"));
+
+    let mismatch = source.replace(
+        "component List()\n  emits\n    select(str)",
+        "component List()\n  emits\n    select(bool)",
+    );
+    let error = analyze(&mismatch).unwrap_err();
+    assert_eq!(error.code, "E127");
+    assert!(error.message.contains("has signature"));
+}
+
+#[test]
 fn component_event_routes_use_caller_scope_and_components_are_closed() {
     let source = r#"app Demo
 theme contract AppTheme
@@ -79,7 +178,7 @@ state
 component Favorite()
   emits
     changed(bool)
-  checkbox "Favorite" checked=false -> emit changed _
+  checkbox "Favorite" checked=false -> emit(changed, _)
 on changed(page, next)
 view
   Favorite
@@ -90,7 +189,7 @@ view
     assert_eq!(document.handlers[0].params[0].ty, Type::Str);
     assert_eq!(document.handlers[0].params[1].ty, Type::Bool);
 
-    let closed = source.replace("-> emit changed _", "-> changed _");
+    let closed = source.replace("-> emit(changed, _)", "-> changed _");
     let error = analyze(&closed).unwrap_err();
     assert_eq!(error.code, "E132");
     assert!(error.message.contains("cannot reference app handler"));
@@ -111,7 +210,7 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 component Choice() -> bool
-  checkbox "Choice" checked=false -> emit _
+  checkbox "Choice" checked=false -> emit(_)
 view
   Choice
 "#,
@@ -132,7 +231,7 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 component Choice() -> str
-  checkbox "Choice" checked=false -> emit _
+  checkbox "Choice" checked=false -> emit(_)
 on changed(next)
 view
   Choice -> changed _
@@ -160,7 +259,7 @@ palette app for AppTheme
   danger #ff0000
 component Search() -> str
   on search
-    run fetch() -> emit _
+    run fetch() -> emit(_)
   button "Search" -> search
 on changed(value)
 view
@@ -188,7 +287,7 @@ palette app for AppTheme
   danger #ff0000
 component PointerCapture() -> mouse-button
   canvas w=fill h=120.0
-    event mouse pressed -> emit _
+    event mouse pressed -> emit(_)
     circle x=60.0 y=60.0 r=24.0 fill=primary
 on changed(value)
 view
@@ -633,12 +732,12 @@ view
     analyze(source).unwrap();
 
     let error = analyze(&source.replace(
-        "  Panel\n    with\n      title=\"Editor\"\n    input",
-        "  Panel\n    text \"before metadata\"\n    with\n      title=\"Editor\"\n    input",
+        "    with\n      title=\"Editor\"",
+        "    with\n      title=\"Editor\"\n    with\n      title=\"Again\"",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E040");
-    assert!(error.message.contains("first metadata child"));
+    assert!(error.message.contains("duplicate with blocks"));
 }
 
 #[test]
@@ -939,7 +1038,7 @@ component EditorPanel(bind content:editor, bind heading:str, readonly:bool, synt
     command(EditorCommand)
   col
     input "Title" <-> heading
-    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit command _
+    editor <-> content highlighter=editor_highlight(syntax) key-binding=editor_keys(readonly) style=editor_surface(readonly) -> emit(command, _)
 on command(value)
 view
   EditorPanel content<->body heading<->title readonly=locked syntax=language

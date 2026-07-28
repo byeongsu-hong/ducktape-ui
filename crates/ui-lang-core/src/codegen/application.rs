@@ -49,21 +49,18 @@ pub(in crate::codegen) fn generate_theme(
     writeln!(out, "fn __palette(&self{callback_arg}) -> __IcePalette {{").unwrap();
     if let Some(setting) = &document.settings.palette {
         let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
-        writeln!(
-            out,
-            "let __palette_name = {value}; match __palette_name.as_str() {{"
-        )
-        .unwrap();
+        let contract = generated_named_rust(&contract.name);
+        writeln!(out, "match {value} {{").unwrap();
         for palette in &document.palettes {
             writeln!(
                 out,
-                "{} => {},",
-                rust_string(&palette.name),
+                "{contract}::{} => {},",
+                pascal(&palette.name),
                 palette_code(palette)
             )
             .unwrap();
         }
-        writeln!(out, "_ => {},\n}}", palette_code(&document.palettes[0])).unwrap();
+        writeln!(out, "}}").unwrap();
     } else {
         writeln!(out, "{}", palette_code(&document.palettes[0])).unwrap();
     }

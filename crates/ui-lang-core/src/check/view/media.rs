@@ -414,7 +414,15 @@ pub(in crate::check) fn infer_media_group(
                         "canvas-local animation is not supported; declare it in app state",
                     ));
                 }
-                check_declared_type(&local.ty, &local.span, &known)?;
+                check_declared_type(
+                    &local.ty,
+                    &local.span,
+                    &known,
+                    document
+                        .theme_contract
+                        .as_ref()
+                        .map(|item| item.name.as_str()),
+                )?;
                 let actual = expr_type(&local.initial, &HashMap::new(), document, &local.span)?;
                 if let Type::Combo(expected) = &local.ty {
                     let Type::List(actual) = actual else {
