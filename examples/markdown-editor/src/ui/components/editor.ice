@@ -1,20 +1,30 @@
-component EditorSurface(bind document:editor)
+component EditorSurface(bind document:editor, line:i64, column:i64, disabled:bool)
   box #root
     with
       w=fill
       h=fill
       bg=surface
-    editor #document <-> document
+      align-x=center
+    box #page
       with
-        highlighter=markdown_highlight()
-        hint="Write Markdown…"
+        w=fill
         h=fill
-        min-h=320.0
-        size=17.0
-        line-h=1.6
-        p=48.0
-        wrap=word
-      active bg=surface border=surface value=fg placeholder=muted selection=selection
-      hovered bg=surface border=surface value=fg placeholder=muted selection=selection
-      focused bg=surface border=surface value=fg placeholder=muted selection=selection
-      focused-hovered bg=surface border=surface value=fg placeholder=muted selection=selection
+        max-w=920.0
+      editor #document <-> document
+        with
+          action=track_action()
+          highlighter=markdown_highlight(line, column)
+          hint="Start writing…"
+          disabled=disabled
+          h=fill
+          min-h=320.0
+          font=geist
+          size=16.0
+          line-h=1.72
+          p=56.0
+          wrap=word
+        active bg=surface border=surface value=fg placeholder=muted selection=selection
+        hovered bg=surface border=surface value=fg placeholder=muted selection=selection
+        focused bg=surface border=surface value=fg placeholder=muted selection=selection
+        focused-hovered bg=surface border=surface value=fg placeholder=muted selection=selection
+        disabled bg=surface border=surface value=muted placeholder=muted selection=selection

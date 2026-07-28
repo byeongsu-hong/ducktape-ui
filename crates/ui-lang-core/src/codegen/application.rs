@@ -658,15 +658,27 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
-    for binding in controlled_state_bindings(document, true)
-        .expect("checker validates controlled editor bindings")
+    for binding in
+        controlled_editor_bindings(document).expect("checker validates controlled editor bindings")
     {
-        let variant = editor_variant(&binding);
-        writeln!(
-            out,
-            "{message}::{variant}(action) => {{ self.{binding}.perform(action); ::iced::Task::none() }}"
-        )
-        .unwrap();
+        let variant = editor_variant(&binding.name);
+        if let Some(action) = binding.action {
+            let function = find_extern_function(document, &action, ExternKind::EditorAction)
+                .expect("checker validates editor action adapters");
+            writeln!(
+                out,
+                "{message}::{variant}(action) => {{ {}(&mut self.{}, action); ::iced::Task::none() }}",
+                function.rust_path, binding.name
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{message}::{variant}(action) => {{ self.{}.perform(action); ::iced::Task::none() }}",
+                binding.name
+            )
+            .unwrap();
+        }
     }
     if needs_extern_noop(document) {
         writeln!(out, "{message}::__ExternNoop => ::iced::Task::none(),").unwrap();

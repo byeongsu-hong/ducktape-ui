@@ -359,6 +359,7 @@ pub enum ExternKind {
     Window,
     MarkdownViewer,
     EditorBinding,
+    EditorAction,
     EditorHighlighter,
     EditorStyle,
     TextStyle,

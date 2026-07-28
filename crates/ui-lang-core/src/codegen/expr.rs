@@ -1515,6 +1515,33 @@ pub(in crate::codegen) fn expr_code(
                 "({}).text()",
                 expr_code(&args[0], env, document, ValueMode::Borrowed)?
             ),
+            "editor_copy" => {
+                let source = expr_code(&args[0], env, document, ValueMode::Borrowed)?;
+                format!(
+                    "{{ let __source = &{source}; let mut __copy = ::iced::widget::text_editor::Content::with_text(&__source.text()); __copy.move_to(__source.cursor()); __copy }}"
+                )
+            }
+            "editor_cursor_line" => format!(
+                "(({}).cursor().position.line.min(i64::MAX as usize) as i64)",
+                expr_code(&args[0], env, document, ValueMode::Borrowed)?
+            ),
+            "editor_cursor_column" => format!(
+                "(({}).cursor().position.column.min(i64::MAX as usize) as i64)",
+                expr_code(&args[0], env, document, ValueMode::Borrowed)?
+            ),
+            "editor_line_count" => format!(
+                "(({}).line_count().min(i64::MAX as usize) as i64)",
+                expr_code(&args[0], env, document, ValueMode::Borrowed)?
+            ),
+            "editor_has_selection" => format!(
+                "({}).cursor().selection.is_some()",
+                expr_code(&args[0], env, document, ValueMode::Borrowed)?
+            ),
+            "editor_line" => format!(
+                "::std::convert::TryFrom::try_from({}).ok().and_then(|__line| ({}).line(__line)).map(|__line| __line.text.into_owned())",
+                expr_code(&args[1], env, document, ValueMode::Owned)?,
+                expr_code(&args[0], env, document, ValueMode::Borrowed)?
+            ),
             "encoded" => format!(
                 "::iced::widget::image::Handle::from_bytes({})",
                 expr_code(&args[0], env, document, ValueMode::Owned)?

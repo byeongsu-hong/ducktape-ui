@@ -172,6 +172,7 @@ pub(in crate::parser) fn parse_extern_fn(
                 | ExternKind::Window
                 | ExternKind::MarkdownViewer
                 | ExternKind::EditorBinding
+                | ExternKind::EditorAction
                 | ExternKind::EditorHighlighter
                 | ExternKind::EditorStyle
                 | ExternKind::TextStyle

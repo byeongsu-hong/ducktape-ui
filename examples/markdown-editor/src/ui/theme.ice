@@ -1,23 +1,29 @@
 theme contract AppTheme
   bg
   surface
+  toolbar
   fg
   muted
   border
   hover
   pressed
   primary
+  primary_soft
   danger
+  danger_soft
   selection
 
 palette app for AppTheme
-  bg        #f4f3ef
-  surface   #ffffff
-  fg        #2f2f2f
-  muted     #8a8883
-  border    #e5e3de
-  hover     #efede8
-  pressed   #e5e2dc
-  primary   #4d72d8
-  danger    #c94b4b
-  selection #b8caf7
+  bg           #efeee9
+  surface      #fbfaf7
+  toolbar      #f7f6f2
+  fg           #292824
+  muted        #817f77
+  border       #dfddd5
+  hover        #ebe9e2
+  pressed      #dfdcd2
+  primary      #315fbd
+  primary_soft #e7edf9
+  danger       #b4433d
+  danger_soft  #fae9e7
+  selection    #b9cdf4

@@ -104,6 +104,13 @@ pub(in crate::parser) fn parse_text_editor(
                 function,
                 args: parse_expr_list(&args, line)?,
             });
+        } else if let Some(value) = part.strip_prefix("action=") {
+            options.action = Some(parse_extern_call(
+                value,
+                line,
+                "E099",
+                "editor action must be a declared action call",
+            )?);
         } else if let Some(value) = part.strip_prefix("style=") {
             options.custom_style = Some(parse_extern_call(
                 value,

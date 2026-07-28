@@ -282,7 +282,7 @@ extern_item    = struct_sig | function_sig | extern_component_sig
                | extern_scroll_style_sig
                | extern_pick_list_style_sig | extern_menu_style_sig
                | extern_pane_grid_style_sig
-               | extern_editor_binding_sig
+               | extern_editor_binding_sig | extern_editor_action_sig
                | extern_editor_highlighter_sig | extern_editor_style_sig
 struct_sig     = PascalName "(" field_list? ")"
 field_list     = field ("," field)*
@@ -295,7 +295,7 @@ type           = "bool" | "i64" | "f64" | "str" | "bytes" | "image"
                | "debug-span"
                | "markdown" | "editor" | "event" | "event-status"
                | "instant" | "window-id" | "window-screenshot"
-               | "key" | "physical-key" | "key-location" | "key-modifiers"
+               | "key" | "key-press" | "physical-key" | "key-location" | "key-modifiers"
                | "pixels" | "padding" | "degrees" | "radians"
                | "rotation"
                | "content-fit"
@@ -347,6 +347,8 @@ extern_markdown_viewer_sig
                = "markdown-viewer" name "(" field_list? ")" "->" type
 extern_editor_binding_sig
                = "editor-binding" name "(" field_list? ")" "->" type
+extern_editor_action_sig
+               = "editor-action" name "()"
 extern_editor_highlighter_sig
                = "editor-highlighter" name "(" field_list? ")"
 extern_editor_style_sig
@@ -754,7 +756,7 @@ editor_property = "hint=" string | "w=" expr | "h=" length
                 | "highlight=" string
                 | "highlight-theme=" ("solarized-dark" | "base16-mocha"
                   | "base16-ocean" | "base16-eighties" | "inspired-github")
-                | ("highlighter=" | "key-binding=" | "style=") call
+                | ("highlighter=" | "key-binding=" | "action=" | "style=") call
                 | "disabled=" expr
 editor_status  = ("active" | "hovered" | "focused"
                | "focused-hovered" | "disabled") editor_style_property*
@@ -1846,7 +1848,11 @@ view
 ```
 
 The compiler owns iced's `Action` message variant and calls `Content::perform`
-automatically, so ordinary editor actions never leak into application handlers.
+automatically. `action=name()` instead delegates that update to an
+`editor-action name()` adapter with the exact Rust signature
+`fn(&mut text_editor::Content, text_editor::Action)`; the adapter must perform
+the action itself and is intended for native history or telemetry that must see
+edits without cloning the document.
 Width is fixed pixels, height accepts every iced `Length`, metrics are
 range-checked, and all four wrapping modes, declared or built-in fonts,
 relative/absolute line height, and all five iced highlighter themes are
@@ -1860,11 +1866,12 @@ The remaining native extension points are typed:
 extern crate::backend
   EditorCommand(save:bool)
   editor-binding editor_keys(readonly:bool) -> EditorCommand
+  editor-action track_edits()
   editor-highlighter editor_highlight(token:str)
   editor-style editor_surface(readonly:bool)
 
 component EditorPanel(bind content:editor, readonly:bool)
-  editor <-> content highlighter=editor_highlight("fn") key-binding=editor_keys(readonly) style=editor_surface(readonly) -> editor_command _
+  editor <-> content action=track_edits() highlighter=editor_highlight("fn") key-binding=editor_keys(readonly) style=editor_surface(readonly) -> editor_command _
 ```
 
 `editor-binding` receives iced's `KeyPress` implicitly and returns an optional
@@ -1881,6 +1888,13 @@ component-local state, or another `bind` prop. Ordinary `name:type` props are
 read-only, and computed temporary bindings are rejected.
 `key-binding=` and the editor's outer `->` route must appear together; an
 editor without a custom binding has neither.
+
+Pure editor inspection uses `editor_cursor_line(editor)`,
+`editor_cursor_column(editor)`, `editor_line_count(editor)`,
+`editor_has_selection(editor)`, and `editor_line(editor, line) -> str?`.
+`editor_copy(editor)` preserves text and cursor in a fresh native Content and
+is reserved for explicit commands such as undo or formatting; ordinary editor
+actions continue to mutate the owned buffer in place.
 
 Spaces inside a compound expression should be wrapped in parentheses when the
 expression shares a line with widget properties:
@@ -1948,6 +1962,7 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `window-screenshot` | `iced::window::Screenshot` |
 | `markdown` | `iced::widget::markdown::Content` |
 | `editor` | `iced::widget::text_editor::Content` |
+| `key-press` | generated native keyboard press payload |
 | `event` | `iced::Event` |
 | `event-status` | `iced::event::Status` |
 | `task-handle` | `iced::task::Handle` |
@@ -2130,6 +2145,8 @@ generated code uses it directly as the widget's runtime style callback.
 
 `editor-binding` receives native `KeyPress` before its declared arguments and
 returns `Option<Binding<Output>>`; `Output` is the custom route payload.
+`editor-action` receives mutable native Content and the current Action and
+returns unit.
 `editor-highlighter` receives a fully configured plain `TextEditor` before its
 declared arguments and returns any value convertible to the same default
 `Element`. `editor-style` receives Theme and native editor Status implicitly.

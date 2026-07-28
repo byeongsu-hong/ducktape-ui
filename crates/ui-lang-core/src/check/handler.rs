@@ -783,6 +783,7 @@ pub(in crate::check) fn extern_function<'a>(
                 ExternKind::Window => "window callback",
                 ExternKind::MarkdownViewer => "markdown viewer",
                 ExternKind::EditorBinding => "editor binding",
+                ExternKind::EditorAction => "editor action",
                 ExternKind::EditorHighlighter => "editor highlighter",
                 ExternKind::EditorStyle => "editor style",
                 ExternKind::TextStyle => "text style",

@@ -46,6 +46,59 @@ view
 }
 
 #[test]
+fn exposes_editor_cursor_state_and_native_action_adapters() {
+    let source = r#"app Composer
+extern crate::backend
+  editor-action track_edits()
+  sync ignore_shortcut(press:key-press) -> unit?
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  notes:editor = "hello"
+on duplicate
+  notes = editor_copy(notes)
+on shortcut(value)
+derived
+  line = editor_cursor_line(notes)
+  column = editor_cursor_column(notes)
+  lines = editor_line_count(notes)
+  selected = editor_has_selection(notes)
+  current = editor_line(notes, line)
+subscribe
+  keyboard press filter=ignore_shortcut -> shortcut _
+view
+  editor <-> notes action=track_edits()
+"#;
+    let generated = compile(source, "composer.ice").unwrap();
+
+    assert!(generated.contains("backend::track_edits(&mut self.notes, action)"));
+    assert!(generated.contains(".cursor().position.line"));
+    assert!(generated.contains(".cursor().position.column"));
+    assert!(generated.contains(".line_count()"));
+    assert!(generated.contains(".cursor().selection.is_some()"));
+    assert!(generated.contains(".line(__line)"));
+    assert!(generated.contains("__copy.move_to(__source.cursor())"));
+
+    let error = compile(
+        &source.replace(
+            "editor-action track_edits()",
+            "editor-action track_edits(enabled:bool)",
+        ),
+        "composer.ice",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E022");
+}
+
+#[test]
 fn lowers_resize_handle_to_a_grabbing_widget() {
     // A `resize-handle` wraps a divider child and reports `(dx, dy)` drag deltas
     // plus press/release, so a component can drive a bound width — something
