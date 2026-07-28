@@ -2136,10 +2136,10 @@ where
 
     pub fn scroll_to(&mut self, id: &str, x: f32, y: f32, source: Location) {
         self.require_finite_pair("scroll to", x, y, source);
-        self.require_scroll_target(id, source);
+        let scroll_id = self.require_scroll_target(id, source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::scrollable::scroll_to::<()>(
-                id.to_owned().into(),
+                scroll_id,
                 iced::advanced::widget::operation::scrollable::AbsoluteOffset {
                     x: Some(x),
                     y: Some(y),
@@ -2151,10 +2151,10 @@ where
 
     pub fn scroll_by(&mut self, id: &str, x: f32, y: f32, source: Location) {
         self.require_finite_pair("scroll by", x, y, source);
-        self.require_scroll_target(id, source);
+        let scroll_id = self.require_scroll_target(id, source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::scrollable::scroll_by::<()>(
-                id.to_owned().into(),
+                scroll_id,
                 iced::advanced::widget::operation::scrollable::AbsoluteOffset { x, y },
             ),
         ));
@@ -2170,10 +2170,10 @@ where
                 source,
             );
         }
-        self.require_scroll_target(id, source);
+        let scroll_id = self.require_scroll_target(id, source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::scrollable::snap_to::<()>(
-                id.to_owned().into(),
+                scroll_id,
                 iced::advanced::widget::operation::scrollable::RelativeOffset {
                     x: Some(x),
                     y: Some(y),
@@ -2208,11 +2208,25 @@ where
             self.accessibility_focus(id, source);
             return;
         }
-        let focus_id = id.to_owned().into();
+        let focus_id = self.require_widget_capability(
+            "focus",
+            id,
+            WidgetCapability::Focusable,
+            "a focusable target",
+            source,
+        );
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::focusable::focus::<()>(focus_id),
         ));
         self.settle(Some(source));
+        if !self.target(id, source).focused() {
+            self.invalid_action(
+                "focus",
+                "the target to gain focus",
+                format!("{id} remained unfocused"),
+                source,
+            );
+        }
     }
 
     pub fn focus_next(&mut self, source: Location) {
@@ -2401,7 +2415,7 @@ where
     }
 
     pub fn select(&mut self, start: usize, end: usize, source: Location) {
-        let id = self.require_focused_widget("select text", source);
+        let id = self.require_focused_text_input("select text", source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::text_input::select_range::<()>(id, start, end),
         ));
@@ -2409,7 +2423,7 @@ where
     }
 
     pub fn select_all(&mut self, source: Location) {
-        let id = self.require_focused_widget("select all text", source);
+        let id = self.require_focused_text_input("select all text", source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::text_input::select_all::<()>(id),
         ));
@@ -2417,7 +2431,7 @@ where
     }
 
     pub fn cursor(&mut self, position: usize, source: Location) {
-        let id = self.require_focused_widget("move text cursor", source);
+        let id = self.require_focused_text_input("move text cursor", source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::text_input::move_cursor_to::<()>(id, position),
         ));
@@ -2425,7 +2439,7 @@ where
     }
 
     pub fn cursor_front(&mut self, source: Location) {
-        let id = self.require_focused_widget("move text cursor to front", source);
+        let id = self.require_focused_text_input("move text cursor to front", source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::text_input::move_cursor_to_front::<()>(id),
         ));
@@ -2433,7 +2447,7 @@ where
     }
 
     pub fn cursor_end(&mut self, source: Location) {
-        let id = self.require_focused_widget("move text cursor to end", source);
+        let id = self.require_focused_text_input("move text cursor to end", source);
         self.perform_widget(Box::new(
             iced::advanced::widget::operation::text_input::move_cursor_to_end::<()>(id),
         ));
@@ -2545,8 +2559,18 @@ where
             self.invalid_action("tap", "a positive tap count", "0".to_owned(), source);
         }
         let position = self.interaction_bounds("tap", id, source).center();
-        for sequence in 0..count {
-            let finger = u64::from(sequence);
+        let mut finger = 0_u64;
+        while self.touches.contains_key(&finger) {
+            finger = finger.checked_add(1).unwrap_or_else(|| {
+                self.invalid_action(
+                    "tap",
+                    "an unused touch id",
+                    "all touch ids are active".to_owned(),
+                    source,
+                )
+            });
+        }
+        for _ in 0..count {
             self.touch(TouchPhase::Down, finger, position.x, position.y, source);
             self.touch(TouchPhase::Up, finger, position.x, position.y, source);
         }
@@ -3095,7 +3119,7 @@ where
         }
     }
 
-    fn require_scroll_target(&mut self, id: &str, source: Location) {
+    fn require_scroll_target(&mut self, id: &str, source: Location) -> widget::Id {
         let target = self.require_target(id, false, source);
         if target.translation_x.is_none() || target.translation_y.is_none() {
             self.invalid_action(
@@ -3105,6 +3129,13 @@ where
                 source,
             );
         }
+        self.require_widget_capability(
+            "scroll",
+            id,
+            WidgetCapability::Scrollable,
+            "a scrollable target",
+            source,
+        )
     }
 
     fn invalid_action(&self, action: &str, expected: &str, actual: String, source: Location) -> ! {
@@ -3203,24 +3234,66 @@ where
         }
     }
 
-    fn require_focused_widget(&mut self, action: &str, source: Location) -> widget::Id {
-        let mut ids = self.with_interface(|interface, renderer, _| {
+    fn require_focused_text_input(&mut self, action: &str, source: Location) -> widget::Id {
+        let (mut focused, text_inputs) = self.with_interface(|interface, renderer, _| {
             let mut operation = FocusedIds::<P::Message>::new().find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            let focused = match operation.finish() {
+                Outcome::Some(ids) => ids,
+                _ => Vec::new(),
+            };
+            let mut operation = TextInputIds.find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            let text_inputs = match operation.finish() {
+                Outcome::Some(ids) => ids,
+                _ => Vec::new(),
+            };
+            (focused, text_inputs)
+        });
+        focused.retain(|id| text_inputs.iter().any(|text_input| text_input == id));
+        focused.sort_by_key(|id| readable_widget_id(id).is_none());
+        focused.into_iter().next().unwrap_or_else(|| {
+            self.invalid_action(
+                action,
+                "a focused text input with an id",
+                "no focused widget exposes text-input selection operations".to_owned(),
+                source,
+            )
+        })
+    }
+
+    fn require_widget_capability(
+        &mut self,
+        action: &str,
+        id: &str,
+        capability: WidgetCapability,
+        expected: &str,
+        source: Location,
+    ) -> widget::Id {
+        let ids = self.with_interface(|interface, renderer, _| {
+            let mut operation = MatchingWidgetIds::new(id, capability).find_all();
             interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
             match operation.finish() {
                 Outcome::Some(ids) => ids,
                 _ => Vec::new(),
             }
         });
-        ids.sort_by_key(|id| readable_widget_id(id).is_none());
-        ids.into_iter().next().unwrap_or_else(|| {
-            self.invalid_action(
+        let mut unique = Vec::new();
+        for id in ids {
+            if !unique.iter().any(|candidate| candidate == &id) {
+                unique.push(id);
+            }
+        }
+        match unique.as_slice() {
+            [id] => id.clone(),
+            [] => self.invalid_action(action, expected, format!("{id} lacks {capability}"), source),
+            ids => self.invalid_action(
                 action,
-                "a focused widget with an id",
-                "no focused widget".to_owned(),
+                "one unambiguous widget operation target",
+                format!("{id} matched {} {capability} widget ids", ids.len()),
                 source,
-            )
-        })
+            ),
+        }
     }
 
     fn require_ime(&self, action: &str, source: Location) {
@@ -4255,6 +4328,75 @@ impl<Message: 'static> Selector for FocusedIds<Message> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum WidgetCapability {
+    Focusable,
+    Scrollable,
+}
+
+impl fmt::Display for WidgetCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Focusable => "focusable",
+            Self::Scrollable => "scrollable",
+        })
+    }
+}
+
+struct MatchingWidgetIds {
+    native_id: widget::Id,
+    stable_id: widget::Id,
+    capability: WidgetCapability,
+}
+
+impl MatchingWidgetIds {
+    fn new(logical_id: &str, capability: WidgetCapability) -> Self {
+        Self {
+            native_id: logical_id.to_owned().into(),
+            stable_id: StableId::new(logical_id).widget_id(),
+            capability,
+        }
+    }
+
+    fn matches(&self, id: Option<&widget::Id>) -> bool {
+        id.is_some_and(|id| id == &self.native_id || id == &self.stable_id)
+    }
+}
+
+impl Selector for MatchingWidgetIds {
+    type Output = widget::Id;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        let id = match (&self.capability, candidate) {
+            (WidgetCapability::Focusable, Candidate::Focusable { id, .. })
+            | (WidgetCapability::Scrollable, Candidate::Scrollable { id, .. }) => id,
+            _ => return None,
+        };
+        self.matches(id).then(|| id.cloned()).flatten()
+    }
+
+    fn description(&self) -> String {
+        format!("{} widget id", self.capability)
+    }
+}
+
+struct TextInputIds;
+
+impl Selector for TextInputIds {
+    type Output = widget::Id;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        match candidate {
+            Candidate::TextInput { id, .. } => id.cloned(),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> String {
+        "text-input widget ids".to_owned()
+    }
+}
+
 fn readable_widget_id(id: &widget::Id) -> Option<String> {
     let debug = format!("{id:?}");
     let value = debug
@@ -4551,7 +4693,7 @@ fn write_png(path: &std::path::Path, rgba: &[u8], width: u32, height: u32) -> Re
 mod tests {
     use super::*;
     use iced::Element;
-    use iced::widget::{button, column, container, scrollable, text, text_input};
+    use iced::widget::{button, column, container, scrollable, text, text_editor, text_input};
 
     #[derive(Debug, Default)]
     struct State {
@@ -4897,6 +5039,37 @@ mod tests {
             .into()
     }
 
+    fn stable_scroll_view(_state: &State) -> Element<'_, Message> {
+        scrollable(container(text("Stable content")).height(200))
+            .id(StableId::new("Stable/scroll").widget_id())
+            .height(50)
+            .into()
+    }
+
+    #[derive(Default)]
+    struct EditorState {
+        content: text_editor::Content,
+    }
+
+    #[derive(Debug, Clone)]
+    enum EditorMessage {
+        Edit(text_editor::Action),
+    }
+
+    fn editor_update(state: &mut EditorState, message: EditorMessage) -> Task<EditorMessage> {
+        match message {
+            EditorMessage::Edit(action) => state.content.perform(action),
+        }
+        Task::none()
+    }
+
+    fn editor_view(state: &EditorState) -> Element<'_, EditorMessage> {
+        text_editor(&state.content)
+            .id("Editor/root")
+            .on_action(EditorMessage::Edit)
+            .into()
+    }
+
     #[test]
     fn drives_real_updates_and_keeps_widget_state() {
         let mut driver = Driver::new(
@@ -4927,6 +5100,77 @@ mod tests {
         let scroll = driver.target("App/root/scroll", HERE);
         assert!(scroll.content_height() >= 200.0);
         assert_eq!(scroll.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn targeted_widget_operations_require_the_capability_they_invoke() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("target_capabilities").viewport(320.0, 240.0),
+        );
+        let failure = panic_message(|| driver.focus("App/root", HERE));
+        assert!(
+            failure.contains("expected: a focusable target"),
+            "{failure}"
+        );
+
+        let mut editor = Driver::new(
+            iced::application::<EditorState, EditorMessage, iced::Theme, iced::Renderer>(
+                EditorState::default,
+                editor_update,
+                editor_view,
+            ),
+            Config::new("editor_selection").viewport(320.0, 240.0),
+        );
+        editor.focus("Editor/root", HERE);
+        assert!(editor.target("Editor/root", HERE).focused());
+        for action in [
+            Action::Select { start: 0, end: 0 },
+            Action::SelectAll,
+            Action::Cursor(0),
+            Action::CursorFront,
+            Action::CursorEnd,
+            Action::Clear,
+            Action::Replace("replacement".to_owned()),
+        ] {
+            let failure = panic_message(|| {
+                editor.perform_action(action, HERE);
+            });
+            assert!(
+                failure.contains("expected: a focused text input with an id"),
+                "{failure}"
+            );
+        }
+    }
+
+    #[test]
+    fn targeted_scroll_uses_the_widget_id_that_validation_matched() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                stable_scroll_view,
+            ),
+            Config::new("stable_scroll").viewport(320.0, 240.0),
+        );
+        driver.scroll_by("Stable/scroll", 0.0, 24.0, HERE);
+        assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
+        driver.snap("Stable/scroll", 0.0, 1.0, HERE);
+        assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
+    }
+
+    #[test]
+    fn tap_allocates_around_retained_multitouch_contacts() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("tap_touch_ids").viewport(320.0, 240.0),
+        );
+        let position = driver.target("App/root", HERE).bounds().center();
+        driver.touch(TouchPhase::Down, 0, position.x, position.y, HERE);
+        driver.tap("App/root/increment", 2, HERE);
+        assert_eq!(driver.touches, HashMap::from([(0, position)]));
+        driver.touch(TouchPhase::Cancel, 0, position.x, position.y, HERE);
+        assert!(driver.touches.is_empty());
     }
 
     #[test]
