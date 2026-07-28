@@ -376,8 +376,14 @@ where
             }
         };
 
-        let line_height = self.line_height.to_absolute(
-            self.text_size.unwrap_or_else(|| renderer.default_size()),
+        let default_size = self
+            .text_size
+            .unwrap_or_else(|| renderer.default_size());
+        let caret_metrics = internal.editor.caret_metrics().unwrap_or(
+            text::editor::CaretMetrics {
+                size: default_size,
+                line_height: self.line_height.to_absolute(default_size),
+            },
         );
 
         let position = cursor + translation;
@@ -385,10 +391,14 @@ where
         InputMethod::Enabled {
             cursor: Rectangle::new(
                 position,
-                Size::new(1.0, f32::from(line_height)),
+                Size::new(1.0, f32::from(caret_metrics.line_height)),
             ),
             purpose: input_method::Purpose::Normal,
-            preedit: state.preedit.as_ref().map(input_method::Preedit::as_ref),
+            preedit: state.preedit.as_ref().map(|preedit| input_method::Preedit {
+                content: preedit.content.as_str(),
+                selection: preedit.selection.clone(),
+                text_size: Some(caret_metrics.size),
+            }),
         }
     }
 }

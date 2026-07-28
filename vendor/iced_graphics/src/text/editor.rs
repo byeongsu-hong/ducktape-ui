@@ -1,7 +1,7 @@
 //! Draw and edit text.
 use crate::core::text::editor::{
-    self, Action, Cursor, Decoration, Direction, Edit, Motion, Position,
-    Selection,
+    self, Action, CaretMetrics, Cursor, Decoration, Direction, Edit, Motion,
+    Position, Selection,
 };
 use crate::core::text::highlighter::{self, Highlighter};
 use crate::core::text::{Highlight, LineHeight, Wrapping};
@@ -214,16 +214,34 @@ impl editor::Editor for Editor {
     }
 
     fn caret_height(&self) -> Pixels {
+        self.caret_metrics()
+            .map_or(Pixels(0.0), |metrics| metrics.line_height)
+    }
+
+    fn caret_metrics(&self) -> Option<CaretMetrics> {
         let internal = self.internal();
         let buffer = buffer_from_editor(&internal.editor);
+        let defaults = buffer.metrics();
+        let cursor = internal.editor.cursor();
         let cursor_y = internal.editor.cursor_position().map(|(_, y)| y);
+        let line_height = buffer
+            .layout_runs()
+            .find(|run| Some(run.line_top as i32) == cursor_y)
+            .map_or(defaults.line_height, |run| run.line_height);
+        let size = buffer
+            .lines
+            .get(cursor.line)
+            .and_then(|line| {
+                line.attrs_list().get_span(cursor.index).metrics_opt
+            })
+            .map_or(defaults.font_size, |metrics| {
+                cosmic_text::Metrics::from(metrics).font_size
+            });
 
-        Pixels(
-            buffer
-                .layout_runs()
-                .find(|run| Some(run.line_top as i32) == cursor_y)
-                .map_or(buffer.metrics().line_height, |run| run.line_height),
-        )
+        Some(CaretMetrics {
+            size: Pixels(size),
+            line_height: Pixels(line_height),
+        })
     }
 
     fn decorations(&self) -> Vec<Decoration> {
