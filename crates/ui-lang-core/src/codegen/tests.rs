@@ -72,6 +72,31 @@ view
     assert!(generated.contains("crate::backend::len(\"value\".to_owned())"));
 }
 
+#[test]
+fn isolates_generated_items_from_consumer_lints() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "ok"
+"#;
+
+    let generated = compile(source, "app.ice").unwrap();
+
+    assert!(generated.starts_with(
+        "macro_rules! __ice_generated_items_6170702e696365 { ($($item:item)*) => { $(#[allow(warnings, clippy::all)] $item)* }; }\n__ice_generated_items_6170702e696365! {\n"
+    ));
+    assert!(generated.ends_with("}\n"));
+}
+
 #[path = "tests/application.rs"]
 mod application;
 #[path = "tests/components.rs"]

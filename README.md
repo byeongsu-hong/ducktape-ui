@@ -49,7 +49,9 @@ ui_lang::include_app!("src/ui/tasks.ice");
 ```
 
 Generated files live below `OUT_DIR/ui-lang-generated`, are isolated per Cargo
-package/profile/target, and are removed by `cargo clean`.
+package/profile/target, and are removed by `cargo clean`. Their emitted items
+suppress backend-only Rust and Clippy warnings, so normal consumer lint output
+contains only actionable source warnings; generated errors remain visible.
 
 ## Taste of the language
 
@@ -607,20 +609,20 @@ handler reachability is combined across every discovered app root, subscription,
 preset, implicit mount, and first-class test mount or dispatch, so shared
 libraries are warned only when no root uses the definition. All language-checker
 warnings appear in the LSP; the workspace-orphan `W010` remains `cargo ice`-only.
-Generated Rust diagnostics from `cargo ice check` and
+Generated Rust errors from `cargo ice check` and
 `clippy` are mapped back to the responsible root or imported `.ice` syntax;
 `test` and `compat` run the same source-mapped check preflight before invoking
-Cargo's normal test runner. The
-generated Rust coordinate remains available as a note for backend debugging.
+Cargo's normal test runner. The generated Rust coordinate remains available as
+a note for backend debugging.
 The LSP also exposes a `Run Ice lint` source action backed by the `ice.lint`
 workspace command. It runs workspace Clippy and publishes generated Rust
 diagnostics at their responsible `.ice` URI, line, and column; ordinary Rust
 diagnostics remain owned by the Rust language server. The action publishes
 error-level generated diagnostics, including type and extern-contract failures.
-Warning-level Rust and Clippy findings from backend output are omitted because
-they are not actionable Ice diagnostics; Ice's non-CLI-only semantic warnings
-(`W001-W009` and `W011-W015`) continue to appear directly from the language
-checker.
+Warning-level Rust and Clippy findings from backend output are suppressed
+because they are not actionable Ice diagnostics; Ice's non-CLI-only semantic
+warnings (`W001-W009` and `W011-W015`) continue to appear directly from the
+language checker.
 
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:

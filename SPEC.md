@@ -171,7 +171,9 @@ the manifest-relative literal to the corresponding file in `OUT_DIR` and
 expands one `include!`. Generated Rust emits probes for every declared extern
 struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
-at runtime.
+at runtime. Generated items suppress backend-only Rust and Clippy warnings at
+their item boundary without changing their enclosing module, visibility, or
+name resolution; compile errors remain unsuppressed.
 
 Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
 a consuming application must declare `iced = "=0.14.0"` and
@@ -5136,7 +5138,7 @@ statements, state declarations and initializers, derived values, subscriptions,
 and extern probes. `ui-lang-build` materializes each root below Cargo's
 `OUT_DIR`, and the proc macro expands it through `include!`, preserving rustc's
 generated line. `cargo ice check` and `clippy` consume Cargo JSON diagnostics
-and map marked spans back to the root or imported `.ice` file, line, source
+and map marked error spans back to the root or imported `.ice` file, line, source
 excerpt, and syntax while retaining the generated Rust coordinate as a note.
 `test` and `compat` first
 run the corresponding source-mapped Cargo check, then invoke the normal test
@@ -5151,9 +5153,9 @@ provenance remain with the Rust language server. The command is explicit so
 normal edit-time parser and semantic diagnostics do not wait for Cargo.
 The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
-output rather than actionable Ice syntax and remain CLI-only; Ice's non-CLI-only
-semantic warnings (`W001-W009` and `W011-W015`) continue to come directly from
-the language checker.
+output rather than actionable Ice syntax and are suppressed at the generated
+item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
+`W011-W015`) continue to come directly from the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.

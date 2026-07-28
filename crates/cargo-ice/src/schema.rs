@@ -2468,7 +2468,7 @@ pub fn document() -> Value {
                     "W013": "statement unreachable after an unconditional return",
                     "W014": "duplicate subscription delivery",
                 },
-                "generatedRustSourceMap": "ui-lang-build writes marked generated Rust below Cargo OUT_DIR; cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics while warning-level backend findings remain CLI-only; test and compat run that check before the normal test runner",
+                "generatedRustSourceMap": "ui-lang-build writes marked generated Rust below Cargo OUT_DIR; generated items suppress backend-only warnings; cargo ice check and clippy consume Cargo JSON and map nested generated error provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics; test and compat run that check before the normal test runner",
             },
             "formatting": {
                 "supported": true,
