@@ -238,17 +238,17 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
     volume_changed(f64)
     lyrics
     queue
-  stack #root w=fill h=98.0
-    shader liquid_glass(2, 26.0, 6.0, 0.50, 24.0) w=fill h=98.0
+  stack #root w=fill h=88.0
+    shader liquid_glass(2, 24.0, 6.0, 0.50, 22.0) w=fill h=88.0
     box #surface
       with
         w=fill
-        h=98.0
-        p=12.0
+        h=88.0
+        p=10.0
         bg=glass/38
         border=white/82
         border-w=1.0
-        r=24.0
+        r=22.0
         shadow=black/22
         shadow-y=7.0
         shadow-blur=22.0
@@ -257,23 +257,23 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
           w=fill
           h=fill
           dir=row
-          gap=18.0
+          gap=14.0
           items=center
         box #metadata
           with
-            w=220.0
+            w=190.0
             h=fill
             align-y=center
           row
             with
               w=fill
-              gap=11.0
+              gap=10.0
               align=center
             Cover #cover
               with
                 source=cover
-                size=66.0
-                radius=13.0
+                size=58.0
+                radius=12.0
             col w=fill gap=3.0
               text "NOW PLAYING" #status
                 with
@@ -376,7 +376,7 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
                   @text-muted
         box #utilities
           with
-            w=238.0
+            w=206.0
             h=fill
             align-y=center
           row
@@ -403,7 +403,7 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
                 min=0.0
                 max=100.0
                 step=1.0
-                w=102.0
+                w=84.0
                 h=12.0
               active rail-start=fg rail-end=player_track rail-w=3.0 rail-r=1.5 handle=circle(0.0) handle-color=fg
               hovered handle=circle(4.0)

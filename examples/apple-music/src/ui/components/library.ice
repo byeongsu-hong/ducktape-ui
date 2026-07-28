@@ -88,7 +88,17 @@ component FeatureHero(kicker:str, title:str, artist:str, description:str, cover:
               wrap=word
               @text-white/72
           row #actions gap=8.0 align=center
-            button "Play now" #play @primary_action -> emit(restart_current)
+            button #play label="Play now" p=10.0 -> emit(restart_current)
+              row gap=7.0 align=center
+                HeroPlayIcon
+                text "Play now"
+                  with
+                    size=13.0
+                    @text-hero_start
+                    @font-bold
+              active bg=white text=hero_start r=10.0 shadow=black/18 shadow-y=3.0 shadow-blur=9.0
+              hovered bg=white/90
+              pressed bg=white/78
             button "Open queue" #queue p=9.0 -> emit(queue)
               active bg=white/12 text=white border=white/25 border-w=1.0 r=10.0
               hovered bg=white/20

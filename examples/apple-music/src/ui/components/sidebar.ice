@@ -52,12 +52,11 @@ component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
             w=fill
             gap=10.0
             align=center
-          text icon #selected-icon
+          svg icon #selected-icon memory
             with
-              w=20.0
-              size=15.0
-              align-x=center
-              @text-primary
+              w=16.0
+              h=16.0
+              color=primary
           text label #selected-label size=13.0 @text-primary
         active bg=accent text=primary r=10.0
     if !selected
@@ -72,12 +71,11 @@ component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
             w=fill
             gap=10.0
             align=center
-          text icon #icon
+          svg icon #icon memory
             with
-              w=20.0
-              size=15.0
-              align-x=center
-              @text-muted
+              w=16.0
+              h=16.0
+              color=muted
           text label #label size=13.0 @text-fg
         active bg=transparent text=fg r=10.0
         hovered bg=surface/58 text=fg
@@ -162,7 +160,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             @font-bold
         NavItem #home
           with
-            icon="⌂"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M2.5 7.1 8 2.6l5.5 4.5v6.3H9.8V9.8H6.2v3.6H2.5z' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>"
             label="Home"
             target=MusicSection.home
             selected=(section == MusicSection.home)
@@ -170,7 +168,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             navigate
         NavItem #new
           with
-            icon="✦"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.8c.5 3.2 2.2 4.9 5.4 5.4-3.2.5-4.9 2.2-5.4 5.4-.5-3.2-2.2-4.9-5.4-5.4C5.8 6.7 7.5 5 8 1.8Z' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linejoin='round'/></svg>"
             label="New"
             target=MusicSection.new
             selected=(section == MusicSection.new)
@@ -178,7 +176,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             navigate
         NavItem #radio
           with
-            icon="◉"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='1.6' fill='currentColor'/><path d='M5.3 5.3a3.8 3.8 0 0 0 0 5.4M10.7 5.3a3.8 3.8 0 0 1 0 5.4M3.3 3.3a6.6 6.6 0 0 0 0 9.4M12.7 3.3a6.6 6.6 0 0 1 0 9.4' fill='none' stroke='currentColor' stroke-width='1.35' stroke-linecap='round'/></svg>"
             label="Radio"
             target=MusicSection.radio
             selected=(section == MusicSection.radio)
@@ -192,7 +190,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             @font-bold
         NavItem #recently-added
           with
-            icon="◷"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='5.5' fill='none' stroke='currentColor' stroke-width='1.4'/><path d='M8 4.7V8l2.4 1.5' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>"
             label="Recently Added"
             target=MusicSection.recently_added
             selected=(section == MusicSection.recently_added)
@@ -200,7 +198,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             navigate
         NavItem #artists
           with
-            icon="⌁"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='6' cy='5.4' r='2.2' fill='none' stroke='currentColor' stroke-width='1.4'/><path d='M2.4 13c.3-2.4 1.6-3.7 3.6-3.7s3.3 1.3 3.6 3.7M10.6 4.2c1.5.2 2.4 1.1 2.4 2.5s-.9 2.3-2.4 2.5M11 10.3c1.4.4 2.2 1.3 2.5 2.7' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round'/></svg>"
             label="Artists"
             target=MusicSection.artists
             selected=(section == MusicSection.artists)
@@ -208,7 +206,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             navigate
         NavItem #albums
           with
-            icon="▣"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2.4' y='3.2' width='9.6' height='9.6' rx='1.4' fill='none' stroke='currentColor' stroke-width='1.4'/><path d='M5 3.2V2.4h7.2c.8 0 1.4.6 1.4 1.4V11h-.8' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round'/><circle cx='7.2' cy='8' r='2' fill='none' stroke='currentColor' stroke-width='1.3'/></svg>"
             label="Albums"
             target=MusicSection.albums
             selected=(section == MusicSection.albums)
@@ -216,7 +214,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             navigate
         NavItem #songs
           with
-            icon="♫"
+            icon="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.2 11.3V4.5l6-1.3v6.7M6.2 6.8l6-1.3' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/><ellipse cx='4.4' cy='11.5' rx='1.8' ry='1.4' fill='currentColor'/><ellipse cx='10.4' cy='10.1' rx='1.8' ry='1.4' fill='currentColor'/></svg>"
             label="Songs"
             target=MusicSection.songs
             selected=(section == MusicSection.songs)
@@ -252,7 +250,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
                     size=10.0
                     wrap=none
                     @text-muted
-              text "↻" size=13.0 @text-muted
+              ReplayIcon
           active bg=surface/62 text=fg border=white/78 border-w=1.0 r=13.0
           hovered bg=surface/82 border=white
           pressed bg=accent text=primary

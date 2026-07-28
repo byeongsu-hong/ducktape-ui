@@ -77,3 +77,17 @@ component QueueIcon(active:bool)
           w=16.0
           h=16.0
           color=fg
+
+component HeroPlayIcon()
+  svg "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><path d='M4 2.2v9.6L12 7z' fill='currentColor'/></svg>" #root memory
+    with
+      w=13.0
+      h=13.0
+      color=hero_start
+
+component ReplayIcon()
+  svg "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><path d='M11.5 4.5V1.8M11.5 1.8H8.8M11.2 2.2A5 5 0 1 1 7 1.8' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>" #root memory
+    with
+      w=14.0
+      h=14.0
+      color=muted

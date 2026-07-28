@@ -37,7 +37,7 @@ pub(in crate::codegen) fn render_media(
                     "::iced::widget::svg(::iced::widget::svg::Handle::from_memory({source}))"
                 ),
                 MediaKind::Svg if options.svg_memory => format!(
-                    "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(({source}).into_bytes()))"
+                    "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(({source}).as_bytes().to_vec()))"
                 ),
                 MediaKind::Svg => format!("::iced::widget::svg({source})"),
             };
