@@ -21,6 +21,8 @@ view
     for expected in [
         "const __ICE_LIVE_CONTRACT: &str",
         "__ice_live: ::ui_lang_runtime::live::LiveRuntime",
+        "__ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog",
+        "self.__ice_update_watchdog.observe()",
         "__IceLiveTick",
         "self.__ice_live.subscription().map(|_| __DemoMessage::__IceLiveTick)",
         "self.__ice_live.poll_and_report()",
