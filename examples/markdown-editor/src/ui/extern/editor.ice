@@ -1,3 +1,2 @@
 extern crate::editor
-  EditorCommand()
-  editor-binding editor_keys() -> EditorCommand
+  editor-highlighter markdown_highlight()
