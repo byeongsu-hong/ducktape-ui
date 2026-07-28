@@ -23,6 +23,9 @@ pub trait Editor: Sized + Default {
     /// Returns the current [`Selection`] of the [`Editor`].
     fn selection(&self) -> Selection;
 
+    /// Returns the text position at the given point, if any.
+    fn hit_test(&self, point: Point) -> Option<Position>;
+
     /// Returns the height of the caret at its current position.
     fn caret_height(&self) -> Pixels {
         Pixels(0.0)
