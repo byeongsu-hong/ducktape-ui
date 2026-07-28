@@ -4756,7 +4756,51 @@ run the corresponding source-mapped Cargo check, then invoke the normal test
 runner. Generated first-class test failures retain their original root or
 imported Ice path and line as before.
 
-## 12. Cargo commands
+## 12. Live development and Cargo commands
+
+`cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` is the native
+development runner. It analyzes `FILE` and its imported source graph with the
+normal parser and checker, lowers a versioned renderer-independent `LivePlan`,
+builds exactly one selected Cargo binary, and launches that binary with the
+plan path in `ICE_LIVE_PLAN`. The plan file is replaced atomically. Generated
+applications do not parse Ice source; they poll and deserialize the checked
+plan only when that environment variable is present. Production launches have
+no polling subscription and use the ordinary generated Rust view.
+
+A running app accepts a plan only when the complete protocol and generated
+Rust contract remain compatible. The contract compares app identity and mode,
+bootstrap/window settings, generated named and palette types, extern structs
+and functions, and behavior that still belongs to generated Rust. Structural
+ABI fields are compared in full. Whole-contract fingerprints are
+diagnostic/cache values; opaque AOT behavior uses an explicit SHA-256 digest
+because the live runtime neither receives nor interprets that generated
+program.
+State slots have stable `(owner, name)` identities and storage classes, but a
+state declaration change currently belongs to generated behavior and therefore
+restarts. A rejected, stale, malformed, or failed revision never replaces the
+last-known-good plan.
+
+The no-restart live backend currently has exact lowering for default `col`,
+`row`, `text`, label `button`, and `if` nodes. Its expression plan covers literals,
+primitive top-level state and derived paths, unary negation/not, and typed
+binary arithmetic, comparison, equality, and short-circuit Boolean operators
+over `bool`, `i64`, `f64`, and `str`. Each render pass copies those supported
+values from the still-running generated app. Live buttons route checked
+primitive arguments into an already generated top-level handler, so handler
+updates continue to mutate the original typed app state and may run their
+normal tasks. This is the state-preserving path: a compatible view revision
+changes the view plan without replacing the process, window, app fields, or
+Iced widget tree cache.
+
+Any node, option, style, ID, expression, component scope, or event payload not
+represented by that exact live backend is rejected by lowering instead of
+receiving approximate semantics. `cargo ice dev` then builds while the old app
+stays open and restarts only after a successful build. Changes to handlers,
+state/derived declarations, themes, recipes, subscriptions, components,
+settings, Rust/Cargo inputs, or a compile-time ABI take the same warm-restart
+path. Parse/check/build failures report diagnostics and preserve the current
+process. The runner executes the built binary directly, so terminating or
+restarting it cannot leave a `cargo run` child orphaned.
 
 | Command | Behavior |
 | --- | --- |
@@ -4770,6 +4814,7 @@ imported Ice path and line as before.
 | `cargo ice clippy` | language analysis followed by workspace clippy |
 | `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
+| `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | runs one native binary with checked state-preserving live views and a build-then-restart fallback |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
 | `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit code actions, definition, and rename |
 

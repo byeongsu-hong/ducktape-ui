@@ -2751,6 +2751,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
+name = "live-reload-example"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5192,6 +5201,17 @@ name = "ui-lang-core"
 version = "0.1.0"
 dependencies = [
  "qrcode 0.14.1",
+ "serde_json",
+ "sha2",
+ "ui-lang-live-protocol",
+]
+
+[[package]]
+name = "ui-lang-live-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5204,6 +5224,8 @@ dependencies = [
  "iced",
  "iced_test",
  "iced_tiny_skia",
+ "serde_json",
+ "ui-lang-live-protocol",
  "unicode-segmentation",
 ]
 

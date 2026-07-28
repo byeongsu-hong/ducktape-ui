@@ -8,8 +8,11 @@ compact `.ice` files; Rust keeps domain rules, I/O, and custom platform code.
 .ice source -> parser -> semantic checker -> checked AST -> iced Rust backend
 ```
 
-There is no runtime interpreter. `ui_lang::include_app!` is only the thin Cargo
-adapter that includes a file and emits ordinary Rust.
+Normal builds have no source parser or general runtime interpreter.
+`ui_lang::include_app!` is the thin Cargo adapter that includes a file and emits
+ordinary Rust. The opt-in `cargo ice dev` path can additionally load a small,
+compiler-checked live view plan; without its environment variable the same
+binary immediately follows its generated Rust view.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
 construct it, and the Iced backend has no unchecked `Document` entry point.
@@ -417,6 +420,7 @@ cargo ice test
 cargo ice clippy
 cargo ice compat
 cargo ice expand examples/iced-app/src/ui/tasks.ice
+cargo ice dev examples/live-reload/src/ui/app.ice -- -p live-reload-example
 cargo ice schema
 cargo ice lsp
 scripts/a11y-smoke.sh
@@ -428,6 +432,19 @@ Cargo tests. Ordinary `cargo test` discovers the same generated `#[test]`
 functions; generated Ice tests need no Rust wrapper, registration, or direct
 `iced_test` dependency in the application. Arguments after `test` pass through to Cargo, so
 `cargo ice test render_contract -- --nocapture` runs one generated contract.
+
+`cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
+one native app, watches its complete imported Ice graph, and keeps the last
+valid screen running while edits are checked. Compatible view edits are
+published atomically into the existing process, so its window and generated
+app state survive. The current no-restart surface covers default `col`, `row`,
+`text`, label `button`, and `if` nodes; primitive `bool`, `i64`, `f64`, and `str`
+state/derived expressions; and button routes into existing top-level handlers
+with primitive arguments. Changing generated behavior or a Rust boundary—or
+using a view feature outside that live surface—builds in the background and
+then performs a warm restart. A failed parse, check, or Rust build leaves the
+last-known-good app open. See `examples/live-reload` for a state-preserving
+counter.
 
 `cargo ice schema` prints a generative JSON description of each Core
 construct's context, syntax, child shape, typed properties, binding, and route,
