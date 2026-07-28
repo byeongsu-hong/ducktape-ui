@@ -335,6 +335,7 @@ cargo run -p iced-app
 cargo run -p apple-music-example
 cargo run -p cef-browser-example
 cargo run -p markdown-editor-example
+cargo run -p terminal-example
 cargo run -p showcase
 ```
 
@@ -353,6 +354,12 @@ that open in the default browser. See its
 native editing path.
 
 ![Native Markdown editor](examples/markdown-editor/screenshots/editor.png)
+
+`terminal-example` embeds a native PTY terminal behind Ice's typed component
+and subscription boundary. It launches a local shell, OpenSSH, Claude Code, or
+Codex with ANSI rendering, interactive keyboard and mouse input, selection,
+clipboard bindings, scrolling, and live resize propagation. See the
+[`terminal example`](examples/terminal/README.md) for usage and architecture.
 
 `apple-music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,
