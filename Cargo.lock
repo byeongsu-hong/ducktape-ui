@@ -2847,6 +2847,7 @@ name = "markdown-editor-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_highlighter",
  "pulldown-cmark",
  "rfd",
  "ui-lang",
