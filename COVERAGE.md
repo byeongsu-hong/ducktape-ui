@@ -224,7 +224,7 @@ Ice 2.0 Preview has thirty-three checked Rust boundaries:
 | `markdown-viewer name(args)` | `fn(...) -> impl for<'a> markdown::Viewer<'a, Event>` | native custom rendering of every Markdown item through `view_with` while preserving checked link-event routing |
 | `editor-binding name(args)` | `fn(text_editor::KeyPress, ...) -> Option<text_editor::Binding<Event>>` | native custom key mapping across every built-in Binding plus typed custom application routes |
 | `editor-action name()` | `fn(&mut text_editor::Content, text_editor::Action)` | in-place native edit observation for bounded history and dirty tracking without per-key document copies |
-| `editor-highlighter name(args)` | generic adapter from plain `TextEditor` to default `Element` | native `highlight_with` access to arbitrary Highlighter settings, highlights, iterators and Theme-aware formats |
+| `editor-highlighter name(args)` | generic adapter from plain `TextEditor` to default `Element` | native `highlight_with` access to arbitrary Highlighter settings, highlights, iterators, mixed text metrics, span backgrounds, visual-line backgrounds, and Theme-aware formats |
 | `editor-style name(args)` | `fn(&Theme, text_editor::Status, ...) -> text_editor::Style` | native theme/status-aware runtime editor style callbacks, equivalent to the default Theme's advanced class representation |
 | `text-style name(args)` | `fn(&Theme, ...) -> text::Style` | native theme-aware runtime text and rich-text style callbacks, equivalent to the default Theme's advanced class representation |
 | `slider-style name(args)` | `fn(&Theme, slider::Status, ...) -> slider::Style` | native theme/status-aware runtime slider style callbacks, equivalent to the default Theme's advanced class representation |
