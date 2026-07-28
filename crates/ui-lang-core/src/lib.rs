@@ -39,6 +39,7 @@ pub struct CheckedDocument {
     source_origins: Vec<(PathBuf, usize)>,
     warnings: Vec<Warning>,
     reachable_components: HashSet<String>,
+    reachable_handlers: HashSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -138,6 +139,7 @@ impl CheckedDocument {
         document: Document,
         warnings: Vec<Warning>,
         reachable_components: HashSet<String>,
+        reachable_handlers: HashSet<String>,
     ) -> Self {
         Self {
             document,
@@ -145,6 +147,7 @@ impl CheckedDocument {
             source_origins: Vec::new(),
             warnings,
             reachable_components,
+            reachable_handlers,
         }
     }
 
@@ -158,6 +161,16 @@ impl CheckedDocument {
             .filter(|symbol| {
                 symbol.kind == SymbolKind::Component
                     && self.reachable_components.contains(&symbol.name)
+            })
+            .map(|symbol| &symbol.definition)
+            .collect()
+    }
+
+    pub fn reachable_handler_definitions(&self) -> Vec<&SourceRange> {
+        self.symbols
+            .iter()
+            .filter(|symbol| {
+                symbol.kind == SymbolKind::Handler && self.reachable_handlers.contains(&symbol.name)
             })
             .map(|symbol| &symbol.definition)
             .collect()

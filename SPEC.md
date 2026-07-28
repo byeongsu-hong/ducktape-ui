@@ -4726,6 +4726,9 @@ Successful analysis may also emit stable semantic warnings:
 | `W002` | reachable state has no reader, including state that is written but has no observable consumer |
 | `W003` | reachable state has readers but no writer and therefore always keeps its initial value |
 | `W004` | handlers form an unconditional immediate routing cycle that can refresh the application forever |
+| `W005` | a handler is unreachable from runtime routes, subscriptions, presets, mount, and first-class tests |
+| `W006` | handlers form a future, task, query, stream, or progress completion cycle that can refresh or multiply work forever |
+| `W007` | an unfiltered raw-event subscription can feed redraw requests back into application updates |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -4733,13 +4736,21 @@ sites, with duplicate checker passes collapsed to one source site. Component
 state is analyzed only when the component is reachable. `cargo ice` combines
 all discovered app roots before reporting `W001`, so a shared component
 definition used by any root is not reported as unreachable merely because
-another root imports but does not mount it. The LSP applies the same union over
-all open app roots. `W004` follows task-flow routes that unconditionally emit
-before any external effect, immediate `units` routes, and pane-query routes,
-including routes nested in task groups. A `return if` termination guard
-suppresses outgoing cycle edges. Extern futures, tasks, and streams do not make
-their result routes immediate. Conditional `try` routes and system window or
-widget operations are also excluded.
+another root imports but does not mount it. `W005` starts at the app view,
+subscriptions, preset boot statements, the implicit `mount` handler, test
+mounts, and test dispatches, then follows every routed effect. Component-local
+handlers use their reachable component view as the root. State reads and writes
+inside unreachable handlers do not suppress `W002` or `W003`. The CLI and LSP
+union reachable component and handler definitions over every discovered or open
+app root before reporting graph warnings.
+
+`W004` follows task-flow routes that unconditionally emit before any external
+effect, immediate `units` routes, and pane-query routes, including routes nested
+in task groups. A non-constant `return if` termination guard suppresses outgoing
+cycle edges; `return if false` does not. `W006` extends the same graph through
+future, task, and query completions plus repeated stream and sip-progress routes.
+`W007` reports raw event subscriptions unless they have a filter, request only
+captured events, or are statically disabled with `when false`.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing

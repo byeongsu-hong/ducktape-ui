@@ -21,11 +21,12 @@ counts toward the row below.
 
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
-Successful analysis reports unreachable components, readerless/writerless
-state, and unconditional immediate handler routing cycles, combining component
-reachability across all workspace or open-editor roots. Cargo JSON diagnostics
-from marked generated Rust regions map back to root and imported Ice syntax for
-`cargo ice` commands.
+Successful analysis reports unreachable components and handlers,
+readerless/writerless state using only reachable handler accesses, immediate
+and future/task/query/stream/progress routing cycles, and unfiltered raw-event redraw
+feedback. Component and handler reachability is combined across all workspace
+or open-editor roots. Cargo JSON diagnostics from marked generated Rust regions
+map back to root and imported Ice syntax for `cargo ice` commands.
 
 Native live development is separately covered by the versioned
 `ui-lang-live-protocol`, compiler lowering, generated state/event bridge,

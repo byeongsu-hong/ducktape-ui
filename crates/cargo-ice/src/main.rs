@@ -474,15 +474,29 @@ fn analyze(files: &[PathBuf]) -> Result<(), String> {
         .flat_map(|(_, document)| document.reachable_component_definitions())
         .filter_map(|range| Some((range.path.clone()?, range.line)))
         .collect::<std::collections::BTreeSet<_>>();
+    let reachable_handlers = documents
+        .iter()
+        .flat_map(|(_, document)| document.reachable_handler_definitions())
+        .filter_map(|range| Some((range.path.clone()?, range.line)))
+        .collect::<std::collections::BTreeSet<_>>();
     let mut warnings = std::collections::BTreeMap::new();
     for (path, document) in &documents {
-        for warning in document.warnings().iter().filter(|warning| {
-            warning.code != "W001"
-                || !warning
-                    .path
-                    .as_deref()
-                    .is_some_and(|path| reachable.contains(&(PathBuf::from(path), warning.line)))
-        }) {
+        for warning in document
+            .warnings()
+            .iter()
+            .filter(|warning| {
+                warning.code != "W001"
+                    || !warning.path.as_deref().is_some_and(|path| {
+                        reachable.contains(&(PathBuf::from(path), warning.line))
+                    })
+            })
+            .filter(|warning| {
+                warning.code != "W005"
+                    || !warning.path.as_deref().is_some_and(|path| {
+                        reachable_handlers.contains(&(PathBuf::from(path), warning.line))
+                    })
+            })
+        {
             warnings
                 .entry((
                     warning.code,
