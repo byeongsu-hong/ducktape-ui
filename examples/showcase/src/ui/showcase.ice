@@ -682,7 +682,7 @@ view
                 size=13.0
                 @text-muted
         demo::Dialog.Body
-          demo::Alert title="No Rust view code" description="The proc macro emits ordinary iced code at compile time."
+          demo::Alert title="No Rust view code" description="The build script emits ordinary iced code at compile time."
         demo::Dialog.Actions
           row
             with

@@ -14,6 +14,9 @@ iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia",
 ui-lang = { path = "../../crates/ui-lang" }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
 
+[build-dependencies]
+ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 iced_winit = { version = "=0.14.0", default-features = false }
 plist = "1"

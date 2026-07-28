@@ -3690,7 +3690,7 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(diagnostics.len(), 6);
+        assert_eq!(diagnostics.len(), 7);
         assert!(
             diagnostics
                 .iter()
@@ -3701,7 +3701,7 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic["code"].as_str().unwrap())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["W001", "W003", "W004", "W005", "W006", "W007"])
+            BTreeSet::from(["W001", "W003", "W004", "W005", "W006", "W007", "W011",])
         );
     }
 

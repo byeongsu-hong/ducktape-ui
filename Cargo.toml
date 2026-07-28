@@ -3,6 +3,7 @@ members = [
     "crates/ui-lang-core",
     "crates/ui-lang-live-protocol",
     "crates/ui-lang-runtime",
+    "crates/ui-lang-build",
     "crates/ui-lang",
     "crates/cargo-ice",
     "crates/ui",

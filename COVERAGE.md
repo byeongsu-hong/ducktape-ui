@@ -25,13 +25,21 @@ Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw
 feedback, positional stateful component identity, retained dynamic state, and
-workspace `.ice` files outside every root graph. Component and handler
-reachability is combined across all workspace or open-editor roots. Cargo JSON
+unused bindings. Constant no-ops/dead gates and unreachable statements include
+preset boot statements; statically disabled subscriptions are excluded from
+duplicate-delivery warnings. Component and handler reachability is combined
+across all workspace or open-editor roots. `cargo ice` additionally reports
+workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON
 diagnostics from marked generated Rust regions map back to root and imported Ice
-syntax for `cargo ice` commands. The LSP `ice.lint` workspace command publishes
+syntax for `cargo ice` commands.
+The LSP `ice.lint` workspace command publishes
 the same mapping for error-level Clippy/rustc diagnostics at their `.ice`
 document URI and source range. Warning-level backend findings remain CLI-only;
-Ice semantic warnings continue to be published directly by the language checker.
+core semantic warnings continue to be published directly by the language
+checker, while `W010` remains `cargo ice`-only.
+Consumer
+build scripts generate every Ice root below Cargo's package/profile/target-
+scoped `OUT_DIR`; the proc macro only includes those outputs.
 
 Native live development is separately covered by the versioned
 `ui-lang-live-protocol`, compiler lowering, generated state/event bridge,

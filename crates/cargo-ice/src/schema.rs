@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 pub const LANGUAGE_REVISION: &str = "2.0";
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
+pub const UI_LANG_BUILD_VERSION: &str = "0.1.0";
 pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
 pub const ACCESSKIT_VERSION: &str = "0.24.1";
 pub const ACCESSKIT_UNIX_VERSION: &str = "0.22.1";
@@ -2396,6 +2397,15 @@ pub fn document() -> Value {
         "backend": {
             "iced": ICED_VERSION,
             "iced_widget": ICED_WIDGET_VERSION,
+            "build": {
+                "package": "ui-lang-build",
+                "version": UI_LANG_BUILD_VERSION,
+                "phase": "Cargo build script",
+                "sourceDirectoryApi": "ui_lang_build::compile_dir",
+                "output": "OUT_DIR/ui-lang-generated",
+                "includeMacro": "ui_lang::include_app!",
+                "procMacroWritesFiles": false,
+            },
             "runtime": {
                 "package": "ui-lang-runtime",
                 "version": UI_LANG_RUNTIME_VERSION,
@@ -2453,8 +2463,12 @@ pub fn document() -> Value {
                     "W008": "position-based identity for a repeated stateful component",
                     "W009": "retained component state under dynamic identities",
                     "W010": "workspace Ice source outside every root import graph; cargo ice only",
+                    "W011": "unused reachable derived value, handler parameter, or local",
+                    "W012": "constant no-op statement or dead/redundant view gate",
+                    "W013": "statement unreachable after an unconditional return",
+                    "W014": "duplicate subscription delivery",
                 },
-                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics while warning-level backend findings remain CLI-only; test and compat run that check before the normal test runner",
+                "generatedRustSourceMap": "ui-lang-build writes marked generated Rust below Cargo OUT_DIR; cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics while warning-level backend findings remain CLI-only; test and compat run that check before the normal test runner",
             },
             "formatting": {
                 "supported": true,
@@ -2645,7 +2659,7 @@ pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
 mod tests {
     use super::{
         ACCESSKIT_WINDOWS_VERSION, COMPLETIONS, ICED_VERSION, ICED_WIDGET_VERSION,
-        UI_LANG_RUNTIME_VERSION, completion_items, document,
+        UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items, document,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -2658,6 +2672,12 @@ mod tests {
 
         assert_eq!(schema["backend"]["iced"], ICED_VERSION);
         assert_eq!(schema["backend"]["iced_widget"], ICED_WIDGET_VERSION);
+        assert_eq!(schema["backend"]["build"]["version"], UI_LANG_BUILD_VERSION);
+        assert_eq!(
+            schema["backend"]["build"]["output"],
+            "OUT_DIR/ui-lang-generated"
+        );
+        assert_eq!(schema["backend"]["build"]["procMacroWritesFiles"], false);
         assert_eq!(
             schema["backend"]["runtime"]["version"],
             UI_LANG_RUNTIME_VERSION

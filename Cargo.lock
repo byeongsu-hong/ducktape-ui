@@ -250,6 +250,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -868,6 +869,7 @@ dependencies = [
  "plist",
  "semver",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -2062,6 +2064,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -2092,6 +2095,7 @@ dependencies = [
  "iced_test",
  "image",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -2749,6 +2753,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -2848,9 +2853,11 @@ name = "markdown-editor-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_highlighter",
  "pulldown-cmark",
  "rfd",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -4506,6 +4513,7 @@ dependencies = [
  "ducktape-ui",
  "iced",
  "ui-lang",
+ "ui-lang-build",
  "ui-lang-runtime",
 ]
 
@@ -5184,6 +5192,13 @@ dependencies = [
 
 [[package]]
 name = "ui-lang"
+version = "0.1.0"
+dependencies = [
+ "ui-lang-build",
+]
+
+[[package]]
+name = "ui-lang-build"
 version = "0.1.0"
 dependencies = [
  "ui-lang-core",

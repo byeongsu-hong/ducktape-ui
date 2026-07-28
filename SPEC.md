@@ -130,9 +130,25 @@ UTF-8 .ice source graph
   -> rustc
 ```
 
-`ui-lang-core` owns the parser, AST, checker, formatter, and backend. The
-`ui-lang` proc macro and `cargo-ice` command are thin frontends over that core.
-There is no runtime parser and no `build.rs` generator.
+`ui-lang-core` owns the parser, AST, checker, formatter, and backend.
+`ui-lang-build` is the Cargo build-script adapter, `ui-lang` is the include-only
+proc macro, and `cargo-ice` owns workspace tooling. There is no runtime parser.
+
+A consuming package declares `ui-lang-build` as a build dependency and compiles
+its Ice source directory through Cargo's standard build-script phase:
+
+```rust
+// build.rs
+fn main() {
+    ui_lang_build::compile_dir("src/ui").expect("compile Ice sources");
+}
+```
+
+The build helper discovers every top-level `app` or `daemon` root below that
+directory, checks each complete import graph, emits dependency tracking for all
+root and imported `.ice` files, and writes generated Rust below
+`OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
+package, profile, and target and removes it with `cargo clean`.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
 Only the checker can construct it, and backend generation accepts that checked
@@ -150,17 +166,19 @@ fn main() -> iced::Result {
 }
 ```
 
-The macro emits `include_str!` for the root and every imported file so Cargo
-rebuilds after any `.ice` change. It also
-emits probes for every declared extern struct field and async function. Rustc
-therefore rejects missing, private, or shape-incompatible Rust items even when
-an extern declaration is not reached at runtime.
+The macro performs no parsing, code generation, or filesystem writes. It maps
+the manifest-relative literal to the corresponding file in `OUT_DIR` and
+expands one `include!`. Generated Rust emits probes for every declared extern
+struct field and async function. Rustc therefore rejects missing, private, or
+shape-incompatible Rust items even when an extern declaration is not reached
+at runtime.
 
 Generated Rust refers to the public `::ui_lang_runtime` path, so a consuming
 application must declare `ui-lang-runtime = "=0.1.0"` as a direct dependency.
-That runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
-on Windows; the reference application uses the workspace path with the exact
-version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
+It must also declare `ui-lang-build = "=0.1.0"` as a direct build dependency.
+The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
+on Windows; the reference application uses workspace paths with exact
+versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
 
 ## 3. Source rules
 
@@ -5044,6 +5062,10 @@ Successful analysis may also emit stable semantic warnings:
 | `W008` | a stateful component is repeated with position-based identity, so inserts or reordering can transfer state between items |
 | `W009` | a retained stateful component is mounted under dynamic identities whose stored state is never reclaimed |
 | `W010` | a workspace `.ice` file is outside every app or daemon import graph |
+| `W011` | a reachable derived value, handler parameter, or handler local is never read |
+| `W012` | a statement or view gate is a constant no-op, redundant gate, or dead subtree |
+| `W013` | a statement follows an unconditional `return if true` and can never execute |
+| `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -5076,17 +5098,30 @@ tree. `cargo ice` emits CLI-only `W010` after unioning the canonical dependency
 graphs of every discovered app and daemon root. Imported fragments and roots are
 not orphans; standalone files that no root imports are.
 
+`W011` follows transitive derived-value dependencies and ignores unreachable
+handlers. Prefixing an intentionally ignored handler parameter or local with
+`_` suppresses it. Preset boot locals and statements participate in the same
+`W011-W013` analysis as application handlers. `W012` reports self-assignment,
+literal `return if false`, literal `if true`/`if false` gates, and repetitions
+over a literal empty list. `W013` reports the first unreachable statement after
+a constant-true return.
+`W014` compares the full subscription identity, context, filter, condition, event status,
+payload arguments, and route; statically disabled `when false` subscriptions are
+excluded, so it warns only when an external event would be delivered twice with
+identical semantics.
+
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 Generated Rust carries nested provenance regions for view nodes, handler
 statements, state declarations and initializers, derived values, subscriptions,
-and extern probes. The proc macro materializes content-addressed generated Rust
-and expands it through `include!`, preserving rustc's generated line. `cargo
-ice check` and `clippy` consume Cargo JSON diagnostics and map marked spans back
-to the root or imported `.ice` file, line, source excerpt, and syntax while
-retaining the generated Rust coordinate as a note. `test` and `compat` first
+and extern probes. `ui-lang-build` materializes each root below Cargo's
+`OUT_DIR`, and the proc macro expands it through `include!`, preserving rustc's
+generated line. `cargo ice check` and `clippy` consume Cargo JSON diagnostics
+and map marked spans back to the root or imported `.ice` file, line, source
+excerpt, and syntax while retaining the generated Rust coordinate as a note.
+`test` and `compat` first
 run the corresponding source-mapped Cargo check, then invoke the normal test
 runner. Generated first-class test failures retain their original root or
 imported Ice path and line as before.
@@ -5099,8 +5134,9 @@ provenance remain with the Rust language server. The command is explicit so
 normal edit-time parser and semantic diagnostics do not wait for Cargo.
 The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
-output rather than actionable Ice syntax and remain CLI-only; W001-W004 Ice
-warnings continue to come directly from the language checker.
+output rather than actionable Ice syntax and remain CLI-only; Ice's non-CLI-only
+semantic warnings (`W001-W009` and `W011-W014`) continue to come directly from
+the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.
@@ -5162,7 +5198,7 @@ restarting it cannot leave a `cargo run` child orphaned.
 
 | Command | Behavior |
 | --- | --- |
-| `cargo build` / `cargo check` | expands each included `.ice` file and checks generated Rust |
+| `cargo build` / `cargo check` | runs `ui-lang-build` in each consumer build script, includes requested roots from `OUT_DIR`, and checks generated Rust |
 | `cargo fmt` | formats Rust; foreign `.ice` files are unchanged |
 | `cargo clippy` | lints generated Rust as part of the normal crate |
 | `cargo ice fmt` | runs Rust formatting and formats all discovered `.ice` files |
