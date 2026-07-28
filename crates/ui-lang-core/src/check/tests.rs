@@ -349,10 +349,14 @@ component MountedRow()
   on increment
     count = count + 1
   button "Increment" -> increment
+component StatelessAction()
+  on press
+  button "Press" -> press
 view
   col
     for item in items
       RetainedRow
+      StatelessAction
     keyed item in items by=item
       RetainedRow
     keyed item in items by=item
@@ -380,6 +384,10 @@ view
     );
     assert!(warnings.iter().all(|warning| {
         warning.code != "W008" && warning.code != "W009" || !warning.message.contains("MountedRow")
+    }));
+    assert!(warnings.iter().all(|warning| {
+        warning.code != "W008" && warning.code != "W009"
+            || !warning.message.contains("StatelessAction")
     }));
 }
 

@@ -134,7 +134,7 @@ impl Session<'_> {
                     .iter()
                     .find(|component| component.name == *name)
                     .expect("checker resolves component calls");
-                let stateful = !component.states.is_empty() || !component.handlers.is_empty();
+                let stateful = component_has_identity_state(component);
                 if stateful && risk.positional {
                     self.emit(
                         Warning::new(
@@ -220,4 +220,19 @@ impl Session<'_> {
             self.visit(node, risk);
         }
     }
+}
+
+fn component_has_identity_state(component: &Component) -> bool {
+    !component.states.is_empty()
+        || component.handlers.iter().any(|handler| {
+            handler.statements.iter().any(|statement| {
+                matches!(
+                    statement,
+                    Statement::Run {
+                        mode: FutureMode::Latest | FutureMode::Replace,
+                        ..
+                    }
+                )
+            })
+        })
 }
