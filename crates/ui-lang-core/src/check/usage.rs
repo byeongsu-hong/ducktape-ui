@@ -143,6 +143,17 @@ pub(in crate::check) fn with_component_scope<T>(
     with_scope(scope, f)
 }
 
+pub(in crate::check) fn with_app_handler_scope<T>(reachable: bool, f: impl FnOnce() -> T) -> T {
+    with_scope(
+        if reachable {
+            Scope::App
+        } else {
+            Scope::Disabled
+        },
+        f,
+    )
+}
+
 pub(in crate::check) fn without_usage<T>(f: impl FnOnce() -> T) -> T {
     with_scope(Scope::Disabled, f)
 }
