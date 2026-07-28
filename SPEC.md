@@ -130,9 +130,25 @@ UTF-8 .ice source graph
   -> rustc
 ```
 
-`ui-lang-core` owns the parser, AST, checker, formatter, and backend. The
-`ui-lang` proc macro and `cargo-ice` command are thin frontends over that core.
-There is no runtime parser and no `build.rs` generator.
+`ui-lang-core` owns the parser, AST, checker, formatter, and backend.
+`ui-lang-build` is the Cargo build-script adapter, `ui-lang` is the include-only
+proc macro, and `cargo-ice` owns workspace tooling. There is no runtime parser.
+
+A consuming package declares `ui-lang-build` as a build dependency and compiles
+its Ice source directory through Cargo's standard build-script phase:
+
+```rust
+// build.rs
+fn main() {
+    ui_lang_build::compile_dir("src/ui").expect("compile Ice sources");
+}
+```
+
+The build helper discovers every top-level `app` or `daemon` root below that
+directory, checks each complete import graph, emits dependency tracking for all
+root and imported `.ice` files, and writes generated Rust below
+`OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
+package, profile, and target and removes it with `cargo clean`.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
 Only the checker can construct it, and backend generation accepts that checked
@@ -150,17 +166,19 @@ fn main() -> iced::Result {
 }
 ```
 
-The macro emits `include_str!` for the root and every imported file so Cargo
-rebuilds after any `.ice` change. It also
-emits probes for every declared extern struct field and async function. Rustc
-therefore rejects missing, private, or shape-incompatible Rust items even when
-an extern declaration is not reached at runtime.
+The macro performs no parsing, code generation, or filesystem writes. It maps
+the manifest-relative literal to the corresponding file in `OUT_DIR` and
+expands one `include!`. Generated Rust emits probes for every declared extern
+struct field and async function. Rustc therefore rejects missing, private, or
+shape-incompatible Rust items even when an extern declaration is not reached
+at runtime.
 
 Generated Rust refers to the public `::ui_lang_runtime` path, so a consuming
 application must declare `ui-lang-runtime = "=0.1.0"` as a direct dependency.
-That runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
-on Windows; the reference application uses the workspace path with the exact
-version. `cargo ice compat` verifies the lockfile and direct-manifest contract.
+It must also declare `ui-lang-build = "=0.1.0"` as a direct build dependency.
+The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
+on Windows; the reference application uses workspace paths with exact
+versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
 
 ## 3. Source rules
 
@@ -5077,11 +5095,12 @@ Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
 Generated Rust carries nested provenance regions for view nodes, handler
 statements, state declarations and initializers, derived values, subscriptions,
-and extern probes. The proc macro materializes content-addressed generated Rust
-and expands it through `include!`, preserving rustc's generated line. `cargo
-ice check` and `clippy` consume Cargo JSON diagnostics and map marked spans back
-to the root or imported `.ice` file, line, source excerpt, and syntax while
-retaining the generated Rust coordinate as a note. `test` and `compat` first
+and extern probes. `ui-lang-build` materializes each root below Cargo's
+`OUT_DIR`, and the proc macro expands it through `include!`, preserving rustc's
+generated line. `cargo ice check` and `clippy` consume Cargo JSON diagnostics
+and map marked spans back to the root or imported `.ice` file, line, source
+excerpt, and syntax while retaining the generated Rust coordinate as a note.
+`test` and `compat` first
 run the corresponding source-mapped Cargo check, then invoke the normal test
 runner. Generated first-class test failures retain their original root or
 imported Ice path and line as before.
@@ -5158,7 +5177,7 @@ restarting it cannot leave a `cargo run` child orphaned.
 
 | Command | Behavior |
 | --- | --- |
-| `cargo build` / `cargo check` | expands each included `.ice` file and checks generated Rust |
+| `cargo build` / `cargo check` | runs `ui-lang-build` in each consumer build script, includes requested roots from `OUT_DIR`, and checks generated Rust |
 | `cargo fmt` | formats Rust; foreign `.ice` files are unchanged |
 | `cargo clippy` | lints generated Rust as part of the normal crate |
 | `cargo ice fmt` | runs Rust formatting and formats all discovered `.ice` files |

@@ -9,15 +9,45 @@ compact `.ice` files; Rust keeps domain rules, I/O, and custom platform code.
 ```
 
 Normal builds have no source parser or general runtime interpreter.
-`ui_lang::include_app!` is the thin Cargo adapter that includes a file and emits
-ordinary Rust. The opt-in `cargo ice dev` path can additionally load a small,
+`ui-lang-build` compiles app roots from `build.rs` into Cargo's `OUT_DIR`, and
+`ui_lang::include_app!` includes that ordinary generated Rust. The opt-in
+`cargo ice dev` path can additionally load a small,
 compiler-checked live view plan; without its environment variable the same
 binary immediately follows its generated Rust view.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
 construct it, and the Iced backend has no unchecked `Document` entry point.
 Generated applications also declare `ui-lang-runtime = "=0.1.0"` directly
-because generated Rust refers to its public crate path.
+because generated Rust refers to its public crate path, plus
+`ui-lang-build = "=0.1.0"` as a build dependency.
+
+The standard Cargo setup generates every app or daemon root below `src/ui`:
+
+```toml
+[dependencies]
+ui-lang = "0.1.0"
+ui-lang-runtime = "=0.1.0"
+
+[build-dependencies]
+ui-lang-build = "=0.1.0"
+```
+
+```rust
+// build.rs
+fn main() {
+    ui_lang_build::compile_dir("src/ui").expect("compile Ice sources");
+}
+```
+
+Application Rust includes a generated root by its manifest-relative source
+path:
+
+```rust
+ui_lang::include_app!("src/ui/tasks.ice");
+```
+
+Generated files live below `OUT_DIR/ui-lang-generated`, are isolated per Cargo
+package/profile/target, and are removed by `cargo clean`.
 
 ## Taste of the language
 
@@ -597,9 +627,10 @@ Content-Length-framed JSON-RPC, so launch it through the editor rather than
 typing into its terminal.
 
 `cargo ice compat` analyzes every app graph, checks the exact `iced 0.14.0`,
-`iced_widget 0.14.2`, `ui-lang-runtime`, and AccessKit lockfile baseline,
-verifies the direct reference-app and runtime manifest pins—including the
-target-scoped Unix and Windows adapters—and runs the app tests.
+`iced_widget 0.14.2`, `ui-lang-build`, `ui-lang-runtime`, and AccessKit
+lockfile baseline, verifies the direct reference-app and runtime manifest
+pins—including the target-scoped Unix and Windows adapters—and runs the app
+tests.
 
 On Linux, `scripts/a11y-smoke.sh` creates an isolated D-Bus/AT-SPI session and
 checks that the native tree is discoverable and an AT-SPI action reaches the
@@ -610,8 +641,8 @@ tests cover dispatch from the bridge to the app message.
 `cargo ice fmt` normalizes indentation and blank lines. It does not translate
 removed vocabulary; old syntax fails analysis.
 
-Normal Cargo commands work too because the proc macro participates in the
-standard compilation graph:
+Normal Cargo commands work too because the build script and proc macro
+participate in the standard compilation graph:
 
 ```bash
 cargo build -p iced-app

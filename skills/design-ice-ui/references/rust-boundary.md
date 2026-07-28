@@ -19,21 +19,41 @@ running work, consuming native Iced capabilities, or testing generated apps.
 
 ## Cargo and entry point
 
-The repository's reference app declares Iced plus both language crates:
+The repository's reference app declares Iced plus the runtime and proc-macro
+crates, with the generator as a build dependency:
 
 ```toml
 [dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tokio", "wgpu", "x11"] }
 ui-lang = { path = "../../crates/ui-lang" }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+
+[build-dependencies]
+ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
 ```
 
 Preserve the consuming workspace's existing feature set. Add an Iced feature
 only when the chosen widget or operation requires it.
 
 Declare `ui-lang-runtime` directly. Generated Rust refers to the public
-`::ui_lang_runtime` path; a transitive dependency is insufficient. The exact
-runtime version is part of the backend contract.
+`::ui_lang_runtime` path; a transitive dependency is insufficient. Declare
+`ui-lang-build` directly under `[build-dependencies]`; its exact version and the
+runtime version are part of the backend contract.
+
+Generate every app or daemon root below the source directory with the standard
+Cargo build-script phase:
+
+```rust
+// build.rs
+fn main() {
+    ui_lang_build::compile_dir("src/ui").expect("compile Ice sources");
+}
+```
+
+The helper writes generated Rust below `OUT_DIR/ui-lang-generated` and emits
+Cargo dependency tracking for every root and imported fragment. Do not write a
+custom target-directory resolver or generate into the system temporary
+directory.
 
 Include one manifest-relative app root:
 
@@ -52,11 +72,10 @@ Paths:
 - must use `/`;
 - cannot be absolute or contain escape sequences.
 
-The macro parses, checks, and generates Rust during compilation. It emits
-compile-time probes for declared extern structs, fields, functions, and typed
-adapters even when they are not reached at runtime.
-
-Do not add `build.rs` generation or include generated Rust manually.
+The macro only includes the generated root from `OUT_DIR`; it performs no
+filesystem writes. Generated code contains compile-time probes for declared
+extern structs, fields, functions, and typed adapters even when they are not
+reached at runtime. Do not include generated Rust manually.
 
 ## Extern namespace and structs
 
@@ -483,6 +502,8 @@ the relevant app compilation/tests.
 - Keep authoritative validation in Rust.
 - Match every Ice extern declaration to a public Rust item.
 - Preserve direct `ui-lang-runtime` dependency.
+- Preserve the direct `ui-lang-build` build dependency and standard `build.rs`
+  call.
 - Use bare extern/`run` for ordinary futures.
 - Use the matching typed adapter for native Iced return types.
 - Route every fallible effect to success and failure.

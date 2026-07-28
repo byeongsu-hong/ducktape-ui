@@ -11,5 +11,8 @@ iced = { version = "=0.14.0", features = ["smol"] }
 ui-lang = { path = "../../crates/ui-lang" }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
 
+[build-dependencies]
+ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+
 [lints]
 workspace = true
