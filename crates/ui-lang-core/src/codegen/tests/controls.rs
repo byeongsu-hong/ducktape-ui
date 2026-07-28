@@ -665,6 +665,14 @@ view
     let zero = plain.replace("PLAIN", "ZERO");
     assert!(generated.contains(plain));
     assert!(generated.contains(&zero));
+    // A tracked run is a row, not an iced Text paragraph, so only the plain
+    // and zero-tracking widgets can use the native selection wrapper.
+    assert_eq!(
+        generated
+            .matches("::ui_lang_runtime::selectable_text(__text)")
+            .count(),
+        2
+    );
 }
 
 #[test]

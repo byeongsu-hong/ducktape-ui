@@ -163,6 +163,11 @@ view
     let error = analyze(&source.replace("border-dash=(4.0, 3.0)", "border-dash=()")).unwrap_err();
     assert_eq!(error.code, "E184");
     assert!(error.message.contains("at least one segment"));
+
+    let error =
+        analyze(&source.replace("border-dash=(4.0, 3.0)", "border-dash=(0.0, 0.0)")).unwrap_err();
+    assert_eq!(error.code, "E176");
+    assert!(error.message.contains("at least one positive segment"));
 }
 
 #[test]

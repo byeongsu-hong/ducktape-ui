@@ -225,11 +225,9 @@ view
     assert!(generated.contains("qr_code::Data::new(&(::std::vec![0x00u8, 0xffu8, 0xa4u8]))"));
     assert!(generated.contains("qr_code::Data::new(&(self.invite))"));
     assert!(generated.contains(".ok()).cell_size(::ui_lang_runtime::bounded_spacing(5.0, 182))"));
-    assert!(
-        generated.contains(
-            ".ok()).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
-        )
-    );
+    assert!(generated.contains(
+        ".ok()).total_size(::ui_lang_runtime::bounded_spacing(120.0, 3)).style(move |theme|"
+    ));
     assert!(generated.contains("qr_code::Style { cell: __ice_palette.colors[2]"));
     // The matrix is built where it is rendered, never cached in app state.
     assert!(!generated.contains("qr_code::Data,"));

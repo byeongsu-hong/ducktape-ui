@@ -58,8 +58,12 @@ pub(in crate::codegen) fn render_foundation(
             let accessibility_key =
                 accessibility_key_code(id.as_ref(), "text", span, scope, env, document)?;
             let code = text_code(options, &style, message, env, document)?;
+            let selection = options.tracking.filter(|tracking| *tracking > 0.0).map_or(
+                "let __text = ::ui_lang_runtime::selectable_text(__text);",
+                |_| "",
+            );
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; let __text = ::ui_lang_runtime::selectable_text(__text); ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
             ))
         }
         ViewNode::RichText {

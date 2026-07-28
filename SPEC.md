@@ -1438,7 +1438,10 @@ stays the author's contract; splitting is by grapheme cluster rather than by
 run also has no line, so `wrap=` and `align-x=justified` are `E174`, as is
 `style=`, whose closure a tracked text would have to repeat per grapheme —
 color a tracked label with a `@text-*` utility instead. Unlike CSS
-`letter-spacing`, tracking adds no trailing space after the last grapheme.
+`letter-spacing`, tracking adds no trailing space after the last grapheme. A
+tracked run is not mouse-selectable because it is a row rather than the single
+text paragraph required by the selection widget; its accessibility value is
+still the complete unsplit text.
 
 `input` keeps its required `str` binding and additionally supports checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,
@@ -1641,10 +1644,12 @@ per-corner radius the solid border would have used. It replaces that solid
 border rather than adding to it, and it changes no layout — the box is the base
 layer of the stack it is drawn in, so the stack measures exactly the box. The
 stroke is inset by half the border width and its corners are tightened by the
-same inset, the way a CSS inner border is. Segments are non-negative `f64` and
-at least one is required; the colour has to be named by `border=` (`E176`),
-because that is the colour the stroke draws. A box without `border-dash=` emits
-byte-identical code to one that never knew about dashes. A declared
+same inset, the way a CSS inner border is. Segments are non-negative `f64`, at
+least one must be positive, and an odd sequence repeats once to form complete
+on/off pairs on every renderer. A dynamically computed all-zero pattern draws
+nothing. The colour has to be named by `border=` (`E176`), because that is the
+colour the stroke draws. A box without `border-dash=` emits byte-identical code
+to one that never knew about dashes. A declared
 `box-style` call may replace the preset because iced uses the same
 `container::Style` callback for tooltip surfaces; concrete tooltip properties
 override the callback result.
@@ -4680,8 +4685,8 @@ The `E160-E179` family covers the constructs iced cannot express directly, whose
 lowering therefore has limits of its own: `E174` rejects a `tracking=` combined
 with a property its grapheme row cannot honour (`wrap=`, `align-x=justified`,
 `style=`), `E175` rejects a `tracking=` on literal text that is not latin, and
-`E176` rejects a `border-dash=` with no `border=` colour for its stroke to
-draw.
+`E176` rejects a `border-dash=` with no `border=` colour for its stroke to draw
+or a statically all-zero pattern.
 
 The implemented families are:
 

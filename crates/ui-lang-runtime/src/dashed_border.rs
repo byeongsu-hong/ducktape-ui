@@ -27,7 +27,7 @@ pub fn dashed_border<'a, Message: 'a>(
         color,
         width,
         radius,
-        segments,
+        segments: normalize_segments(segments),
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -52,6 +52,9 @@ impl<Message> canvas::Program<Message> for DashedBorder {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
+        if self.width <= 0.0 || self.segments.is_empty() {
+            return Vec::new();
+        }
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let inset = self.width / 2.0;
         let path = canvas::Path::rounded_rectangle(
@@ -76,6 +79,24 @@ impl<Message> canvas::Program<Message> for DashedBorder {
         );
         vec![frame.into_geometry()]
     }
+}
+
+/// Makes the pattern valid for both canvas renderers. WGPU repeats odd-length
+/// patterns itself, while tiny-skia rejects them; all-zero patterns are
+/// invalid in tiny-skia and can make WGPU's path walker stop advancing.
+fn normalize_segments(mut segments: Vec<f32>) -> Vec<f32> {
+    for segment in &mut segments {
+        if !segment.is_finite() || *segment < 0.0 {
+            *segment = 0.0;
+        }
+    }
+    if segments.iter().all(|segment| *segment == 0.0) {
+        return Vec::new();
+    }
+    if segments.len() % 2 == 1 {
+        segments.extend_from_within(..);
+    }
+    segments
 }
 
 /// Keeps the stroke concentric with the surface it traces: an inset path needs
@@ -107,5 +128,18 @@ mod tests {
         assert_eq!(radius.top_left, 6.0);
         assert_eq!(radius.bottom_right, 0.0);
         assert_eq!(radius.bottom_left, 0.0);
+    }
+
+    #[test]
+    fn normalizes_patterns_for_both_canvas_renderers() {
+        assert_eq!(
+            normalize_segments(vec![4.0, 3.0, 2.0]),
+            vec![4.0, 3.0, 2.0, 4.0, 3.0, 2.0]
+        );
+        assert_eq!(normalize_segments(vec![0.0, 0.0]), Vec::<f32>::new());
+        assert_eq!(
+            normalize_segments(vec![f32::NAN, -1.0, 2.0]),
+            vec![0.0, 0.0, 2.0, 0.0, 0.0, 2.0]
+        );
     }
 }

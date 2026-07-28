@@ -864,6 +864,17 @@ pub(in crate::check) fn check_border_dash(
     for segment in &options.border_dash {
         require_nonnegative_f64(segment, env, document, "border dash segment", span)?;
     }
+    if options
+        .border_dash
+        .iter()
+        .all(|segment| matches!(segment, Expr::F64(value) if *value == 0.0))
+    {
+        return Err(Error::new(
+            "E176",
+            span,
+            "a border dash needs at least one positive segment",
+        ));
+    }
     Ok(())
 }
 

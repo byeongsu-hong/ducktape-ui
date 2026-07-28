@@ -341,6 +341,8 @@ view
 #[test]
 fn lowers_dashed_borders_to_a_stroke_over_the_surface() {
     let source = r#"app Boxed
+extern crate::backend
+  box-style dynamic_container()
 theme contract AppTheme
   bg
   fg
@@ -353,7 +355,7 @@ palette app for AppTheme
   danger #ff0000
 view
   col
-    box #draft p=8.0 bg=primary border=fg border-w=1.5 border-dash=(4.0, 3.0) r=6.0 r-tl=2.0
+    box #draft style=dynamic_container() p=8.0 bg=primary border=fg border-w=1.5 border-dash=(4.0, 3.0) r=6.0 r-tl=2.0
       text "Draft"
     box #final p=8.0 bg=primary border=fg border-w=1.5 r=6.0
       text "Final"
@@ -386,6 +388,9 @@ view
             .count(),
         1
     );
+    // The final reset happens after custom and typed styles are composed, so
+    // a custom style cannot leave its own solid border under the dash.
+    assert!(generated.contains("__style }; __style.border.width = 0.0; __style }"));
 }
 
 #[test]

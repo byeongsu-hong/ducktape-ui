@@ -94,13 +94,20 @@ pub(in crate::codegen) fn render_container(
         )
         .unwrap();
     }
-    if let Some(surface) = container_surface_style_value(
+    if let Some(mut surface) = container_surface_style_value(
         &style,
         &surface,
         options.custom_style.as_ref(),
         env,
         document,
     )? {
+        // A custom style can return its own solid border. Clear that final
+        // value too, after every style lane has been composed, so the dash is
+        // always a replacement instead of an overlay on a solid stroke.
+        if dash.is_some() {
+            surface =
+                format!("{{ let mut __style = {surface}; __style.border.width = 0.0; __style }}");
+        }
         write!(code, ".style(move |__theme| {surface})").unwrap();
     }
     if let Some(dash) = dash {
