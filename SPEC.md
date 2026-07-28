@@ -4732,6 +4732,9 @@ Successful analysis may also emit stable semantic warnings:
 | `W005` | a handler is unreachable from runtime routes, subscriptions, presets, mount, and first-class tests |
 | `W006` | handlers form a future, task, query, stream, or progress completion cycle that can refresh or multiply work forever |
 | `W007` | an unfiltered raw-event subscription can feed redraw requests back into application updates |
+| `W008` | a stateful component is repeated with position-based identity, so inserts or reordering can transfer state between items |
+| `W009` | a retained stateful component is mounted under dynamic identities whose stored state is never reclaimed |
+| `W010` | a workspace `.ice` file is outside every app or daemon import graph |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -4754,6 +4757,15 @@ cycle edges; `return if false` does not. `W006` extends the same graph through
 future, task, and query completions plus repeated stream and sip-progress routes.
 `W007` reports raw event subscriptions unless they have a filter, request only
 captured events, or are statically disabled with `when false`.
+
+`W008` follows component composition through `for`, table-cell, and component
+slot scopes. Use `keyed item in items by=stable_key` when repeated children own
+state. `W009` covers keyed repetitions, dynamic `#id(key)` scopes, pane
+templates, tables, and unkeyed repetitions when the component uses the default
+`retained` lifetime; `lifetime mounted` reclaims entries that leave the rendered
+tree. `cargo ice` emits CLI-only `W010` after unioning the canonical dependency
+graphs of every discovered app and daemon root. Imported fragments and roots are
+not orphans; standalone files that no root imports are.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing

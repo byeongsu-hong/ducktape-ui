@@ -1,0 +1,3 @@
+W008 stateful component `Counter` has position-based identity inside a repeated view
+W009 retained component `Counter` can accumulate state for dynamic identities
+W009 retained component `Counter` can accumulate state for dynamic identities

@@ -105,7 +105,7 @@ fn run() -> Result<(), String> {
             if check_only && !changed.is_empty() {
                 return Err(format!("unformatted .ice files:\n{}", changed.join("\n")));
             }
-            analyze(&roots)?;
+            analyze(&roots, &files)?;
             if check_only {
                 println!("formatting is clean for {} .ice file(s)", files.len());
             } else {
@@ -114,12 +114,12 @@ fn run() -> Result<(), String> {
         }
         "check" => {
             let roots = root_files(&files)?;
-            analyze(&roots)?;
+            analyze(&roots, &files)?;
             cargo(&["check", "--workspace"])?;
         }
         "test" => {
             let roots = root_files(&files)?;
-            analyze(&roots)?;
+            analyze(&roots, &files)?;
             cargo(&["check", "--workspace", "--tests"])?;
             let mut cargo_args = vec!["test", "--workspace"];
             cargo_args.extend(trailing.iter().map(String::as_str));
@@ -127,12 +127,12 @@ fn run() -> Result<(), String> {
         }
         "clippy" => {
             let roots = root_files(&files)?;
-            analyze(&roots)?;
+            analyze(&roots, &files)?;
             cargo(&["clippy", "--workspace", "--all-targets", "--no-deps"])?;
         }
         "compat" => {
             let roots = root_files(&files)?;
-            analyze(&roots)?;
+            analyze(&roots, &files)?;
             compat::verify(&root)?;
             cargo(&["check", "-p", "iced-app", "--tests"])?;
             cargo(&["test", "-p", "iced-app"])?;
@@ -462,12 +462,14 @@ impl Drop for ChildGuard {
     }
 }
 
-fn analyze(files: &[PathBuf]) -> Result<(), String> {
+fn analyze(files: &[PathBuf], all_files: &[PathBuf]) -> Result<(), String> {
     let mut documents = Vec::new();
+    let mut dependencies = std::collections::BTreeSet::new();
     for path in files {
-        let document = ui_lang_core::analyze_file(path)
+        let analysis = ui_lang_core::analyze_file_graph(path)
             .map_err(|error| error.render(&path.display().to_string()))?;
-        documents.push((path, document));
+        dependencies.extend(analysis.dependencies);
+        documents.push((path, analysis.document));
     }
     let reachable = documents
         .iter()
@@ -512,8 +514,24 @@ fn analyze(files: &[PathBuf]) -> Result<(), String> {
     for warning in warnings.into_values() {
         eprintln!("{warning}");
     }
+    for path in orphan_ice_files(all_files, &dependencies) {
+        eprintln!(
+            "warning[W010] {}:1:1: .ice source is outside every app, daemon, and test import graph\n  = help: import this file from a reachable root or remove it",
+            path.display()
+        );
+    }
     println!("checked {} .ice root graph(s)", files.len());
     Ok(())
+}
+
+fn orphan_ice_files<'a>(
+    files: &'a [PathBuf],
+    dependencies: &std::collections::BTreeSet<PathBuf>,
+) -> Vec<&'a PathBuf> {
+    files
+        .iter()
+        .filter(|path| !dependencies.contains(*path))
+        .collect()
 }
 
 fn root_files(files: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -787,10 +805,11 @@ fn decode_hex(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IceLocation, ice_files, ignored_dir, mapped_ice_location_in, remap_compiler_diagnostic,
-        root_files, valid_command_args,
+        IceLocation, ice_files, ignored_dir, mapped_ice_location_in, orphan_ice_files,
+        remap_compiler_diagnostic, root_files, valid_command_args,
     };
-    use std::path::Path;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -829,6 +848,20 @@ mod tests {
     #[test]
     fn missing_root_names_both_root_kinds() {
         assert!(root_files(&[]).unwrap_err().contains("`app` or `daemon`"));
+    }
+
+    #[test]
+    fn reports_ice_files_outside_every_root_graph() {
+        let files = ["app.ice", "used.ice", "orphan.ice"]
+            .map(PathBuf::from)
+            .to_vec();
+        let dependencies = [PathBuf::from("app.ice"), PathBuf::from("used.ice")]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            orphan_ice_files(&files, &dependencies),
+            [&PathBuf::from("orphan.ice")]
+        );
     }
 
     #[test]
