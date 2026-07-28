@@ -148,6 +148,9 @@ test component_titles_and_hero_contract
   expect hero_art.width ~= 180.0
   expect hero_cover.width ~= 168.0
   expect hero_play.kind == "button"
+  expect hero_play.background == background.color(color.rgb8(255, 255, 255))
+  expect hero_play.text_color == color.rgb8(115, 29, 60)
+  expect hero_play.border.radius == radius(10.0)
   expect hero_queue.kind == "button"
   dispatch seek(64.0)
   dispatch toggle_playback
@@ -369,14 +372,14 @@ test component_player_and_queue_contract
   target queue_close = #stage/lower/queue-panel/root/surface/header/close
   target queue_current = #stage/lower/queue-panel/root/surface/current
   target queued_song = #stage/lower/queue-panel/root/surface/list/row(1)/root
-  expect player.height ~= 98.0
-  expect player_surface.border.radius == radius(24.0)
-  expect metadata.x ~= player_surface.x + 12.0
-  expect player_cover.width ~= 66.0
+  expect player.height ~= 88.0
+  expect player_surface.border.radius == radius(22.0)
+  expect metadata.x ~= player_surface.x + 10.0
+  expect player_cover.width ~= 58.0
   expect player_title.text_size ~= 13.0
-  expect transport.x ~= metadata.right + 18.0
+  expect transport.x ~= metadata.right + 14.0
   expect controls.height ~= 36.0
-  expect utilities.x ~= transport.right + 18.0
+  expect utilities.x ~= transport.right + 14.0
   expect elapsed.value == "1:17"
   expect remaining.value == "-2:30"
   expect exists pause_button
@@ -555,6 +558,7 @@ test minimum_window_layout_contract
   target transport = #app/shell/content/dock/player/root/surface/layout/transport
   target controls = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls
   target timeline = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/timeline
+  target seek_control = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/timeline/seek
   target utilities = #app/shell/content/dock/player/root/surface/layout/utilities
   target volume_control = #app/shell/content/dock/player/root/surface/layout/utilities/volume
   target queue_control = #app/shell/content/dock/player/root/surface/layout/utilities/queue/queue-inactive
@@ -566,11 +570,13 @@ test minimum_window_layout_contract
   expect content.x ~= sidebar.right + 10.0
   expect content.right ~= shell.right
   expect player.visible
-  expect player.height ~= 98.0
+  expect player.height ~= 88.0
   expect metadata.right < transport.x
   expect transport.right < utilities.x
   expect controls.visible
   expect timeline.visible
+  expect seek_control.width > 140.0
+  expect volume_control.width ~= 84.0
   expect volume_control.visible
   expect queue_control.visible
-  expect utilities.right ~= player_surface.right - 12.0
+  expect utilities.right ~= player_surface.right - 10.0

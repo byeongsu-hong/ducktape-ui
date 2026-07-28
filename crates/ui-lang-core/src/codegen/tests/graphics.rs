@@ -204,7 +204,9 @@ view
     assert!(generated.contains(".crop(::iced::Rectangle { x: (1).clamp(0, u32::MAX as i64) as u32, y: (2).clamp(0, u32::MAX as i64) as u32, width: (30).clamp(0, u32::MAX as i64) as u32, height: (40).clamp(0, u32::MAX as i64) as u32 })"));
     assert!(generated.contains(".filter_method(::iced::widget::image::FilterMethod::Nearest)"));
     assert!(generated.contains("::iced::widget::svg(\"icon.svg\".to_owned())"));
-    assert!(generated.contains("svg::Handle::from_memory((\"<svg/>\".to_owned()).into_bytes())"));
+    assert!(
+        generated.contains("svg::Handle::from_memory((\"<svg/>\".to_owned()).as_bytes().to_vec())")
+    );
     assert!(generated.contains(
         "svg::Handle::from_memory(::std::vec![0x3cu8, 0x73u8, 0x76u8, 0x67u8, 0x2fu8, 0x3eu8])"
     ));
@@ -250,4 +252,31 @@ view
     assert!(generated.contains("::iced::mouse::ScrollDelta::Lines"));
     assert!(generated.contains("__MediaMessage::Scrolled(__x as f64, __y as f64, true)"));
     assert!(generated.contains(".interaction(::iced::mouse::Interaction::Pointer)"));
+}
+
+#[test]
+fn lowers_borrowed_component_svg_memory_source() {
+    let source = r#"app Media
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component MemorySvg(source:str)
+  svg source memory
+view
+  MemorySvg source="<svg/>"
+"#;
+
+    let generated = compile(source, "media.ice").unwrap();
+
+    assert!(
+        generated.contains("svg::Handle::from_memory((\"<svg/>\".clone()).as_bytes().to_vec())")
+    );
+    assert!(!generated.contains(".into_bytes()"));
 }
