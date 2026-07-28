@@ -3243,9 +3243,9 @@ mod tests {
     }
 
     #[test]
-    fn publishes_reachability_and_state_warnings() {
+    fn publishes_static_warnings() {
         let uri = "file:///tmp/warnings.ice";
-        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  fixed = 0\ncomponent Hidden()\n  text \"Hidden\"\nview\n  text fixed\n";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  fixed = 0\non refresh\n  flow\n    from done 1\n    done -> refresh\ncomponent Hidden()\n  text \"Hidden\"\nview\n  col\n    text fixed\n    button \"Refresh\" -> refresh\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -3264,7 +3264,7 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics.len(), 3);
         assert!(
             diagnostics
                 .iter()
@@ -3275,7 +3275,7 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic["code"].as_str().unwrap())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["W001", "W003"])
+            BTreeSet::from(["W001", "W003", "W004"])
         );
     }
 
