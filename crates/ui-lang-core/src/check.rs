@@ -20,6 +20,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     ));
     warnings.extend(routed_task_cycle_warnings(&document, &reachable_handlers));
     warnings.extend(raw_event_feedback_warnings(&document));
+    warnings.extend(component_identity_warnings(&document));
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(
         document,
@@ -635,6 +636,7 @@ mod cycles;
 mod declarations;
 mod expr;
 mod handler;
+mod lifecycle;
 mod options;
 mod reachability;
 mod state;
@@ -650,6 +652,7 @@ use canvas::*;
 use cycles::*;
 use declarations::*;
 use handler::*;
+use lifecycle::*;
 use options::*;
 use reachability::*;
 use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};
