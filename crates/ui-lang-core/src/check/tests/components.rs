@@ -196,6 +196,48 @@ view
 }
 
 #[test]
+fn routes_sensor_dimensions_to_named_component_events() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Measured()
+  emits
+    shown(f64, f64)
+    resized(f64, f64)
+  sensor show=emit(shown, _, _) resize=emit(resized, _, _)
+    space w=fill h=fill
+on shown(width, height)
+on resized(width, height)
+view
+  Measured
+    events
+      shown -> shown _ _
+      resized -> resized _ _
+"#;
+    let document = analyze(source).unwrap();
+    for handler in &document.handlers {
+        assert_eq!(handler.params[0].ty, Type::F64);
+        assert_eq!(handler.params[1].ty, Type::F64);
+    }
+
+    let wrong_event = source
+        .replace("shown(f64, f64)", "shown(f64)")
+        .replace("on shown(width, height)", "on shown(width)")
+        .replace("shown -> shown _ _", "shown -> shown _");
+    let error = analyze(&wrong_event).unwrap_err();
+    assert_eq!(error.code, "E133");
+    assert!(error.message.contains("expects 1 values, got 2"));
+}
+
+#[test]
 fn requires_component_output_routes_and_matching_emit_values() {
     let missing_route = analyze(
         r#"app Demo

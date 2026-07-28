@@ -2714,7 +2714,7 @@ The implemented native nodes are:
 | `combo` | searchable/replaced/incrementally pushed `combo[T]` state, `T?` selection, optional ID, complete typography/icon/input/menu styles, typed native input/menu style callbacks and all routes |
 | `float` | one child with positive scale, bounds/viewport-aware x/y translation, shadow and per-corner shadow radius |
 | `pin` | one child with typed width/height and fixed x/y position |
-| `sensor` | one child with show/resize `(width, height)`, hide, key, anticipation and delay |
+| `sensor` | one child with show/resize `(width, height)` routes, including direct named component-event emission, plus hide, key, anticipation and delay |
 | `responsive` | breakpoint sugar or one arbitrary size-dependent child tree with scoped width/height bindings and typed bounds |
 | `rule` | horizontal/vertical separator with non-negative thickness, all fill modes, default/weak preset, color, corner radii and snap |
 | `qr` | literal or runtime text/binary payload with correction/version, cell/overall sizing and checked colors |
@@ -3396,6 +3396,10 @@ component PageMenu(page:str)
 `forward select` is exactly `select -> emit(select, _)` without an intermediate
 message. The outer event must exist with the identical payload signature;
 wildcard forwarding and verbose identity routes are errors.
+
+Ordered widget payloads may emit named component events directly. For example,
+`sensor show=emit(measured, _, _)` and `resize=emit(measured, _, _)` pass the
+measured `f64` width and height through the component contract.
 
 A component route resolves only local component handlers and declared event
 emissions. Direct references to app-global handlers are errors, so reusable

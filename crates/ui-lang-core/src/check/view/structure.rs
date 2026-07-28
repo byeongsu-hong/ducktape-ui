@@ -94,23 +94,21 @@ pub(in crate::check) fn infer_structure_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            for (route, label) in [(&options.show, "show"), (&options.resize, "resize")]
-                .into_iter()
-                .filter_map(|(route, label)| route.as_ref().map(|route| (route, label)))
+            for (route, label) in [
+                (&options.show, "sensor show"),
+                (&options.resize, "sensor resize"),
+            ]
+            .into_iter()
+            .filter_map(|(route, label)| route.as_ref().map(|route| (route, label)))
             {
-                if route.args.len() != 2
-                    || route
-                        .args
-                        .iter()
-                        .any(|arg| !matches!(arg, RouteArg::Payload))
-                {
-                    return Err(Error::new(
-                        "E129",
-                        span,
-                        format!("sensor {label} route receives width and height"),
-                    ));
-                }
-                infer_route(route, Some(Type::F64), env, document, signatures)?;
+                infer_ordered_payload_route(
+                    route,
+                    &[Type::F64, Type::F64],
+                    env,
+                    document,
+                    signatures,
+                    label,
+                )?;
             }
             if let Some(route) = &options.hide {
                 infer_route(route, None, env, document, signatures)?;

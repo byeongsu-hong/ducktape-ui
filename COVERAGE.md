@@ -79,6 +79,8 @@ Components expose closed checked contracts: named events carry zero or more
 ordered typed payloads, every call site routes each event in caller scope, and
 direct app-handler references from component bodies are rejected. The single
 typed `->` output remains the default-event shorthand.
+Ordered widget payload routes, including sensor show/resize dimensions, may
+emit those named events directly from a component view.
 An explicit `forward` block accepts only outer events with the exact same name
 and payload signature; wildcard and verbose identity forwarding are rejected.
 Component contracts also support required and optional slots; missing optional
@@ -318,7 +320,7 @@ public behavior has direct documented Ice syntax and tests.
 | `row` | native | children, typed spacing/per-side padding, all `Length` bounds, cross-axis alignment, clipping and wrapping row spacing/alignment |
 | `rule` | native | axis/thickness, every fill mode, default/weak presets, checked color/opacity, per-corner radius and snap cover all concrete style fields; advanced classes are an alternate extension mechanism |
 | `scrollable` | native | native content/ID, every concrete builder setter, all Viewport getters, every Status field through ordered selectors, every concrete Style field for container, rails, scrollers, gap and auto-scroll overlay, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
-| `sensor` | native | show/resize dimensions, hide, comparable owned keys, anticipation and delay; owned keys provide the same continuity behavior as `key_ref` without borrowed lifetimes |
+| `sensor` | native | show/resize dimensions route to handlers or named component events; hide, comparable owned keys, anticipation and delay; owned keys provide the same continuity behavior as `key_ref` without borrowed lifetimes |
 | `shader` | native | typed factory for any concrete native `shader::Program<Event>`, complete width/height builder API, checked message routing, and generated Program/Element probes; the Rust program retains complete State, Primitive, Pipeline/Storage, update/action, draw and mouse-interaction behavior |
 | `slider` | native | direct checked ID; native f64 or arbitrary typed extern numeric values with Rust-verified iced Slider bounds; complete default/normal+shift step, sizing and change/release behavior; every concrete Style field across active/hovered/dragged including solid/linear rail and handle backgrounds, border/per-corner radius and circle/rectangle handles; typed theme/status-aware runtime callbacks cover advanced classes |
 | `space` | native | optional fixed/fill/fill-portion/shrink width and height cover the complete widget API |

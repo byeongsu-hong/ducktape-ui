@@ -193,6 +193,9 @@ ConfirmDialog title="Delete page?"
     cancel -> close_dialog
 ```
 
+Multi-payload widget routes can emit those events directly; for example,
+`sensor show=emit(measured, _, _)` forwards its measured width and height.
+
 Events may carry ordered typed payloads. The existing
 `component Toggle(...) -> bool` plus call-site `-> changed _` form is the
 intentional shorthand for one default event.
