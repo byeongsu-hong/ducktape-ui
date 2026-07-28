@@ -1829,7 +1829,7 @@ pub fn document() -> Value {
                     "W009": "retained component state under dynamic identities",
                     "W010": "workspace Ice source outside every root import graph; cargo ice only",
                 },
-                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; test and compat run that check before the normal test runner",
+                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics while warning-level backend findings remain CLI-only; test and compat run that check before the normal test runner",
             },
             "formatting": {
                 "supported": true,

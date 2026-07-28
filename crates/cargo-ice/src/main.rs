@@ -608,6 +608,7 @@ fn cargo(args: &[&str]) -> Result<(), String> {
         .spawn()
         .map_err(|error| error.to_string())?;
     let stdout = child.stdout.take().expect("piped cargo stdout");
+    let mut source_maps = GeneratedSourceMaps::new();
     for line in BufReader::new(stdout).lines() {
         let line = line.map_err(|error| error.to_string())?;
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -618,7 +619,7 @@ fn cargo(args: &[&str]) -> Result<(), String> {
             continue;
         }
         let diagnostic = &message["message"];
-        if let Some(rendered) = remap_compiler_diagnostic(diagnostic) {
+        if let Some(rendered) = remap_compiler_diagnostic_with_maps(diagnostic, &mut source_maps) {
             eprint!("{rendered}");
         } else if let Some(rendered) = diagnostic["rendered"].as_str() {
             eprint!("{rendered}");
@@ -639,7 +640,40 @@ struct IceLocation {
     column: usize,
 }
 
+#[derive(Clone, Debug)]
+struct GeneratedSourceMap(Vec<Option<IceLocation>>);
+
+type GeneratedSourceMaps = std::collections::HashMap<PathBuf, GeneratedSourceMap>;
+
+impl GeneratedSourceMap {
+    fn parse(generated: &str) -> Self {
+        let mut stack = Vec::new();
+        let mut locations = Vec::new();
+        for line in generated.lines() {
+            if line == "// __ICE_SOURCE_END" {
+                stack.pop();
+            } else if let Some(location) = parse_source_marker(line) {
+                stack.push(location);
+            }
+            locations.push(stack.last().cloned());
+        }
+        Self(locations)
+    }
+
+    fn location(&self, generated_line: usize) -> Option<IceLocation> {
+        self.0.get(generated_line.checked_sub(1)?)?.clone()
+    }
+}
+
+#[cfg(test)]
 fn remap_compiler_diagnostic(diagnostic: &serde_json::Value) -> Option<String> {
+    remap_compiler_diagnostic_with_maps(diagnostic, &mut GeneratedSourceMaps::new())
+}
+
+fn remap_compiler_diagnostic_with_maps(
+    diagnostic: &serde_json::Value,
+    source_maps: &mut GeneratedSourceMaps,
+) -> Option<String> {
     let spans = diagnostic["spans"].as_array()?;
     let mapped = spans
         .iter()
@@ -647,7 +681,7 @@ fn remap_compiler_diagnostic(diagnostic: &serde_json::Value) -> Option<String> {
             let file = span["file_name"].as_str()?;
             let line = span["line_start"].as_u64()? as usize;
             let generated_column = span["column_start"].as_u64()? as usize;
-            let location = mapped_ice_location(Path::new(file), line)?;
+            let location = mapped_ice_location(source_maps, Path::new(file), line)?;
             Some((span, location, file, line, generated_column))
         })
         .collect::<Vec<_>>();
@@ -720,26 +754,21 @@ fn push_source_excerpt(output: &mut String, location: &IceLocation) {
     ));
 }
 
-fn mapped_ice_location(path: &Path, generated_line: usize) -> Option<IceLocation> {
-    let generated = fs::read_to_string(path).ok()?;
-    mapped_ice_location_in(&generated, generated_line)
+fn mapped_ice_location(
+    source_maps: &mut GeneratedSourceMaps,
+    path: &Path,
+    generated_line: usize,
+) -> Option<IceLocation> {
+    if !source_maps.contains_key(path) {
+        let generated = fs::read_to_string(path).ok()?;
+        source_maps.insert(path.to_owned(), GeneratedSourceMap::parse(&generated));
+    }
+    source_maps.get(path)?.location(generated_line)
 }
 
+#[cfg(test)]
 fn mapped_ice_location_in(generated: &str, generated_line: usize) -> Option<IceLocation> {
-    let mut stack = Vec::new();
-    for (index, line) in generated.lines().enumerate() {
-        if index + 1 > generated_line {
-            break;
-        }
-        if line == "// __ICE_SOURCE_END" {
-            stack.pop();
-            continue;
-        }
-        if let Some(location) = parse_source_marker(line) {
-            stack.push(location);
-        }
-    }
-    stack.pop()
+    GeneratedSourceMap::parse(generated).location(generated_line)
 }
 
 fn parse_source_marker(line: &str) -> Option<IceLocation> {

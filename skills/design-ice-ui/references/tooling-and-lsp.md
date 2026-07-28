@@ -55,7 +55,7 @@ cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | 
 | `cargo ice compat` | verify backend/runtime pins and run reference app tests |
 | `cargo ice expand FILE` | print generated Rust for one app root |
 | `cargo ice schema` | print generative Core/LSP/backend JSON |
-| `cargo ice lsp` | run the live stdio language server |
+| `cargo ice lsp` | run the live stdio language server, including the `Run Ice lint` source action |
 
 Discovery recursively scans below the current directory, skipping `.git`,
 worktree metadata, `target`, and `tests/cases` fixture trees. Files with a
@@ -88,6 +88,12 @@ The equivalent process command is:
 ```bash
 cargo ice lsp
 ```
+
+The server advertises `ice.lint` through `workspace/executeCommand`. Invoking
+the corresponding `Run Ice lint` source action runs workspace Clippy and
+publishes error-level generated Rust findings at their mapped `.ice` URI and
+range. Warning-level backend findings remain available through `cargo ice
+clippy` without flooding editor diagnostics.
 
 It intentionally waits for Content-Length-framed JSON-RPC on stdin. A quiet,
 long-running process means the server is ready; it is not a hung checker.

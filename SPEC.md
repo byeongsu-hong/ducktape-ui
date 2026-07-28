@@ -4779,6 +4779,20 @@ run the corresponding source-mapped Cargo check, then invoke the normal test
 runner. Generated first-class test failures retain their original root or
 imported Ice path and line as before.
 
+The LSP exposes the same Clippy remapping as the `Run Ice lint` source action
+and `ice.lint` workspace command. The command runs Clippy for every initialized
+Cargo workspace root and publishes mapped rustc and Clippy diagnostics under
+the responsible `.ice` document URI. Diagnostics without generated Ice
+provenance remain with the Rust language server. The command is explicit so
+normal edit-time parser and semantic diagnostics do not wait for Cargo.
+The LSP publishes error-level generated diagnostics, including type and extern
+contract failures. Warning-level Rust and Clippy findings describe backend
+output rather than actionable Ice syntax and remain CLI-only; W001-W004 Ice
+warnings continue to come directly from the language checker.
+The command rejects execution while any open workspace Ice buffer differs from
+disk, preventing Cargo diagnostics from being applied to a different source
+revision.
+
 ## 12. Live development and Cargo commands
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` is the native
@@ -4839,7 +4853,7 @@ restarting it cannot leave a `cargo run` child orphaned.
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | runs one native binary with checked state-preserving live views and a build-then-restart fallback |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
-| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit code actions, definition, and rename |
+| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
 
 `cargo-ice` discovers `.ice` files recursively below the current directory,
 skips `.git`, worktree metadata, `target`, and `tests/cases` fixture trees,
