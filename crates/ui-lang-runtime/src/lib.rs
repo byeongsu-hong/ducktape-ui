@@ -176,6 +176,7 @@ impl<Message> Semantics<Message> {
 struct SemanticState<Message> {
     semantics: Semantics<Message>,
     focused: bool,
+    focus_visible: bool,
 }
 
 impl<Message> Focusable for SemanticState<Message> {
@@ -185,10 +186,12 @@ impl<Message> Focusable for SemanticState<Message> {
 
     fn focus(&mut self) {
         self.focused = true;
+        self.focus_visible = true;
     }
 
     fn unfocus(&mut self) {
         self.focused = false;
+        self.focus_visible = false;
     }
 }
 
@@ -349,6 +352,7 @@ where
         tree::State::new(SemanticState {
             semantics: self.semantics.clone(),
             focused: false,
+            focus_visible: false,
         })
     }
 
@@ -361,6 +365,7 @@ where
         state.semantics = self.semantics.clone();
         if state.semantics.disabled {
             state.focused = false;
+            state.focus_visible = false;
         }
         tree.diff_children(std::slice::from_ref(&self.content));
     }
@@ -395,6 +400,7 @@ where
         let focus_id = state.semantics.focus_id.clone();
         if state.semantics.disabled {
             state.focused = false;
+            state.focus_visible = false;
         }
         operation.custom(Some(&focus_id), layout.bounds(), state);
 
@@ -451,6 +457,7 @@ where
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 | Event::Touch(iced::touch::Event::FingerPressed { .. }) => {
                     state.focused = cursor.is_over(layout.bounds());
+                    state.focus_visible = false;
                 }
                 _ => {}
             }
@@ -515,7 +522,7 @@ where
             viewport,
         );
         let state = tree.state.downcast_ref::<SemanticState<Message>>();
-        if state.focused && !state.semantics.disabled {
+        if state.focus_visible && !state.semantics.disabled {
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: layout.bounds(),
@@ -2388,6 +2395,7 @@ mod tests {
         let mut state: SemanticState<Message> = SemanticState {
             semantics: Semantics::new(StableId::new("extreme-bounds"), Role::Button),
             focused: false,
+            focus_visible: false,
         };
         operation.custom(
             None,
@@ -2636,7 +2644,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_wrapper_draws_a_visible_outline() {
+    fn keyboard_focused_wrapper_draws_a_visible_outline() {
         let id = StableId::new("focus-ring");
         let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
         let mut element: Element<'_, Message, (), RecordingRenderer> =
@@ -2667,6 +2675,55 @@ mod tests {
         assert_eq!(renderer.quads.len(), 1);
         assert_eq!(renderer.quads[0].border.width, 2.0);
         assert_eq!(renderer.quads[0].border.color, iced::Color::WHITE);
+    }
+
+    #[test]
+    fn pointer_focused_wrapper_does_not_draw_an_outline() {
+        let id = StableId::new("pointer-focus");
+        let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
+        let mut element: Element<'_, Message, (), RecordingRenderer> =
+            accessible(leaf, id, Role::Button).label("Focusable").into();
+        let mut tree = WidgetTree::new(&element);
+        let mut renderer = RecordingRenderer::default();
+        let viewport = Rectangle::with_size(Size::new(100.0, 100.0));
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+
+        element.as_widget_mut().update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            mouse::Cursor::Available(Point::new(40.0, 15.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        drop(shell);
+
+        let state = tree.state.downcast_ref::<SemanticState<Message>>();
+        assert!(state.focused);
+        assert!(!state.focus_visible);
+
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &(),
+            &renderer::Style {
+                text_color: iced::Color::WHITE,
+            },
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+
+        assert!(renderer.quads.is_empty());
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

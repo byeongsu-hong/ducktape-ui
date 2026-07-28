@@ -63,6 +63,7 @@ test music_interactions
   target search_input = #app/shell/sidebar/root/surface/content/music-search
   target sign_in = #app/shell/sidebar/root/surface/content/sign-in
   target pause = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/pause
+  target play = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/play
   target next_track = #app/shell/content/dock/player/root/surface/layout/transport/transport-content/controls/next
   target lyrics_button = #app/shell/content/dock/player/root/surface/layout/utilities/lyrics/lyrics-inactive
   target queue_button = #app/shell/content/dock/player/root/surface/layout/utilities/queue/queue-inactive
@@ -83,6 +84,8 @@ test music_interactions
   expect profile_name == "Eddy Kim"
   click pause
   expect !playing
+  expect play.focused
+  expect play.border.width ~= 0.0
   click next_track
   expect current_title == "After Blue"
   expect playing
