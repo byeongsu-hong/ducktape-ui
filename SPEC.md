@@ -4653,6 +4653,27 @@ zero, overflowing, or mismatched renderer buffers before writing artifacts.
 Capture names use lowercase ASCII letters, digits, and underscores. The
 returned `Capture` retains RGBA bytes, dimensions, scale, and both artifact
 paths. Capture does not perform a golden-image comparison implicitly.
+Every manifest target generated from an Ice view carries the `.ice` path, line,
+and column of the rendered view node that constructed it. Generated test builds
+retain this provenance across imports, component scopes, dynamic IDs, and
+rerenders. A target constructed wholly inside Rust without an enclosing Ice
+node may report `source: null`.
+
+Every generated app also contains an inert hidden inspection test. It returns
+immediately during ordinary test runs; `cargo ice inspect ROOT.ice` activates
+only the canonical matching root, constructs the normal app/daemon `Program`,
+applies the requested preset and fixed environment, and writes one named PNG
+plus JSON manifest. Options cover viewport, preset, render/system theme, scale,
+locale, platform, reduced motion, name, output directory, and an explicit Cargo
+package for external includes. A fragment without a top-level app/daemon or a
+root not included by the selected package is rejected.
+
+`cargo ice diff BASE.json CURRENT.json` recursively compares structured
+manifest values and 8-bit RGBA pixels under explicit numeric, channel, and
+changed-ratio tolerances. It writes machine-readable `report.json` and a
+transparent/red `diff.png`, then exits unsuccessfully for a disallowed delta.
+Capture remains observation-only; golden policy belongs to tooling rather than
+runtime behavior.
 
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their
@@ -5152,6 +5173,8 @@ restarting it cannot leave a `cargo run` child orphaned.
 | `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | runs one native binary with checked state-preserving live views and a build-then-restart fallback |
+| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
+| `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
 | `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
 

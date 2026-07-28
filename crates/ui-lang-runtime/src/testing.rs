@@ -24,12 +24,13 @@ use iced_test::runtime::user_interface::{self, UserInterface};
 use iced_test::runtime::{self, Task};
 use iced_test::selector::{Candidate, Selector};
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hasher as _;
 use std::marker::PhantomData;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -66,6 +67,235 @@ impl Location {
 impl fmt::Display for Location {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}:{}:{}", self.path, self.line, self.column)
+    }
+}
+
+thread_local! {
+    static RENDER_SOURCE_STACK: RefCell<Vec<Location>> = const { RefCell::new(Vec::new()) };
+    static RENDER_SOURCES: RefCell<HashMap<String, Vec<Location>>> = RefCell::new(HashMap::new());
+}
+
+/// Restores the previous rendered-node source when generated view construction exits.
+#[doc(hidden)]
+pub struct RenderSourceGuard;
+
+/// Enters one generated `.ice` view-node source while its widget is constructed.
+#[doc(hidden)]
+pub fn push_render_source(source: Location) -> RenderSourceGuard {
+    RENDER_SOURCE_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        if stack.is_empty() {
+            RENDER_SOURCES.with(|sources| sources.borrow_mut().clear());
+        }
+        stack.push(source);
+    });
+    RenderSourceGuard
+}
+
+impl Drop for RenderSourceGuard {
+    fn drop(&mut self) {
+        RENDER_SOURCE_STACK.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+pub(crate) fn current_render_source() -> Option<Location> {
+    RENDER_SOURCE_STACK.with(|stack| stack.borrow().last().copied())
+}
+
+/// Associates a generated native widget ID with the current `.ice` view node.
+#[doc(hidden)]
+pub fn register_render_source(id: &str) {
+    let Some(source) = current_render_source() else {
+        return;
+    };
+    RENDER_SOURCES.with(|sources| {
+        let mut sources = sources.borrow_mut();
+        let candidates = sources.entry(id.to_owned()).or_default();
+        if !candidates.contains(&source) {
+            candidates.push(source);
+        }
+    });
+}
+
+fn render_source_for_id(id: &str) -> Option<Location> {
+    RENDER_SOURCES.with(|sources| {
+        let sources = sources.borrow();
+        let candidates = sources.get(id)?;
+        (candidates.len() == 1).then_some(candidates[0])
+    })
+}
+
+struct RenderSourceState(Location);
+struct RenderSourceEnd;
+
+/// Wraps a generated test widget in its originating `.ice` view-node frame.
+#[doc(hidden)]
+pub fn sourced<'a, Message, Theme, Renderer>(
+    content: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    source: Location,
+) -> iced::Element<'a, Message, Theme, Renderer>
+where
+    Message: 'static,
+    Theme: 'a,
+    Renderer: iced::advanced::Renderer + 'a,
+{
+    iced::Element::new(Sourced {
+        content: content.into(),
+        source,
+    })
+}
+
+struct Sourced<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    content: iced::Element<'a, Message, Theme, Renderer>,
+    source: Location,
+}
+
+impl<Message, Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer>
+    for Sourced<'_, Message, Theme, Renderer>
+where
+    Message: 'static,
+    Renderer: iced::advanced::Renderer,
+{
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<RenderSourceState>()
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(RenderSourceState(self.source))
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.state.downcast_mut::<RenderSourceState>().0 = self.source;
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> iced::Size<iced::Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> iced::Size<iced::Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        operation.custom(
+            None,
+            layout.bounds(),
+            tree.state.downcast_mut::<RenderSourceState>(),
+        );
+        operation.traverse(&mut |operation| {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                operation,
+            );
+        });
+        operation.custom(None, layout.bounds(), &mut RenderSourceEnd);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &Renderer,
+    ) -> iced::mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'a>,
+        renderer: &Renderer,
+        viewport: &iced::Rectangle,
+        translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'a, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -485,6 +715,126 @@ impl Config {
     }
 }
 
+/// Runs the hidden headless inspection entry point generated for every Ice app.
+#[doc(hidden)]
+pub fn agent_inspect<P>(program: impl FnOnce() -> P, source_path: &'static str)
+where
+    P: Program + 'static,
+    P::Renderer: 'static,
+    P::Message: Clone,
+{
+    let Some(requested_source) = std::env::var_os("ICE_AGENT_INSPECT_SOURCE") else {
+        return;
+    };
+    let requested_source = PathBuf::from(requested_source);
+    let generated_source = PathBuf::from(source_path);
+    let requested_source = requested_source.canonicalize().unwrap_or(requested_source);
+    let generated_source = generated_source.canonicalize().unwrap_or(generated_source);
+    if requested_source != generated_source {
+        return;
+    }
+
+    let name = leaked_env("ICE_AGENT_INSPECT_NAME").unwrap_or("inspection");
+    let source = Location::new(source_path, 1, 1, "agent inspection");
+    let mut config = Config::new(name).source(source);
+    if let (Some(width), Some(height)) = (
+        parsed_env::<f32>("ICE_AGENT_INSPECT_WIDTH"),
+        parsed_env::<f32>("ICE_AGENT_INSPECT_HEIGHT"),
+    ) {
+        config = config.viewport(width, height);
+    }
+    if let Some(preset) = leaked_env("ICE_AGENT_INSPECT_PRESET") {
+        config = config.preset(preset);
+    }
+    if let Some(theme) = mode_env("ICE_AGENT_INSPECT_THEME") {
+        config = config.theme(theme);
+    }
+    if let Some(theme) = mode_env("ICE_AGENT_INSPECT_SYSTEM_THEME") {
+        config = config.system_theme(theme);
+    }
+    if let Some(scale) = parsed_env::<f32>("ICE_AGENT_INSPECT_SCALE") {
+        config = config.scale_factor(scale);
+    }
+    if let Some(locale) = leaked_env("ICE_AGENT_INSPECT_LOCALE") {
+        config = config.locale(locale);
+    }
+    if let Some(platform) = platform_env("ICE_AGENT_INSPECT_PLATFORM") {
+        config = config.platform(platform);
+    }
+    if let Some(reduced_motion) = bool_env("ICE_AGENT_INSPECT_REDUCED_MOTION") {
+        config = config.reduced_motion(reduced_motion);
+    }
+    if let Some(directory) = std::env::var_os("ICE_AGENT_INSPECT_ARTIFACT_DIR") {
+        config = config.artifact_dir(directory);
+    }
+
+    let mut driver = Driver::new(program(), config);
+    let capture = driver.capture(name, source);
+    let result_path = std::env::var_os("ICE_AGENT_INSPECT_RESULT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("{source}: ICE_AGENT_INSPECT_RESULT is required"));
+    let result = serde_json::json!({
+        "source": generated_source,
+        "png": capture.png_path,
+        "manifest": capture.metadata_path,
+    });
+    std::fs::write(
+        &result_path,
+        serde_json::to_vec_pretty(&result).expect("inspection result is serializable"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "{source}: cannot write inspection result {}: {error}",
+            result_path.display()
+        )
+    });
+}
+
+fn leaked_env(name: &str) -> Option<&'static str> {
+    std::env::var(name)
+        .ok()
+        .map(|value| Box::leak(value.into_boxed_str()) as &'static str)
+}
+
+fn parsed_env<T>(name: &str) -> Option<T>
+where
+    T: std::str::FromStr,
+    T::Err: fmt::Display,
+{
+    std::env::var(name).ok().map(|value| {
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid {name} value {value:?}: {error}"))
+    })
+}
+
+fn mode_env(name: &str) -> Option<ThemeMode> {
+    std::env::var(name).ok().map(|value| match value.as_str() {
+        "none" => ThemeMode::None,
+        "light" => ThemeMode::Light,
+        "dark" => ThemeMode::Dark,
+        _ => panic!("invalid {name} value {value:?}; expected none, light, or dark"),
+    })
+}
+
+fn platform_env(name: &str) -> Option<Platform> {
+    std::env::var(name).ok().map(|value| match value.as_str() {
+        "linux" => Platform::Linux,
+        "windows" => Platform::Windows,
+        "macos" => Platform::Macos,
+        "wasm" => Platform::Wasm,
+        _ => panic!("invalid {name} value {value:?}; expected linux, windows, macos, or wasm"),
+    })
+}
+
+fn bool_env(name: &str) -> Option<bool> {
+    std::env::var(name).ok().map(|value| match value.as_str() {
+        "true" => true,
+        "false" => false,
+        _ => panic!("invalid {name} value {value:?}; expected true or false"),
+    })
+}
+
 /// Runs generated Rust for one Ice test statement with source-mapped panic context.
 #[doc(hidden)]
 pub fn step<T>(test_name: &'static str, source: Location, operation: impl FnOnce() -> T) -> T {
@@ -565,6 +915,7 @@ pub struct Target {
     accessibility: Option<AccessibilityData>,
     focused: Option<bool>,
     scale_factor: f32,
+    render_source: Option<Location>,
 }
 
 impl Target {
@@ -995,6 +1346,7 @@ struct LayoutTarget {
     value: Option<String>,
     accessibility: Option<AccessibilityData>,
     focused: Option<bool>,
+    source: Option<Location>,
 }
 
 struct IdSelector<Message> {
@@ -1002,6 +1354,7 @@ struct IdSelector<Message> {
     native_id: widget::Id,
     stable_id: widget::Id,
     semantic_frames: Vec<Option<usize>>,
+    source_frames: Vec<Location>,
     marker: PhantomData<fn() -> Message>,
 }
 
@@ -1065,6 +1418,7 @@ impl<Message> IdSelector<Message> {
             native_id: logical_id.to_owned().into(),
             stable_id: StableId::new(logical_id).widget_id(),
             semantic_frames: Vec::new(),
+            source_frames: Vec::new(),
             marker: PhantomData,
         }
     }
@@ -1080,6 +1434,14 @@ impl<Message: 'static> Selector for IdSelector<Message> {
     fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
         let mut semantic_group = self.semantic_frames.last().copied().flatten();
         if let Candidate::Custom { state, .. } = &candidate {
+            if state.downcast_ref::<RenderSourceEnd>().is_some() {
+                self.source_frames.pop();
+                return None;
+            }
+            if let Some(state) = state.downcast_ref::<RenderSourceState>() {
+                self.source_frames.push(state.0);
+                return None;
+            }
             if state.downcast_ref::<SemanticEnd>().is_some() {
                 self.semantic_frames.pop();
                 return None;
@@ -1108,95 +1470,122 @@ impl<Message: 'static> Selector for IdSelector<Message> {
 
         let bounds = candidate.bounds();
         let visible_bounds = candidate.visible_bounds();
-        let (semantic, state_key, kind, content_bounds, translation, value, accessibility, focused) =
-            match candidate {
-                Candidate::Container { .. } => {
-                    (false, None, "container", None, None, None, None, None)
+        let source = self
+            .source_frames
+            .last()
+            .copied()
+            .or_else(|| render_source_for_id(&self.logical_id));
+        let (
+            semantic,
+            state_key,
+            kind,
+            content_bounds,
+            translation,
+            value,
+            accessibility,
+            focused,
+            source,
+        ) = match candidate {
+            Candidate::Container { .. } => (
+                false,
+                None,
+                "container",
+                None,
+                None,
+                None,
+                None,
+                None,
+                source,
+            ),
+            Candidate::Focusable { state, .. } => (
+                false,
+                Some(data_address(state)),
+                "focusable",
+                None,
+                None,
+                None,
+                None,
+                Some(state.is_focused()),
+                source,
+            ),
+            Candidate::Scrollable {
+                content_bounds,
+                translation,
+                state,
+                ..
+            } => (
+                false,
+                Some(data_address(state)),
+                "scrollable",
+                Some(content_bounds),
+                Some(translation),
+                None,
+                None,
+                None,
+                source,
+            ),
+            Candidate::TextInput { state, .. } => (
+                false,
+                Some(data_address(state)),
+                "text_input",
+                None,
+                None,
+                Some(state.text().to_owned()),
+                None,
+                None,
+                source,
+            ),
+            Candidate::Text { content, .. } => (
+                false,
+                None,
+                "text",
+                None,
+                None,
+                Some(content.to_owned()),
+                None,
+                None,
+                source,
+            ),
+            Candidate::Custom { state, .. } => {
+                if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
+                    let semantics = &state.semantics;
+                    (
+                        true,
+                        Some(data_address(state)),
+                        role_name(semantics.role),
+                        None,
+                        None,
+                        semantics.value.clone(),
+                        Some(AccessibilityData {
+                            role: semantics.role,
+                            name: semantics.label.clone(),
+                            description: semantics.description.clone(),
+                            value: semantics.value.clone(),
+                            checked: semantics.checked,
+                            disabled: semantics.disabled,
+                            focused: state.focused,
+                            supports_activate: !semantics.disabled && semantics.activate.is_some(),
+                            supports_focus: !semantics.disabled
+                                && semantics.focus != crate::FocusBehavior::None,
+                        }),
+                        Some(state.focused),
+                        semantics.source,
+                    )
+                } else {
+                    (
+                        false,
+                        Some(data_address(state)),
+                        "custom",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        source,
+                    )
                 }
-                Candidate::Focusable { state, .. } => (
-                    false,
-                    Some(data_address(state)),
-                    "focusable",
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(state.is_focused()),
-                ),
-                Candidate::Scrollable {
-                    content_bounds,
-                    translation,
-                    state,
-                    ..
-                } => (
-                    false,
-                    Some(data_address(state)),
-                    "scrollable",
-                    Some(content_bounds),
-                    Some(translation),
-                    None,
-                    None,
-                    None,
-                ),
-                Candidate::TextInput { state, .. } => (
-                    false,
-                    Some(data_address(state)),
-                    "text_input",
-                    None,
-                    None,
-                    Some(state.text().to_owned()),
-                    None,
-                    None,
-                ),
-                Candidate::Text { content, .. } => (
-                    false,
-                    None,
-                    "text",
-                    None,
-                    None,
-                    Some(content.to_owned()),
-                    None,
-                    None,
-                ),
-                Candidate::Custom { state, .. } => {
-                    if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
-                        let semantics = &state.semantics;
-                        (
-                            true,
-                            Some(data_address(state)),
-                            role_name(semantics.role),
-                            None,
-                            None,
-                            semantics.value.clone(),
-                            Some(AccessibilityData {
-                                role: semantics.role,
-                                name: semantics.label.clone(),
-                                description: semantics.description.clone(),
-                                value: semantics.value.clone(),
-                                checked: semantics.checked,
-                                disabled: semantics.disabled,
-                                focused: state.focused,
-                                supports_activate: !semantics.disabled
-                                    && semantics.activate.is_some(),
-                                supports_focus: !semantics.disabled
-                                    && semantics.focus != crate::FocusBehavior::None,
-                            }),
-                            Some(state.focused),
-                        )
-                    } else {
-                        (
-                            false,
-                            Some(data_address(state)),
-                            "custom",
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                    }
-                }
-            };
+            }
+        };
 
         Some(LayoutTarget {
             semantic,
@@ -1210,6 +1599,7 @@ impl<Message: 'static> Selector for IdSelector<Message> {
             value,
             accessibility,
             focused,
+            source,
         })
     }
 
@@ -2846,9 +3236,15 @@ where
         });
 
         let manifest = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "name": name,
             "png": format!("{name}.png"),
+            "capture_source": {
+                "path": manifest_source_path(source.path),
+                "line": source.line,
+                "column": source.column,
+                "statement": source.statement,
+            },
             "viewport": { "width": self.size.width, "height": self.size.height },
             "physical_size": {
                 "width": screenshot.size.width,
@@ -3914,6 +4310,7 @@ fn merge_target_match(existing: &mut LayoutTarget, mut candidate: LayoutTarget) 
     }
     existing.focused =
         (existing.focused.is_some() || candidate.focused.is_some()).then_some(focused);
+    existing.source = existing.source.or(candidate.source);
     if !existing.semantic {
         existing.value = existing.value.take().or(candidate.value);
     }
@@ -3981,6 +4378,7 @@ fn target_from_layout(
         accessibility: layout.accessibility,
         focused: layout.focused,
         scale_factor,
+        render_source: layout.source,
     }
 }
 
@@ -4522,6 +4920,11 @@ fn target_manifest(target: &Target) -> serde_json::Value {
     serde_json::json!({
         "id": target.id,
         "kind": target.kind,
+        "source": target.render_source.map(|source| serde_json::json!({
+            "path": manifest_source_path(source.path),
+            "line": source.line,
+            "column": source.column,
+        })),
         "geometry": {
             "x": target.x,
             "y": target.y,
@@ -4567,6 +4970,19 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "images": target.images.iter().map(|image| rectangle_manifest(image.bounds)).collect::<Vec<_>>(),
         },
     })
+}
+
+fn manifest_source_path(path: &str) -> String {
+    let path = Path::new(path);
+    let root = std::env::var_os("ICE_AGENT_INSPECT_ROOT").map(PathBuf::from);
+    normalized_source_path(path, root.as_deref())
+}
+
+fn normalized_source_path(path: &Path, root: Option<&Path>) -> String {
+    root.and_then(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn surface_manifest(surface: &SurfacePaint) -> serde_json::Value {
@@ -4860,7 +5276,8 @@ mod tests {
     }
 
     fn view(state: &State) -> Element<'_, Message> {
-        container(
+        let source = push_render_source(HERE);
+        let view = container(
             column![
                 crate::accessible(
                     text(state.count),
@@ -4915,7 +5332,9 @@ mod tests {
             },
             ..container::Style::default()
         })
-        .into()
+        .into();
+        drop(source);
+        view
     }
 
     const HERE: Location = Location::new("test.ice", 1, 1, "test statement");
@@ -5724,6 +6143,7 @@ mod tests {
             &std::fs::read(&capture.metadata_path).expect("capture manifest"),
         )
         .expect("valid capture manifest");
+        assert_eq!(metadata["schema_version"], 2);
         assert_eq!(metadata["scale_factor"], 2.0);
         assert_eq!(metadata["png"], "primitive_matrix.png");
         assert_eq!(metadata["clock"]["supports_virtual_redraw_advance"], true);
@@ -5748,6 +6168,13 @@ mod tests {
             }),
             "capture targets must contain only stable, addressable IDs"
         );
+        assert!(metadata["targets"].as_array().is_some_and(|targets| {
+            targets.iter().any(|target| {
+                target["source"]["path"] == HERE.path
+                    && target["source"]["line"] == HERE.line
+                    && target["source"]["column"] == HERE.column
+            })
+        }));
         assert!(
             metadata["targets"].as_array().is_some_and(|targets| {
                 targets.iter().any(|target| {
@@ -5765,6 +6192,17 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");
+    }
+
+    #[test]
+    fn manifest_source_paths_are_stable_relative_to_the_inspection_root() {
+        assert_eq!(
+            normalized_source_path(
+                Path::new("workspace/examples/app/src/ui/app.ice"),
+                Some(Path::new("workspace")),
+            ),
+            "examples/app/src/ui/app.ice"
+        );
     }
 
     #[test]

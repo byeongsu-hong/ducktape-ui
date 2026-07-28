@@ -131,6 +131,7 @@ enum FocusBehavior {
 struct Semantics<Message> {
     id: StableId,
     logical_id: Option<String>,
+    source: Option<testing::Location>,
     role: Role,
     label: Option<String>,
     description: Option<String>,
@@ -158,6 +159,7 @@ impl<Message> Semantics<Message> {
         Self {
             id,
             logical_id: None,
+            source: None,
             role,
             label: None,
             description: None,
@@ -283,6 +285,7 @@ where
     #[doc(hidden)]
     pub fn logical_id(mut self, id: impl Into<String>) -> Self {
         self.semantics.logical_id = Some(id.into());
+        self.semantics.source = testing::current_render_source();
         self
     }
 

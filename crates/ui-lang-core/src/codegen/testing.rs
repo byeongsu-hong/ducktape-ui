@@ -74,10 +74,14 @@ pub(in crate::codegen) fn generate_tests(
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
-    if document.tests.is_empty() {
-        return Ok(());
-    }
     writeln!(out, "#[cfg(test)]\nmod __ice_tests {{\nuse super::*;").unwrap();
+    writeln!(
+        out,
+        "#[test]\nfn __ice_agent_inspect() {{ ::ui_lang_runtime::testing::agent_inspect(|| {}::__program(), {}); }}",
+        document.app,
+        rust_string(source_path),
+    )
+    .unwrap();
     for (index, test) in document.tests.iter().enumerate() {
         generate_test(out, document, message, source_path, index, test)?;
     }

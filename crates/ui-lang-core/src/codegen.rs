@@ -8,14 +8,30 @@ use std::path::Path;
 const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
 const SOURCE_MARKER: &str = "// __ICE_SOURCE ";
 const SOURCE_MARKER_END: &str = "// __ICE_SOURCE_END";
+const RENDER_SOURCE_MARKER: &str = "__ICE_RENDER_SOURCE_";
+const RENDER_SOURCE_MARKER_END: &str = "__";
 
 fn source_marker(span: &Span) -> String {
     format!("{SOURCE_MARKER}{} {}", span.line, span.column)
 }
 
-fn source_mapped_expression(code: String, span: &Span) -> String {
+fn source_mapped_expression(
+    code: String,
+    span: &Span,
+    message: &str,
+    track_descendants: bool,
+) -> String {
+    let render_source = format!(
+        "{RENDER_SOURCE_MARKER}{}_{}{RENDER_SOURCE_MARKER_END}",
+        span.line, span.column
+    );
+    let descendant_source = if track_descendants {
+        "#[cfg(test)]\nlet __ice_rendered = ::ui_lang_runtime::testing::sourced(__ice_rendered, __ice_render_source_location);\n"
+    } else {
+        ""
+    };
     format!(
-        "{{\n{}\n{code}\n{SOURCE_MARKER_END}\n}}",
+        "{{\n{}\n#[cfg(test)]\nlet __ice_render_source_location = {render_source};\n#[cfg(test)]\nlet __ice_render_source = ::ui_lang_runtime::testing::push_render_source(__ice_render_source_location);\nlet __ice_rendered: __IceElement<'_, {message}> = {code};\n{descendant_source}#[cfg(test)]\ndrop(__ice_render_source);\n__ice_rendered\n{SOURCE_MARKER_END}\n}}",
         source_marker(span)
     )
 }
@@ -34,7 +50,7 @@ fn resolve_source_markers(
 ) -> String {
     let mut output = String::with_capacity(generated.len());
     for line in generated.lines() {
-        let resolved = line
+        let resolved_marker = line
             .strip_prefix(SOURCE_MARKER)
             .and_then(|location| location.split_once(' '))
             .and_then(|(line, column)| {
@@ -51,9 +67,47 @@ fn resolve_source_markers(
                 )
             })
             .unwrap_or_else(|| line.to_owned());
+        let resolved = resolve_render_source_markers(&resolved_marker, document, source_path);
         output.push_str(&resolved);
         output.push('\n');
     }
+    output
+}
+
+fn resolve_render_source_markers(
+    line: &str,
+    document: &CheckedDocument,
+    source_path: &str,
+) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut remaining = line;
+    while let Some(start) = remaining.find(RENDER_SOURCE_MARKER) {
+        output.push_str(&remaining[..start]);
+        let marker = &remaining[start + RENDER_SOURCE_MARKER.len()..];
+        let Some(end) = marker.find(RENDER_SOURCE_MARKER_END) else {
+            output.push_str(&remaining[start..]);
+            return output;
+        };
+        let Some((line, column)) = marker[..end].split_once('_').and_then(|(line, column)| {
+            Some((line.parse::<usize>().ok()?, column.parse::<usize>().ok()?))
+        }) else {
+            output.push_str(&remaining[start..start + RENDER_SOURCE_MARKER.len() + end]);
+            remaining = &marker[end..];
+            continue;
+        };
+        let (path, line) = document.source_origin(line).map_or_else(
+            || (source_path.to_owned(), line),
+            |(path, line)| (path.display().to_string(), line),
+        );
+        write!(
+            output,
+            "::ui_lang_runtime::testing::Location::new({}, {line}, {column}, \"rendered view node\")",
+            rust_string(&path)
+        )
+        .unwrap();
+        remaining = &marker[end + RENDER_SOURCE_MARKER_END.len()..];
+    }
+    output.push_str(remaining);
     output
 }
 

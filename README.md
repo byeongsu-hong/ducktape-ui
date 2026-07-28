@@ -398,6 +398,11 @@ not impose exact pixel equality. It records configured, resolved-render, and
 system theme fields separately and limits physical output to 16,777,216 pixels
 (64 MiB RGBA8). A task-issued window open replaces the single headless current
 window with fresh widget/focus/input state while retaining application state.
+Each target generated from an Ice view also records its originating `.ice`
+path, line, and column. A target constructed wholly inside a Rust widget may
+report no finer provenance. `cargo ice inspect` exposes the same real headless
+app `Program` without requiring an authored test capture, while
+`cargo ice diff` compares two manifests and their PNGs outside the runtime.
 
 Tests use the same checked components, handlers, presets, expressions, and Rust
 extern boundary as production code. IDs select rendered widgets after real
@@ -476,6 +481,8 @@ cargo ice clippy
 cargo ice compat
 cargo ice expand examples/iced-app/src/ui/tasks.ice
 cargo ice dev examples/live-reload/src/ui/app.ice -- -p live-reload-example
+cargo ice inspect examples/showcase/src/ui/showcase.ice --viewport 1440x900 --theme light --name showcase_light
+cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_showcase/showcase_light.json
 cargo ice schema
 cargo ice lsp
 scripts/a11y-smoke.sh
@@ -487,6 +494,16 @@ Cargo tests. Ordinary `cargo test` discovers the same generated `#[test]`
 functions; generated Ice tests need no Rust wrapper, registration, or direct
 `iced_test` dependency in the application. Arguments after `test` pass through to Cargo, so
 `cargo ice test render_contract -- --nocapture` runs one generated contract.
+
+`cargo ice inspect ROOT.ice` selects the Cargo package containing that root,
+runs its generated headless inspection entry, and prints absolute PNG and JSON
+paths. Pin inputs with `--viewport WIDTHxHEIGHT`, `--preset`, `--theme`,
+`--system-theme`, `--scale`, `--locale`, `--platform`, and
+`--reduced-motion`; `--output`, `--name`, and `--package` control artifact and
+package selection. `cargo ice diff BASE.json CURRENT.json` writes
+`report.json` and `diff.png`, then fails when structured values differ or the
+changed-pixel ratio exceeds explicit `--pixel-threshold`,
+`--max-changed-ratio`, or `--value-tolerance` settings.
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
 one native app, watches its complete imported Ice graph, and keeps the last

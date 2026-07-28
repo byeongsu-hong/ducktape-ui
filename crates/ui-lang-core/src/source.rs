@@ -883,6 +883,13 @@ mod tests {
             generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_path}")),
             "generated Rust did not retain the imported view location:\n{generated}"
         );
+        assert!(
+            generated.contains(&format!(
+                "Location::new({:?}, 2, 1, \"rendered view node\")",
+                component.display().to_string()
+            )),
+            "generated render provenance did not retain the imported view location:\n{generated}"
+        );
     }
 
     #[test]
