@@ -4,16 +4,36 @@ use std::collections::{HashMap, HashSet};
 
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable = reachable_components(&document);
+    let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable);
-    check(&mut document, &reachable)?;
+    check(&mut document, &reachable, &reachable_handlers)?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
+    warnings.extend(unreachable_handler_warnings(
+        &document,
+        &reachable,
+        &reachable_handlers,
+    ));
     warnings.extend(usage.finish());
-    warnings.extend(immediate_handler_cycle_warnings(&document));
+    warnings.extend(immediate_handler_cycle_warnings(
+        &document,
+        &reachable_handlers,
+    ));
+    warnings.extend(routed_task_cycle_warnings(&document, &reachable_handlers));
+    warnings.extend(raw_event_feedback_warnings(&document));
     warnings.sort_by_key(|warning| warning.line);
-    Ok(CheckedDocument::new(document, warnings, reachable))
+    Ok(CheckedDocument::new(
+        document,
+        warnings,
+        reachable,
+        reachable_handlers.app,
+    ))
 }
 
-fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Error> {
+fn check(
+    document: &mut Document,
+    reachable: &HashSet<String>,
+    reachable_handlers: &HandlerReachability,
+) -> Result<(), Error> {
     check_unique(document)?;
     check_fonts(document)?;
     check_slots(document)?;
@@ -294,7 +314,12 @@ fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Err
     }
     infer_subscriptions(document, &states, &mut signatures)?;
     let empty_env = HashMap::new();
-    for handler in document.handlers.iter().chain(&preset_handlers) {
+    for handler in &document.handlers {
+        with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
+            infer_runs(handler, document, &mut signatures, &app_values, &empty_env)
+        })?;
+    }
+    for handler in &preset_handlers {
         infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
     }
     for component in &document.components {
@@ -304,12 +329,17 @@ fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Err
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
         let env = HashMap::from([(component_context_key(&component.name), Type::Unit)]);
-        with_component_scope(&component.name, reachable.contains(&component.name), || {
-            for handler in &component.handlers {
-                infer_runs(handler, document, &mut signatures, &values, &env)?;
-            }
-            Ok::<_, Error>(())
-        })?;
+        for handler in &component.handlers {
+            with_component_scope(
+                &component.name,
+                reachable.contains(&component.name)
+                    && reachable_handlers.component_contains(&component.name, &handler.name),
+                || {
+                    infer_runs(handler, document, &mut signatures, &values, &env)?;
+                    Ok::<_, Error>(())
+                },
+            )?;
+        }
     }
 
     for handler in &mut document.handlers {
@@ -347,7 +377,19 @@ fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Err
         }
     }
 
-    for handler in document.handlers.iter().chain(&preset_handlers) {
+    for handler in &document.handlers {
+        with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
+            check_handler(
+                handler,
+                &states,
+                &app_values,
+                document,
+                &operation_ids,
+                &pane_grids,
+            )
+        })?;
+    }
+    for handler in &preset_handlers {
         check_handler(
             handler,
             &states,
@@ -375,19 +417,24 @@ fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Err
             .iter()
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
-        with_component_scope(&component.name, reachable.contains(&component.name), || {
-            for handler in &component.handlers {
-                check_handler(
-                    handler,
-                    &states,
-                    &states,
-                    document,
-                    &operation_ids,
-                    &HashMap::new(),
-                )?;
-            }
-            Ok::<_, Error>(())
-        })?;
+        for handler in &component.handlers {
+            with_component_scope(
+                &component.name,
+                reachable.contains(&component.name)
+                    && reachable_handlers.component_contains(&component.name, &handler.name),
+                || {
+                    check_handler(
+                        handler,
+                        &states,
+                        &states,
+                        document,
+                        &operation_ids,
+                        &HashMap::new(),
+                    )?;
+                    Ok::<_, Error>(())
+                },
+            )?;
+        }
     }
     check_tests(document, &view_states)?;
     Ok(())
@@ -589,6 +636,7 @@ mod declarations;
 mod expr;
 mod handler;
 mod options;
+mod reachability;
 mod state;
 mod style;
 mod subscription;
@@ -603,6 +651,7 @@ use cycles::*;
 use declarations::*;
 use handler::*;
 use options::*;
+use reachability::*;
 use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};
 pub(crate) use state::{controlled_editor_bindings, controlled_state_bindings};
 use style::*;

@@ -15,6 +15,7 @@ use ui_lang_core::{
 struct DiagnosticReport {
     diagnostics: Vec<(String, Value)>,
     reachable_components: BTreeSet<(String, usize)>,
+    reachable_handlers: BTreeSet<(String, usize)>,
 }
 
 type CargoDiagnosticReports = HashMap<PathBuf, Vec<(String, Value)>>;
@@ -707,6 +708,19 @@ fn analyze_diagnostics(
                     )
                 })
                 .collect();
+            let reachable_handlers = document
+                .reachable_handler_definitions()
+                .into_iter()
+                .map(|range| {
+                    (
+                        range
+                            .path
+                            .as_deref()
+                            .map_or_else(|| uri.to_owned(), file_path_uri),
+                        range.line,
+                    )
+                })
+                .collect();
             let diagnostics = document
                 .warnings()
                 .iter()
@@ -737,6 +751,7 @@ fn analyze_diagnostics(
             DiagnosticReport {
                 diagnostics,
                 reachable_components,
+                reachable_handlers,
             }
         }
         Err(error) => {
@@ -759,6 +774,7 @@ fn analyze_diagnostics(
                     }),
                 )],
                 reachable_components: BTreeSet::new(),
+                reachable_handlers: BTreeSet::new(),
             }
         }
     }
@@ -2835,6 +2851,10 @@ fn publish_aggregated(
         .values()
         .flat_map(|report| report.reachable_components.iter().cloned())
         .collect::<BTreeSet<_>>();
+    let reachable_handlers = reports
+        .values()
+        .flat_map(|report| report.reachable_handlers.iter().cloned())
+        .collect::<BTreeSet<_>>();
     let mut diagnostics = Vec::new();
     let mut warning_locations = BTreeSet::new();
     for (target, diagnostic) in reports
@@ -2846,6 +2866,13 @@ fn publish_aggregated(
         if diagnostic["code"] == "W001"
             && line.is_some_and(|line| {
                 reachable_components.contains(&(target.clone(), line as usize + 1))
+            })
+        {
+            continue;
+        }
+        if diagnostic["code"] == "W005"
+            && line.is_some_and(|line| {
+                reachable_handlers.contains(&(target.clone(), line as usize + 1))
             })
         {
             continue;
@@ -3644,7 +3671,7 @@ mod tests {
     #[test]
     fn publishes_static_warnings() {
         let uri = "file:///tmp/warnings.ice";
-        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  fixed = 0\non refresh\n  flow\n    from done 1\n    done -> refresh\ncomponent Hidden()\n  text \"Hidden\"\nview\n  col\n    text fixed\n    button \"Refresh\" -> refresh\n";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  fixed = 0\non refresh\n  flow\n    from done 1\n    done -> refresh\non poll\n  task system theme -> polled _\non polled(theme)\n  flow\n    from done theme\n    done -> poll\non dead\non raw(value)\nsubscribe\n  event raw -> raw _\ncomponent Hidden()\n  text \"Hidden\"\nview\n  col\n    text fixed\n    button \"Refresh\" -> refresh\n    button \"Poll\" -> poll\n";
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -3663,7 +3690,7 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics.len(), 6);
         assert!(
             diagnostics
                 .iter()
@@ -3674,19 +3701,24 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic["code"].as_str().unwrap())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["W001", "W003", "W004"])
+            BTreeSet::from(["W001", "W003", "W004", "W005", "W006", "W007"])
         );
     }
 
     #[test]
-    fn reachable_from_any_open_root_suppresses_fragment_warning() {
+    fn reachable_from_any_open_root_suppresses_fragment_graph_warnings() {
         let fixture = Fixture::new();
-        fixture.write("part.ice", "component Shared()\n  text \"Shared\"\n");
+        fixture.write(
+            "part.ice",
+            "on shared\ncomponent Shared()\n  text \"Shared\"\n",
+        );
         let part_uri = file_path_uri(&fixture.path("part.ice"));
         let one_uri = file_path_uri(&fixture.path("one.ice"));
         let two_uri = file_path_uri(&fixture.path("two.ice"));
         let one = format!("app One\nuse \"part.ice\"\n{APP_THEME}view\n  text \"One\"\n");
-        let two = format!("app Two\nuse \"part.ice\"\n{APP_THEME}view\n  Shared\n");
+        let two = format!(
+            "app Two\nuse \"part.ice\"\n{APP_THEME}view\n  col\n    Shared\n    button \"Shared\" -> shared\n"
+        );
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
             json!({
@@ -3712,7 +3744,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(published.len(), 2, "{messages:#?}");
-        assert_eq!(published[0]["params"]["diagnostics"][0]["code"], "W001");
+        assert_eq!(
+            published[0]["params"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["W001", "W005"])
+        );
         assert!(
             published[1]["params"]["diagnostics"]
                 .as_array()

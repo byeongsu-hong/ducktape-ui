@@ -18,4 +18,6 @@ on update
 component Hidden()
   text "Hidden"
 view
-  text fixed
+  col
+    text fixed
+    button "Update" -> update

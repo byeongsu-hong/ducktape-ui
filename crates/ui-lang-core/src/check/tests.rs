@@ -45,6 +45,12 @@ view
     text "Theme"
 "#;
 
+fn warning_app(body: &str) -> String {
+    format!(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n{body}"
+    )
+}
+
 #[test]
 fn checks_complete_dynamic_palettes() {
     analyze(THEMED_APP).unwrap();
@@ -327,7 +333,7 @@ fn warns_for_unreachable_component_graphs() {
 #[test]
 fn warns_for_state_without_readers_or_writers() {
     let document = analyze(
-        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n",
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n    button \"Mutate\" -> mutate\n",
     )
     .unwrap();
     let warnings = document
@@ -358,7 +364,7 @@ fn warns_for_state_without_readers_or_writers() {
 #[test]
 fn warns_for_immediate_handler_routing_cycles() {
     let document = analyze(
-        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non refresh\n  flow\n    from done 1\n    done -> refresh\non first\n  flow\n    from done 1\n    then value -> done value + 1\n    done -> second\non second\n  flow\n    from done 1\n    done -> first\non empty\n  flow\n    from none i64\n    collect\n    done -> empty\nview\n  col\n    button \"Refresh\" -> refresh\n    button \"Empty\" -> empty\n",
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non refresh\n  flow\n    from done 1\n    done -> refresh\non first\n  flow\n    from done 1\n    then value -> done value + 1\n    done -> second\non second\n  flow\n    from done 1\n    done -> first\non empty\n  flow\n    from none i64\n    collect\n    done -> empty\nview\n  col\n    button \"Refresh\" -> refresh\n    button \"First\" -> first\n    button \"Empty\" -> empty\n",
     )
     .unwrap();
     let warnings = document
@@ -384,7 +390,7 @@ fn warns_for_immediate_handler_routing_cycles() {
 }
 
 #[test]
-fn ignores_guarded_and_asynchronous_handler_routing_cycles() {
+fn distinguishes_guarded_immediate_cycles_from_task_completion_cycles() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  stopped = false\non guarded\n  return if stopped\n  flow\n    from done 1\n    done -> guarded\non poll\n  flow\n    from task system theme\n    done -> polled _\non polled(theme)\n  flow\n    from done theme\n    done -> poll\nview\n  col\n    button \"Guarded\" -> guarded\n    button \"Poll\" -> poll\n",
     )
@@ -395,6 +401,253 @@ fn ignores_guarded_and_asynchronous_handler_routing_cycles() {
             .iter()
             .all(|warning| warning.code != "W004")
     );
+    assert!(
+        document
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "W006"
+                && warning.message.contains("`poll`")
+                && warning.message.contains("`polled`"))
+    );
+}
+
+#[test]
+fn warns_for_handlers_unreachable_from_runtime_and_test_roots() {
+    let document = analyze(&warning_app(
+        r#"on root
+  flow
+    from done 1
+    done -> chained
+on chained
+on dead
+component Used()
+  on live
+  on dead_local
+  button "Live" -> live
+view
+  col
+    button "Root" -> root
+    Used
+"#,
+    ))
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W005")
+        .map(|warning| warning.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .any(|message| message.contains("handler `dead`"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|message| message.contains("component handler `Used.dead_local`"))
+    );
+    assert!(warnings.iter().all(|message| !message.contains("chained")));
+}
+
+#[test]
+fn treats_mount_presets_and_test_dispatches_as_handler_roots() {
+    let document = analyze(&warning_app(
+        r#"preset ready
+  boot
+    flow
+      from done 1
+      done -> from_preset
+on mount
+on from_preset
+on from_test
+test routes
+  dispatch from_test
+view
+  text "Ready"
+"#,
+    ))
+    .unwrap();
+    assert!(
+        document
+            .warnings()
+            .iter()
+            .all(|warning| warning.code != "W005"),
+        "{:?}",
+        document.warnings()
+    );
+}
+
+#[test]
+fn ignores_state_accesses_in_unreachable_handlers() {
+    let document = analyze(&warning_app(
+        r#"state
+  observed = 0
+  dead_only = 0
+on dead_writer
+  observed = 1
+on dead_reader
+  let value = dead_only
+view
+  text observed
+"#,
+    ))
+    .unwrap();
+    assert!(
+        document.warnings().iter().any(|warning| {
+            warning.code == "W003" && warning.message.contains("state `observed`")
+        })
+    );
+    assert!(document.warnings().iter().any(|warning| {
+        warning.code == "W002"
+            && warning.message.contains("state `dead_only`")
+            && warning.message.contains("never read or written")
+    }));
+}
+
+#[test]
+fn literal_false_does_not_hide_an_immediate_cycle() {
+    let document = analyze(&warning_app(
+        r#"on refresh
+  return if false
+  flow
+    from done 1
+    done -> refresh
+view
+  button "Refresh" -> refresh
+"#,
+    ))
+    .unwrap();
+    assert!(
+        document
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "W004")
+    );
+}
+
+#[test]
+fn warns_for_repeated_stream_feedback_cycles() {
+    let document = analyze(&warning_app(
+        r#"extern crate::backend
+  stream ticks() -> i64
+on start
+  stream ticks() -> ticked _
+on ticked(value)
+  flow
+    from done value
+    done -> start
+view
+  button "Start" -> start
+"#,
+    ))
+    .unwrap();
+    assert!(document.warnings().iter().any(|warning| {
+        warning.code == "W006"
+            && warning.message.contains("`start`")
+            && warning.message.contains("`ticked`")
+            && warning.message.contains("multiply")
+    }));
+}
+
+#[test]
+fn warns_for_task_and_widget_query_completion_cycles() {
+    let document = analyze(&warning_app(
+        r#"extern crate::backend
+  task load() -> i64
+on load_next
+  task load() -> loaded _
+on loaded(value)
+  flow
+    from done value
+    done -> load_next
+on inspect
+  task widget focused #control -> inspected _
+on inspected(value)
+  flow
+    from done value
+    done -> inspect
+state
+  field = ""
+view
+  col
+    button "Load" -> load_next
+    input "Field" #control <-> field
+    button "Inspect" -> inspect
+"#,
+    ))
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W006")
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(warnings.iter().all(|warning| {
+        warning
+            .message
+            .contains("future, task, or query completion")
+            && warning.message.contains("refresh forever")
+    }));
+}
+
+#[test]
+fn warns_for_component_local_handler_cycles() {
+    let document = analyze(&warning_app(
+        r#"extern crate::backend
+  fetch() -> i64
+component Loader()
+  on start
+    run fetch() -> loaded _
+  on loaded(value)
+    run fetch() -> loaded _
+  button "Load" -> start
+view
+  Loader
+"#,
+    ))
+    .unwrap();
+    assert!(
+        document.warnings().iter().any(|warning| {
+            warning.code == "W006" && warning.message.contains("`Loader.loaded`")
+        })
+    );
+}
+
+#[test]
+fn warns_for_unfiltered_raw_event_feedback() {
+    let source = warning_app(
+        r#"on received(value)
+subscribe
+  event raw -> received _
+view
+  text "Events"
+"#,
+    );
+    let document = analyze(&source).unwrap();
+    assert!(
+        document
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "W007")
+    );
+
+    for safe in [
+        source.replace("event raw ->", "event raw status=captured ->"),
+        source.replace("event raw ->", "event raw when false ->"),
+        source.replace("event raw ->", "event ->"),
+    ] {
+        let document = analyze(&safe).unwrap();
+        assert!(
+            document
+                .warnings()
+                .iter()
+                .all(|warning| warning.code != "W007"),
+            "{:?}",
+            document.warnings()
+        );
+    }
 }
 
 #[test]
