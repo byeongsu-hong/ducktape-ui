@@ -1,4 +1,5 @@
 use super::*;
+use crate::Warning;
 
 #[derive(Clone)]
 pub(in crate::check) struct WidgetIdSlot {
@@ -713,6 +714,197 @@ fn collect_widget_ids(
     })
 }
 
+pub(in crate::check) fn unscoped_component_widget_warnings(
+    document: &Document,
+    reachable_components: &HashSet<String>,
+) -> Vec<Warning> {
+    fn visit(node: &ViewNode, target_counts: &HashMap<String, usize>, warnings: &mut Vec<Warning>) {
+        match node {
+            ViewNode::Component {
+                name,
+                id,
+                slots,
+                span,
+                ..
+            } => {
+                let count = target_counts.get(name).copied().unwrap_or_default();
+                if id.is_none() && count > 0 {
+                    let noun = if count == 1 { "ID" } else { "IDs" };
+                    warnings.push(
+                        Warning::new(
+                            "W015",
+                            span,
+                            format!(
+                                "component `{name}` is mounted without an ID, so its {count} widget {noun} cannot be targeted from the caller"
+                            ),
+                        )
+                        .hint(
+                            "add an explicit `#id` to the component call to expose those widget targets under that scope",
+                        ),
+                    );
+                }
+                for slot in slots {
+                    visit(&slot.content, target_counts, warnings);
+                }
+            }
+            ViewNode::Layout { children, .. }
+            | ViewNode::If { children, .. }
+            | ViewNode::For { children, .. } => {
+                for child in children {
+                    visit(child, target_counts, warnings);
+                }
+            }
+            ViewNode::Match { arms, .. } => {
+                for child in arms.iter().flat_map(|arm| &arm.children) {
+                    visit(child, target_counts, warnings);
+                }
+            }
+            ViewNode::Container { content, .. }
+            | ViewNode::Lazy { child: content, .. }
+            | ViewNode::Theme { content, .. }
+            | ViewNode::Float { content, .. }
+            | ViewNode::Pin { content, .. }
+            | ViewNode::Sensor { content, .. }
+            | ViewNode::MouseArea { content, .. }
+            | ViewNode::ResizeHandle { content, .. }
+            | ViewNode::KeyedColumn { child: content, .. } => {
+                visit(content, target_counts, warnings);
+            }
+            ViewNode::Button {
+                content: Some(content),
+                ..
+            } => visit(content, target_counts, warnings),
+            ViewNode::Overlay { content, layer, .. } => {
+                visit(content, target_counts, warnings);
+                visit(layer, target_counts, warnings);
+            }
+            ViewNode::PaneGrid {
+                panes, templates, ..
+            } => {
+                for child in panes
+                    .iter()
+                    .flat_map(PaneView::nodes)
+                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
+                {
+                    visit(child, target_counts, warnings);
+                }
+            }
+            ViewNode::Table { columns, .. } => {
+                for column in columns {
+                    visit(&column.header, target_counts, warnings);
+                    visit(&column.cell, target_counts, warnings);
+                }
+            }
+            ViewNode::Tooltip { content, tip, .. } => {
+                visit(content, target_counts, warnings);
+                visit(tip, target_counts, warnings);
+            }
+            ViewNode::Responsive { content, .. } => match content {
+                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                    visit(narrow, target_counts, warnings);
+                    visit(wide, target_counts, warnings);
+                }
+                ResponsiveContent::Size { content, .. } => {
+                    visit(content, target_counts, warnings);
+                }
+            },
+            _ => {}
+        }
+    }
+
+    let target_counts = document
+        .components
+        .iter()
+        .map(|component| {
+            let mut env: HashMap<String, Type> = component
+                .params
+                .iter()
+                .map(|param| (param.name.clone(), param.ty.clone()))
+                .collect();
+            env.extend(
+                component
+                    .states
+                    .iter()
+                    .map(|state| (state.name.clone(), state.ty.clone())),
+            );
+            (
+                component.name.clone(),
+                widget_operation_ids(&component.root, &env, document).map_or(0, |ids| ids.len()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut warnings = Vec::new();
+    visit(&document.view, &target_counts, &mut warnings);
+    for component in document
+        .components
+        .iter()
+        .filter(|component| reachable_components.contains(&component.name))
+    {
+        visit(&component.root, &target_counts, &mut warnings);
+    }
+    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+        visit(mount, &target_counts, &mut warnings);
+    }
+    warnings
+}
+
+fn widget_path_label(path: &WidgetIdPath) -> String {
+    format!(
+        "#{}",
+        path.iter()
+            .map(|(name, key)| if key.is_some() {
+                format!("{name}(key)")
+            } else {
+                name.clone()
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    )
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_byte) in left.bytes().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_byte) in right.bytes().enumerate() {
+            current[right_index + 1] = if left_byte == right_byte {
+                previous[right_index]
+            } else {
+                1 + previous[right_index]
+                    .min(previous[right_index + 1])
+                    .min(current[right_index])
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
+}
+
+fn unknown_widget_target_hint(label: &str, operation_ids: &[WidgetIdPath]) -> String {
+    let mut candidates = operation_ids
+        .iter()
+        .map(widget_path_label)
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    candidates.sort_by_key(|candidate| (edit_distance(label, candidate), candidate.clone()));
+    candidates.truncate(3);
+    if candidates.is_empty() {
+        return "use the full component, layout, keyed, table, or pane identity path from the app view"
+            .into();
+    }
+    format!(
+        "nearest valid widget targets: {}",
+        candidates
+            .iter()
+            .map(|candidate| format!("`{candidate}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 pub(in crate::check) fn check_widget_target(
     target: &WidgetTarget,
     env: &HashMap<String, Type>,
@@ -815,9 +1007,8 @@ pub(in crate::check) fn check_widget_target(
         ));
     }
     Err(
-        Error::new("E172", span, format!("unknown app widget target `{label}`")).hint(
-            "use the full component, layout, keyed, table, or pane identity path from the app view",
-        ),
+        Error::new("E172", span, format!("unknown app widget target `{label}`"))
+            .hint(unknown_widget_target_hint(&label, operation_ids)),
     )
 }
 
