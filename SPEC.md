@@ -4530,7 +4530,11 @@ left-button gesture: it moves to `from`, presses, moves to `to`, and releases.
 Standalone `drop target` moves to `target` and releases an already-held left
 button, normally established by an earlier `press` and optional `move`. The
 driver retains cursor, button, focus, and widget-local state across steps,
-including rerenders.
+including rerenders. Targeted focus and scroll operations first prove that the
+resolved widget exposes the matching native capability and then use the exact
+widget ID that was matched, including a `StableId`-derived ID. A present but
+non-focusable or non-scrollable target therefore fails instead of silently
+performing no operation.
 
 Keyboard, text, and input-method actions operate on the current focus:
 
@@ -4578,7 +4582,11 @@ distinct native unidentified keys therefore retain independent lifecycles.
 applies its listed modifiers for one key. `repeat key count` treats `count` as
 the total activation count: one initial non-repeat key-down, `count - 1` repeat
 key-down events, then one key-up. `select`, indexed `cursor`, `select-all`, and
-the `front`/`end` cursor positions use native widget operations. Negative
+the `front`/`end` cursor positions use native widget operations and require
+exactly one focused widget ID that exposes Iced's text-input operation.
+`clear` and `replace` share that requirement because they begin with
+`select-all`. A focused text editor or other focusable widget fails explicitly
+instead of being treated as a text input. Negative
 indexes and values that do not fit `usize` fail;
 otherwise Ice passes the positions to the native operation without an Ice-side
 upper-bound or text-length check. Composition steps emit the normal Iced
@@ -4618,7 +4626,9 @@ dispatch top_level_handler(argument, ...)
 ```
 
 A touch ID is numeric and remains active from `down` until `up` or `cancel`;
-multiple IDs permit multi-touch fixtures. `window resize` updates the retained
+multiple IDs permit multi-touch fixtures. `tap` allocates the lowest unused
+touch ID for its complete down/up gesture, so explicitly managed contacts may
+remain active at the same time. `window resize` updates the retained
 viewport before emitting the ordinary Iced resize event; `resize width height`
 is its concise equivalent. Move, rescale, focus, close-request, opened/closed,
 redraw, file, and system-theme steps likewise travel through the normal

@@ -2219,7 +2219,7 @@ where
             iced::advanced::widget::operation::focusable::focus::<()>(focus_id),
         ));
         self.settle(Some(source));
-        if !self.target(id, source).focused() {
+        if !self.require_target(id, false, source).focused() {
             self.invalid_action(
                 "focus",
                 "the target to gain focus",
@@ -3235,7 +3235,7 @@ where
     }
 
     fn require_focused_text_input(&mut self, action: &str, source: Location) -> widget::Id {
-        let (mut focused, text_inputs) = self.with_interface(|interface, renderer, _| {
+        let (focused, text_inputs) = self.with_interface(|interface, renderer, _| {
             let mut operation = FocusedIds::<P::Message>::new().find_all();
             interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
             let focused = match operation.finish() {
@@ -3250,16 +3250,34 @@ where
             };
             (focused, text_inputs)
         });
-        focused.retain(|id| text_inputs.iter().any(|text_input| text_input == id));
-        focused.sort_by_key(|id| readable_widget_id(id).is_none());
-        focused.into_iter().next().unwrap_or_else(|| {
+        let focused_id = match focused.as_slice() {
+            [id] => id,
+            [] => self.invalid_action(
+                action,
+                "exactly one focused text input with an id",
+                "no focused widget with an id".to_owned(),
+                source,
+            ),
+            ids => self.invalid_action(
+                action,
+                "exactly one focused text input with an id",
+                format!("{} widgets are focused", ids.len()),
+                source,
+            ),
+        };
+        let matches = text_inputs
+            .iter()
+            .filter(|text_input| *text_input == focused_id)
+            .count();
+        if matches != 1 {
             self.invalid_action(
                 action,
-                "a focused text input with an id",
-                "no focused widget exposes text-input selection operations".to_owned(),
+                "exactly one focused text input with an id",
+                format!("focused widget exposes {matches} text-input operation candidates"),
                 source,
-            )
-        })
+            );
+        }
+        focused_id.clone()
     }
 
     fn require_widget_capability(
@@ -3278,13 +3296,7 @@ where
                 _ => Vec::new(),
             }
         });
-        let mut unique = Vec::new();
-        for id in ids {
-            if !unique.iter().any(|candidate| candidate == &id) {
-                unique.push(id);
-            }
-        }
-        match unique.as_slice() {
+        match ids.as_slice() {
             [id] => id.clone(),
             [] => self.invalid_action(action, expected, format!("{id} lacks {capability}"), source),
             ids => self.invalid_action(
@@ -5046,6 +5058,31 @@ mod tests {
             .into()
     }
 
+    fn duplicate_scroll_view(_state: &State) -> Element<'_, Message> {
+        column![
+            scrollable(container(text("First")).height(200))
+                .id("Duplicate/scroll")
+                .height(50),
+            scrollable(container(text("Second")).height(200))
+                .id("Duplicate/scroll")
+                .height(50),
+        ]
+        .into()
+    }
+
+    fn accessible_input_view(state: &State) -> Element<'_, Message> {
+        crate::accessible(
+            text_input("", &state.input)
+                .id("Accessible/input")
+                .on_input(Message::Input),
+            StableId::new("Accessible/input"),
+            crate::Role::TextInput,
+        )
+        .logical_id("Accessible/input")
+        .value(state.input.clone())
+        .into()
+    }
+
     #[derive(Default)]
     struct EditorState {
         content: text_editor::Content,
@@ -5113,6 +5150,9 @@ mod tests {
             failure.contains("expected: a focusable target"),
             "{failure}"
         );
+        PROBE_REDRAWS.with(|redraws| redraws.set(0));
+        driver.focus("App/root/input", HERE);
+        PROBE_REDRAWS.with(|redraws| assert_eq!(redraws.get(), 0));
 
         let mut editor = Driver::new(
             iced::application::<EditorState, EditorMessage, iced::Theme, iced::Renderer>(
@@ -5137,10 +5177,23 @@ mod tests {
                 editor.perform_action(action, HERE);
             });
             assert!(
-                failure.contains("expected: a focused text input with an id"),
+                failure.contains("expected: exactly one focused text input with an id"),
                 "{failure}"
             );
         }
+
+        let mut input = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                accessible_input_view,
+            ),
+            Config::new("accessible_input_selection").viewport(320.0, 240.0),
+        );
+        input.focus("Accessible/input", HERE);
+        input.select_all(HERE);
+        input.cursor_front(HERE);
+        assert!(input.target("Accessible/input", HERE).focused());
     }
 
     #[test]
@@ -5157,6 +5210,19 @@ mod tests {
         assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
         driver.snap("Stable/scroll", 0.0, 1.0, HERE);
         assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
+
+        let mut duplicate = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                duplicate_scroll_view,
+            ),
+            Config::new("duplicate_scroll").viewport(320.0, 240.0),
+        );
+        let failure = panic_message(|| {
+            duplicate.scroll_by("Duplicate/scroll", 0.0, 24.0, HERE);
+        });
+        assert!(failure.contains("target lookup is ambiguous"), "{failure}");
     }
 
     #[test]
