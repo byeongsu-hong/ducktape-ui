@@ -107,6 +107,8 @@ impl editor::Editor for Editor {
         let mut font_system =
             text::font_system().write().expect("Write font system");
 
+        buffer.set_tab_width(font_system.raw(), 4);
+
         buffer.set_text(
             font_system.raw(),
             text,
@@ -191,6 +193,24 @@ impl editor::Editor for Editor {
             Some(cursor.clone());
 
         cursor
+    }
+
+    fn hit_test(&self, point: Point) -> Option<Position> {
+        let buffer = self.buffer();
+        buffer
+            .layout_runs()
+            .any(|run| {
+                0.0 <= point.x
+                    && point.x <= run.line_w
+                    && run.line_top <= point.y
+                    && point.y < run.line_top + run.line_height
+            })
+            .then(|| buffer.hit(point.x, point.y))
+            .flatten()
+            .map(|cursor| Position {
+                line: cursor.line,
+                column: cursor.index,
+            })
     }
 
     fn caret_height(&self) -> Pixels {

@@ -130,7 +130,11 @@ pub fn link_at_cursor(line: Option<String>, column: i64) -> String {
     let Ok(column) = usize::try_from(column) else {
         return String::new();
     };
-    Parser::new_ext(&line, Options::ENABLE_STRIKETHROUGH)
+    link_at(&line, column)
+}
+
+pub fn link_at(line: &str, column: usize) -> String {
+    Parser::new_ext(line, Options::ENABLE_STRIKETHROUGH)
         .into_offset_iter()
         .find_map(|(event, range)| match event {
             Event::Start(Tag::Link { dest_url, .. })

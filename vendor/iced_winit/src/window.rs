@@ -394,7 +394,7 @@ where
                 size: preedit
                     .text_size
                     .unwrap_or_else(|| renderer.default_size()),
-                line_height: text::LineHeight::default(),
+                line_height: text::LineHeight::Absolute(cursor.height.into()),
                 font: renderer.default_font(),
                 align_x: text::Alignment::Default,
                 align_y: alignment::Vertical::Top,
