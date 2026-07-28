@@ -38,10 +38,12 @@ Native live development is separately covered by the versioned
 runtime last-known-good loader, and `cargo ice dev` runner. Compatible default
 `col`, `row`, `text`, label `button`, and `if` plans can read primitive app/derived
 values and invoke existing primitive top-level handlers without replacing the
-process. Unsupported live view semantics and changes to generated behavior or
-Rust ABI deliberately use a successful-build-only warm restart. This does not
-change the 48/48 AOT render-node claim below: nodes outside the narrower live
-surface retain their normal native implementation through that fallback.
+process. Plan polling emits no update for unchanged payloads, and a dev-only
+watchdog reports update storms without changing application behavior.
+Unsupported live view semantics and changes to generated behavior or Rust ABI
+deliberately use a successful-build-only warm restart. This does not change the
+48/48 AOT render-node claim below: nodes outside the narrower live surface
+retain their normal native implementation through that fallback.
 
 Source graphs support both bare fragment imports and aliased module imports.
 Aliases preserve checked `::` identity for components, recipes, extern

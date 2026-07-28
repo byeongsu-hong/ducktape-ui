@@ -438,8 +438,13 @@ functions; generated Ice tests need no Rust wrapper, registration, or direct
 one native app, watches its complete imported Ice graph, and keeps the last
 valid screen running while edits are checked. Compatible view edits are
 published atomically into the existing process, so its window and generated
-app state survive. The current no-restart surface covers default `col`, `row`,
-`text`, label `button`, and `if` nodes; primitive `bool`, `i64`, `f64`, and `str`
+app state survive. The app receives a live-poll message only after the plan
+payload changes; an idle dev session does not continuously update or redraw.
+If more than 256 application updates arrive within one second, the dev runtime
+reports an update-storm warning pointing to handler cycles, repeated
+subscriptions, and overly short timers. The current no-restart surface covers
+default `col`, `row`, `text`, label `button`, and `if` nodes; primitive `bool`,
+`i64`, `f64`, and `str`
 state/derived expressions; and button routes into existing top-level handlers
 with primitive arguments. Changing generated behavior or a Rust boundary—or
 using a view feature outside that live surface—builds in the background and

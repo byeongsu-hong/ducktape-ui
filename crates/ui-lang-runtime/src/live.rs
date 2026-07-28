@@ -6,7 +6,7 @@ use iced::{Element, Subscription};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use ui_lang_live_protocol::{
     LiveBinaryOp, LiveExpression, LivePlan, LiveProgramContract, LiveReloadDecision,
     LiveRestartReason, LiveRoute, LiveStateChange, LiveUnaryOp, LiveView, evaluate_live_reload,
@@ -15,6 +15,70 @@ pub use ui_lang_live_protocol::{LiveEvent, LiveValue};
 
 pub const PLAN_PATH_ENV: &str = "ICE_LIVE_PLAN";
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const UPDATE_STORM_WINDOW: Duration = Duration::from_secs(1);
+const UPDATE_STORM_LIMIT: u32 = 256;
+const UPDATE_STORM_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Debug, Hash)]
+struct PlanSubscription {
+    path: PathBuf,
+    payload_fingerprint: Option<(usize, u64)>,
+}
+
+/// Detects update storms while an application is running under `cargo ice dev`.
+#[derive(Debug)]
+pub struct UpdateWatchdog {
+    enabled: bool,
+    window_started: Instant,
+    updates: u32,
+    last_warning: Option<Instant>,
+}
+
+impl UpdateWatchdog {
+    pub fn new() -> Self {
+        Self::with_enabled(std::env::var_os(PLAN_PATH_ENV).is_some())
+    }
+
+    fn with_enabled(enabled: bool) -> Self {
+        Self {
+            enabled,
+            window_started: Instant::now(),
+            updates: 0,
+            last_warning: None,
+        }
+    }
+
+    /// Records one application update and reports a sustained event storm.
+    pub fn observe(&mut self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let now = Instant::now();
+        if now.duration_since(self.window_started) >= UPDATE_STORM_WINDOW {
+            self.window_started = now;
+            self.updates = 0;
+        }
+        self.updates = self.updates.saturating_add(1);
+        if self.updates != UPDATE_STORM_LIMIT
+            || self
+                .last_warning
+                .is_some_and(|last| now.duration_since(last) < UPDATE_STORM_WARNING_INTERVAL)
+        {
+            return false;
+        }
+        self.last_warning = Some(now);
+        eprintln!(
+            "ice live warning: update storm detected (at least {UPDATE_STORM_LIMIT} updates in one second); check handler cycles, repeated subscriptions, and very short timers"
+        );
+        true
+    }
+}
+
+impl Default for UpdateWatchdog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LivePoll {
@@ -37,6 +101,7 @@ pub struct LiveRuntime {
     contract: Option<LiveProgramContract>,
     path: Option<PathBuf>,
     last_payload: Option<String>,
+    last_payload_fingerprint: Option<(usize, u64)>,
     plan: Option<LivePlan>,
 }
 
@@ -48,6 +113,7 @@ impl LiveRuntime {
                 contract: None,
                 path: None,
                 last_payload: None,
+                last_payload_fingerprint: None,
                 plan: None,
             };
         };
@@ -63,6 +129,7 @@ impl LiveRuntime {
             contract: Some(contract),
             path,
             last_payload: None,
+            last_payload_fingerprint: None,
             plan: None,
         }
     }
@@ -77,8 +144,14 @@ impl LiveRuntime {
 
     pub fn subscription(&self) -> Subscription<()> {
         #[cfg(not(target_arch = "wasm32"))]
-        if self.is_enabled() {
-            return Subscription::run(tick_stream);
+        if let Some(path) = &self.path {
+            return Subscription::run_with(
+                PlanSubscription {
+                    path: path.clone(),
+                    payload_fingerprint: self.last_payload_fingerprint,
+                },
+                plan_change_stream,
+            );
         }
         Subscription::none()
     }
@@ -102,6 +175,7 @@ impl LiveRuntime {
         if self.last_payload.as_deref() == Some(payload.as_str()) {
             return LivePoll::Unchanged;
         }
+        self.last_payload_fingerprint = Some(payload_fingerprint(payload.as_bytes()));
         self.last_payload = Some(payload.clone());
         let plan = match serde_json::from_str::<LivePlan>(&payload) {
             Ok(plan) => plan,
@@ -182,17 +256,42 @@ impl LiveRuntime {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn tick_stream() -> iced::futures::channel::mpsc::UnboundedReceiver<()> {
+fn plan_change_stream(
+    subscription: &PlanSubscription,
+) -> iced::futures::channel::mpsc::UnboundedReceiver<()> {
     let (sender, receiver) = iced::futures::channel::mpsc::unbounded();
+    let path = subscription.path.clone();
+    let mut previous = subscription.payload_fingerprint;
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(POLL_INTERVAL);
+            let next = fs::read(&path).ok().as_deref().map(payload_fingerprint);
+            if !replace_if_changed(&mut previous, next) {
+                continue;
+            }
             if sender.unbounded_send(()).is_err() {
                 break;
             }
         }
     });
     receiver
+}
+
+fn replace_if_changed(previous: &mut Option<(usize, u64)>, next: Option<(usize, u64)>) -> bool {
+    if *previous == next {
+        return false;
+    }
+    *previous = next;
+    true
+}
+
+fn payload_fingerprint(payload: &[u8]) -> (usize, u64) {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in payload {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (payload.len(), hash)
 }
 
 fn render_view<Message, Theme, Renderer, Event>(
@@ -560,6 +659,33 @@ mod tests {
         file.write(&serde_json::to_string(&plan(1, expected, "one")).unwrap());
         assert_eq!(runtime.poll(), LivePoll::Unchanged);
         assert_eq!(runtime.active_revision(), Some(2));
+    }
+
+    #[test]
+    fn update_watchdog_trips_only_at_the_dev_storm_threshold() {
+        let mut disabled = UpdateWatchdog::with_enabled(false);
+        for _ in 0..UPDATE_STORM_LIMIT {
+            assert!(!disabled.observe());
+        }
+
+        let mut enabled = UpdateWatchdog::with_enabled(true);
+        for _ in 1..UPDATE_STORM_LIMIT {
+            assert!(!enabled.observe());
+        }
+        assert!(enabled.observe());
+        assert!(!enabled.observe());
+    }
+
+    #[test]
+    fn live_poll_tick_is_emitted_only_when_the_plan_payload_changes() {
+        let one = Some(payload_fingerprint(b"one"));
+        let two = Some(payload_fingerprint(b"two"));
+        let mut previous = one;
+        assert!(!replace_if_changed(&mut previous, one));
+        assert!(replace_if_changed(&mut previous, two));
+        assert!(!replace_if_changed(&mut previous, two));
+        assert!(replace_if_changed(&mut previous, None));
+        assert!(!replace_if_changed(&mut previous, None));
     }
 
     #[test]

@@ -347,6 +347,11 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     .unwrap();
     writeln!(
         out,
+        "pub(crate) __ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog,"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
