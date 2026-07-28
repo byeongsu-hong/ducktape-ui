@@ -33,7 +33,9 @@ Rust regions map back to root and imported Ice syntax for `cargo ice` commands.
 The LSP `ice.lint` workspace command publishes
 the same mapping for error-level Clippy/rustc diagnostics at their `.ice`
 document URI and source range. Warning-level backend findings remain CLI-only;
-Ice semantic warnings continue to be published directly by the language checker.
+warnings continue to be published directly by the language checker. Consumer
+build scripts generate every Ice root below Cargo's package/profile/target-
+scoped `OUT_DIR`; the proc macro only includes those outputs.
 
 Native live development is separately covered by the versioned
 `ui-lang-live-protocol`, compiler lowering, generated state/event bridge,

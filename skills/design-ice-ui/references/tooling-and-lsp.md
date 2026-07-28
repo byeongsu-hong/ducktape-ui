@@ -267,7 +267,9 @@ Do not:
 - copy generated message/state internals into hand-written code;
 - use expansion instead of fixing the `.ice` source or extern signature.
 
-The macro already emits source dependency tracking and extern probes.
+The `ui-lang-build` build script emits source dependency tracking; generated
+Rust contains the extern probes, and the proc macro only includes that output
+from Cargo's `OUT_DIR`.
 
 ## Verification recipes
 

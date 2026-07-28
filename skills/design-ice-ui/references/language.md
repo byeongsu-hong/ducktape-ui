@@ -33,9 +33,10 @@ UTF-8 .ice source graph
   -> rustc
 ```
 
-`ui_lang::include_app!` runs this path during Rust compilation. Cargo tracks the
-root and every imported `.ice` fragment through generated `include_str!` calls.
-The generated application is ordinary Iced code; there is no runtime parser.
+`ui_lang_build::compile_dir` runs this path from `build.rs` and writes ordinary
+Rust below Cargo's `OUT_DIR`. `ui_lang::include_app!` includes one generated
+root during Rust compilation. The build helper tells Cargo to track the root
+and every imported `.ice` fragment. There is no runtime parser.
 
 Ice owns:
 
