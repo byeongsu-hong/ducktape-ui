@@ -184,7 +184,11 @@ pub(in crate::codegen) fn expr_code(
             ) || (binding.local && path.len() == 1)
                 || owned_projection;
             if matches!(mode, ValueMode::Owned) && !clone_unnecessary {
-                code.push_str(".clone()");
+                if ty == Type::Str {
+                    code.push_str(".to_owned()");
+                } else {
+                    code.push_str(".clone()");
+                }
             }
             code
         }

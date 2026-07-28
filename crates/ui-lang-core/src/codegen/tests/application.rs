@@ -683,7 +683,7 @@ fn lowers_native_debug_spans_and_timed_values() {
     let generated = compile(source, "debug_timing.ice").unwrap();
     for expected in [
         "::std::option::Option<::iced::debug::Span>",
-        "::iced::debug::time(self.label.clone())",
+        "::iced::debug::time(self.label.to_owned())",
         "__span.finish()",
         "(self.timer).is_some()",
         "::iced::debug::time_with(\"compute\".to_owned(), || (self.value + 1))",
@@ -1249,10 +1249,10 @@ view
     let generated = compile(source, "params.ice").unwrap();
 
     // A parameter is a Rust binding: the first owned use would MOVE it, so
-    // both reads clone. Without this the generated Rust fails borrowck at the
+    // both reads create owned values. Without this the generated Rust fails borrowck at the
     // `include_app!` line, where no span points back at the `.ice` source.
-    assert!(generated.contains("self.latch = value.clone();"));
-    assert!(generated.contains("self.echo = value.clone();"));
+    assert!(generated.contains("self.latch = value.to_owned();"));
+    assert!(generated.contains("self.echo = value.to_owned();"));
     // Copy parameters keep the bare read — cloning those is pure noise.
     assert!(generated.contains("self.count = times;"));
     assert!(generated.contains("self.cursor = times;"));

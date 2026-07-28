@@ -331,7 +331,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         };
         writeln!(
             out,
-            "#[derive({derives})]\npub(crate) enum {} {{",
+            "#[allow(dead_code)]\n#[derive({derives})]\npub(crate) enum {} {{",
             generated_named_rust(&item.name)
         )
         .unwrap();
@@ -352,7 +352,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
     {
         let ty = component_state_type(&component.name);
-        writeln!(out, "struct {ty} {{").unwrap();
+        writeln!(out, "#[allow(dead_code)]\npub(crate) struct {ty} {{").unwrap();
         for state in &component.states {
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
@@ -393,7 +393,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         writeln!(out, "}} }}\n}}").unwrap();
     }
 
-    writeln!(out, "pub struct {} {{", document.app).unwrap();
+    writeln!(out, "#[allow(dead_code)]\npub struct {} {{", document.app).unwrap();
     writeln!(
         out,
         "pub(crate) __ice_live: ::ui_lang_runtime::live::LiveRuntime,"
@@ -492,7 +492,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     )
     .unwrap();
 
-    writeln!(out, "#[derive(Clone)]\nenum {message} {{").unwrap();
+    writeln!(out, "#[derive(Clone)]\npub(crate) enum {message} {{").unwrap();
     writeln!(
         out,
         "__IceLiveTick,\n__IceLiveEvent(::ui_lang_runtime::live::LiveEvent),\n__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
@@ -683,7 +683,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
     writeln!(
         out,
-        "}}\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
+        "}}\n#[allow(dead_code)]\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
     )
     .unwrap();
 

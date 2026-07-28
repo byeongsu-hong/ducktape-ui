@@ -1,5 +1,17 @@
 use super::*;
 
+fn route_result_code(route: &Route, binding: &str, expression: String) -> String {
+    if route
+        .args
+        .iter()
+        .any(|arg| matches!(arg, RouteArg::Payload))
+    {
+        expression
+    } else {
+        format!("{{ let _ = &{binding}; {expression} }}")
+    }
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[Statement],
@@ -115,7 +127,11 @@ pub(in crate::codegen) fn generate_statements(
                 {
                     if function == "__ice_font_load" {
                         let bytes = expr_code(&args[0], env, document, ValueMode::Owned)?;
-                        let success_message = route_code(success, "value", env, document, message)?;
+                        let success_message = route_result_code(
+                            success,
+                            "value",
+                            route_code(success, "value", env, document, message)?,
+                        );
                         writeln!(
                             out,
                             "{}::iced::font::load({bytes}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => match error {{}} }}){}",
@@ -127,7 +143,11 @@ pub(in crate::codegen) fn generate_statements(
                     }
                     if function == "__ice_image_allocate" {
                         let handle = expr_code(&args[0], env, document, ValueMode::Owned)?;
-                        let success_message = route_code(success, "value", env, document, message)?;
+                        let success_message = route_result_code(
+                            success,
+                            "value",
+                            route_code(success, "value", env, document, message)?,
+                        );
                         let error_message = route_code(
                             error.as_ref().expect("checker requires image error route"),
                             "error",
@@ -135,6 +155,11 @@ pub(in crate::codegen) fn generate_statements(
                             document,
                             message,
                         )?;
+                        let error_message = route_result_code(
+                            error.as_ref().expect("checker requires image error route"),
+                            "error",
+                            error_message,
+                        );
                         writeln!(
                             out,
                             "{}::iced::widget::image::allocate({handle}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){}",
@@ -154,7 +179,11 @@ pub(in crate::codegen) fn generate_statements(
                         "__ice_clipboard_read_primary" => "::iced::clipboard::read_primary()",
                         _ => unreachable!(),
                     };
-                    let success_message = route_code(success, "value", env, document, message)?;
+                    let success_message = route_result_code(
+                        success,
+                        "value",
+                        route_code(success, "value", env, document, message)?,
+                    );
                     writeln!(
                         out,
                         "{}{task}.map(move |value| {success_message}){}",
@@ -174,9 +203,17 @@ pub(in crate::codegen) fn generate_statements(
                         Error::new("E130", span, format!("unknown extern fn `{function}`"))
                     })?;
                 let args = expr_list_code(args, env, document)?;
-                let success_message = route_code(success, "value", env, document, message)?;
+                let success_message = route_result_code(
+                    success,
+                    "value",
+                    route_code(success, "value", env, document, message)?,
+                );
                 if let (Some(error_route), Some(_)) = (error, &action.error) {
-                    let error_message = route_code(error_route, "error", env, document, message)?;
+                    let error_message = route_result_code(
+                        error_route,
+                        "error",
+                        route_code(error_route, "error", env, document, message)?,
+                    );
                     match kind {
                         EffectKind::Future => writeln!(out, "{task_prefix}::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
                         EffectKind::Task => writeln!(out, "{task_prefix}{}({args}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
@@ -219,10 +256,22 @@ pub(in crate::codegen) fn generate_statements(
                         Error::new("E130", span, format!("unknown extern sip `{function}`"))
                     })?;
                 let args = expr_list_code(args, env, document)?;
-                let progress_message = route_code(progress, "value", env, document, message)?;
-                let success_message = route_code(success, "value", env, document, message)?;
+                let progress_message = route_result_code(
+                    progress,
+                    "value",
+                    route_code(progress, "value", env, document, message)?,
+                );
+                let success_message = route_result_code(
+                    success,
+                    "value",
+                    route_code(success, "value", env, document, message)?,
+                );
                 if let (Some(error_route), Some(_)) = (error, &action.error) {
-                    let error_message = route_code(error_route, "error", env, document, message)?;
+                    let error_message = route_result_code(
+                        error_route,
+                        "error",
+                        route_code(error_route, "error", env, document, message)?,
+                    );
                     writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap();
                 } else {
                     writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |value| {success_message}){task_suffix}", action.rust_path).unwrap();
@@ -248,10 +297,18 @@ pub(in crate::codegen) fn generate_statements(
                     task
                 } else {
                     let success = success.as_ref().expect("checked flow done route");
-                    let success_message = route_code(success, "value", env, document, message)?;
+                    let success_message = route_result_code(
+                        success,
+                        "value",
+                        route_code(success, "value", env, document, message)?,
+                    );
                     if error_ty.is_some() {
                         let error = error.as_ref().expect("checked flow error route");
-                        let error_message = route_code(error, "error", env, document, message)?;
+                        let error_message = route_result_code(
+                            error,
+                            "error",
+                            route_code(error, "error", env, document, message)?,
+                        );
                         format!(
                             "({task}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
                         )

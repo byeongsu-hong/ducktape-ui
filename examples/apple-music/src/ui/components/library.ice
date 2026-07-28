@@ -178,25 +178,31 @@ component RecentCard(album:Album)
     col
       with
         w=152.0
-        h=200.0
-        gap=6.0
+        h=204.0
+        gap=0.0
       Cover #cover
         with
           source=album.cover
           size=152.0
           radius=12.0
-      text album.title #title
+      col #metadata
         with
-          size=13.0
-          line-h=1.15
-          wrap=none
-          @text-fg
-      text album.artist #artist
-        with
-          size=10.0
-          line-h=1.15
-          wrap=none
-          @text-muted
+          w=fill
+          h=52.0
+          p=8.0
+          gap=2.0
+        text album.title #title
+          with
+            size=13.0
+            line-h=1.15
+            wrap=none
+            @text-fg
+        text album.artist #artist
+          with
+            size=10.0
+            line-h=1.15
+            wrap=none
+            @text-muted
     active bg=transparent text=fg r=12.0
     hovered shadow=black/16 shadow-y=3.0 shadow-blur=9.0
     pressed bg=accent
@@ -247,24 +253,30 @@ component AlbumGrid(albums:[Album])
         col
           with
             w=fill
-            h=210.0
-            gap=7.0
+            h=214.0
+            gap=0.0
           image album.cover
             with
               w=fill
               h=160.0
               fit=cover
               r=12.0
-          text album.title
+          col #metadata
             with
-              size=13.0
-              wrap=none
-              @text-fg
-          text album.artist
-            with
-              size=10.0
-              wrap=none
-              @text-muted
+              w=fill
+              h=54.0
+              p=8.0
+              gap=2.0
+            text album.title #title
+              with
+                size=13.0
+                wrap=none
+                @text-fg
+            text album.artist #artist
+              with
+                size=10.0
+                wrap=none
+                @text-muted
         active bg=transparent text=fg r=12.0
         hovered shadow=black/16 shadow-y=3.0 shadow-blur=9.0
         pressed bg=accent
