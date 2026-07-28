@@ -2149,11 +2149,13 @@ mod tests {
         });
 
         assert_eq!(editor.caret_height(), Pixels(42.0));
+        assert_eq!(editor.caret_metrics().unwrap().size, Pixels(30.0));
         editor.move_to(Cursor {
             position: Position { line: 4, column: 0 },
             selection: None,
         });
         assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
+        assert!((editor.caret_metrics().unwrap().size.0 - 14.4).abs() < 0.01);
         let decorations = editor.decorations();
         assert!(decorations.iter().any(|decoration| {
             decoration.bounds.height == 1.0 && decoration.bounds.width > 0.0
@@ -2191,6 +2193,7 @@ mod tests {
         });
 
         assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
+        assert!((editor.caret_metrics().unwrap().size.0 - 14.4).abs() < 0.01);
         assert!(
             editor
                 .decorations()

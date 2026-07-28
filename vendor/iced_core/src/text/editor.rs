@@ -31,6 +31,11 @@ pub trait Editor: Sized + Default {
         Pixels(0.0)
     }
 
+    /// Returns the text metrics at the current caret position.
+    fn caret_metrics(&self) -> Option<CaretMetrics> {
+        None
+    }
+
     /// Returns the visible decorations produced by the highlighter.
     fn decorations(&self) -> Vec<Decoration> {
         Vec::new()
@@ -76,6 +81,15 @@ pub trait Editor: Sized + Default {
         highlighter: &mut H,
         format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
     );
+}
+
+/// The text metrics at an editor caret.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CaretMetrics {
+    /// The font size of text inserted at the caret.
+    pub size: Pixels,
+    /// The height of the visual line containing the caret.
+    pub line_height: Pixels,
 }
 
 /// A visible editor decoration.
