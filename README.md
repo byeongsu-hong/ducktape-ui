@@ -548,14 +548,16 @@ with no reachable reader or writer, immediate and effect-driven handler cycles
 that can refresh forever, repeated-stream feedback that can multiply work,
 unfiltered raw-event redraw feedback, position-based stateful component
 identity, and retained state under unbounded dynamic identities. `cargo ice`
-also reports `.ice` sources outside every root import graph. Component and
+also reports `.ice` sources outside every root import graph. Unused derived and
+handler bindings, constant no-ops and dead gates, unreachable statements, and
+duplicate subscriptions are diagnosed at their Ice source lines. Component and
 handler reachability is combined across every discovered app root, subscription,
 preset, implicit mount, and first-class test mount or dispatch, so shared
 libraries are warned only when no root uses the definition. The same warnings
 appear in the LSP. Generated Rust diagnostics from `cargo ice check` and
 `clippy` are mapped back to the responsible root or imported `.ice` syntax;
-`test` and `compat` run the same
-source-mapped check preflight before invoking Cargo's normal test runner. The
+`test` and `compat` run the same source-mapped check preflight before invoking
+Cargo's normal test runner. The
 generated Rust coordinate remains available as a note for backend debugging.
 The LSP also exposes a `Run Ice lint` source action backed by the `ice.lint`
 workspace command. It runs workspace Clippy and publishes generated Rust

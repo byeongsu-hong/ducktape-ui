@@ -5023,6 +5023,10 @@ Successful analysis may also emit stable semantic warnings:
 | `W008` | a stateful component is repeated with position-based identity, so inserts or reordering can transfer state between items |
 | `W009` | a retained stateful component is mounted under dynamic identities whose stored state is never reclaimed |
 | `W010` | a workspace `.ice` file is outside every app or daemon import graph |
+| `W011` | a reachable derived value, handler parameter, or handler local is never read |
+| `W012` | a statement or view gate is a constant no-op, redundant gate, or dead subtree |
+| `W013` | a statement follows an unconditional `return if true` and can never execute |
+| `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -5054,6 +5058,15 @@ templates, tables, and unkeyed repetitions when the component uses the default
 tree. `cargo ice` emits CLI-only `W010` after unioning the canonical dependency
 graphs of every discovered app and daemon root. Imported fragments and roots are
 not orphans; standalone files that no root imports are.
+
+`W011` follows transitive derived-value dependencies and ignores unreachable
+handlers. Prefixing an intentionally ignored handler parameter or local with
+`_` suppresses it. `W012` reports self-assignment, literal `return if false`,
+literal `if true`/`if false` gates, and repetitions over a literal empty list.
+`W013` reports the first unreachable statement after a constant-true return.
+`W014` compares the full subscription identity, context, filter, condition, event status,
+payload arguments, and route; it therefore warns only when an external event
+would be delivered twice with identical semantics.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing

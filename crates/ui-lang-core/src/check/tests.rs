@@ -392,6 +392,93 @@ view
 }
 
 #[test]
+fn warns_for_unused_bindings_noops_dead_statements_and_duplicate_subscriptions() {
+    let document = analyze(&warning_app(
+        r#"state
+  total = 0
+derived
+  base = total + 1
+  shown = base + 1
+  abandoned = total + 2
+on act(value, ignored)
+  let next = total + 1
+  let discarded = total + 2
+  total = next
+  total = total
+  return if false
+  return if true
+  total = 1
+on tick(now)
+on intentionally_ignored(_event)
+component Worker()
+  on press(detail)
+  button "Press" -> press 1
+component Hidden()
+  on press(unused_unreachable)
+  button "Hidden" -> press 1
+subscribe
+  every 1s -> tick _
+  every 1s -> tick _
+view
+  col
+    text shown
+    button "Act" -> act 1 2
+    button "Ignore" -> intentionally_ignored 1
+    Worker
+    if false
+      text "Dead"
+"#,
+    ))
+    .unwrap();
+    let warnings = document.warnings();
+    for name in [
+        "abandoned",
+        "value",
+        "ignored",
+        "discarded",
+        "now",
+        "detail",
+    ] {
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.code == "W011" && warning.message.contains(&format!("`{name}`"))
+            }),
+            "missing unused warning for {name}: {warnings:?}"
+        );
+    }
+    assert!(warnings.iter().all(|warning| {
+        warning.code != "W011"
+            || !["base", "shown", "next", "_event", "unused_unreachable"]
+                .iter()
+                .any(|name| warning.message.contains(&format!("`{name}`")))
+    }));
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W012")
+            .count(),
+        3,
+        "{warnings:?}"
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W013")
+            .count(),
+        1,
+        "{warnings:?}"
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W014")
+            .count(),
+        1,
+        "{warnings:?}"
+    );
+}
+
+#[test]
 fn warns_for_state_without_readers_or_writers() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n    button \"Mutate\" -> mutate\n",
