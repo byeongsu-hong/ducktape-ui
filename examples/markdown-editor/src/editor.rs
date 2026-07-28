@@ -1,8 +1,9 @@
 use iced::advanced::text::highlighter::{Format, Highlighter, PlainText};
+use iced::advanced::text::{Highlight as TextHighlight, LineHeight};
 use iced::font::{Family, Style as FontStyle, Weight};
 use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position, TextEditor};
-use iced::{Color, Element, Font, Theme};
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use iced::{Border, Color, Element, Font, Padding, Pixels, Theme};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -11,6 +12,13 @@ use std::time::{Duration, Instant};
 const HISTORY_LIMIT: usize = 1_000;
 const HISTORY_BYTES: usize = 16 * 1024 * 1024;
 const COALESCE_WINDOW: Duration = Duration::from_millis(750);
+const BODY_SIZE: f32 = 16.0;
+const BODY_LINE_HEIGHT: f32 = 1.6;
+const HEADING_SCALE: [f32; 6] = [1.875, 1.5, 1.375, 1.25, 1.125, 1.0];
+const HEADING_LINE_HEIGHT: f32 = 1.4;
+const CODE_BLOCK_SCALE: f32 = 0.9;
+const INLINE_CODE_SCALE: f32 = 0.8;
+const CODE_BLOCK_PADDING: f32 = BODY_SIZE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Caret {
@@ -44,10 +52,13 @@ struct Fence {
 pub enum MarkdownHighlight {
     HiddenMarker,
     Marker,
-    Heading,
+    HiddenFence,
+    Fence,
+    Heading(u8),
     Strong,
     Emphasis,
-    Code,
+    InlineCode,
+    CodeBlock,
     Link,
     Quote,
     ListMarker,
@@ -60,6 +71,12 @@ pub fn markdown_highlight<'a, Message: 'a>(
     column: i64,
 ) -> Element<'a, Message> {
     editor
+        .padding(Padding {
+            top: BODY_SIZE,
+            right: CODE_BLOCK_PADDING,
+            bottom: 0.0,
+            left: CODE_BLOCK_PADDING,
+        })
         .highlight_with::<MarkdownHighlighter>(Caret::new(line, column), markdown_format)
         .into()
 }
@@ -87,42 +104,128 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         ..palette.text
     };
 
-    match highlight {
+    let code_background = TextHighlight {
+        background: Color {
+            a: 0.03,
+            ..palette.text
+        }
+        .into(),
+        border: Border {
+            color: Color {
+                a: 0.1,
+                ..palette.text
+            },
+            width: 1.0,
+            radius: 3.0.into(),
+        },
+    };
+    let inline_code_background = TextHighlight {
+        background: Color {
+            a: 0.03,
+            ..palette.text
+        }
+        .into(),
+        border: Border::default().rounded(3.0),
+    };
+
+    match *highlight {
         MarkdownHighlight::HiddenMarker => Format {
             color: Some(Color::TRANSPARENT),
             font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            size: Some(Pixels(0.01)),
+            ..Format::default()
         },
         MarkdownHighlight::Marker => Format {
             color: Some(subdued),
             font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            ..Format::default()
         },
-        MarkdownHighlight::Heading => Format {
+        MarkdownHighlight::HiddenFence => Format {
+            color: Some(Color::TRANSPARENT),
+            font: Some(geist_mono()),
+            size: Some(Pixels(0.01)),
+            line_height: Some(LineHeight::Absolute(Pixels(BODY_SIZE))),
+            line_highlight: Some(code_background),
+            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            ..Format::default()
+        },
+        MarkdownHighlight::Fence => Format {
+            color: Some(subdued),
+            font: Some(geist_mono()),
+            size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
+            line_height: Some(LineHeight::Absolute(Pixels(
+                BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
+            ))),
+            line_highlight: Some(code_background),
+            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            ..Format::default()
+        },
+        MarkdownHighlight::Heading(level) => Format {
             color: Some(palette.text),
             font: Some(geist(Weight::Bold, FontStyle::Normal)),
+            size: Some(Pixels(BODY_SIZE * HEADING_SCALE[level as usize - 1])),
+            line_height: Some(LineHeight::Absolute(Pixels(
+                BODY_SIZE * HEADING_SCALE[level as usize - 1] * HEADING_LINE_HEIGHT,
+            ))),
+            ..Format::default()
         },
         MarkdownHighlight::Strong => Format {
             color: Some(palette.text),
             font: Some(geist(Weight::Bold, FontStyle::Normal)),
+            ..Format::default()
         },
         MarkdownHighlight::Emphasis => Format {
             color: Some(palette.text),
             font: Some(geist(Weight::Normal, FontStyle::Italic)),
+            ..Format::default()
         },
         MarkdownHighlight::Quote => Format {
-            color: Some(palette.primary),
-            font: Some(geist(Weight::Normal, FontStyle::Italic)),
-        },
-        MarkdownHighlight::Code => Format {
-            color: Some(palette.primary),
-            font: Some(geist_mono()),
-        },
-        MarkdownHighlight::Link | MarkdownHighlight::ListMarker => Format {
-            color: Some(palette.primary),
-            font: Some(geist(Weight::Semibold, FontStyle::Normal)),
-        },
-        MarkdownHighlight::Strikethrough => Format {
             color: Some(subdued),
             font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            ..Format::default()
+        },
+        MarkdownHighlight::InlineCode => Format {
+            color: Some(palette.text),
+            font: Some(geist_mono()),
+            size: Some(Pixels(BODY_SIZE * INLINE_CODE_SCALE)),
+            line_height: Some(LineHeight::Absolute(Pixels(
+                BODY_SIZE * INLINE_CODE_SCALE * BODY_LINE_HEIGHT,
+            ))),
+            highlight: Some(inline_code_background),
+            padding: Padding {
+                top: BODY_SIZE * INLINE_CODE_SCALE * 0.2,
+                right: BODY_SIZE * INLINE_CODE_SCALE * 0.4,
+                bottom: BODY_SIZE * INLINE_CODE_SCALE * 0.2,
+                left: BODY_SIZE * INLINE_CODE_SCALE * 0.4,
+            },
+            ..Format::default()
+        },
+        MarkdownHighlight::CodeBlock => Format {
+            color: Some(palette.text),
+            font: Some(geist_mono()),
+            size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
+            line_height: Some(LineHeight::Absolute(Pixels(
+                BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
+            ))),
+            line_highlight: Some(code_background),
+            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            ..Format::default()
+        },
+        MarkdownHighlight::Link => Format {
+            color: Some(palette.primary),
+            font: Some(geist(Weight::Semibold, FontStyle::Normal)),
+            ..Format::default()
+        },
+        MarkdownHighlight::ListMarker => Format {
+            color: Some(palette.text),
+            font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            ..Format::default()
+        },
+        MarkdownHighlight::Strikethrough => Format {
+            color: Some(palette.text),
+            font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            strikethrough: Some(palette.text),
+            ..Format::default()
         },
     }
 }
@@ -198,12 +301,12 @@ fn highlight_line(
                 0..line.len(),
                 if closes {
                     if caret.is_some() {
-                        MarkdownHighlight::Marker
+                        MarkdownHighlight::Fence
                     } else {
-                        MarkdownHighlight::HiddenMarker
+                        MarkdownHighlight::HiddenFence
                     }
                 } else {
-                    MarkdownHighlight::Code
+                    MarkdownHighlight::CodeBlock
                 },
             )],
             if closes { None } else { Some(fence) },
@@ -215,9 +318,9 @@ fn highlight_line(
             vec![(
                 leading..line.len(),
                 if caret.is_some() {
-                    MarkdownHighlight::Marker
+                    MarkdownHighlight::Fence
                 } else {
-                    MarkdownHighlight::HiddenMarker
+                    MarkdownHighlight::HiddenFence
                 },
             )],
             Some(fence),
@@ -280,7 +383,7 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
                 }
                 push_content(
                     content,
-                    Some(MarkdownHighlight::Code),
+                    Some(MarkdownHighlight::InlineCode),
                     &mut covered,
                     &mut highlights,
                 );
@@ -292,14 +395,14 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
                 }
                 push_content(
                     content,
-                    Some(MarkdownHighlight::Code),
+                    Some(MarkdownHighlight::InlineCode),
                     &mut covered,
                     &mut highlights,
                 );
             }
             Event::Html(_) | Event::InlineHtml(_) => push_content(
                 range,
-                Some(MarkdownHighlight::Code),
+                Some(MarkdownHighlight::InlineCode),
                 &mut covered,
                 &mut highlights,
             ),
@@ -382,7 +485,14 @@ fn push_marker(
 
 fn tag_style(tag: &Tag<'_>) -> Option<MarkdownHighlight> {
     match tag {
-        Tag::Heading { .. } => Some(MarkdownHighlight::Heading),
+        Tag::Heading { level, .. } => Some(MarkdownHighlight::Heading(match level {
+            HeadingLevel::H1 => 1,
+            HeadingLevel::H2 => 2,
+            HeadingLevel::H3 => 3,
+            HeadingLevel::H4 => 4,
+            HeadingLevel::H5 => 5,
+            HeadingLevel::H6 => 6,
+        })),
         Tag::BlockQuote(_) => Some(MarkdownHighlight::Quote),
         Tag::Strong => Some(MarkdownHighlight::Strong),
         Tag::Emphasis => Some(MarkdownHighlight::Emphasis),
@@ -1061,7 +1171,124 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(highlighter.current_line(), 3);
-        assert_eq!(changed, vec![(0..14, MarkdownHighlight::Code)]);
+        assert_eq!(changed, vec![(0..14, MarkdownHighlight::CodeBlock)]);
+    }
+
+    #[test]
+    fn gives_headings_distinct_metrics_and_code_blocks_a_surface() {
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let headings = (1..=6)
+            .map(|level| {
+                let line = format!("{} heading", "#".repeat(level));
+                highlighter
+                    .highlight_line(&line)
+                    .find_map(|(_, style)| match style {
+                        MarkdownHighlight::Heading(level) => {
+                            super::markdown_format(&style, &iced::Theme::Light)
+                                .size
+                                .map(|size| (level, size.0))
+                        }
+                        _ => None,
+                    })
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            headings,
+            [
+                (1, 30.0),
+                (2, 24.0),
+                (3, 22.0),
+                (4, 20.0),
+                (5, 18.0),
+                (6, 16.0)
+            ]
+        );
+        let code = super::markdown_format(&MarkdownHighlight::CodeBlock, &iced::Theme::Light);
+        assert!((code.size.unwrap().0 - 14.4).abs() < 0.01);
+        let iced::advanced::text::LineHeight::Absolute(code_line_height) =
+            code.line_height.unwrap()
+        else {
+            panic!("code line height must be absolute");
+        };
+        assert!((code_line_height.0 - 23.04).abs() < 0.01);
+        assert_eq!(code.line_highlight.unwrap().border.width, 1.0);
+
+        let inline = super::markdown_format(&MarkdownHighlight::InlineCode, &iced::Theme::Light);
+        assert!((inline.size.unwrap().0 - 12.8).abs() < 0.01);
+        assert!((inline.padding.top - 2.56).abs() < 0.01);
+        assert!((inline.padding.left - 5.12).abs() < 0.01);
+    }
+
+    #[test]
+    fn platform_word_backspace_matches_the_standard_editor_keymap() {
+        use iced::keyboard::key::{Code, Named, Physical};
+        use iced::keyboard::{Key, Modifiers};
+        use iced::widget::text_editor::{Binding, KeyPress, Motion, Status};
+
+        let key = Key::Named(Named::Backspace);
+        let word_modifier = if cfg!(target_os = "macos") {
+            Modifiers::ALT
+        } else {
+            Modifiers::CTRL
+        };
+        let binding = Binding::<()>::from_key_press(KeyPress {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(Code::Backspace),
+            modifiers: word_modifier,
+            text: None,
+            status: Status::Focused { is_hovered: true },
+        });
+
+        assert_eq!(
+            binding,
+            Some(Binding::Sequence(vec![
+                Binding::Select(Motion::WordLeft),
+                Binding::Backspace,
+            ]))
+        );
+    }
+
+    #[test]
+    fn mixed_markdown_metrics_drive_native_caret_geometry() {
+        use iced::advanced::text::editor::Editor as _;
+        use iced::advanced::text::{LineHeight, Wrapping};
+        use iced::widget::text_editor::{Cursor, Position};
+        use iced::{Font, Pixels, Size};
+
+        let mut editor = iced::advanced::graphics::text::Editor::with_text(
+            "# Heading\n~~old~~\n\n```\ncode\n```",
+        );
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        editor.update(
+            Size::new(300.0, 200.0),
+            Font::default(),
+            Pixels(16.0),
+            LineHeight::Absolute(Pixels(24.0)),
+            Wrapping::None,
+            &mut highlighter,
+        );
+        editor.highlight(Font::default(), &mut highlighter, |highlight| {
+            super::markdown_format(highlight, &iced::Theme::Light)
+        });
+
+        assert_eq!(editor.caret_height(), Pixels(42.0));
+        editor.move_to(Cursor {
+            position: Position { line: 4, column: 0 },
+            selection: None,
+        });
+        assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
+        let decorations = editor.decorations();
+        assert!(decorations.iter().any(|decoration| {
+            decoration.bounds.height == 1.0 && decoration.bounds.width > 0.0
+        }));
+        assert!(
+            decorations
+                .iter()
+                .any(|decoration| (decoration.bounds.height - 55.04).abs() < 0.01)
+        );
     }
 
     #[test]

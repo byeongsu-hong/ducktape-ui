@@ -2097,8 +2097,6 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91ab1937d699403e7e69252ae743a902bcee9f4ab2052cc4c9a46fcf34729d85"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -2142,8 +2140,6 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234ca1c2cec4155055f68fa5fad1b5242c496ac8238d80a259bca382fb44a102"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -2164,8 +2160,6 @@ dependencies = [
 [[package]]
 name = "iced_highlighter"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb24e1610502779b4e307c6f95da616ec7e883b67a18108cb0a036b169e50359"
 dependencies = [
  "iced_core",
  "two-face",
@@ -2276,8 +2270,6 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1596afa0d3109c2618e8bc12bae6c11d3064df8f95c42dfce570397dbe957ab"
 dependencies = [
  "iced_highlighter",
  "iced_renderer",

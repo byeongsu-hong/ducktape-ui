@@ -308,9 +308,10 @@ shows the Ice shell without downloading Chromium; follow
 CEF-enabled bundle.
 
 `markdown-editor-example` is a full-window native Markdown editor with inline
-styling, caret-local syntax markers, bundled Geist fonts, file open/save,
-bounded undo/redo, find, formatting shortcuts, dirty-close protection, and
-links that open in the default browser. See its
+styling, scaled headings, surfaced code blocks, caret-local syntax markers,
+platform-standard group and line deletion, bundled Geist fonts, file open/save,
+bounded undo/redo, find, formatting shortcuts, dirty-close protection, and links
+that open in the default browser. See its
 [design notes](examples/markdown-editor/DESIGN.md) for the project layout and
 native editing path.
 

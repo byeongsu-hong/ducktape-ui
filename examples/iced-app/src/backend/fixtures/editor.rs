@@ -35,6 +35,7 @@ pub fn editor_highlight<'a, Message: 'a>(
             iced::advanced::text::highlighter::Format {
                 color: Some(theme.palette().primary),
                 font: Some(iced::Font::MONOSPACE),
+                ..Default::default()
             }
         })
         .into()

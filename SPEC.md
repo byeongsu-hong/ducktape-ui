@@ -1879,7 +1879,9 @@ native `Binding<EditorCommand>`; built-in edit bindings stay native while
 `Binding::Custom` is mapped through the checked route. `editor-highlighter`
 receives the fully configured plain-text `TextEditor` and returns a value
 convertible to the same default `Element`, so Rust can call `highlight_with`
-with any `Highlighter`, settings, highlight type, and format function.
+with any `Highlighter`, settings, highlight type, and format function. Editor
+formats can vary font, size, line height, span background, and full visual-line
+background without replacing the native editing buffer.
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
 inside a component may bind only a prop declared with `bind`. Every call passes
@@ -2149,7 +2151,8 @@ returns `Option<Binding<Output>>`; `Output` is the custom route payload.
 returns unit.
 `editor-highlighter` receives a fully configured plain `TextEditor` before its
 declared arguments and returns any value convertible to the same default
-`Element`. `editor-style` receives Theme and native editor Status implicitly.
+`Element`; its formats support mixed metrics and span or visual-line
+backgrounds. `editor-style` receives Theme and native editor Status implicitly.
 
 `text-style` receives the current Theme implicitly and returns native
 `text::Style`. Both `text ... style=summary_text(args)` and
