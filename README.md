@@ -114,7 +114,7 @@ palette dark for ProductTheme
   surface #20201e
 
 state
-  active_palette = "light"
+  active_palette:palette[ProductTheme] = ProductTheme.light
 ```
 
 Components may keep instance-scoped UI state and local handlers. A handler may
@@ -149,8 +149,8 @@ component ConfirmDialog(title:str)
   col
     text title
     row
-      button "Cancel" -> emit cancel
-      button "Confirm" -> emit confirm
+      button "Cancel" -> emit(cancel)
+      button "Confirm" -> emit(confirm)
 
 ConfirmDialog title="Delete page?"
   events
@@ -161,6 +161,15 @@ ConfirmDialog title="Delete page?"
 Events may carry ordered typed payloads. The existing
 `component Toggle(...) -> bool` plus call-site `-> changed _` form is the
 intentional shorthand for one default event.
+
+An enclosing component can forward an identically named event with the same
+payload signature without restating an identity route:
+
+```ice
+PageItem page="roadmap"
+  forward
+    navigate
+```
 
 ```ice
 component Counter()
@@ -421,7 +430,9 @@ is derived from the same construct table.
 `cargo ice lsp` is a stdio server with full-document synchronization, UTF-16
 diagnostics, whole-document formatting, and cursor-aware completion for
 declarations, handlers, views, typed match arms, widget statuses, component
-contracts, theme contracts, and tests.
+contracts, theme contracts, and tests. Its structural cursor context comes from
+the error-tolerant core editor model shared with the language frontends rather
+than a second indentation parser in the server.
 Component hover/signature help exposes read/bind/default props, output, named
 events, and required/optional slots; recipe hover shows base-first expansion.
 Workspace-edit code actions repair component bindings and event routes, create
@@ -507,8 +518,8 @@ next to their parser, checker, or code generator module.
 
 ## Status
 
-Ice 2.0 is an executable language revision, not an attempt to replace iced.
-Its stable authoring Core is app/state/derived/component/handler/view structure,
+Ice 2.0 Preview is an executable language candidate, not an attempt to replace iced.
+Its implemented authoring Core is app/state/derived/component/handler/view structure,
 component-local state, `match`, common layout and widgets, checked event
 routing, typed Rust effects, and first-class headless tests over generated
 programs and mounted components. The extended native surface remains available,
@@ -517,7 +528,7 @@ while typed
 native behavior without growing Core merely for API parity.
 
 Language revisions and Cargo package versions are intentionally separate. The
-specification is revision 2.0; the workspace packages currently use pre-1.0
+specification is the 2.0 Preview candidate; the workspace packages currently use pre-1.0
 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.

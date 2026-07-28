@@ -15,7 +15,11 @@ on submit
 view
   col gap=12.0 p=16.0
     text "Accessible form"
-    input "Name" #name label="Full name" description="Name used on your profile" hint="Ada" <-> name
+    input "Name" #name <-> name
+      with
+        label="Full name"
+        description="Name used on your profile"
+        hint="Ada"
     input "Password" #password <-> secret
       with
         label="Account password"

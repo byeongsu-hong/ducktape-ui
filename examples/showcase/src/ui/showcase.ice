@@ -313,8 +313,16 @@ view
       align-x=center
       align-y=center
     content
-      box #app w=fill h=fill bg=bg
-        scroll #catalog-scroll dir=vertical w=fill h=fill
+      box #app
+        with
+          w=fill
+          h=fill
+          bg=bg
+        scroll #catalog-scroll
+          with
+            dir=vertical
+            w=fill
+            h=fill
           col #page @demo::page
             row w=fill align=center
               demo::PageHeader title="ducktape-ui" description="Default iced components, composed and checked by Ice."
@@ -323,7 +331,11 @@ view
 
             demo::Alert title="Ice is the source of truth" description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
-            grid #catalog-grid gap=20.0 min-cell=500.0 @w-full
+            grid #catalog-grid
+              with
+                gap=20.0
+                min-cell=500.0
+                @w-full
               demo::Panel #buttons title="Buttons" description="Clear defaults with native focus and disabled behavior."
                 col w=fill gap=14.0
                   row gap=8.0 wrap wrap-gap=8.0
@@ -335,7 +347,11 @@ view
                     button "Disabled" disabled=true @demo::secondary_action -> clicked
                   row gap=8.0 align=center
                     text "Activated" size=12.0 @text-muted
-                    text clicks size=13.0 @font-bold text-primary
+                    text clicks
+                      with
+                        size=13.0
+                        @font-bold
+                        @text-primary
                     demo::Badge.Secondary label="events"
 
               demo::Panel #badges title="Badges & keyboard" description="Compact status and shortcut primitives."
@@ -386,11 +402,20 @@ view
                     extern switch("showcase-notifications", notifications, false) -> notifications_changed _
                     text "Product notifications" size=13.0 @text-fg
                   extern radio_group(density) -> density_changed _
-                  slider volume min=0.0 max=100.0 step=1.0 w=fill -> volume_changed _
+                  slider volume -> volume_changed _
+                    with
+                      min=0.0
+                      max=100.0
+                      step=1.0
+                      w=fill
                   extern slider(native_range) -> native_range_changed _
                   row gap=8.0 align=center
                     box w=fill
-                      progress volume length=fill girth=5.0 style=progress_success_style()
+                      progress volume
+                        with
+                          length=fill
+                          girth=5.0
+                          style=progress_success_style()
                     text volume size=12.0 @text-muted
 
               demo::Panel title="Composition" description="Slots keep caller state and handlers in their original scope."
@@ -416,7 +441,11 @@ view
                       demo::Surface
                         demo::Message author="ducktape-ui" copy="Everything visible here is composed from Ice declarations." initials="UI" outgoing=false
                     demo::Card.Footer
-                      row w=fill gap=8.0 align=center
+                      row
+                        with
+                          w=fill
+                          gap=8.0
+                          align=center
                         demo::Marker label="stable" active=true
                         demo::Marker label="native" active=false
                         space w=fill h=1.0
@@ -438,7 +467,11 @@ view
                 col w=fill gap=14.0
                   demo::CollapsibleDemo #collapsible
                   demo::Separator
-                  row w=fill gap=16.0 align=center
+                  row
+                    with
+                      w=fill
+                      gap=16.0
+                      align=center
                     demo::ToggleDemo #toggle
                     space w=fill h=1.0
                     demo::ToggleGroupDemo #segments
@@ -505,7 +538,11 @@ view
                         demo::Avatar initials="I"
                       demo::Item title="Dialog" description="Overlay composition" meta="UI"
                         demo::Avatar initials="D"
-                  row w=fill gap=8.0 align=center
+                  row
+                    with
+                      w=fill
+                      gap=8.0
+                      align=center
                     input "Filter components" <-> catalog_query
                       with
                         hint="Filter components"
@@ -519,15 +556,27 @@ view
                       sep-y=1.0
                     col w=fill align-x=left align-y=center
                       header
-                        text "Component" size=12.0 @font-bold text-fg
+                        text "Component"
+                          with
+                            size=12.0
+                            @font-bold
+                            @text-fg
                       cell
                         text item size=12.0 @text-fg
                     col w=100.0 align-x=center align-y=center
                       header
-                        text "Source" size=12.0 @font-bold text-fg
+                        text "Source"
+                          with
+                            size=12.0
+                            @font-bold
+                            @text-fg
                       cell
                         text "Ice" size=12.0 @text-primary
-                  row w=fill gap=8.0 align=center
+                  row
+                    with
+                      w=fill
+                      gap=8.0
+                      align=center
                     button "Previous" -> catalog_previous
                       with
                         disabled=catalog_at_start
@@ -542,7 +591,11 @@ view
                 col w=fill gap=14.0
                   demo::Field label="Verification code" description="Paste and keyboard editing stay inside one native focus target."
                     extern input_otp("showcase-otp", otp, false, false) -> otp_changed _
-                  row w=fill gap=10.0 align=center
+                  row
+                    with
+                      w=fill
+                      gap=10.0
+                      align=center
                     extern spinner(clicks, false)
                     text "Spinner frame follows the Ice click counter." size=12.0 @text-muted
                   extern date_picker(date_picker) -> date_picker_changed _
@@ -559,19 +612,35 @@ view
               demo::Panel title="Navigation" description="Sidebar collapse and active route remain controlled by Ice."
                 col w=fill gap=16.0
                   extern navigation_menu(navigation_menu) -> navigation_menu_changed _
-                  box w=fill h=240.0 clip=true
+                  box
+                    with
+                      w=fill
+                      h=240.0
+                      clip=true
                     extern sidebar(sidebar) -> sidebar_changed _
 
               demo::Panel title="Notifications" description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
-                box w=fill h=220.0 clip=true
+                box
+                  with
+                    w=fill
+                    h=220.0
+                    clip=true
                   extern sonner(sonner) -> sonner_changed _
 
               demo::Panel title="Messages" description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
-                box w=fill h=220.0 clip=true
+                box
+                  with
+                    w=fill
+                    h=220.0
+                    clip=true
                   extern message_scroller(message_scroller) -> message_scroller_changed _
 
               demo::Panel title="Edge panels" description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
-                box w=fill h=160.0 clip=true
+                box
+                  with
+                    w=fill
+                    h=160.0
+                    clip=true
                   extern drawer(drawer) -> drawer_changed _
 
               demo::Panel title="Loading" description="Static placeholders remain reduced-motion safe."
@@ -587,7 +656,11 @@ view
                 box w=fill
                   demo::EmptyState title="No components found" description="Try a different filter or create the first component."
 
-            row w=fill gap=12.0 align=center
+            row
+              with
+                w=fill
+                gap=12.0
+                align=center
               button "Open dialog" @demo::primary_action -> open_dialog
               if !toast_visible
                 button "Show toast" @demo::secondary_action -> show_toast
@@ -599,7 +672,11 @@ view
       demo::Dialog
         demo::Dialog.Header
           col gap=4.0
-            text "Default dialog" size=20.0 @font-bold text-fg
+            text "Default dialog"
+              with
+                size=20.0
+                @font-bold
+                @text-fg
             text "The overlay, dismissal route, and focusable controls are declared in Ice."
               with
                 size=13.0
@@ -607,7 +684,11 @@ view
         demo::Dialog.Body
           demo::Alert title="No Rust view code" description="The proc macro emits ordinary iced code at compile time."
         demo::Dialog.Actions
-          row w=fill gap=8.0 align=end
+          row
+            with
+              w=fill
+              gap=8.0
+              align=end
             space w=fill h=1.0
             button "Cancel" @demo::secondary_action -> close_dialog
             button "Continue" @demo::primary_action -> close_dialog

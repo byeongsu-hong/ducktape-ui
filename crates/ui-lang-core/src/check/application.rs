@@ -42,23 +42,15 @@ pub(in crate::check) fn check_app_settings(
         }
     }
     if let Some(setting) = &document.settings.palette {
+        let contract = document
+            .theme_contract
+            .as_ref()
+            .expect("theme contract is checked before app settings");
         require_type(
             &expr_type(&setting.value, &callback_states, document, &setting.span)?,
-            &Type::Str,
+            &Type::Palette(contract.name.clone()),
             &setting.span,
         )?;
-        if let Expr::Str(value) = &setting.value
-            && !document
-                .palettes
-                .iter()
-                .any(|palette| palette.name == *value)
-        {
-            return Err(Error::new(
-                "E015",
-                &setting.span,
-                format!("unknown palette `{value}`"),
-            ));
-        }
     }
     if let Some(setting) = &document.settings.scale_factor {
         require_type(

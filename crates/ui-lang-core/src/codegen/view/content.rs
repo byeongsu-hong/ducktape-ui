@@ -142,17 +142,27 @@ pub(in crate::codegen) fn render_content(
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
                 let payload_refs = payloads.iter().map(String::as_str).collect::<Vec<_>>();
+                let code = if let Some(route) = &supplied.route {
+                    ordered_route_callback_code(
+                        route,
+                        &payloads.join(", "),
+                        &payload_refs,
+                        env,
+                        document,
+                        message,
+                    )?
+                } else {
+                    let (outer, _) = component_context(env)
+                        .expect("checker requires forward inside a component");
+                    component_event(env, outer, &event.name)
+                        .expect("checker requires matching forwarded event")
+                        .code
+                        .clone()
+                };
                 component_env.insert(
                     component_event_key(name, &event.name),
                     Binding {
-                        code: ordered_route_callback_code(
-                            &supplied.route,
-                            &payloads.join(", "),
-                            &payload_refs,
-                            env,
-                            document,
-                            message,
-                        )?,
+                        code,
                         ty: Type::Unit,
                         local: true,
                         state: None,

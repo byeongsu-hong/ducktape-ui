@@ -34,9 +34,21 @@ on inspect
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect
-    image pixel w=48.0 h=48.0 fit=round_trip
-    viewer pixel w=48.0 h=48.0 fit=scale_down_fit
-    svg "<svg/>" memory w=48.0 h=48.0 fit=fill_fit
+    image pixel
+      with
+        w=48.0
+        h=48.0
+        fit=round_trip
+    viewer pixel
+      with
+        w=48.0
+        h=48.0
+        fit=scale_down_fit
+    svg "<svg/>" memory
+      with
+        w=48.0
+        h=48.0
+        fit=fill_fit
     text kind
     text display
     text applied_size.width

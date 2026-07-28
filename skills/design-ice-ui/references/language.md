@@ -492,7 +492,7 @@ Components may declare one output:
 
 ```ice
 component Toggle(checked:bool) -> bool
-  extern native_toggle(checked) -> emit _
+  extern native_toggle(checked) -> emit(_)
 
 Toggle checked=enabled -> enabled_changed _
 ```

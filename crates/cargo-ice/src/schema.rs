@@ -1771,6 +1771,8 @@ pub fn document() -> Value {
         "language": {
             "name": "Ice",
             "revision": LANGUAGE_REVISION,
+            "status": "preview",
+            "stability": "implemented candidate",
             "fileExtension": ".ice",
             "encoding": "UTF-8",
             "indent": "two spaces",
@@ -1824,7 +1826,7 @@ pub fn document() -> Value {
                 "supported": true,
                 "source": "core constructs plus checked component and extern contracts",
                 "contextAware": true,
-                "contexts": ["top-level", "handler", "view", "typed-match-arm", "status", "component-call", "theme-contract", "test"],
+                "contexts": ["top-level", "handler", "view", "node-metadata", "component-call", "component-events", "typed-match-arm", "palette-value", "status", "theme-contract", "test"],
             },
             "hover": {
                 "supported": true,
@@ -1876,7 +1878,8 @@ pub fn document() -> Value {
             },
         },
         "core": {
-            "frozenAt": LANGUAGE_REVISION,
+            "candidateRevision": LANGUAGE_REVISION,
+            "frozen": false,
             "generative": true,
             "componentProps": {
                 "read": {
@@ -1894,8 +1897,9 @@ pub fn document() -> Value {
             },
             "componentEvents": {
                 "declaration": "emits block with unique zero-or-more typed ordered payloads",
-                "emission": "emit <event> [<value>|_ ...] inside the component view",
+                "emission": "emit(<event>[, <value>|_ ...]) inside the component view",
                 "routing": "events block with exactly one caller-scoped route per declared event",
+                "forwarding": "forward block with explicit same-name, same-signature events",
                 "closedComponents": true,
                 "defaultEventShorthand": "component Name(...) -> Type paired with call-site -> route",
             },

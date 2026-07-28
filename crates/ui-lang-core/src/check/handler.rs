@@ -871,7 +871,15 @@ pub(in crate::check) fn task_source_type(
                 .iter()
                 .map(|item| item.name.as_str())
                 .collect::<HashSet<_>>();
-            check_declared_type(output, span, &known)?;
+            check_declared_type(
+                output,
+                span,
+                &known,
+                document
+                    .theme_contract
+                    .as_ref()
+                    .map(|item| item.name.as_str()),
+            )?;
             Ok((output.clone(), None))
         }
         TaskSource::Effect {

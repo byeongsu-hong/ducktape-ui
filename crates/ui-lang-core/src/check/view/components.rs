@@ -143,13 +143,92 @@ pub(in crate::check) fn infer_components_group(
                             ),
                         )
                     })?;
-                infer_component_event_route(
-                    &supplied.route,
-                    &event.payloads,
-                    env,
-                    document,
-                    signatures,
-                )?;
+                if let Some(route) = &supplied.route {
+                    let forwarded = route.handler == "emit"
+                        && route.args.len() == event.payloads.len() + 1
+                        && matches!(
+                            route.args.first(),
+                            Some(RouteArg::Expr(Expr::Path(path)))
+                                if path.as_slice() == [event.name.as_str()]
+                        )
+                        && route
+                            .args
+                            .iter()
+                            .skip(1)
+                            .all(|arg| matches!(arg, RouteArg::Payload));
+                    if forwarded
+                        && component_context(env).is_some_and(|outer| {
+                            document.components.iter().any(|component| {
+                                component.name == outer
+                                    && component.events.iter().any(|outer_event| {
+                                        outer_event.name == event.name
+                                            && outer_event.payloads == event.payloads
+                                    })
+                            })
+                        })
+                    {
+                        return Err(Error::new(
+                            "E127",
+                            &supplied.span,
+                            format!("event `{}` is an exact component event forward", event.name),
+                        )
+                        .hint(format!(
+                            "replace the events entry with `forward\n  {}`",
+                            event.name
+                        )));
+                    }
+                    infer_component_event_route(route, &event.payloads, env, document, signatures)?;
+                } else {
+                    let Some(outer) = component_context(env) else {
+                        return Err(Error::new(
+                            "E127",
+                            &supplied.span,
+                            "forward is only valid inside a component",
+                        ));
+                    };
+                    let outer_event = document
+                        .components
+                        .iter()
+                        .find(|component| component.name == outer)
+                        .and_then(|component| {
+                            component
+                                .events
+                                .iter()
+                                .find(|outer_event| outer_event.name == event.name)
+                        })
+                        .ok_or_else(|| {
+                            Error::new(
+                                "E127",
+                                &supplied.span,
+                                format!(
+                                    "component `{outer}` does not declare event `{}`",
+                                    event.name
+                                ),
+                            )
+                        })?;
+                    if outer_event.payloads != event.payloads {
+                        return Err(Error::new(
+                            "E127",
+                            &supplied.span,
+                            format!(
+                                "forwarded event `{}` has signature `{}` but `{outer}` declares `{}`",
+                                event.name,
+                                event
+                                    .payloads
+                                    .iter()
+                                    .map(Type::display)
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                outer_event
+                                    .payloads
+                                    .iter()
+                                    .map(Type::display)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        ));
+                    }
+                }
             }
             if let Some(missing) = component
                 .events

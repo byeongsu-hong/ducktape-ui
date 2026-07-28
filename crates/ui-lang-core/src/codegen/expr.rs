@@ -52,6 +52,19 @@ pub(in crate::codegen) fn expr_code(
         Expr::List(values) => format!("::std::vec![{}]", expr_list_code(values, env, document)?),
         Expr::None => "::std::option::Option::None".into(),
         Expr::Path(path) => {
+            if let [contract, palette] = path.as_slice()
+                && document
+                    .theme_contract
+                    .as_ref()
+                    .is_some_and(|item| item.name == *contract)
+                && document.palettes.iter().any(|item| item.name == *palette)
+            {
+                return Ok(format!(
+                    "{}::{}",
+                    generated_named_rust(contract),
+                    pascal(palette)
+                ));
+            }
             if let [enum_name, variant_name] = path.as_slice()
                 && document.enums.iter().any(|item| {
                     item.name == *enum_name

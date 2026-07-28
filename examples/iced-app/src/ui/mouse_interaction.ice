@@ -41,5 +41,9 @@ view
     button "Inspect" -> inspect
     mouse cursor=(returned)
       text kind
-    canvas w=64.0 h=32.0 cursor=(returned)
+    canvas
+      with
+        w=64.0
+        h=32.0
+        cursor=(returned)
       rect x=0.0 y=0.0 w=canvas_width h=canvas_height fill=primary

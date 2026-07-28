@@ -15,13 +15,13 @@ palette app for AppTheme
   danger #cc3333
 
 component PluginHelp(active:bool) -> bool
-  extern native_help(active) -> emit _
+  extern native_help(active) -> emit(_)
 
 component BorrowedPluginHelp(label:str, active:bool) -> bool
-  extern borrowed_help(label, active) -> emit _
+  extern borrowed_help(label, active) -> emit(_)
 
 component NestedPluginHelp(active:bool) -> bool
-  PluginHelp active=active -> emit _
+  PluginHelp active=active -> emit(_)
 
 state
   active = false

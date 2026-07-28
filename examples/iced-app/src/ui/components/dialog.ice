@@ -1,5 +1,14 @@
 component Dialog(width:f64=480.0)
-  box w=width h=shrink max-w=720.0 p=24.0 border-w=1.0 r=10.0 @bg-surface border-border
+  box
+    with
+      w=width
+      h=shrink
+      max-w=720.0
+      p=24.0
+      border-w=1.0
+      r=10.0
+      @bg-surface
+      @border-border
     col gap=16.0 @w-full
       slot Header
       slot Body

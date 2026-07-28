@@ -1,0 +1,6 @@
+enum ProductTheme
+enum Selection
+__BindDraft(::std::string::String)
+__ContractMessage::Committed(__event_0)
+ProductTheme::Light => __IcePalette
+ProductTheme::Dark => __IcePalette

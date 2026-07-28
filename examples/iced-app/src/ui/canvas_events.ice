@@ -30,7 +30,13 @@ on file_dropped(path)
 on files_left
 
 view
-  canvas w=fill h=120.0 capture=true cursor=(cursor_state) cursor-outside=true
+  canvas
+    with
+      w=fill
+      h=120.0
+      capture=true
+      cursor=(cursor_state)
+      cursor-outside=true
     state
       cursor_state = "crosshair"
       move_count = 0

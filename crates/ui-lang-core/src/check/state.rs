@@ -498,6 +498,23 @@ pub(in crate::check) fn check_theme(document: &Document) -> Result<(), Error> {
             ),
         ));
     }
+    if contract.name == document.app
+        || document
+            .structs
+            .iter()
+            .any(|item| item.name == contract.name)
+        || document.enums.iter().any(|item| item.name == contract.name)
+    {
+        return Err(Error::new(
+            "E110",
+            &contract.span,
+            format!(
+                "theme contract `{}` conflicts with another generated type",
+                contract.name
+            ),
+        ));
+    }
+    let mut rust_variants = HashSet::new();
     for palette in &document.palettes {
         if palette.contract != contract.name {
             return Err(Error::new(
@@ -506,6 +523,26 @@ pub(in crate::check) fn check_theme(document: &Document) -> Result<(), Error> {
                 format!(
                     "palette `{}` targets theme contract `{}`, not `{}`",
                     palette.name, palette.contract, contract.name
+                ),
+            ));
+        }
+        let rust_variant = palette
+            .name
+            .split('_')
+            .map(|part| {
+                let mut chars = part.chars();
+                chars.next().map_or_else(String::new, |first| {
+                    first.to_uppercase().collect::<String>() + chars.as_str()
+                })
+            })
+            .collect::<String>();
+        if !rust_variants.insert(rust_variant) {
+            return Err(Error::new(
+                "E110",
+                &palette.span,
+                format!(
+                    "palette `{}` conflicts with another generated palette variant",
+                    palette.name
                 ),
             ));
         }

@@ -32,8 +32,14 @@ palette light for Ducktape
   primary #3366ff
   danger #cc3344
   surface #f4f4f4
+palette dark for Ducktape
+  bg #111111
+  fg #ffffff
+  primary #88aaff
+  danger #ff6677
+  surface #222222
 state
-  active_palette = "light"
+  active_palette:palette[Ducktape] = Ducktape.light
 view
   box bg=surface
     text "Theme"
@@ -42,6 +48,20 @@ view
 #[test]
 fn checks_complete_dynamic_palettes() {
     analyze(THEMED_APP).unwrap();
+}
+
+#[test]
+fn exhaustively_matches_nominal_palettes() {
+    let source = THEMED_APP.replace(
+        "  box bg=surface\n    text \"Theme\"",
+        "  match active_palette\n    Ducktape.light\n      text \"Light\"\n    Ducktape.dark\n      text \"Dark\"",
+    );
+    analyze(&source).unwrap();
+
+    let error =
+        analyze(&source.replace("    Ducktape.dark\n      text \"Dark\"\n", "")).unwrap_err();
+    assert_eq!(error.code, "E195");
+    assert!(error.message.contains("Ducktape.dark"));
 }
 
 #[test]
@@ -60,16 +80,23 @@ fn rejects_invalid_theme_contracts_and_palettes() {
             "unknown token `accent`",
         ),
         (
-            THEMED_APP.replace("  surface #f4f4f4\nstate", "state"),
+            THEMED_APP.replace("  surface #f4f4f4\npalette dark", "palette dark"),
             "missing token `surface`",
         ),
         (
-            THEMED_APP.replace("  active_palette = \"light\"", "  active_palette = true"),
-            "expected `str`, got `bool`",
+            THEMED_APP.replace(
+                "  active_palette:palette[Ducktape] = Ducktape.light",
+                "  active_palette:palette[Ducktape] = true",
+            ),
+            "expected `palette[Ducktape]`, got `bool`",
         ),
         (
-            THEMED_APP.replace("palette active_palette", "palette \"missing\""),
-            "unknown palette `missing`",
+            THEMED_APP.replace("Ducktape.light", "\"light\""),
+            "expected `palette[Ducktape]`, got `str`",
+        ),
+        (
+            THEMED_APP.replace("palette active_palette", "palette Ducktape.missing"),
+            "has no palette `missing`",
         ),
     ] {
         let error = analyze(&source).unwrap_err();

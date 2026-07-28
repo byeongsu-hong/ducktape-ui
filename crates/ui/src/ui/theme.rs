@@ -570,17 +570,23 @@ mod tests {
         assert!(recipes.contains("font-mono font-medium"));
         assert!(recipes.contains("font-mono font-semibold"));
         assert!(recipes.contains("font-semibold text-primary"));
-        assert!(components.contains("px=6.0 py=3.0 bg=brand r=4.0"));
-        assert!(components.contains("text label size=8.0 @badge_label text-brand_fg"));
-        assert!(components.contains("bg=success_bg border=success_line"));
-        assert!(components.contains("w=30.0 h=30.0 align-x=center align-y=center bg=avatar_bg"));
+        assert!(components.contains("      px=6.0\n      py=3.0\n      bg=brand\n      r=4.0"));
+        assert!(components.contains(
+            "    text label\n      with\n        size=8.0\n        @badge_label\n        @text-brand_fg"
+        ));
+        assert!(components.contains("      bg=success_bg\n      border=success_line"));
+        assert!(components.contains(
+            "      w=30.0\n      h=30.0\n      align-x=center\n      align-y=center\n      bg=avatar_bg"
+        ));
         assert!(
             components
                 .contains("      shadow=shadow_toast\n      shadow-y=6.0\n      shadow-blur=18.0")
         );
         assert_eq!(
             components
-                .matches("box w=6.0 h=6.0 bg=success_dot r=3.0")
+                .matches(
+                    "          w=6.0\n          h=6.0\n          bg=success_dot\n          r=3.0"
+                )
                 .count(),
             2
         );

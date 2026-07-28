@@ -59,7 +59,7 @@ pub(in crate::parser) fn parse_component_children(
                     };
                     Ok(ComponentEventRoute {
                         name: identifier(name.trim(), event)?,
-                        route: parse_route(route.trim(), event)?,
+                        route: Some(parse_route(route.trim(), event)?),
                         span: Span::line(event.number),
                     })
                 })
@@ -67,10 +67,39 @@ pub(in crate::parser) fn parse_component_children(
         })
         .transpose()?
         .unwrap_or_default();
+    let mut forward_blocks = line.children.iter().filter(|child| child.text == "forward");
+    let forwards = forward_blocks.next();
+    if forward_blocks.next().is_some() {
+        return Err(error(
+            "E040",
+            line,
+            "component call has duplicate forward blocks",
+        ));
+    }
+    let mut event_routes = event_routes;
+    if let Some(forwards) = forwards {
+        if forwards.children.is_empty() {
+            return Err(error("E040", forwards, "forward cannot be empty"));
+        }
+        event_routes.extend(
+            forwards
+                .children
+                .iter()
+                .map(|event| {
+                    ensure_leaf(event)?;
+                    Ok(ComponentEventRoute {
+                        name: identifier(event.text.trim(), event)?,
+                        route: None,
+                        span: Span::line(event.number),
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        );
+    }
     let children = line
         .children
         .iter()
-        .filter(|child| child.text != "events")
+        .filter(|child| child.text != "events" && child.text != "forward")
         .collect::<Vec<_>>();
     if children.is_empty() {
         return Ok((Vec::new(), event_routes));

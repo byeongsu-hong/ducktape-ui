@@ -97,38 +97,112 @@ component RenderContract()
       box #heading
         text "Render contract" size=18.0 @text-primary
       box #field
-        input "Draft" #draft <-> draft @bg-bg border border-primary rounded-md
-      button "Increment" #increment p=8.0 @bg-primary text-fg rounded-md -> increment
+        input "Draft" #draft <-> draft
+          with
+            @bg-bg
+            @border
+            @border-primary
+            @rounded-md
+      button "Increment" #increment -> increment
+        with
+          p=8.0
+          @bg-primary
+          @text-fg
+          @rounded-md
       box #result
         text count size=14.0 @text-fg
 
 component LayoutContract()
-  col #root w=320.0 gap=10.0 p=10.0 @bg-bg border border-primary rounded-lg
-    row #row w=300.0 gap=8.0 p=4.0
-      box #left w=80.0 h=20.0 @bg-primary
+  col #root
+    with
+      w=320.0
+      gap=10.0
+      p=10.0
+      @bg-bg
+      @border
+      @border-primary
+      @rounded-lg
+    row #row
+      with
+        w=300.0
+        gap=8.0
+        p=4.0
+      box #left
+        with
+          w=80.0
+          h=20.0
+          @bg-primary
         text "Left" size=10.0 @text-fg
-      box #right w=fill h=20.0 @bg-primary
+      box #right
+        with
+          w=fill
+          h=20.0
+          @bg-primary
         text "Right" size=10.0 @text-fg
-    grid #grid cols=2 w=300.0 gap=6.0
-      box #first w=fill h=20.0 @bg-primary
+    grid #grid
+      with
+        cols=2
+        w=300.0
+        gap=6.0
+      box #first
+        with
+          w=fill
+          h=20.0
+          @bg-primary
         text "First" size=10.0 @text-fg
-      box #second w=fill h=20.0 @bg-primary
+      box #second
+        with
+          w=fill
+          h=20.0
+          @bg-primary
         text "Second" size=10.0 @text-fg
-    flex #flex w=300.0 h=20.0 justify=space-between
-      box #start w=60.0 h=20.0 @bg-primary
+    flex #flex
+      with
+        w=300.0
+        h=20.0
+        justify=space-between
+      box #start
+        with
+          w=60.0
+          h=20.0
+          @bg-primary
         text "Start" size=10.0 @text-fg
-      box #end w=60.0 h=20.0 @bg-primary
+      box #end
+        with
+          w=60.0
+          h=20.0
+          @bg-primary
         text "End" size=10.0 @text-fg
     stack #stack w=300.0 h=40.0
-      box #base w=100.0 h=20.0 @bg-primary
+      box #base
+        with
+          w=100.0
+          h=20.0
+          @bg-primary
         text "Base" size=10.0 @text-fg
-      box #layer w=100.0 h=20.0 @bg-danger
+      box #layer
+        with
+          w=100.0
+          h=20.0
+          @bg-danger
         text "Layer" size=10.0 @text-fg
-    scroll #scroll dir=vertical w=300.0 h=50.0
+    scroll #scroll
+      with
+        dir=vertical
+        w=300.0
+        h=50.0
       col #content w=300.0 h=120.0
         text "Scrollable" size=10.0 @text-fg
-    responsive size=(available_width, available_height) w=300.0 h=30.0
-      box #responsive-content w=available_width h=available_height @bg-primary
+    responsive
+      with
+        size=(available_width, available_height)
+        w=300.0
+        h=30.0
+      box #responsive-content
+        with
+          w=available_width
+          h=available_height
+          @bg-primary
         text "Responsive" size=10.0 @text-fg
     space #space w=300.0 h=8.0
 
@@ -183,11 +257,30 @@ component InteractionContract()
   on close_dialog
     dialog_open = false
     status = "overlay closed"
-  col #root w=320.0 gap=8.0 p=12.0 @bg-bg border border-primary rounded-lg
-    button "Click" #button p=6.0 @bg-primary text-fg rounded-md -> clicked
+  col #root
+    with
+      w=320.0
+      gap=8.0
+      p=12.0
+      @bg-bg
+      @border
+      @border-primary
+      @rounded-lg
+    button "Click" #button -> clicked
+      with
+        p=6.0
+        @bg-primary
+        @text-fg
+        @rounded-md
     checkbox "Checkbox" #checkbox checked=checked -> checked_changed _
     toggler "Toggler" #toggler checked=toggled -> toggled_changed _
-    slider level #slider min=0.0 max=100.0 step=1.0 w=200.0 h=24.0 -> level_changed _
+    slider level #slider -> level_changed _
+      with
+        min=0.0
+        max=100.0
+        step=1.0
+        w=200.0
+        h=24.0
     radio "Radio" #radio value=1 selected=(mode == 1) -> mode_changed _
     pick choices choice #pick -> choice_changed _
       with
@@ -196,10 +289,20 @@ component InteractionContract()
         open=pick_opened
         close=pick_closed
     mouse press=mouse_pressed cursor=pointer
-      box #mouse w=200.0 h=32.0 @bg-bg rounded-md
+      box #mouse
+        with
+          w=200.0
+          h=32.0
+          @bg-bg
+          @rounded-md
         text mouse_presses size=14.0 @text-fg
     resize-handle drag=resized cursor=resize-horizontal
-      box #resize w=200.0 h=12.0 @bg-primary rounded-md
+      box #resize
+        with
+          w=200.0
+          h=12.0
+          @bg-primary
+          @rounded-md
         text resize_x size=1.0 @text-primary
     box #canvas w=200.0 h=40.0
       canvas w=200.0 h=40.0
@@ -211,7 +314,14 @@ component InteractionContract()
     button "Open dialog" #open-dialog -> open_dialog
     box #status
       text status size=12.0 @text-fg
-    overlay when=dialog_open dismiss=close_dialog backdrop=black/25 p=4.0 align-x=end align-y=end
+    overlay
+      with
+        when=dialog_open
+        dismiss=close_dialog
+        backdrop=black/25
+        p=4.0
+        align-x=end
+        align-y=end
       content
         text "Overlay page" size=12.0 @text-fg
       layer
