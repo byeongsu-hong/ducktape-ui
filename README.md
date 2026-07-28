@@ -493,6 +493,14 @@ Rust diagnostics from `cargo ice check` and `clippy` are mapped back to the
 responsible root or imported `.ice` syntax; `test` and `compat` run the same
 source-mapped check preflight before invoking Cargo's normal test runner. The
 generated Rust coordinate remains available as a note for backend debugging.
+The LSP also exposes a `Run Ice lint` source action backed by the `ice.lint`
+workspace command. It runs workspace Clippy and publishes generated Rust
+diagnostics at their responsible `.ice` URI, line, and column; ordinary Rust
+diagnostics remain owned by the Rust language server. The action publishes
+error-level generated diagnostics, including type and extern-contract failures.
+Warning-level Rust and Clippy findings from backend output are omitted because
+they are not actionable Ice diagnostics; Ice's own W001-W004 warnings continue
+to appear directly from the language checker.
 
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:
@@ -507,6 +515,11 @@ with:
   "transport": "stdio"
 }
 ```
+
+Clients that support source actions can invoke `Run Ice lint` from an open
+`.ice` file. A client may also send `workspace/executeCommand` with command
+`ice.lint` and no arguments. Save every open Ice buffer first so Cargo and the
+published source ranges describe the same source revision.
 
 Keep the importing `app` or `daemon` root open while editing a fragment; Ice
 checks fragments as part of their source graph instead of treating them as
