@@ -399,6 +399,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
             ..
         } => {
+            record_read(state, span);
             check_id(id, env, document, ids, span)?;
             let Some(Type::Combo(option_type)) = env.get(state) else {
                 return Err(Error::new(

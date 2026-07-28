@@ -4,8 +4,9 @@ mod schema;
 
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 fn main() -> ExitCode {
     match run() {
@@ -104,6 +105,7 @@ fn run() -> Result<(), String> {
         "test" => {
             let roots = root_files(&files)?;
             analyze(&roots)?;
+            cargo(&["check", "--workspace", "--tests"])?;
             let mut cargo_args = vec!["test", "--workspace"];
             cargo_args.extend(trailing.iter().map(String::as_str));
             cargo(&cargo_args)?;
@@ -117,6 +119,7 @@ fn run() -> Result<(), String> {
             let roots = root_files(&files)?;
             analyze(&roots)?;
             compat::verify(&root)?;
+            cargo(&["check", "-p", "iced-app", "--tests"])?;
             cargo(&["test", "-p", "iced-app"])?;
         }
         _ => unreachable!("commands were validated before scanning the workspace"),
@@ -137,9 +140,40 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
 }
 
 fn analyze(files: &[PathBuf]) -> Result<(), String> {
+    let mut documents = Vec::new();
     for path in files {
-        ui_lang_core::analyze_file(path)
+        let document = ui_lang_core::analyze_file(path)
             .map_err(|error| error.render(&path.display().to_string()))?;
+        documents.push((path, document));
+    }
+    let reachable = documents
+        .iter()
+        .flat_map(|(_, document)| document.reachable_component_definitions())
+        .filter_map(|range| Some((range.path.clone()?, range.line)))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut warnings = std::collections::BTreeMap::new();
+    for (path, document) in &documents {
+        for warning in document.warnings().iter().filter(|warning| {
+            warning.code != "W001"
+                || !warning
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| reachable.contains(&(PathBuf::from(path), warning.line)))
+        }) {
+            warnings
+                .entry((
+                    warning.code,
+                    warning
+                        .path
+                        .clone()
+                        .unwrap_or_else(|| path.display().to_string()),
+                    warning.line,
+                ))
+                .or_insert_with(|| warning.render(&path.display().to_string()));
+        }
+    }
+    for warning in warnings.into_values() {
+        eprintln!("{warning}");
     }
     println!("checked {} .ice root graph(s)", files.len());
     Ok(())
@@ -201,10 +235,41 @@ fn ignored_dir(path: &Path) -> bool {
 
 fn cargo(args: &[&str]) -> Result<(), String> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let status = Command::new(cargo)
+    if matches!(args.first(), Some(&"fmt" | &"test")) {
+        let status = Command::new(cargo)
+            .args(args)
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!("cargo {} failed", args.join(" ")))
+        };
+    }
+    let mut child = Command::new(cargo)
         .args(args)
-        .status()
+        .arg("--message-format=json-diagnostic-rendered-ansi")
+        .stdout(Stdio::piped())
+        .spawn()
         .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().expect("piped cargo stdout");
+    for line in BufReader::new(stdout).lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+            println!("{line}");
+            continue;
+        };
+        if message["reason"] != "compiler-message" {
+            continue;
+        }
+        let diagnostic = &message["message"];
+        if let Some(rendered) = remap_compiler_diagnostic(diagnostic) {
+            eprint!("{rendered}");
+        } else if let Some(rendered) = diagnostic["rendered"].as_str() {
+            eprint!("{rendered}");
+        }
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
     if status.success() {
         Ok(())
     } else {
@@ -212,10 +277,155 @@ fn cargo(args: &[&str]) -> Result<(), String> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IceLocation {
+    path: PathBuf,
+    line: usize,
+    column: usize,
+}
+
+fn remap_compiler_diagnostic(diagnostic: &serde_json::Value) -> Option<String> {
+    let spans = diagnostic["spans"].as_array()?;
+    let mapped = spans
+        .iter()
+        .filter_map(|span| {
+            let file = span["file_name"].as_str()?;
+            let line = span["line_start"].as_u64()? as usize;
+            let generated_column = span["column_start"].as_u64()? as usize;
+            let location = mapped_ice_location(Path::new(file), line)?;
+            Some((span, location, file, line, generated_column))
+        })
+        .collect::<Vec<_>>();
+    let primary = mapped
+        .iter()
+        .find(|(span, ..)| span["is_primary"].as_bool() == Some(true))?;
+    let level = diagnostic["level"].as_str().unwrap_or("error");
+    let code = diagnostic["code"]["code"]
+        .as_str()
+        .map(|code| format!("[{code}]"))
+        .unwrap_or_default();
+    let message = diagnostic["message"]
+        .as_str()
+        .unwrap_or("generated Rust error");
+    let location = &primary.1;
+    let mut output = format!(
+        "{level}{code} {}:{}:{}: {message}\n",
+        location.path.display(),
+        location.line,
+        location.column
+    );
+    push_source_excerpt(&mut output, location);
+    let mut related = std::collections::BTreeSet::new();
+    for (span, location, ..) in &mapped {
+        if location == &primary.1 {
+            continue;
+        }
+        let label = span["label"]
+            .as_str()
+            .unwrap_or("related generated expression");
+        related.insert(format!(
+            "related: {}:{}:{}: {label}",
+            location.path.display(),
+            location.line,
+            location.column
+        ));
+    }
+    for line in related {
+        output.push_str(&line);
+        output.push('\n');
+    }
+    if let Some(children) = diagnostic["children"].as_array() {
+        for child in children {
+            let level = child["level"].as_str().unwrap_or("note");
+            if let Some(message) = child["message"].as_str() {
+                output.push_str(&format!("{level}: {message}\n"));
+            }
+        }
+    }
+    output.push_str(&format!(
+        "note: generated Rust location: {}:{}:{}\n",
+        primary.2, primary.3, primary.4
+    ));
+    Some(output)
+}
+
+fn push_source_excerpt(output: &mut String, location: &IceLocation) {
+    let Ok(source) = fs::read_to_string(&location.path) else {
+        return;
+    };
+    let Some(line) = source.lines().nth(location.line.saturating_sub(1)) else {
+        return;
+    };
+    let gutter = location.line.to_string();
+    let column = location.column.saturating_sub(1).min(line.chars().count());
+    output.push_str(&format!(
+        "{gutter} | {line}\n{} | {}^\n",
+        " ".repeat(gutter.len()),
+        " ".repeat(column)
+    ));
+}
+
+fn mapped_ice_location(path: &Path, generated_line: usize) -> Option<IceLocation> {
+    let generated = fs::read_to_string(path).ok()?;
+    mapped_ice_location_in(&generated, generated_line)
+}
+
+fn mapped_ice_location_in(generated: &str, generated_line: usize) -> Option<IceLocation> {
+    let mut stack = Vec::new();
+    for (index, line) in generated.lines().enumerate() {
+        if index + 1 > generated_line {
+            break;
+        }
+        if line == "// __ICE_SOURCE_END" {
+            stack.pop();
+            continue;
+        }
+        if let Some(location) = parse_source_marker(line) {
+            stack.push(location);
+        }
+    }
+    stack.pop()
+}
+
+fn parse_source_marker(line: &str) -> Option<IceLocation> {
+    let location = line.strip_prefix("// __ICE_SOURCE ")?;
+    let mut parts = location.split_ascii_whitespace();
+    let line = parts.next()?.parse().ok()?;
+    let column = parts.next()?.parse().ok()?;
+    let path = decode_hex(parts.next()?)?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(IceLocation {
+        path: PathBuf::from(path),
+        line,
+        column,
+    })
+}
+
+fn decode_hex(value: &str) -> Option<String> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|digits| {
+            let digits = std::str::from_utf8(digits).ok()?;
+            u8::from_str_radix(digits, 16).ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ice_files, ignored_dir, root_files, valid_command_args};
+    use super::{
+        IceLocation, ice_files, ignored_dir, mapped_ice_location_in, remap_compiler_diagnostic,
+        root_files, valid_command_args,
+    };
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn ignores_build_and_fixture_directories() {
@@ -244,6 +454,77 @@ mod tests {
     #[test]
     fn missing_root_names_both_root_kinds() {
         assert!(root_files(&[]).unwrap_err().contains("`app` or `daemon`"));
+    }
+
+    #[test]
+    fn maps_nested_generated_regions_to_the_innermost_ice_source() {
+        let generated = "boilerplate\n// __ICE_SOURCE 4 1 6170702e696365\nouter\n// __ICE_SOURCE 9 3 667261676d656e742e696365\ninner\n// __ICE_SOURCE_END\nouter again\n// __ICE_SOURCE_END\nboilerplate\n";
+        assert_eq!(
+            mapped_ice_location_in(generated, 5),
+            Some(IceLocation {
+                path: "fragment.ice".into(),
+                line: 9,
+                column: 3,
+            })
+        );
+        assert_eq!(
+            mapped_ice_location_in(generated, 7),
+            Some(IceLocation {
+                path: "app.ice".into(),
+                line: 4,
+                column: 1,
+            })
+        );
+        assert_eq!(mapped_ice_location_in(generated, 9), None);
+    }
+
+    #[test]
+    fn renders_rustc_diagnostics_against_ice_syntax() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "cargo-ice-source-map-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let source = directory.join("app.ice");
+        let generated = directory.join("generated.rs");
+        std::fs::write(&source, "app Demo\nview\n  text moved_value\n").unwrap();
+        let encoded = source
+            .display()
+            .to_string()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        std::fs::write(
+            &generated,
+            format!(
+                "fn generated() {{\n// __ICE_SOURCE 3 1 {encoded}\nlet moved_value = String::new();\nlet consumed = moved_value;\nuse_again(moved_value);\n// __ICE_SOURCE_END\n}}\n"
+            ),
+        )
+        .unwrap();
+        let diagnostic = serde_json::json!({
+            "message": "use of moved value: `moved_value`",
+            "code": { "code": "E0382" },
+            "level": "error",
+            "spans": [{
+                "file_name": generated.display().to_string(),
+                "line_start": 5,
+                "column_start": 11,
+                "is_primary": true,
+                "label": "value used here after move"
+            }],
+            "children": [{ "level": "note", "message": "move occurs because the value is not Copy" }],
+        });
+        let rendered = remap_compiler_diagnostic(&diagnostic).unwrap();
+        assert!(rendered.contains(&format!("{}:3:1", source.display())));
+        assert!(rendered.contains("3 |   text moved_value"));
+        assert!(rendered.contains("error[E0382]"));
+        assert!(rendered.contains("generated Rust location"));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]

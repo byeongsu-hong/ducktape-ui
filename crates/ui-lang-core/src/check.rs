@@ -3,11 +3,16 @@ use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
-    check(&mut document)?;
-    Ok(CheckedDocument::new(document))
+    let reachable = reachable_components(&document);
+    let usage = UsageSession::start(&document, &reachable);
+    check(&mut document, &reachable)?;
+    let mut warnings = unreachable_component_warnings(&document, &reachable);
+    warnings.extend(usage.finish());
+    warnings.sort_by_key(|warning| warning.line);
+    Ok(CheckedDocument::new(document, warnings, reachable))
 }
 
-fn check(document: &mut Document) -> Result<(), Error> {
+fn check(document: &mut Document, reachable: &HashSet<String>) -> Result<(), Error> {
     check_unique(document)?;
     check_fonts(document)?;
     check_slots(document)?;
@@ -27,7 +32,7 @@ fn check(document: &mut Document) -> Result<(), Error> {
         .iter()
         .map(|state| (state.name.clone(), state.ty.clone()))
         .collect();
-    let derived = check_derived(document, &states)?;
+    let derived = without_usage(|| check_derived(document, &states))?;
     let mut app_values = states.clone();
     app_values.extend(derived);
     let preset_handlers = document
@@ -265,7 +270,9 @@ fn check(document: &mut Document) -> Result<(), Error> {
             component.output.clone(),
         );
         let mut ids = HashSet::new();
-        infer_view(&component.root, &env, document, &mut signatures, &mut ids)?;
+        with_component_scope(&component.name, reachable.contains(&component.name), || {
+            infer_view(&component.root, &env, document, &mut signatures, &mut ids)
+        })?;
     }
     infer_tests(document, &view_states, &mut signatures)?;
     let mut pane_grids = static_pane_grids(&document.view, &view_states, document)?;
@@ -274,8 +281,16 @@ fn check(document: &mut Document) -> Result<(), Error> {
         pane_grids.extend(static_pane_grids(mount, &view_states, document)?);
         operation_ids.extend(widget_operation_ids(mount, &view_states, document)?);
     }
-    controlled_state_bindings(document, false)?;
-    controlled_state_bindings(document, true)?;
+    for binding in controlled_state_bindings(document, false)? {
+        if let Some(state) = document.states.iter().find(|state| state.name == binding) {
+            record_write(&binding, &state.span);
+        }
+    }
+    for binding in controlled_state_bindings(document, true)? {
+        if let Some(state) = document.states.iter().find(|state| state.name == binding) {
+            record_write(&binding, &state.span);
+        }
+    }
     infer_subscriptions(document, &states, &mut signatures)?;
     let empty_env = HashMap::new();
     for handler in document.handlers.iter().chain(&preset_handlers) {
@@ -288,9 +303,12 @@ fn check(document: &mut Document) -> Result<(), Error> {
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
         let env = HashMap::from([(component_context_key(&component.name), Type::Unit)]);
-        for handler in &component.handlers {
-            infer_runs(handler, document, &mut signatures, &values, &env)?;
-        }
+        with_component_scope(&component.name, reachable.contains(&component.name), || {
+            for handler in &component.handlers {
+                infer_runs(handler, document, &mut signatures, &values, &env)?;
+            }
+            Ok::<_, Error>(())
+        })?;
     }
 
     for handler in &mut document.handlers {
@@ -356,16 +374,19 @@ fn check(document: &mut Document) -> Result<(), Error> {
             .iter()
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
-        for handler in &component.handlers {
-            check_handler(
-                handler,
-                &states,
-                &states,
-                document,
-                &operation_ids,
-                &HashMap::new(),
-            )?;
-        }
+        with_component_scope(&component.name, reachable.contains(&component.name), || {
+            for handler in &component.handlers {
+                check_handler(
+                    handler,
+                    &states,
+                    &states,
+                    document,
+                    &operation_ids,
+                    &HashMap::new(),
+                )?;
+            }
+            Ok::<_, Error>(())
+        })?;
     }
     check_tests(document, &view_states)?;
     Ok(())
@@ -570,6 +591,7 @@ mod state;
 mod style;
 mod subscription;
 mod testing;
+mod usage;
 mod view;
 mod widgets;
 
@@ -583,6 +605,7 @@ use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_sp
 use style::*;
 use subscription::*;
 use testing::*;
+use usage::*;
 use view::*;
 use widgets::*;
 

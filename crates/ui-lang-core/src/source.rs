@@ -848,6 +848,29 @@ mod tests {
     }
 
     #[test]
+    fn generated_rust_markers_retain_imported_view_origins() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"components.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Card\n",
+        );
+        fixture.write("components.ice", "component Card()\n  text \"Imported\"\n");
+        let component = fixture.path("components.ice").canonicalize().unwrap();
+        let encoded_path = component
+            .display()
+            .to_string()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let generated = compile_file(fixture.path("app.ice")).unwrap().rust;
+        assert!(
+            generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_path}")),
+            "generated Rust did not retain the imported view location:\n{generated}"
+        );
+    }
+
+    #[test]
     fn keeps_component_local_handlers_out_of_global_symbol_navigation() {
         let fixture = Fixture::new();
         let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle()\n  state\n    enabled = false\n  on changed(next)\n    enabled = next\n  checkbox \"Enabled\" checked=enabled -> changed _\non changed\nview\n  Toggle #toggle\n";

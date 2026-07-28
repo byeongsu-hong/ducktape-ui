@@ -24,6 +24,20 @@ fn diagnostic_cases() {
 }
 
 #[test]
+fn warning_cases() {
+    for case in cases("warning") {
+        let document = analyze(&case.read("as-is.ice")).unwrap();
+        let warnings = document
+            .warnings()
+            .iter()
+            .map(|warning| format!("{} {}", warning.code, warning.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_contains(&case, &warnings);
+    }
+}
+
+#[test]
 fn compile_cases() {
     for case in cases("compile") {
         let generated = compile(&case.read("as-is.ice"), "as-is.ice").unwrap();

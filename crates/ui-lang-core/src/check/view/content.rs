@@ -174,6 +174,8 @@ pub(in crate::check) fn infer_content_group(
             span,
             ..
         } => {
+            record_read(binding, span);
+            record_write(binding, span);
             check_id(id, env, document, ids, span)?;
             let Some(binding_ty) = env.get(binding) else {
                 return Err(Error::new(

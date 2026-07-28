@@ -139,6 +139,7 @@ fn lowers_every_canvas_event_and_redraw_action() {
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
+    assert!(!generated.contains("if (true) || __cursor.is_over(__bounds)"));
 }
 
 #[test]

@@ -355,7 +355,7 @@ fn lowers_every_native_mouse_interaction() {
         "crate::backend::interaction_round_trip(::iced::mouse::Interaction::Pointer)",
         "::iced::mouse::Interaction::Pointer => \"pointer\"",
         "::iced::widget::mouse_area(__mouse_content).interaction(self.returned)",
-        "if (false) || __cursor.is_over(__bounds) { self.returned }",
+        "if __cursor.is_over(__bounds) { self.returned }",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }

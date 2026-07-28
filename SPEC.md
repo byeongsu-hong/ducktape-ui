@@ -4701,13 +4701,37 @@ The implemented families are:
 | `E160-E179` | IDs and backend lowering constraints |
 | `E180-E199` | file imports and source loading |
 
+Successful analysis may also emit stable semantic warnings:
+
+| Code | Meaning |
+| --- | --- |
+| `W001` | a component is unreachable from every application view and first-class test mount |
+| `W002` | reachable state has no reader, including state that is written but has no observable consumer |
+| `W003` | reachable state has readers but no writer and therefore always keeps its initial value |
+
+State initializers are not writers. Reads and writes are collected at the
+already checked expression, mutation, controlled-binding, and test-expression
+sites, with duplicate checker passes collapsed to one source site. Component
+state is analyzed only when the component is reachable. `cargo ice` combines
+all discovered app roots before reporting `W001`, so a shared component
+definition used by any root is not reported as unreachable merely because
+another root imports but does not mount it. The LSP applies the same union over
+all open app roots.
+
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
 Imported-language diagnostics already point to the original fragment and line.
-A future generated-Rust source-map layer may remap rustc spans into the precise
-extern line; 2.0 does not claim that remapping. Generated first-class test
-failures already retain their original root or imported Ice path and line.
+Generated Rust carries nested provenance regions for view nodes, handler
+statements, state declarations and initializers, derived values, subscriptions,
+and extern probes. The proc macro materializes content-addressed generated Rust
+and expands it through `include!`, preserving rustc's generated line. `cargo
+ice check` and `clippy` consume Cargo JSON diagnostics and map marked spans back
+to the root or imported `.ice` file, line, source excerpt, and syntax while
+retaining the generated Rust coordinate as a note. `test` and `compat` first
+run the corresponding source-mapped Cargo check, then invoke the normal test
+runner. Generated first-class test failures retain their original root or
+imported Ice path and line as before.
 
 ## 12. Cargo commands
 

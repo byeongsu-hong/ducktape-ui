@@ -78,6 +78,7 @@ pub(in crate::check) fn check_handler(
                     }
                     require_type(&expr_type(at, &env, document, span)?, &Type::Instant, span)?;
                 }
+                record_write(target, span);
             }
             Statement::MarkdownAppend {
                 target,
@@ -89,6 +90,8 @@ pub(in crate::check) fn check_handler(
                 })?;
                 require_type(expected, &Type::Markdown, span)?;
                 require_type(&expr_type(value, &env, document, span)?, &Type::Str, span)?;
+                record_read(target, span);
+                record_write(target, span);
             }
             Statement::ComboPush {
                 target,
@@ -106,6 +109,8 @@ pub(in crate::check) fn check_handler(
                     ));
                 };
                 require_type(&expr_type(value, &env, document, span)?, expected, span)?;
+                record_read(target, span);
+                record_write(target, span);
             }
             Statement::ReturnIf { condition, span } => {
                 require_type(
@@ -211,6 +216,7 @@ pub(in crate::check) fn check_handler(
                 handle, task, span, ..
             } => {
                 require_task_handle_state(handle, states, span)?;
+                record_write(handle, span);
                 check_handler(
                     &Handler {
                         statements: vec![(**task).clone()],
@@ -225,13 +231,18 @@ pub(in crate::check) fn check_handler(
             }
             Statement::Abort { handle, span } => {
                 require_task_handle_state(handle, states, span)?;
+                record_read(handle, span);
             }
             Statement::DebugStart { name, target, span } => {
                 require_debug_span_state(target, states, span)?;
                 require_type(&expr_type(name, &env, document, span)?, &Type::Str, span)?;
+                record_read(target, span);
+                record_write(target, span);
             }
             Statement::DebugFinish { target, span } => {
                 require_debug_span_state(target, states, span)?;
+                record_read(target, span);
+                record_write(target, span);
             }
             Statement::ClipboardWrite { value, span, .. } => {
                 if index + 1 != handler.statements.len() {

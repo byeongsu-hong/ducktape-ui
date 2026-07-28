@@ -6,6 +6,56 @@ use std::fmt::Write;
 use std::path::Path;
 
 const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
+const SOURCE_MARKER: &str = "// __ICE_SOURCE ";
+const SOURCE_MARKER_END: &str = "// __ICE_SOURCE_END";
+
+fn source_marker(span: &Span) -> String {
+    format!("{SOURCE_MARKER}{} {}", span.line, span.column)
+}
+
+fn source_mapped_expression(code: String, span: &Span) -> String {
+    format!(
+        "{{\n{}\n{code}\n{SOURCE_MARKER_END}\n}}",
+        source_marker(span)
+    )
+}
+
+fn encode_source_path(path: &str) -> String {
+    path.as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn resolve_source_markers(
+    generated: String,
+    document: &CheckedDocument,
+    source_path: &str,
+) -> String {
+    let mut output = String::with_capacity(generated.len());
+    for line in generated.lines() {
+        let resolved = line
+            .strip_prefix(SOURCE_MARKER)
+            .and_then(|location| location.split_once(' '))
+            .and_then(|(line, column)| {
+                Some((line.parse::<usize>().ok()?, column.parse::<usize>().ok()?))
+            })
+            .map(|(merged_line, column)| {
+                let (path, line) = document.source_origin(merged_line).map_or_else(
+                    || (source_path.to_owned(), merged_line),
+                    |(path, line)| (path.display().to_string(), line),
+                );
+                format!(
+                    "{SOURCE_MARKER}{line} {column} {}",
+                    encode_source_path(&path)
+                )
+            })
+            .unwrap_or_else(|| line.to_owned());
+        output.push_str(&resolved);
+        output.push('\n');
+    }
+    output
+}
 
 fn reconciliation_scope<'a>(public_scope: &'a str, env: &'a HashMap<String, Binding>) -> &'a str {
     env.get(RECONCILIATION_SCOPE_BINDING)
@@ -148,6 +198,7 @@ fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> 
     let env = state_env(document, "self");
     for derived in &document.derived {
         let value = expr_code(&derived.value, &env, document, ValueMode::Owned)?;
+        writeln!(out, "{}", source_marker(&derived.span)).unwrap();
         writeln!(
             out,
             "fn {}(&self) -> {} {{ {value} }}",
@@ -155,6 +206,7 @@ fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> 
             derived.ty.rust(&document.structs),
         )
         .unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     Ok(())
 }
@@ -240,7 +292,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         let ty = component_state_type(&component.name);
         writeln!(out, "struct {ty} {{").unwrap();
         for state in &component.states {
+            writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
+            writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
         for line in component_generation_lines(component) {
             writeln!(out, "{}: u64,", component_latest_field(line)).unwrap();
@@ -259,7 +313,9 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
         for state in &component.states {
+            writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
+            writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
         for line in component_generation_lines(component) {
             writeln!(out, "{}: 0,", component_latest_field(line)).unwrap();
@@ -325,6 +381,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         }
     }
     for state in &document.states {
+        writeln!(out, "{}", source_marker(&state.span)).unwrap();
         writeln!(
             out,
             "pub(crate) {}: {},",
@@ -332,6 +389,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
             state.ty.rust(&document.structs)
         )
         .unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     for component in document
         .components
@@ -565,7 +623,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_test_mounts(&mut out, document, &message, source_path)?;
     writeln!(out, "}}").unwrap();
     generate_tests(&mut out, document, &message, source_path)?;
-    Ok(out)
+    Ok(resolve_source_markers(out, document, source_path))
 }
 
 mod application;

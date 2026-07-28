@@ -244,7 +244,9 @@ pub(in crate::codegen) fn generate_boot(
         .unwrap();
     }
     for state in &document.states {
+        writeln!(out, "{}", source_marker(&state.span)).unwrap();
         writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     for component in document
         .components

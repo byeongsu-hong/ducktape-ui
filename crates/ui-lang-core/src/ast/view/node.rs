@@ -333,6 +333,54 @@ pub enum ViewNode {
     },
 }
 
+impl ViewNode {
+    pub fn span(&self) -> &Span {
+        match self {
+            Self::Layout { span, .. }
+            | Self::Container { span, .. }
+            | Self::Overlay { span, .. }
+            | Self::PaneGrid { span, .. }
+            | Self::Text { span, .. }
+            | Self::RichText { span, .. }
+            | Self::Input { span, .. }
+            | Self::Button { span, .. }
+            | Self::Checkbox { span, .. }
+            | Self::Toggler { span, .. }
+            | Self::Slider { span, .. }
+            | Self::Progress { span, .. }
+            | Self::Radio { span, .. }
+            | Self::PickList { span, .. }
+            | Self::ComboBox { span, .. }
+            | Self::Rule { span, .. }
+            | Self::QrCode { span, .. }
+            | Self::Space { span, .. }
+            | Self::If { span, .. }
+            | Self::Match { span, .. }
+            | Self::For { span, .. }
+            | Self::KeyedColumn { span, .. }
+            | Self::Lazy { span, .. }
+            | Self::Markdown { span, .. }
+            | Self::TextEditor { span, .. }
+            | Self::Table { span, .. }
+            | Self::Component { span, .. }
+            | Self::Slot { span, .. }
+            | Self::ExternComponent { span, .. }
+            | Self::Themer { span, .. }
+            | Self::Shader { span, .. }
+            | Self::Media { span, .. }
+            | Self::Tooltip { span, .. }
+            | Self::MouseArea { span, .. }
+            | Self::ResizeHandle { span, .. }
+            | Self::Canvas { span, .. }
+            | Self::Theme { span, .. }
+            | Self::Float { span, .. }
+            | Self::Pin { span, .. }
+            | Self::Sensor { span, .. }
+            | Self::Responsive { span, .. } => span,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pattern: MatchPattern,

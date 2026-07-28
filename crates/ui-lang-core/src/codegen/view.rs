@@ -164,25 +164,24 @@ pub(in crate::codegen) fn render_node(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    if let Some(rendered) = render_foundation(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    if let Some(rendered) = render_controls(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    if let Some(rendered) = render_content(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    if let Some(rendered) = render_media(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    if let Some(rendered) = render_structure(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    if let Some(rendered) = render_documents(node, document, message, env, scope, slot)? {
-        return Ok(rendered);
-    }
-    unreachable!("every view node belongs to a render group")
+    let rendered = if let Some(rendered) =
+        render_foundation(node, document, message, env, scope, slot)?
+    {
+        rendered
+    } else if let Some(rendered) = render_controls(node, document, message, env, scope, slot)? {
+        rendered
+    } else if let Some(rendered) = render_content(node, document, message, env, scope, slot)? {
+        rendered
+    } else if let Some(rendered) = render_media(node, document, message, env, scope, slot)? {
+        rendered
+    } else if let Some(rendered) = render_structure(node, document, message, env, scope, slot)? {
+        rendered
+    } else if let Some(rendered) = render_documents(node, document, message, env, scope, slot)? {
+        rendered
+    } else {
+        unreachable!("every view node belongs to a render group")
+    };
+    Ok(source_mapped_expression(rendered, node.span()))
 }
 
 mod container;

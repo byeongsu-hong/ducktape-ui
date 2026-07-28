@@ -27,6 +27,9 @@ pub(crate) fn expr_type(
         }
         Expr::None => Ok(Type::Option(Box::new(Type::Unknown))),
         Expr::Path(path) => {
+            if let Some(name) = path.first() {
+                record_read(name, span);
+            }
             if let [contract, palette] = path.as_slice()
                 && document
                     .theme_contract

@@ -117,6 +117,7 @@ pub(in crate::check) fn infer_documents_group(
             route,
             span,
         } => {
+            record_read(content, span);
             check_id(id, env, document, ids, span)?;
             let content_type = env.get(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
@@ -156,6 +157,8 @@ pub(in crate::check) fn infer_documents_group(
             options,
             span,
         } => {
+            record_read(binding, span);
+            record_write(binding, span);
             check_id(id, env, document, ids, span)?;
             let binding_type = env.get(binding).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown editor state `{binding}`"))

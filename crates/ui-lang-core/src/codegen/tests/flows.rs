@@ -64,7 +64,7 @@ view
     let generated = compile(source, "grouped.ice").unwrap();
     assert!(generated.contains("return ::iced::Task::batch(["));
     assert!(generated.contains("::iced::Task::none().chain({"));
-    assert!(generated.contains(".chain({ ::iced::system::information()"));
+    assert!(generated.contains("::iced::system::information()"));
     assert!(generated.contains("fn __ice_system_info"));
 }
 

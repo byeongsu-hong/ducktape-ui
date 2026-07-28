@@ -180,6 +180,31 @@ pub enum Statement {
     },
 }
 
+impl Statement {
+    pub fn span(&self) -> &Span {
+        match self {
+            Self::Let { span, .. }
+            | Self::Assign { span, .. }
+            | Self::MarkdownAppend { span, .. }
+            | Self::ComboPush { span, .. }
+            | Self::ReturnIf { span, .. }
+            | Self::Exit { span }
+            | Self::Run { span, .. }
+            | Self::Sip { span, .. }
+            | Self::TaskFlow { span, .. }
+            | Self::TaskGroup { span, .. }
+            | Self::Abortable { span, .. }
+            | Self::Abort { span, .. }
+            | Self::DebugStart { span, .. }
+            | Self::DebugFinish { span, .. }
+            | Self::ClipboardWrite { span, .. }
+            | Self::WidgetOperation { span, .. }
+            | Self::WindowOperation { span, .. }
+            | Self::PaneOperation { span, .. } => span,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FutureMode {
     #[default]
