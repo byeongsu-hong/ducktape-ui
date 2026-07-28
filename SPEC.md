@@ -173,9 +173,10 @@ struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
 at runtime.
 
-Generated Rust refers to the public `::ui_lang_runtime` path, so a consuming
-application must declare `ui-lang-runtime = "=0.1.0"` as a direct dependency.
-It must also declare `ui-lang-build = "=0.1.0"` as a direct build dependency.
+Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
+a consuming application must declare `iced = "=0.14.0"` and
+`ui-lang-runtime = "=0.1.0"` as direct dependencies. It must also declare
+`ui-lang-build = "=0.1.0"` as a direct build dependency.
 The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
 on Windows; the reference application uses workspace paths with exact
 versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
@@ -5208,7 +5209,7 @@ restarting it cannot leave a `cargo run` child orphaned.
 | `cargo ice check` | language analysis followed by workspace `cargo check` |
 | `cargo ice test [cargo-test args...]` | analyzes every Ice app graph, then runs `cargo test --workspace` with the remaining arguments; ordinary Cargo discovers the same generated tests |
 | `cargo ice clippy` | language analysis followed by workspace clippy |
-| `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
+| `cargo ice compat` | analyzes app graphs, verifies exact `iced`, `iced_widget`, `ui-lang-build`, runtime, and AccessKit lockfile versions plus direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | runs one native binary with checked state-preserving live views and a build-then-restart fallback |
 | `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
