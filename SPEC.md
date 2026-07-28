@@ -4781,8 +4781,17 @@ normal parser and checker, lowers a versioned renderer-independent `LivePlan`,
 builds exactly one selected Cargo binary, and launches that binary with the
 plan path in `ICE_LIVE_PLAN`. The plan file is replaced atomically. Generated
 applications do not parse Ice source; they poll and deserialize the checked
-plan only when that environment variable is present. Production launches have
-no polling subscription and use the ordinary generated Rust view.
+plan only when that environment variable is present. The native subscription
+checks the plan path every 100 ms but emits an application message only when
+the payload changes, so an idle session does not continuously update or redraw.
+Production launches have no polling subscription and use the ordinary generated
+Rust view.
+
+Generated applications also enable an update-storm watchdog only when
+`ICE_LIVE_PLAN` is present. It reports at most once per five seconds after 256
+updates arrive within a one-second window. The warning identifies dynamic
+handler feedback, duplicated subscriptions, and overly short timers as likely
+causes; it does not stop or change application behavior.
 
 A running app accepts a plan only when the complete protocol and generated
 Rust contract remain compatible. The contract compares app identity and mode,
