@@ -5,6 +5,7 @@ theme contract AppTheme
   muted
   muted_bg
   primary
+  primary_hover
   primary_fg
   secondary
   secondary_fg
@@ -37,6 +38,8 @@ theme contract AppTheme
   control_line
   input
   ring
+  disabled
+  disabled_fg
   glass_thin
   glass_regular
   glass_sheet
@@ -65,6 +68,7 @@ palette app for AppTheme
   muted        #776d72
   muted_bg     #f2edef
   primary      #f0305b
+  primary_hover #d9294f
   primary_fg   #ffffff
   secondary    #f5f0f2
   secondary_fg #21191d
@@ -97,6 +101,8 @@ palette app for AppTheme
   control_line #ded5d9
   input        #ded5d9
   ring         #f0305b
+  disabled     #f2edef
+  disabled_fg  #a0959a
   glass_thin   #fffafa80
   glass_regular #fffafa9e
   glass_sheet  #fffafadb

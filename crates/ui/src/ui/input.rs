@@ -27,7 +27,7 @@ where
 {
     let theme = *theme;
     text_input(placeholder, value)
-        .padding([8, 12])
+        .padding(theme.controls.input_padding)
         .size(theme.typography.body)
         .style(move |_iced_theme, status| style(&theme, variant, status))
 }

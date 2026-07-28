@@ -436,6 +436,30 @@ view
 }
 
 #[test]
+fn lowers_semantic_disabled_button_colors() {
+    let source = r#"app Actions
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on pressed
+view
+  button "Save" @bg-primary text-fg disabled:bg-bg disabled:text-danger -> pressed
+"#;
+    let generated = compile(source, "actions.ice").unwrap();
+
+    assert!(generated.contains("button::Status::Disabled"));
+    assert!(generated.contains("__style.background = Some(__ice_palette.colors[0].into());"));
+    assert!(generated.contains("__style.text_color = __ice_palette.colors[3];"));
+}
+
+#[test]
 fn cascades_active_style_into_interaction_states() {
     let source = r#"app Styles
 theme contract AppTheme

@@ -228,6 +228,8 @@ spacing/radius values and non-positive or non-finite text sizes.
 Recipes may specialize one same-target base with
 `recipe danger_action for button extends action`. The base expands first, the
 child overrides it, and direct typed node properties remain the final override.
+Button state utilities support semantic `disabled:bg-*` and
+`disabled:text-*` colors as well as `disabled:opacity-*`.
 
 `box` and `flex` provide a checked CSS-like flexbox. `flex` supports reverse
 directions, wrapping, `justify`, `items`, `content`, and axis-specific gaps.

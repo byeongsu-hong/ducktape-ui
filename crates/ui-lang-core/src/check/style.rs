@@ -379,7 +379,14 @@ pub(in crate::check) fn check_styles(
                         .is_some_and(|color| valid_theme_color(color, document))
             }
             Some("disabled") => {
-                matches!(target, StyleTarget::Button(_)) && utility.starts_with("opacity-")
+                matches!(target, StyleTarget::Button(_))
+                    && (utility.starts_with("opacity-")
+                        || utility
+                            .strip_prefix("bg-")
+                            .is_some_and(|color| valid_theme_color(color, document))
+                        || utility
+                            .strip_prefix("text-")
+                            .is_some_and(|color| valid_theme_color(color, document)))
             }
             Some(_) => false,
             None => match utility {

@@ -10,6 +10,7 @@ members = [
     "examples/iced-app",
     "examples/markdown-editor",
     "examples/showcase",
+    "conformance/ice",
 ]
 exclude = ["vendor/iced_wgpu"]
 resolver = "3"
