@@ -267,9 +267,18 @@ fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> 
 
 pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String, Error> {
     let message = format!("__{}Message", document.app);
+    let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
     let live_contract = serde_json::to_string(&crate::live_program_contract(document))
         .expect("the live contract only contains serializable protocol values");
     let mut out = String::new();
+    // Attributes on `include!` do not reach the included items, while a module
+    // wrapper would change their visibility and name-resolution scope. Expand
+    // the items in place and attach the lint boundary to each one instead.
+    writeln!(
+        out,
+        "macro_rules! {lint_macro} {{ ($($item:item)*) => {{ $(#[allow(warnings, clippy::all)] $item)* }}; }}\n{lint_macro}! {{"
+    )
+    .unwrap();
     writeln!(
         out,
         "const _: &str = include_str!({});",
@@ -696,6 +705,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_test_mounts(&mut out, document, &message, source_path)?;
     writeln!(out, "}}").unwrap();
     generate_tests(&mut out, document, &message, source_path)?;
+    writeln!(out, "}}").unwrap();
     Ok(resolve_source_markers(out, document, source_path))
 }
 
