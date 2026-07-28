@@ -1,9 +1,9 @@
 # CEF browser in an Ice app
 
 This example embeds Chromium Embedded Framework as a native child of the iced
-window. Ice owns the 96-pixel application chrome, address state, navigation
-handlers, and CEF message-pump subscription; Rust owns CEF initialization and
-the native-window boundary.
+window. Ice owns the 68-pixel application chrome, address state, and navigation
+handlers; Rust owns CEF initialization, main-thread message-loop integration,
+and the native-window boundary.
 
 ![CEF rendering below the Ice-owned toolbar](screenshot.svg)
 

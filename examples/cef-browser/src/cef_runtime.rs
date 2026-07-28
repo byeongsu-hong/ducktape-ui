@@ -16,6 +16,20 @@ const DISABLED_CREDENTIAL_PREFERENCES: &[&str] = &[
 ];
 
 #[cfg(any(feature = "cef", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CefProcessKind {
+    Browser,
+    Helper,
+}
+
+#[cfg(any(feature = "cef", test))]
+impl CefProcessKind {
+    fn uses_helper_bundle_layout(self) -> bool {
+        matches!(self, Self::Helper)
+    }
+}
+
+#[cfg(any(feature = "cef", test))]
 fn credential_switches(target_os: &str) -> Vec<(&'static str, Option<&'static str>)> {
     let mut switches = vec![("disable-blink-features", Some("WebAuth"))];
     match target_os {
@@ -84,6 +98,7 @@ pub fn can_go_forward() -> bool {
 }
 
 #[cfg(feature = "cef")]
+#[cfg_attr(test, allow(dead_code))]
 mod enabled {
     use cef::rc::Rc;
     use cef::wrap_app;
@@ -105,7 +120,7 @@ mod enabled {
 
     const WINDOW_WIDTH: f32 = 1100.0;
     const WINDOW_HEIGHT: f32 = 760.0;
-    const ICE_CHROME_HEIGHT: f32 = 96.0;
+    const ICE_CHROME_HEIGHT: f32 = 68.0;
     const WELCOME_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
@@ -214,7 +229,7 @@ mod enabled {
 
     pub fn run() -> iced::Result {
         #[cfg(target_os = "macos")]
-        let _library = load_library();
+        let _library = load_library(super::CefProcessKind::Browser);
         initialize_api();
         let args = cef::args::Args::new();
         let mut app = BrowserApp::new();
@@ -249,6 +264,14 @@ mod enabled {
             return Err(error);
         }
 
+        #[cfg(target_os = "macos")]
+        let result = iced_winit::run_with_event_loop(
+            crate::CefBrowser::__program(),
+            cef::do_message_loop_work,
+            Duration::from_millis(16),
+        )
+        .map_err(iced::Error::from);
+        #[cfg(not(target_os = "macos"))]
         let result = crate::CefBrowser::run();
         close_browser();
         cef::shutdown();
@@ -258,7 +281,7 @@ mod enabled {
 
     pub fn run_helper() -> i32 {
         #[cfg(target_os = "macos")]
-        let _library = load_library();
+        let _library = load_library(super::CefProcessKind::Helper);
         initialize_api();
         let args = cef::args::Args::new();
         let mut app = BrowserApp::new();
@@ -270,6 +293,16 @@ mod enabled {
     }
 
     pub fn attach(url: String) -> iced::Task<super::AttachResult> {
+        #[cfg(test)]
+        {
+            let _ = url;
+            return iced::Task::done(super::AttachResult {
+                attached: false,
+                status: "CEF attachment skipped in the headless test runtime".to_owned(),
+            });
+        }
+
+        #[cfg(not(test))]
         iced::window::oldest().then(move |id| {
             let url = url.clone();
             match id {
@@ -286,7 +319,7 @@ mod enabled {
     }
 
     pub fn pump() -> bool {
-        cef::do_message_loop_work();
+        pump_message_loop();
         BROWSER.with_borrow(|browser| browser.is_some())
     }
 
@@ -474,6 +507,14 @@ mod enabled {
         iced::Error::WindowCreationFailed(Box::new(io::Error::other(message)))
     }
 
+    #[cfg(target_os = "macos")]
+    fn pump_message_loop() {}
+
+    #[cfg(not(target_os = "macos"))]
+    fn pump_message_loop() {
+        cef::do_message_loop_work();
+    }
+
     fn disable_credential_services() -> iced::Result {
         let context = cef::request_context_get_global_context()
             .ok_or_else(|| iced_error("CEF global request context is unavailable"))?;
@@ -513,10 +554,10 @@ mod enabled {
     }
 
     #[cfg(target_os = "macos")]
-    fn load_library() -> cef::library_loader::LibraryLoader {
+    fn load_library(kind: super::CefProcessKind) -> cef::library_loader::LibraryLoader {
         let loader = cef::library_loader::LibraryLoader::new(
             &std::env::current_exe().expect("current executable path"),
-            false,
+            kind.uses_helper_bundle_layout(),
         );
         assert!(loader.load(), "failed to load the CEF framework");
         loader
@@ -528,7 +569,9 @@ pub use enabled::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{DISABLED_CREDENTIAL_PREFERENCES, credential_switches, normalize_url};
+    use super::{
+        CefProcessKind, DISABLED_CREDENTIAL_PREFERENCES, credential_switches, normalize_url,
+    };
 
     #[test]
     fn normalizes_host_names_without_changing_explicit_schemes() {
@@ -568,5 +611,11 @@ mod tests {
                 "credentials_enable_passkeys"
             ]
         );
+    }
+
+    #[test]
+    fn helper_processes_use_the_parent_bundle_framework_layout() {
+        assert!(!CefProcessKind::Browser.uses_helper_bundle_layout());
+        assert!(CefProcessKind::Helper.uses_helper_bundle_layout());
     }
 }
