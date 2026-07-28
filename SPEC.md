@@ -4174,6 +4174,9 @@ but its descendants cannot be targeted from the caller. Layout and box IDs
 create descendant scopes, slot content inherits its slot position's scope,
 keyed rows add `key(value)`, table headers/cells add
 `header(index)` or `row(index)/col(index)`, and panes add their name.
+An ID on the component's root widget is another path segment rather than an
+alias for the component scope. For example, a `Dialog #dialog` whose root is
+`col #root` and whose input is `#title` exposes `#dialog/root/title`.
 Inside a component handler, the path starts at that component instance, so
 `task widget focus #title` targets its own `#title` descendant without naming
 the call-site scope.
@@ -4181,7 +4184,8 @@ Declared dynamic IDs use `i64` or `str`; keyed rows use bool/i64/f64 and table
 indices use i64. Every segment name, key presence, order, and key type must
 match a real input, editor, or scroll ID. Static paths lower to
 `widget::Id::new`; a path with any dynamic segment lowers to
-`widget::Id::from(String)`.
+`widget::Id::from(String)`. An unknown `E172` target reports up to three nearest
+valid target paths so missing or reordered scope segments are visible.
 
 Ice exposes all 13 functions in `iced::widget::operation`: previous/next/direct
 focus and focus query; cursor front/end/position; select all/range; relative
@@ -5069,6 +5073,7 @@ Successful analysis may also emit stable semantic warnings:
 | `W012` | a statement or view gate is a constant no-op, redundant gate, or dead subtree |
 | `W013` | a statement follows an unconditional `return if true` and can never execute |
 | `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
+| `W015` | a component with targetable widget IDs is mounted without the public ID scope needed to address them from its caller |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -5112,6 +5117,11 @@ a constant-true return.
 payload arguments, and route; statically disabled `when false` subscriptions are
 excluded, so it warns only when an external event would be delivered twice with
 identical semantics.
+`W015` reports each reachable id-less component call whose definition contains
+input, editor, or scroll IDs that an explicit component ID would expose to
+widget operations. Component-local handlers may still use their own relative
+paths; the warning covers operation paths hidden from the caller and suggests
+adding an explicit component ID.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
@@ -5138,7 +5148,7 @@ normal edit-time parser and semantic diagnostics do not wait for Cargo.
 The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
 output rather than actionable Ice syntax and remain CLI-only; Ice's non-CLI-only
-semantic warnings (`W001-W009` and `W011-W014`) continue to come directly from
+semantic warnings (`W001-W009` and `W011-W015`) continue to come directly from
 the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source

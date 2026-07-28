@@ -381,6 +381,14 @@ fn checks_scoped_widget_operations() {
     let error = analyze(&source.replacen("/inner/field", "/inner/missing", 1)).unwrap_err();
     assert_eq!(error.code, "E172");
     assert!(error.message.contains("#outer(key)/inner/missing"));
+    assert!(
+        error
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("#outer(key)/inner/field")),
+        "{:?}",
+        error.hint
+    );
 
     let error = analyze(&source.replacen("#outer(selected)", "#outer(value)", 1)).unwrap_err();
     assert_eq!(error.code, "E172");

@@ -21,6 +21,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     warnings.extend(routed_task_cycle_warnings(&document, &reachable_handlers));
     warnings.extend(raw_event_feedback_warnings(&document));
     warnings.extend(component_identity_warnings(&document));
+    warnings.extend(unscoped_component_widget_warnings(&document, &reachable));
     warnings.extend(semantic_smell_warnings(
         &document,
         &reachable,

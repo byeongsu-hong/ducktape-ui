@@ -24,8 +24,9 @@ graph and fall back to disk when a buffer closes.
 Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw
-feedback, positional stateful component identity, retained dynamic state, and
-unused bindings. Constant no-ops/dead gates and unreachable statements include
+feedback, positional stateful component identity, retained dynamic state,
+id-less component calls that hide widget targets, and unused bindings. Constant
+no-ops/dead gates and unreachable statements include
 preset boot statements; statically disabled subscriptions are excluded from
 duplicate-delivery warnings. Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports

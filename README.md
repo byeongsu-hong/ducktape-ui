@@ -616,7 +616,7 @@ diagnostics remain owned by the Rust language server. The action publishes
 error-level generated diagnostics, including type and extern-contract failures.
 Warning-level Rust and Clippy findings from backend output are omitted because
 they are not actionable Ice diagnostics; Ice's non-CLI-only semantic warnings
-(`W001-W009` and `W011-W014`) continue to appear directly from the language
+(`W001-W009` and `W011-W015`) continue to appear directly from the language
 checker.
 
 The LSP is live and intended for editor use. Configure any custom LSP client

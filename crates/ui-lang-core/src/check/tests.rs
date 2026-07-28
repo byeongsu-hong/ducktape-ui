@@ -392,6 +392,73 @@ view
 }
 
 #[test]
+fn warns_when_an_idless_component_hides_widget_targets() {
+    let document = analyze(&warning_app(
+        r#"component OverlayLayer()
+  state
+    query = ""
+  col #root
+    input "Search" #palette-input <-> query
+component Label()
+  text "Label"
+component Decorative()
+  col #root
+    text "Decorative" #label
+view
+  col
+    OverlayLayer
+    OverlayLayer #overlay
+    Label
+    Decorative
+"#,
+    ))
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W015")
+        .collect::<Vec<_>>();
+
+    assert_eq!(warnings.len(), 1, "{:?}", document.warnings());
+    assert!(warnings[0].message.contains("component `OverlayLayer`"));
+    assert!(warnings[0].message.contains("1 widget ID"));
+    assert!(
+        warnings[0]
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("explicit `#id`"))
+    );
+}
+
+#[test]
+fn warns_when_a_test_mount_masks_an_idless_component_target() {
+    let document = analyze(&warning_app(
+        r#"state
+  query = ""
+component OverlayLayer(bind query:str)
+  input "Search" #palette-input <-> query
+component WorkspaceTabs(bind query:str)
+  OverlayLayer query<->query
+on open
+  task widget focus #workspace-tabs/palette-input
+view
+  WorkspaceTabs query<->query #workspace-tabs
+test masks_the_missing_component_scope
+  mount
+    col #workspace-tabs
+      input "Search" #palette-input <-> query
+"#,
+    ))
+    .unwrap();
+
+    assert!(document.warnings().iter().any(|warning| {
+        warning.code == "W015"
+            && warning.message.contains("component `OverlayLayer`")
+            && warning.message.contains("1 widget ID")
+    }));
+}
+
+#[test]
 fn warns_for_unused_bindings_noops_dead_statements_and_duplicate_subscriptions() {
     let document = analyze(&warning_app(
         r#"state
