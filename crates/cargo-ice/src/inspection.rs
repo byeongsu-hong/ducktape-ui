@@ -118,6 +118,7 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
 
     let output = command.output().map_err(|error| error.to_string())?;
     if !output.status.success() {
+        let _ = fs::remove_file(&result_path);
         return Err(format!(
             "headless inspection failed for {}\nstdout:\n{}\nstderr:\n{}",
             source.display(),
