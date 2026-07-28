@@ -1823,7 +1823,7 @@ pub fn document() -> Value {
                     "W003": "reachable state has no writer",
                     "W004": "unconditional immediate handler routing cycle",
                 },
-                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; test and compat run that check before the normal test runner",
+                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics while warning-level backend findings remain CLI-only; test and compat run that check before the normal test runner",
             },
             "formatting": {
                 "supported": true,

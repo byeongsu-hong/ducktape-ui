@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use ui_lang_core::{
     CursorContext, STYLE_STATUS_NAMES as STATUS_NAMES, SourcePosition,
     editor_ancestor_lines as ancestor_lines, editor_block_end as child_block_end,
@@ -15,6 +16,10 @@ struct DiagnosticReport {
     diagnostics: Vec<(String, Value)>,
     reachable_components: BTreeSet<(String, usize)>,
 }
+
+type CargoDiagnosticReports = HashMap<PathBuf, Vec<(String, Value)>>;
+
+const LINT_COMMAND: &str = "ice.lint";
 
 enum Incoming {
     Message(Value),
@@ -103,6 +108,7 @@ pub fn run_stdio() -> Result<(), String> {
 fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
     let mut documents = HashMap::<String, String>::new();
     let mut diagnostic_reports = HashMap::<String, DiagnosticReport>::new();
+    let mut cargo_diagnostic_reports = CargoDiagnosticReports::new();
     let mut workspace_roots = Vec::<PathBuf>::new();
     let mut initialized = false;
     let mut shutdown = false;
@@ -189,6 +195,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                             "hoverProvider": true,
                             "signatureHelpProvider": { "triggerCharacters": [" ", "=", "<"] },
                             "codeActionProvider": true,
+                            "executeCommandProvider": { "commands": [LINT_COMMAND] },
                             "definitionProvider": true,
                             "renameProvider": { "prepareProvider": true },
                         },
@@ -219,7 +226,12 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                 let params = &message["params"]["textDocument"];
                 if let (Some(uri), Some(text)) = (params["uri"].as_str(), params["text"].as_str()) {
                     documents.insert(uri.to_owned(), text.to_owned());
-                    reanalyze_open_roots(writer, &documents, &mut diagnostic_reports)?;
+                    reanalyze_open_roots(
+                        writer,
+                        &documents,
+                        &mut diagnostic_reports,
+                        &cargo_diagnostic_reports,
+                    )?;
                 }
             }
             "textDocument/didChange" => {
@@ -230,13 +242,23 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     .and_then(|change| change["text"].as_str());
                 if let (Some(uri), Some(text)) = (uri, text) {
                     documents.insert(uri.to_owned(), text.to_owned());
-                    reanalyze_open_roots(writer, &documents, &mut diagnostic_reports)?;
+                    reanalyze_open_roots(
+                        writer,
+                        &documents,
+                        &mut diagnostic_reports,
+                        &cargo_diagnostic_reports,
+                    )?;
                 }
             }
             "textDocument/didClose" => {
                 if let Some(uri) = message["params"]["textDocument"]["uri"].as_str() {
                     documents.remove(uri);
-                    reanalyze_open_roots(writer, &documents, &mut diagnostic_reports)?;
+                    reanalyze_open_roots(
+                        writer,
+                        &documents,
+                        &mut diagnostic_reports,
+                        &cargo_diagnostic_reports,
+                    )?;
                 }
             }
             "textDocument/formatting" => {
@@ -299,9 +321,42 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     if valid_code_action_params(&message["params"]) {
                         let actions =
                             code_actions_at(&documents, &message["params"]).unwrap_or_default();
+                        let mut actions = actions;
+                        if accepts_code_action_kind(&message["params"], "source") {
+                            actions.push(lint_code_action());
+                        }
                         respond(writer, id, Value::Array(actions))?;
                     } else {
                         invalid_params(writer, id, "invalid code action params")?;
+                    }
+                }
+            }
+            "workspace/executeCommand" => {
+                if let Some(id) = id {
+                    if message["params"]["command"].as_str() != Some(LINT_COMMAND)
+                        || !message["params"]["arguments"]
+                            .as_array()
+                            .is_none_or(Vec::is_empty)
+                    {
+                        invalid_params(writer, id, "invalid Ice lint command")?;
+                        continue;
+                    }
+                    if workspace_roots.is_empty() {
+                        invalid_params(writer, id, "Ice lint requires an initialized workspace")?;
+                        continue;
+                    }
+                    if has_unsaved_workspace_document(&documents, &workspace_roots) {
+                        invalid_params(writer, id, "save all open Ice files before running lint")?;
+                        continue;
+                    }
+                    match lint_workspaces(
+                        writer,
+                        &workspace_roots,
+                        &diagnostic_reports,
+                        &mut cargo_diagnostic_reports,
+                    ) {
+                        Ok(result) => respond(writer, id, result)?,
+                        Err(error) => request_error(writer, id, -32603, &error)?,
                     }
                 }
             }
@@ -400,6 +455,7 @@ fn reanalyze_open_roots(
     writer: &mut impl Write,
     documents: &HashMap<String, String>,
     reports: &mut HashMap<String, DiagnosticReport>,
+    cargo_reports: &CargoDiagnosticReports,
 ) -> io::Result<()> {
     let overlays = source_overlays(documents);
     // ponytail: Add a dependency graph only if profiling shows open-root scale matters.
@@ -415,9 +471,204 @@ fn reanalyze_open_roots(
         .collect::<BTreeSet<_>>();
     *reports = next;
     for target in targets {
-        publish_aggregated(writer, reports, &target)?;
+        publish_aggregated(writer, reports, cargo_reports, &target)?;
     }
     Ok(())
+}
+
+fn lint_workspaces(
+    writer: &mut impl Write,
+    workspace_roots: &[PathBuf],
+    language_reports: &HashMap<String, DiagnosticReport>,
+    cargo_reports: &mut CargoDiagnosticReports,
+) -> Result<Value, String> {
+    let previous_targets = cargo_diagnostic_targets(cargo_reports);
+    let mut success = true;
+    for root in workspace_roots {
+        let (diagnostics, root_success) = cargo_lint_diagnostics(root)?;
+        success &= root_success;
+        cargo_reports.insert(root.clone(), diagnostics);
+    }
+    let targets = previous_targets
+        .into_iter()
+        .chain(cargo_diagnostic_targets(cargo_reports))
+        .collect::<BTreeSet<_>>();
+    for target in targets {
+        publish_aggregated(writer, language_reports, cargo_reports, &target)
+            .map_err(|error| error.to_string())?;
+    }
+    let diagnostics = cargo_reports.values().map(Vec::len).sum::<usize>();
+    Ok(json!({
+        "success": success,
+        "diagnostics": diagnostics,
+        "workspaceRoots": workspace_roots.len(),
+    }))
+}
+
+fn cargo_diagnostic_targets(reports: &CargoDiagnosticReports) -> BTreeSet<String> {
+    reports
+        .values()
+        .flatten()
+        .map(|(target, _)| target.clone())
+        .collect()
+}
+
+fn has_unsaved_workspace_document(
+    documents: &HashMap<String, String>,
+    workspace_roots: &[PathBuf],
+) -> bool {
+    documents.iter().any(|(uri, source)| {
+        let Some(path) = file_uri_path(uri) else {
+            return false;
+        };
+        let path = canonical_path(&path).unwrap_or(path);
+        let in_workspace = workspace_roots.iter().any(|root| {
+            let root = canonical_path(root).unwrap_or_else(|| root.clone());
+            path.starts_with(root)
+        });
+        in_workspace && fs::read_to_string(path).ok().as_deref() != Some(source)
+    })
+}
+
+fn cargo_lint_diagnostics(root: &Path) -> Result<(Vec<(String, Value)>, bool), String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let output = Command::new(cargo)
+        .args([
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--no-deps",
+            "--message-format=json",
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot run Ice lint in {}: {error}", root.display()))?;
+    let diagnostics = collect_cargo_lint_diagnostics(root, &output.stdout);
+    Ok((diagnostics, output.status.success()))
+}
+
+fn collect_cargo_lint_diagnostics(root: &Path, stdout: &[u8]) -> Vec<(String, Value)> {
+    let mut diagnostics = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut source_maps = super::GeneratedSourceMaps::new();
+    for line in String::from_utf8_lossy(stdout).lines() {
+        let Ok(message) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if message["reason"] != "compiler-message" {
+            continue;
+        }
+        if message["message"]["level"] != "error" {
+            continue;
+        }
+        let Some((target, diagnostic)) =
+            compiler_diagnostic_to_lsp(root, &message["message"], &mut source_maps)
+        else {
+            continue;
+        };
+        let key = (
+            target.clone(),
+            diagnostic["range"]["start"]["line"].as_u64(),
+            diagnostic["range"]["start"]["character"].as_u64(),
+            diagnostic["code"].as_str().map(str::to_owned),
+            diagnostic["message"].as_str().map(str::to_owned),
+        );
+        if seen.insert(key) {
+            diagnostics.push((target, diagnostic));
+        }
+    }
+    diagnostics
+}
+
+fn compiler_diagnostic_to_lsp(
+    root: &Path,
+    diagnostic: &Value,
+    source_maps: &mut super::GeneratedSourceMaps,
+) -> Option<(String, Value)> {
+    let spans = diagnostic["spans"].as_array()?;
+    let mapped = spans
+        .iter()
+        .filter_map(|span| {
+            let generated_path = span["file_name"].as_str()?;
+            let generated_line = usize::try_from(span["line_start"].as_u64()?).ok()?;
+            let generated_column = usize::try_from(span["column_start"].as_u64()?).ok()?;
+            let mut location =
+                super::mapped_ice_location(source_maps, Path::new(generated_path), generated_line)?;
+            if location.path.is_relative() {
+                location.path = root.join(location.path);
+            }
+            Some((
+                span,
+                location,
+                generated_path,
+                generated_line,
+                generated_column,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let primary = mapped
+        .iter()
+        .find(|(span, ..)| span["is_primary"].as_bool() == Some(true))?;
+    let source = fs::read_to_string(&primary.1.path).ok()?;
+    let target = file_path_uri(&primary.1.path);
+    let code = diagnostic["code"]["code"].as_str();
+    let diagnostic_source = if code.is_some_and(|code| code.starts_with("clippy::")) {
+        "clippy"
+    } else {
+        "rustc"
+    };
+    let mut message = diagnostic["message"]
+        .as_str()
+        .unwrap_or("generated Rust error")
+        .to_owned();
+    if let Some(children) = diagnostic["children"].as_array() {
+        for child in children {
+            let Some(child_message) = child["message"].as_str() else {
+                continue;
+            };
+            let level = child["level"].as_str().unwrap_or("note");
+            message.push_str(&format!("\n{level}: {child_message}"));
+        }
+    }
+    message.push_str(&format!(
+        "\nnote: generated Rust location: {}:{}:{}",
+        primary.2, primary.3, primary.4
+    ));
+    let severity = match diagnostic["level"].as_str() {
+        Some("warning") => 2,
+        Some("note") => 3,
+        Some("help") => 4,
+        _ => 1,
+    };
+    let mut mapped_diagnostic = json!({
+        "range": diagnostic_range(&source, primary.1.line, primary.1.column),
+        "severity": severity,
+        "source": diagnostic_source,
+        "message": message,
+    });
+    if let Some(code) = code {
+        mapped_diagnostic["code"] = Value::String(code.to_owned());
+    }
+    let related = mapped
+        .iter()
+        .filter(|(_, location, ..)| location != &primary.1)
+        .filter_map(|(span, location, ..)| {
+            let source = fs::read_to_string(&location.path).ok()?;
+            Some(json!({
+                "location": {
+                    "uri": file_path_uri(&location.path),
+                    "range": diagnostic_range(&source, location.line, location.column),
+                },
+                "message": span["label"]
+                    .as_str()
+                    .unwrap_or("related generated expression"),
+            }))
+        })
+        .collect::<Vec<_>>();
+    if !related.is_empty() {
+        mapped_diagnostic["relatedInformation"] = Value::Array(related);
+    }
+    Some((target, mapped_diagnostic))
 }
 
 fn source_overlays(documents: &HashMap<String, String>) -> HashMap<PathBuf, String> {
@@ -567,6 +818,14 @@ fn valid_code_action_params(params: &Value) -> bool {
         && range["start"]["character"].as_u64().is_some()
         && range["end"]["line"].as_u64().is_some()
         && range["end"]["character"].as_u64().is_some()
+}
+
+fn accepts_code_action_kind(params: &Value, kind: &str) -> bool {
+    params["context"]["only"].as_array().is_none_or(|only| {
+        only.iter()
+            .filter_map(Value::as_str)
+            .any(|requested| kind == requested || kind.starts_with(&format!("{requested}.")))
+    })
 }
 
 fn checked_document(
@@ -2569,6 +2828,7 @@ fn workspace_edit(
 fn publish_aggregated(
     writer: &mut impl Write,
     reports: &HashMap<String, DiagnosticReport>,
+    cargo_reports: &CargoDiagnosticReports,
     uri: &str,
 ) -> io::Result<()> {
     let reachable_components = reports
@@ -2598,6 +2858,22 @@ fn publish_aggregated(
         }
         diagnostics.push(diagnostic.clone());
     }
+    let mut cargo_locations = BTreeSet::new();
+    for (_, diagnostic) in cargo_reports
+        .values()
+        .flatten()
+        .filter(|(target, _)| target == uri)
+    {
+        let location = (
+            diagnostic["range"]["start"]["line"].as_u64(),
+            diagnostic["range"]["start"]["character"].as_u64(),
+            diagnostic["code"].as_str().unwrap_or_default(),
+            diagnostic["message"].as_str().unwrap_or_default(),
+        );
+        if cargo_locations.insert(location) {
+            diagnostics.push(diagnostic.clone());
+        }
+    }
     write_message(
         writer,
         &json!({
@@ -2606,6 +2882,18 @@ fn publish_aggregated(
             "params": { "uri": uri, "diagnostics": diagnostics },
         }),
     )
+}
+
+fn lint_code_action() -> Value {
+    json!({
+        "title": "Run Ice lint",
+        "kind": "source",
+        "command": {
+            "title": "Run Ice lint",
+            "command": LINT_COMMAND,
+            "arguments": [],
+        },
+    })
 }
 
 fn diagnostic_target(
@@ -2863,9 +3151,10 @@ fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Navigation, code_actions_at, completion_items_at, diagnostic_range, file_path_uri,
-        file_uri_path, hover_at, navigation_at, read_message, serve, signature_help_at,
-        source_range, whole_document_range, workspace_edit,
+        Navigation, accepts_code_action_kind, code_actions_at, collect_cargo_lint_diagnostics,
+        compiler_diagnostic_to_lsp, completion_items_at, diagnostic_range, file_path_uri,
+        file_uri_path, has_unsaved_workspace_document, hover_at, lint_code_action, navigation_at,
+        read_message, serve, signature_help_at, source_range, whole_document_range, workspace_edit,
     };
     use serde_json::{Value, json};
     use std::collections::{BTreeSet, HashMap};
@@ -2988,9 +3277,119 @@ mod tests {
             json!([" ", "=", "<"])
         );
         assert_eq!(capabilities["codeActionProvider"], true);
+        assert_eq!(
+            capabilities["executeCommandProvider"]["commands"],
+            json!(["ice.lint"])
+        );
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(response(&messages, 2)["result"], Value::Null);
+    }
+
+    #[test]
+    fn maps_generated_clippy_diagnostics_to_ice_locations() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", "app Demo\nview\n  text missing\n");
+        let source_path = fixture.path("app.ice");
+        let encoded_path = source_path
+            .display()
+            .to_string()
+            .bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        fixture.write(
+            "generated.rs",
+            &format!(
+                "// __ICE_SOURCE 3 3 {encoded_path}\nlet generated = &missing;\n// __ICE_SOURCE_END\n"
+            ),
+        );
+        let generated_path = fixture.path("generated.rs");
+        let diagnostic = json!({
+            "message": "this expression creates a needless borrow",
+            "code": { "code": "clippy::needless_borrow" },
+            "level": "warning",
+            "spans": [{
+                "file_name": generated_path.display().to_string(),
+                "line_start": 2,
+                "column_start": 17,
+                "is_primary": true,
+            }],
+            "children": [{
+                "level": "help",
+                "message": "change this expression",
+            }],
+        });
+
+        let (uri, mapped) = compiler_diagnostic_to_lsp(
+            &fixture.0,
+            &diagnostic,
+            &mut super::super::GeneratedSourceMaps::new(),
+        )
+        .unwrap();
+        assert_eq!(uri, file_path_uri(&source_path));
+        assert_eq!(mapped["source"], "clippy");
+        assert_eq!(mapped["code"], "clippy::needless_borrow");
+        assert_eq!(mapped["severity"], 2);
+        assert_eq!(
+            mapped["range"],
+            json!({
+                "start": { "line": 2, "character": 2 },
+                "end": { "line": 2, "character": 3 },
+            })
+        );
+        assert!(
+            mapped["message"]
+                .as_str()
+                .unwrap()
+                .contains("help: change this expression")
+        );
+        assert!(
+            mapped["message"]
+                .as_str()
+                .unwrap()
+                .contains("generated.rs:2:17")
+        );
+
+        let warning = json!({ "reason": "compiler-message", "message": diagnostic });
+        let warning_json = serde_json::to_vec(&warning).unwrap();
+        assert!(collect_cargo_lint_diagnostics(&fixture.0, &warning_json).is_empty());
+
+        let mut error = warning;
+        error["message"]["level"] = json!("error");
+        let error_json = serde_json::to_vec(&error).unwrap();
+        let diagnostics = collect_cargo_lint_diagnostics(&fixture.0, &error_json);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].0, file_path_uri(&source_path));
+    }
+
+    #[test]
+    fn exposes_lint_as_a_source_action() {
+        assert_eq!(lint_code_action()["kind"], "source");
+        assert_eq!(lint_code_action()["command"]["command"], "ice.lint");
+        assert!(accepts_code_action_kind(
+            &json!({ "context": { "only": ["source"] } }),
+            "source"
+        ));
+        assert!(!accepts_code_action_kind(
+            &json!({ "context": { "only": ["quickfix"] } }),
+            "source"
+        ));
+    }
+
+    #[test]
+    fn lint_requires_open_workspace_documents_to_match_disk() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", "app Saved\nview\n  text \"Saved\"\n");
+        let uri = file_path_uri(&fixture.path("app.ice"));
+        let roots = [fixture.0.clone()];
+        let saved = HashMap::from([(
+            uri.clone(),
+            "app Saved\nview\n  text \"Saved\"\n".to_owned(),
+        )]);
+        assert!(!has_unsaved_workspace_document(&saved, &roots));
+
+        let unsaved = HashMap::from([(uri, "app Changed\nview\n  text \"Changed\"\n".to_owned())]);
+        assert!(has_unsaved_workspace_document(&unsaved, &roots));
     }
 
     #[test]
