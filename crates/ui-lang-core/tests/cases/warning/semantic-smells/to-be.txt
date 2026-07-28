@@ -1,0 +1,9 @@
+W011 derived value `abandoned` is never read
+W011 handler parameters `value`, `ignored` in `act` are never read
+W011 handler local `discarded` in `act` is never read
+W012 assignment `total = total` has no effect
+W012 `return if false` never exits the handler
+W013 statement is unreachable because `return if true` at line 24 always exits the handler
+W011 handler parameter `now` in `tick` is never read
+W014 subscription duplicates the same source, gates, and route declared at line 28
+W012 `if false` makes its entire view subtree unreachable

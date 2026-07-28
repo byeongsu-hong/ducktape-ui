@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable = reachable_components(&document);
     let reachable_handlers = reachable_handlers(&document, &reachable);
-    let usage = UsageSession::start(&document, &reachable);
+    let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     check(&mut document, &reachable, &reachable_handlers)?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(unreachable_handler_warnings(
@@ -21,6 +21,11 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     warnings.extend(routed_task_cycle_warnings(&document, &reachable_handlers));
     warnings.extend(raw_event_feedback_warnings(&document));
     warnings.extend(component_identity_warnings(&document));
+    warnings.extend(semantic_smell_warnings(
+        &document,
+        &reachable,
+        &reachable_handlers,
+    ));
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(
         document,
@@ -380,14 +385,16 @@ fn check(
 
     for handler in &document.handlers {
         with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
-            check_handler(
-                handler,
-                &states,
-                &app_values,
-                document,
-                &operation_ids,
-                &pane_grids,
-            )
+            with_handler_usage(None, &handler.name, || {
+                check_handler(
+                    handler,
+                    &states,
+                    &app_values,
+                    document,
+                    &operation_ids,
+                    &pane_grids,
+                )
+            })
         })?;
     }
     for handler in &preset_handlers {
@@ -424,14 +431,16 @@ fn check(
                 reachable.contains(&component.name)
                     && reachable_handlers.component_contains(&component.name, &handler.name),
                 || {
-                    check_handler(
-                        handler,
-                        &states,
-                        &states,
-                        document,
-                        &operation_ids,
-                        &HashMap::new(),
-                    )?;
+                    with_handler_usage(Some(&component.name), &handler.name, || {
+                        check_handler(
+                            handler,
+                            &states,
+                            &states,
+                            document,
+                            &operation_ids,
+                            &HashMap::new(),
+                        )
+                    })?;
                     Ok::<_, Error>(())
                 },
             )?;
@@ -639,6 +648,7 @@ mod handler;
 mod lifecycle;
 mod options;
 mod reachability;
+mod smells;
 mod state;
 mod style;
 mod subscription;
@@ -655,6 +665,7 @@ use handler::*;
 use lifecycle::*;
 use options::*;
 use reachability::*;
+use smells::*;
 use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};
 pub(crate) use state::{controlled_editor_bindings, controlled_state_bindings};
 use style::*;
