@@ -908,7 +908,11 @@ fn keeps_extern_struct_and_future_probe_names_distinct() {
     )
     .unwrap();
 
+    assert!(generated.contains(
+        "#[allow(dead_code)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum AppTheme"
+    ));
     assert!(generated.contains("fn __ui_lang_check_Load"));
+    assert!(generated.contains("#[allow(dead_code, non_snake_case)] fn __ui_lang_check_Load"));
     assert!(generated.contains("async fn __ui_lang_check_future_load"));
 }
 

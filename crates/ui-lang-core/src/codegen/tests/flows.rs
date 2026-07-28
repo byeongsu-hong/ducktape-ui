@@ -30,6 +30,7 @@ view
   button "Save" disabled=!can_submit -> submit
 "#;
     let generated = compile(source, "derived.ice").unwrap();
+    assert!(generated.contains("#[allow(unused_parens)]\nimpl Derived"));
     assert!(generated.contains("fn __ice_derived_normalized(&self) -> ::std::string::String"));
     assert!(generated.contains("fn __ice_derived_can_submit(&self) -> bool"));
     assert!(generated.contains("let title = Self::__ice_derived_normalized(self);"));

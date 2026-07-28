@@ -110,7 +110,7 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
         writeln!(out, "{}", source_marker(&item.span)).unwrap();
         writeln!(
             out,
-            "#[allow(dead_code)] fn __ui_lang_check_{}(value: &{}) {{",
+            "#[allow(dead_code, non_snake_case)] fn __ui_lang_check_{}(value: &{}) {{",
             item.name, item.rust_path
         )
         .unwrap();

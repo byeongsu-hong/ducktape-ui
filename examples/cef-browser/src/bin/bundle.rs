@@ -88,7 +88,16 @@ fn remove_credential_usage_descriptions(app: &std::path::Path) -> Result<(), Box
 
 fn build(binary: &str, release: bool) -> Result<(), Box<dyn Error>> {
     let mut command = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
-    command.args(["build", "-p", APP, "--features", "cef", "--bin", binary]);
+    command.args([
+        "build",
+        "--quiet",
+        "-p",
+        APP,
+        "--features",
+        "cef",
+        "--bin",
+        binary,
+    ]);
     if release {
         command.arg("--release");
     }
