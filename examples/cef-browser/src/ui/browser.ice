@@ -23,29 +23,33 @@ extern crate::cef_runtime
 
 theme contract BrowserTheme
   bg
+  chrome
   surface
-  raised
+  address
   fg
   muted
   border
   primary
   primary_hover
   on_primary
+  disabled
   danger
   success
 
 palette browser for BrowserTheme
-  bg       #eef2f7
-  surface  #ffffff
-  raised   #f8fafc
-  fg       #172033
-  muted    #64748b
-  border   #d8e0eb
-  primary  #2563eb
-  primary_hover #1d4ed8
-  on_primary #ffffff
-  danger   #dc2626
-  success  #16a34a
+  bg            #e8ebf1
+  chrome        #f5f6f9
+  surface       #ffffff
+  address       #ffffff
+  fg            #20232b
+  muted         #747b89
+  border        #d9dde5
+  primary       #5368f5
+  primary_hover #4559e8
+  on_primary    #ffffff
+  disabled      #b6bcc7
+  danger        #d34b4b
+  success       #28a66a
 
 state
   address = "ice://welcome"
@@ -97,95 +101,112 @@ view
       h=fill
       gap=0.0
       @bg-bg
-    box #status-bar
+    box #toolbar
       with
         w=fill
-        h=36.0
-        px=16.0
+        h=68.0
+        px=18.0
         border=border
         border-w=1.0
-        @bg-raised
+        @bg-chrome
       row
         with
           w=fill
           h=fill
           align=center
           gap=10.0
-        text "ICE + CEF"
-          with
-            size=12.0
-            @font-bold
-            @text-fg
-        box
-          with
-            w=8.0
-            h=8.0
-            r=4.0
-            @bg-success
-          space w=8.0 h=8.0
-        text status
-          with
-            w=fill
-            size=12.0
-            @text-muted
-        text "native child surface" size=11.0 @text-muted
-    box #toolbar
-      with
-        w=fill
-        h=60.0
-        px=12.0
-        border=border
-        border-w=1.0
-        @bg-surface
-      row
-        with
-          w=fill
-          h=fill
-          align=center
-          gap=8.0
-        button "←" #back -> back
+        button #back -> back
           with
             label="Back"
             w=40.0
-            h=36.0
+            h=40.0
+            p=0.0
             disabled=!can_back
-          active bg=raised text=fg border=border border-w=1.0 r=8.0
-          hovered bg=bg
-          disabled bg=raised text=muted border=border border-w=1.0 r=8.0
-        button "→" #forward -> forward
+          text "←"
+            with
+              size=18.0
+              align-x=center
+              align-y=center
+          active bg=transparent text=fg border=transparent border-w=0.0 r=12.0
+          hovered bg=surface text=fg shadow=black/8 shadow-y=1.0 shadow-blur=5.0
+          pressed bg=border text=fg
+          disabled bg=transparent text=disabled border=transparent border-w=0.0 r=12.0
+        button #forward -> forward
           with
             label="Forward"
             w=40.0
-            h=36.0
+            h=40.0
+            p=0.0
             disabled=!can_forward
-          active bg=raised text=fg border=border border-w=1.0 r=8.0
-          hovered bg=bg
-          disabled bg=raised text=muted border=border border-w=1.0 r=8.0
-        button "↻" #refresh -> refresh
+          text "→"
+            with
+              size=18.0
+              align-x=center
+              align-y=center
+          active bg=transparent text=fg border=transparent border-w=0.0 r=12.0
+          hovered bg=surface text=fg shadow=black/8 shadow-y=1.0 shadow-blur=5.0
+          pressed bg=border text=fg
+          disabled bg=transparent text=disabled border=transparent border-w=0.0 r=12.0
+        button #refresh -> refresh
           with
             label="Reload"
             w=40.0
-            h=36.0
+            h=40.0
+            p=0.0
             disabled=!attached
-          active bg=raised text=fg border=border border-w=1.0 r=8.0
-          hovered bg=bg
-          disabled bg=raised text=muted border=border border-w=1.0 r=8.0
-        input "Enter a URL" #address <-> address
+          text "↻"
+            with
+              size=19.0
+              align-x=center
+              align-y=center
+          active bg=transparent text=fg border=transparent border-w=0.0 r=12.0
+          hovered bg=surface text=fg shadow=black/8 shadow-y=1.0 shadow-blur=5.0
+          pressed bg=border text=fg
+          disabled bg=transparent text=disabled border=transparent border-w=0.0 r=12.0
+        box #address-shell
           with
             w=fill
-            p=10.0
-            submit=navigate
-            @bg-raised
-          active border=border border-w=1.0 r=8.0
-          focused border=primary border-w=2.0 r=8.0
-        button "Go" #go -> navigate
+            h=42.0
+            px=14.0
+            align-y=center
+            bg=address
+            border=border
+            border-w=1.0
+            r=14.0
+            shadow=black/7
+            shadow-y=2.0
+            shadow-blur=8.0
+          row
+            with
+              w=fill
+              h=fill
+              align=center
+              gap=11.0
+            text "◉" size=14.0 @text-success
+            input "" #address <-> address
+              with
+                label="Address"
+                hint="Search or enter an address"
+                w=fill
+                p=6.0
+                submit=navigate
+              active bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+              hovered bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted
+              focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
+        button #go -> navigate
           with
-            w=58.0
-            h=36.0
+            label="Go to address"
+            w=74.0
+            h=40.0
+            p=0.0
             disabled=!can_navigate
-          active bg=primary text=on_primary r=8.0
-          hovered bg=primary_hover
-          disabled bg=muted text=on_primary r=8.0
+          row align=center gap=7.0
+            text "Go" size=13.0 @font-bold
+            text "→" size=17.0
+          active bg=primary text=on_primary r=12.0 shadow=primary/18 shadow-y=3.0 shadow-blur=8.0
+          hovered bg=primary_hover text=on_primary
+          pressed bg=primary_hover text=on_primary shadow=transparent
+          disabled bg=disabled text=on_primary r=12.0 shadow=transparent
     box #browser-surface
       with
         w=fill
@@ -207,8 +228,8 @@ view
 test renders_ice_chrome_without_cef
   viewport 1100 760
   target toolbar = #root/toolbar
-  target address_input = #root/toolbar/address
+  target address_input = #root/toolbar/address-shell/address
   target browser = #root/browser-surface
   expect toolbar.width == 1100.0
   expect address_input.value == "ice://welcome"
-  expect browser.height == 664.0
+  expect browser.height == 692.0
