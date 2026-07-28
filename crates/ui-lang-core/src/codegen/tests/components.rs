@@ -101,6 +101,47 @@ view
 }
 
 #[test]
+fn lowers_sensor_dimensions_through_named_component_events() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Measured()
+  emits
+    shown(f64, f64)
+    resized(f64, f64)
+  sensor show=emit(shown, _, _) resize=emit(resized, _, _)
+    space w=fill h=fill
+on shown(width, height)
+on resized(width, height)
+view
+  Measured
+    events
+      shown -> shown _ _
+      resized -> resized _ _
+"#;
+    let generated = compile(source, "sensor-events.ice").unwrap();
+    assert!(generated.contains(".on_show(move |__size|"));
+    assert!(generated.contains(".on_resize(move |__size|"));
+    assert!(generated.contains(")(__size.width as f64, __size.height as f64)"));
+    assert!(
+        generated
+            .contains("move |__event_0, __event_1| __DemoMessage::Shown(__event_0, __event_1)")
+    );
+    assert!(
+        generated
+            .contains("move |__event_0, __event_1| __DemoMessage::Resized(__event_0, __event_1)")
+    );
+}
+
+#[test]
 fn lowers_exact_component_event_forwarding_without_an_intermediate_message() {
     let source = r#"app Demo
 theme contract AppTheme
