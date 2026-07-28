@@ -1,11 +1,12 @@
 use crate::schema::{
     ACCESSKIT_UNIX_VERSION, ACCESSKIT_VERSION, ACCESSKIT_WINDOWS_VERSION, ICED_VERSION,
-    ICED_WIDGET_VERSION, UI_LANG_RUNTIME_VERSION,
+    ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION,
 };
 use std::fs;
 use std::path::Path;
 
 const DIRECT_DEPENDENCIES: &str = "[dependencies]";
+const BUILD_DEPENDENCIES: &str = "[build-dependencies]";
 const LINUX_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "linux")'.dependencies]"#;
 const WINDOWS_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "windows")'.dependencies]"#;
 
@@ -17,6 +18,13 @@ pub fn verify(root: &Path) -> Result<(), String> {
         &format!("={ICED_VERSION}"),
         None,
         DIRECT_DEPENDENCIES,
+    )?;
+    verify_dependency(
+        &root.join("examples/iced-app/Cargo.toml"),
+        "ui-lang-build",
+        &format!("={UI_LANG_BUILD_VERSION}"),
+        Some(&root.join("crates/ui-lang-build")),
+        BUILD_DEPENDENCIES,
     )?;
     verify_dependency(
         &root.join("examples/iced-app/Cargo.toml"),
@@ -55,7 +63,7 @@ pub fn verify(root: &Path) -> Result<(), String> {
         WINDOWS_TARGET_DEPENDENCIES,
     )?;
     println!(
-        "compatibility baseline: iced {ICED_VERSION}, iced_widget {ICED_WIDGET_VERSION}, ui-lang-runtime {UI_LANG_RUNTIME_VERSION}, accesskit {ACCESSKIT_VERSION}, accesskit_unix {ACCESSKIT_UNIX_VERSION} (linux), accesskit_windows {ACCESSKIT_WINDOWS_VERSION} (windows)"
+        "compatibility baseline: iced {ICED_VERSION}, iced_widget {ICED_WIDGET_VERSION}, ui-lang-build {UI_LANG_BUILD_VERSION}, ui-lang-runtime {UI_LANG_RUNTIME_VERSION}, accesskit {ACCESSKIT_VERSION}, accesskit_unix {ACCESSKIT_UNIX_VERSION} (linux), accesskit_windows {ACCESSKIT_WINDOWS_VERSION} (windows)"
     );
     Ok(())
 }
@@ -70,6 +78,7 @@ fn verify_lock_contents(lock: &str) -> Result<(), String> {
     for (name, expected, unique) in [
         ("iced", ICED_VERSION, true),
         ("iced_widget", ICED_WIDGET_VERSION, true),
+        ("ui-lang-build", UI_LANG_BUILD_VERSION, true),
         ("ui-lang-runtime", UI_LANG_RUNTIME_VERSION, true),
         ("accesskit", ACCESSKIT_VERSION, false),
         ("accesskit_unix", ACCESSKIT_UNIX_VERSION, false),
@@ -259,8 +268,9 @@ fn locked_versions<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DIRECT_DEPENDENCIES, LINUX_TARGET_DEPENDENCIES, WINDOWS_TARGET_DEPENDENCIES,
-        dependency_version, direct_dependency, locked_versions, quoted_field, verify_lock_contents,
+        BUILD_DEPENDENCIES, DIRECT_DEPENDENCIES, LINUX_TARGET_DEPENDENCIES,
+        WINDOWS_TARGET_DEPENDENCIES, dependency_version, direct_dependency, locked_versions,
+        quoted_field, verify_lock_contents,
     };
 
     #[test]
@@ -276,6 +286,10 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.2"
+
+[[package]]
+name = "ui-lang-build"
+version = "0.1.0"
 
 [[package]]
 name = "ui-lang-runtime"
@@ -367,6 +381,9 @@ version = "0.14.2"
 iced = { version = "=0.14.0", features = ["advanced", "canvas"] }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
 
+[build-dependencies]
+ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 accesskit_unix = "=0.22.1"
 
@@ -374,12 +391,18 @@ accesskit_unix = "=0.22.1"
 accesskit_windows = "=0.32.0"
 "#;
         let runtime = direct_dependency(manifest, "ui-lang-runtime", DIRECT_DEPENDENCIES).unwrap();
+        let build = direct_dependency(manifest, "ui-lang-build", BUILD_DEPENDENCIES).unwrap();
         let unix =
             direct_dependency(manifest, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).unwrap();
         let windows =
             direct_dependency(manifest, "accesskit_windows", WINDOWS_TARGET_DEPENDENCIES).unwrap();
 
         assert_eq!(quoted_field(runtime, "version"), Some("=0.1.0"));
+        assert_eq!(quoted_field(build, "version"), Some("=0.1.0"));
+        assert_eq!(
+            quoted_field(build, "path"),
+            Some("../../crates/ui-lang-build")
+        );
         assert_eq!(
             quoted_field(runtime, "path"),
             Some("../../crates/ui-lang-runtime")

@@ -61,8 +61,9 @@ refactoring `.ice`. Read the other references only when their scope is involved:
 
 ## Inspect before writing
 
-1. Find the Cargo workspace root, `.cargo/config.toml`, app/daemon root, imported
-   fragments, Rust `include_app!` call, and corresponding extern modules.
+1. Find the Cargo workspace root, `.cargo/config.toml`, `build.rs`, app/daemon
+   root, imported fragments, Rust `include_app!` call, and corresponding extern
+   modules.
 2. Read the complete files being changed and every `use` edge in their source
    graph. Treat declarations as graph-wide even when split across files.
 3. Reuse the repository's closest compiling `.ice` example. Prefer the readable
