@@ -1,7 +1,7 @@
 use super::*;
 use crate::Warning;
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 #[derive(Clone, Debug)]
 enum Scope {
@@ -24,6 +24,20 @@ struct Tracker {
     scope: Scope,
     states: HashMap<(Option<String>, String), StateSites>,
     derived_dependencies: HashMap<String, Vec<String>>,
+    derived_value_dependencies: HashMap<String, Vec<String>>,
+    derived: HashMap<String, BindingSites>,
+    bindings: HashMap<(Option<String>, String, String), BindingSites>,
+    active_handler: Option<(Option<String>, String)>,
+}
+
+#[derive(Clone, Debug)]
+struct BindingSites {
+    kind: &'static str,
+    name: String,
+    owner: Option<String>,
+    span: Span,
+    order: usize,
+    reads: BTreeSet<(usize, usize)>,
 }
 
 thread_local! {
@@ -33,7 +47,11 @@ thread_local! {
 pub(in crate::check) struct UsageSession;
 
 impl UsageSession {
-    pub(in crate::check) fn start(document: &Document, reachable: &HashSet<String>) -> Self {
+    pub(in crate::check) fn start(
+        document: &Document,
+        reachable: &HashSet<String>,
+        reachable_handlers: &HandlerReachability,
+    ) -> Self {
         let mut states = HashMap::new();
         for state in &document.states {
             states.insert(
@@ -65,12 +83,53 @@ impl UsageSession {
                 );
             }
         }
+        let derived = document
+            .derived
+            .iter()
+            .map(|derived| {
+                (
+                    derived.name.clone(),
+                    BindingSites {
+                        kind: "derived value",
+                        name: derived.name.clone(),
+                        owner: None,
+                        span: derived.span.clone(),
+                        order: 0,
+                        reads: BTreeSet::new(),
+                    },
+                )
+            })
+            .collect();
+        let mut bindings = HashMap::new();
+        for handler in document
+            .handlers
+            .iter()
+            .filter(|handler| reachable_handlers.app_contains(&handler.name))
+        {
+            collect_handler_bindings(None, handler, &mut bindings);
+        }
+        for component in document
+            .components
+            .iter()
+            .filter(|component| reachable.contains(&component.name))
+        {
+            for handler in component.handlers.iter().filter(|handler| {
+                reachable_handlers.component_contains(&component.name, &handler.name)
+            }) {
+                collect_handler_bindings(Some(&component.name), handler, &mut bindings);
+            }
+        }
         let derived_dependencies = derived_state_dependencies(document);
+        let derived_value_dependencies = derived_value_dependencies(document);
         TRACKER.with(|tracker| {
             let previous = tracker.replace(Some(Tracker {
                 scope: Scope::App,
                 states,
                 derived_dependencies,
+                derived_value_dependencies,
+                derived,
+                bindings,
+                active_handler: None,
             }));
             assert!(previous.is_none(), "state usage analysis cannot be nested");
         });
@@ -81,11 +140,57 @@ impl UsageSession {
         let tracker = TRACKER
             .with(|tracker| tracker.borrow_mut().take())
             .expect("state usage session");
+        let mut unused = tracker
+            .derived
+            .into_values()
+            .chain(tracker.bindings.into_values())
+            .filter(|binding| binding.reads.is_empty() && !binding.name.starts_with('_'))
+            .collect::<Vec<_>>();
+        unused.sort_by_key(|binding| (binding.span.line, binding.span.column, binding.order));
+        let mut groups =
+            BTreeMap::<(usize, usize, &'static str, Option<String>), (Span, Vec<String>)>::new();
+        for binding in unused {
+            groups
+                .entry((
+                    binding.span.line,
+                    binding.span.column,
+                    binding.kind,
+                    binding.owner,
+                ))
+                .or_insert_with(|| (binding.span, Vec::new()))
+                .1
+                .push(binding.name);
+        }
+        let mut warnings = Vec::new();
+        for ((_, _, kind, owner), (span, names)) in groups {
+            let owner = owner
+                .as_deref()
+                .map(|owner| format!(" in `{owner}`"))
+                .unwrap_or_default();
+            let names = names
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (kind, verb) = if names.contains(", ") {
+                (format!("{kind}s"), "are")
+            } else {
+                (kind.to_owned(), "is")
+            };
+            warnings.push(
+                Warning::new(
+                    "W011",
+                    &span,
+                    format!("{kind} {names}{owner} {verb} never read"),
+                )
+                .hint(
+                    "remove the binding, use its value, or prefix an intentionally ignored name with `_`",
+                ),
+            );
+        }
         let mut states = tracker.states.into_values().collect::<Vec<_>>();
         states.sort_by_key(|state| state.span.line);
-        states
-            .into_iter()
-            .filter_map(|state| {
+        warnings.extend(states.into_iter().filter_map(|state| {
                 let scope = state.component.as_ref().map_or_else(
                     || format!("state `{}`", state.name),
                     |component| format!("state `{}.{}`", component, state.name),
@@ -117,8 +222,8 @@ impl UsageSession {
                 } else {
                     None
                 }
-            })
-            .collect()
+            }));
+        warnings
     }
 }
 
@@ -152,6 +257,28 @@ pub(in crate::check) fn with_app_handler_scope<T>(reachable: bool, f: impl FnOnc
         },
         f,
     )
+}
+
+pub(in crate::check) fn with_handler_usage<T>(
+    component: Option<&str>,
+    handler: &str,
+    f: impl FnOnce() -> T,
+) -> T {
+    let key = (component.map(str::to_owned), handler.to_owned());
+    let previous = TRACKER.with(|tracker| {
+        let mut tracker = tracker.borrow_mut();
+        let tracker = tracker.as_mut().expect("state usage session");
+        tracker.active_handler.replace(key)
+    });
+    let output = f();
+    TRACKER.with(|tracker| {
+        tracker
+            .borrow_mut()
+            .as_mut()
+            .expect("state usage session")
+            .active_handler = previous;
+    });
+    output
 }
 
 pub(in crate::check) fn without_usage<T>(f: impl FnOnce() -> T) -> T {
@@ -189,6 +316,19 @@ fn record(name: &str, span: &Span, write: bool) {
         let Some(tracker) = tracker.as_mut() else {
             return;
         };
+        if !write {
+            if let Some((component, handler)) = &tracker.active_handler
+                && let Some(binding) =
+                    tracker
+                        .bindings
+                        .get_mut(&(component.clone(), handler.clone(), name.to_owned()))
+            {
+                binding.reads.insert((span.line, span.column));
+            }
+            if matches!(tracker.scope, Scope::App) {
+                record_derived_read(tracker, name, (span.line, span.column));
+            }
+        }
         let names = match &tracker.scope {
             Scope::App if write => vec![name.to_owned()],
             Scope::App => tracker
@@ -215,6 +355,133 @@ fn record(name: &str, span: &Span, write: bool) {
             }
         }
     });
+}
+
+fn record_derived_read(tracker: &mut Tracker, name: &str, site: (usize, usize)) {
+    let mut queue = VecDeque::from([name.to_owned()]);
+    let mut visited = HashSet::new();
+    while let Some(name) = queue.pop_front() {
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let Some(derived) = tracker.derived.get_mut(&name) else {
+            continue;
+        };
+        derived.reads.insert(site);
+        if let Some(dependencies) = tracker.derived_value_dependencies.get(&name) {
+            queue.extend(dependencies.iter().cloned());
+        }
+    }
+}
+
+fn derived_value_dependencies(document: &Document) -> HashMap<String, Vec<String>> {
+    fn paths(expr: &Expr, output: &mut Vec<String>) {
+        match expr {
+            Expr::Path(path) => {
+                if let Some(name) = path.first() {
+                    output.push(name.clone());
+                }
+            }
+            Expr::List(values) | Expr::Call { args: values, .. } => {
+                for value in values {
+                    paths(value, output);
+                }
+            }
+            Expr::Unary { value, .. } => paths(value, output),
+            Expr::Binary { left, right, .. } => {
+                paths(left, output);
+                paths(right, output);
+            }
+            Expr::Bool(_)
+            | Expr::I64(_)
+            | Expr::F64(_)
+            | Expr::Str(_)
+            | Expr::Bytes(_)
+            | Expr::EmptyList
+            | Expr::None => {}
+        }
+    }
+
+    let names = document
+        .derived
+        .iter()
+        .map(|derived| derived.name.as_str())
+        .collect::<HashSet<_>>();
+    document
+        .derived
+        .iter()
+        .map(|derived| {
+            let mut dependencies = Vec::new();
+            paths(&derived.value, &mut dependencies);
+            dependencies.retain(|name| names.contains(name.as_str()));
+            dependencies.sort();
+            dependencies.dedup();
+            (derived.name.clone(), dependencies)
+        })
+        .collect()
+}
+
+fn collect_handler_bindings(
+    component: Option<&String>,
+    handler: &Handler,
+    output: &mut HashMap<(Option<String>, String, String), BindingSites>,
+) {
+    let component = component.cloned();
+    let owner = Some(component.as_ref().map_or_else(
+        || handler.name.clone(),
+        |component| format!("{component}.{}", handler.name),
+    ));
+    for (order, param) in handler.params.iter().enumerate() {
+        output.insert(
+            (component.clone(), handler.name.clone(), param.name.clone()),
+            BindingSites {
+                kind: "handler parameter",
+                name: param.name.clone(),
+                owner: owner.clone(),
+                span: handler.span.clone(),
+                order,
+                reads: BTreeSet::new(),
+            },
+        );
+    }
+
+    fn collect_lets(
+        component: &Option<String>,
+        handler: &Handler,
+        owner: &Option<String>,
+        statements: &[Statement],
+        output: &mut HashMap<(Option<String>, String, String), BindingSites>,
+    ) {
+        for statement in statements {
+            match statement {
+                Statement::Let { name, span, .. } => {
+                    output.insert(
+                        (component.clone(), handler.name.clone(), name.clone()),
+                        BindingSites {
+                            kind: "handler local",
+                            name: name.clone(),
+                            owner: owner.clone(),
+                            span: span.clone(),
+                            order: 0,
+                            reads: BTreeSet::new(),
+                        },
+                    );
+                }
+                Statement::TaskGroup { statements, .. } => {
+                    collect_lets(component, handler, owner, statements, output);
+                }
+                Statement::Abortable { task, .. } => collect_lets(
+                    component,
+                    handler,
+                    owner,
+                    std::slice::from_ref(task),
+                    output,
+                ),
+                _ => {}
+            }
+        }
+    }
+    collect_lets(&component, handler, &owner, &handler.statements, output);
 }
 
 fn derived_state_dependencies(document: &Document) -> HashMap<String, Vec<String>> {

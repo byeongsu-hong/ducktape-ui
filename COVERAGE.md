@@ -25,10 +25,12 @@ Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw
 feedback, positional stateful component identity, retained dynamic state, and
-workspace `.ice` files outside every root graph. Component and handler
-reachability is combined across all workspace or open-editor roots. Cargo JSON
-diagnostics from marked generated Rust regions map back to root and imported Ice
-syntax for `cargo ice` commands. The LSP `ice.lint` workspace command publishes
+workspace `.ice` files outside every root graph. Unused bindings, constant
+no-ops/dead gates, unreachable statements, and duplicate subscriptions are
+also semantic warnings. Component and handler reachability is combined across
+all workspace or open-editor roots. Cargo JSON diagnostics from marked generated
+Rust regions map back to root and imported Ice syntax for `cargo ice` commands.
+The LSP `ice.lint` workspace command publishes
 the same mapping for error-level Clippy/rustc diagnostics at their `.ice`
 document URI and source range. Warning-level backend findings remain CLI-only;
 Ice semantic warnings continue to be published directly by the language checker.
