@@ -1,0 +1,301 @@
+{
+  "version": 1,
+  "source": {
+    "package": "ducktape-design-system-react",
+    "version": "1.0.0",
+    "sha256": "5d79109f1c3bf21f53186239dfc270dadc06dbc615ca752b6c37ad7969dc1702",
+    "viewport": [
+      1440,
+      900
+    ],
+    "deviceScaleFactor": 2
+  },
+  "tolerances": {
+    "geometryPx": 1,
+    "colorChannel": 2,
+    "changedPixelRatio": 0.2,
+    "changedPixelChannel": 32
+  },
+  "cases": {
+    "typography.display": {
+      "size": [
+        228.609,
+        28
+      ],
+      "roles": {
+        "foreground": "primary"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(38, 37, 31)",
+        "borderWidth": 0,
+        "radius": 0,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "foreground": "rgb(38, 37, 31)",
+        "fontFamily": "Geist",
+        "fontSize": 22,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/typography-display.png"
+    },
+    "typography.machine": {
+      "size": [
+        216.016,
+        16
+      ],
+      "roles": {
+        "foreground": "secondary_foreground"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(94, 92, 85)",
+        "borderWidth": 0,
+        "radius": 0,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "foreground": "rgb(94, 92, 85)",
+        "fontFamily": "\"Geist Mono\", monospace",
+        "fontSize": 12,
+        "fontWeight": 400,
+        "lineHeight": null
+      },
+      "screenshot": "web/typography-machine.png"
+    },
+    "button.default": {
+      "size": [
+        114.469,
+        39
+      ],
+      "roles": {
+        "background": "primary",
+        "foreground": "primary_foreground"
+      },
+      "style": {
+        "background": "rgb(38, 37, 31)",
+        "borderColor": "rgb(255, 255, 255)",
+        "borderWidth": 0,
+        "radius": 9,
+        "padding": [
+          11,
+          16,
+          11,
+          16
+        ],
+        "foreground": "rgb(255, 255, 255)",
+        "fontFamily": "Geist",
+        "fontSize": 12.5,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/button-default.png"
+    },
+    "button.hover": {
+      "size": [
+        114.469,
+        39
+      ],
+      "roles": {
+        "background": "primary_hover",
+        "foreground": "primary_foreground"
+      },
+      "style": {
+        "background": "rgb(50, 47, 40)",
+        "borderColor": "rgb(255, 255, 255)",
+        "borderWidth": 0,
+        "radius": 9,
+        "padding": [
+          11,
+          16,
+          11,
+          16
+        ],
+        "foreground": "rgb(255, 255, 255)",
+        "fontFamily": "Geist",
+        "fontSize": 12.5,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/button-hover.png"
+    },
+    "button.disabled": {
+      "size": [
+        114.469,
+        39
+      ],
+      "roles": {
+        "background": "disabled",
+        "foreground": "disabled_foreground"
+      },
+      "style": {
+        "background": "rgb(236, 235, 230)",
+        "borderColor": "rgb(179, 177, 168)",
+        "borderWidth": 0,
+        "radius": 9,
+        "padding": [
+          11,
+          16,
+          11,
+          16
+        ],
+        "foreground": "rgb(179, 177, 168)",
+        "fontFamily": "Geist",
+        "fontSize": 12.5,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/button-disabled.png"
+    },
+    "button.secondary": {
+      "size": [
+        75.719,
+        39
+      ],
+      "roles": {
+        "background": "secondary",
+        "foreground": "secondary_foreground",
+        "border": "control_line"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(224, 223, 215)",
+        "borderWidth": 1,
+        "radius": 9,
+        "padding": [
+          10,
+          16,
+          10,
+          16
+        ],
+        "foreground": "rgb(94, 92, 85)",
+        "fontFamily": "Geist",
+        "fontSize": 12.5,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/button-secondary.png"
+    },
+    "button.outline": {
+      "size": [
+        73.484,
+        32
+      ],
+      "roles": {
+        "background": "card",
+        "foreground": "accent_foreground",
+        "border": "border"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(231, 230, 226)",
+        "borderWidth": 1,
+        "radius": 8,
+        "padding": [
+          7,
+          12,
+          7,
+          12
+        ],
+        "foreground": "rgb(63, 62, 57)",
+        "fontFamily": "Geist",
+        "fontSize": 12,
+        "fontWeight": 600,
+        "lineHeight": null
+      },
+      "screenshot": "web/button-outline.png"
+    },
+    "input.focused": {
+      "size": [
+        309.328,
+        42
+      ],
+      "roles": {
+        "background": "card",
+        "border": "ring"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(38, 37, 31)",
+        "borderWidth": 1,
+        "radius": 10,
+        "padding": [
+          11,
+          13,
+          11,
+          13
+        ],
+        "foreground": "rgb(44, 43, 39)",
+        "fontFamily": "\"Geist Mono\", monospace",
+        "fontSize": 13.5,
+        "fontWeight": 500,
+        "lineHeight": null
+      },
+      "screenshot": "web/input-focused.png"
+    },
+    "input.placeholder": {
+      "size": [
+        309.328,
+        45
+      ],
+      "roles": {
+        "background": "card",
+        "border": "border"
+      },
+      "style": {
+        "background": "rgb(255, 255, 255)",
+        "borderColor": "rgb(231, 230, 226)",
+        "borderWidth": 1,
+        "radius": 10,
+        "padding": [
+          11,
+          13,
+          11,
+          13
+        ],
+        "foreground": "rgb(179, 177, 168)",
+        "fontFamily": "Geist, \"IBM Plex Sans KR\"",
+        "fontSize": 13,
+        "fontWeight": 400,
+        "lineHeight": null
+      },
+      "screenshot": "web/input-placeholder.png"
+    },
+    "card.proposal": {
+      "size": [
+        309.328,
+        64
+      ],
+      "roles": {
+        "background": "brand_background",
+        "border": "brand_line"
+      },
+      "style": {
+        "background": "rgb(249, 241, 234)",
+        "borderColor": "rgb(231, 210, 196)",
+        "borderWidth": 1,
+        "radius": 11,
+        "padding": [
+          12,
+          13,
+          12,
+          13
+        ],
+        "foreground": "rgb(44, 43, 39)",
+        "fontFamily": "Geist, \"IBM Plex Sans KR\", system-ui, -apple-system, sans-serif",
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": null
+      },
+      "screenshot": "web/card-proposal.png"
+    }
+  }
+}

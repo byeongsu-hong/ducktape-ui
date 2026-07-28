@@ -4532,7 +4532,7 @@ recipe panel for box
   @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
 
 recipe action for button
-  @px-4 py-2 rounded-md disabled:opacity-50
+  @px-4 py-2 rounded-md disabled:bg-disabled disabled:text-disabled_fg
 
 recipe primary_action for button extends action
   @bg-primary text-primary_fg
@@ -4583,7 +4583,7 @@ The accepted utility surface is:
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
 | border | `border`, `border-2` | visual layout wrappers, box, input, and button |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |
-| states | `hover:bg-*`, `pressed:bg-*`, `disabled:opacity-*` | button |
+| states | `hover:bg-*`, `pressed:bg-*`, `disabled:bg-*`, `disabled:text-*`, `disabled:opacity-*` | button |
 | focus | `focus:border-*` | input |
 
 Structured native status blocks use `active` as their shared base. A button's

@@ -1,0 +1,20 @@
+[package]
+name = "ice-ui-conformance"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+iced = { version = "=0.14.0", features = ["smol"] }
+ui-lang = { path = "../../crates/ui-lang" }
+ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+
+[dev-dependencies]
+ducktape-ui = { path = "../../crates/ui", features = ["button", "theme"] }
+iced_test = "=0.14.0"
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

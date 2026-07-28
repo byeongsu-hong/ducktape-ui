@@ -15,6 +15,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  ICED_TEST_BACKEND: tiny-skia
 
 jobs:
   validate:

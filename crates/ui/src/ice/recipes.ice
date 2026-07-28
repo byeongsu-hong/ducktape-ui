@@ -68,13 +68,13 @@ recipe control for input
   @w-full px-13px py-11px bg-surface border border-border rounded-10px focus:border-ring
 
 recipe primary_action for button
-  @px-16px py-11px bg-primary text-primary_fg rounded-9px hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
+  @px-16px py-11px bg-primary text-primary_fg rounded-9px hover:bg-primary_hover pressed:bg-primary/80 disabled:bg-disabled disabled:text-disabled_fg
 
 recipe secondary_action for button
-  @px-16px py-10px bg-secondary text-secondary_fg border border-control_line rounded-9px hover:bg-accent pressed:bg-muted_bg disabled:opacity-50
+  @px-16px py-11px bg-secondary text-secondary_fg border border-control_line rounded-9px hover:bg-accent pressed:bg-muted_bg disabled:opacity-50
 
 recipe outline_action for button
-  @px-12px py-7px bg-surface text-accent_fg border border-border rounded-8px hover:bg-muted_bg pressed:bg-accent disabled:opacity-50
+  @px-12px py-8px bg-surface text-accent_fg border border-border rounded-8px hover:bg-muted_bg pressed:bg-accent disabled:opacity-50
 
 recipe ghost_action for button
   @px-12px py-7px bg-transparent text-fg rounded-8px hover:bg-accent pressed:bg-border disabled:opacity-50
