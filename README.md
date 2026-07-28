@@ -17,14 +17,16 @@ binary immediately follows its generated Rust view.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
 construct it, and the Iced backend has no unchecked `Document` entry point.
-Generated applications also declare `ui-lang-runtime = "=0.1.0"` directly
-because generated Rust refers to its public crate path, plus
+Generated applications also declare `iced = "=0.14.0"` and
+`ui-lang-runtime = "=0.1.0"` directly because generated Rust refers to their
+public crate paths, plus
 `ui-lang-build = "=0.1.0"` as a build dependency.
 
 The standard Cargo setup generates every app or daemon root below `src/ui`:
 
 ```toml
 [dependencies]
+iced = "=0.14.0"
 ui-lang = "0.1.0"
 ui-lang-runtime = "=0.1.0"
 
