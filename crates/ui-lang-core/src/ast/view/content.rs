@@ -69,6 +69,7 @@ pub struct TextEditorOptions {
     pub highlighter: Option<ExternCall>,
     pub key_binding: Option<ExternCall>,
     pub key_binding_route: Option<Route>,
+    pub action: Option<ExternCall>,
     pub custom_style: Option<ExternCall>,
     pub style: Box<TextInputStyleSet>,
 }

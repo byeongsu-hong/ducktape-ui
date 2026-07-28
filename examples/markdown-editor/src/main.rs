@@ -1,5 +1,6 @@
 ui_lang::include_app!("src/ui/app.ice");
 
+mod document;
 mod editor;
 
 fn main() -> iced::Result {
@@ -13,6 +14,7 @@ mod tests {
 
     #[test]
     fn large_document_edits_stay_in_the_native_buffer() {
+        let _lock = crate::editor::test_history_lock();
         let (mut app, _) = MarkdownEditor::__boot();
         let source = "A native editor line.\n".repeat(10_000);
         app.document = Content::with_text(&source);

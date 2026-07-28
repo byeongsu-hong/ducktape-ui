@@ -7,30 +7,78 @@ enum ControlledBinding {
     ReadOnly(Type),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ControlledEditorBinding {
+    pub name: String,
+    pub action: Option<String>,
+}
+
 pub(crate) fn controlled_state_bindings(
     document: &Document,
     editors: bool,
 ) -> Result<Vec<String>, Error> {
+    Ok(controlled_bindings(document, editors)?
+        .into_iter()
+        .map(|binding| binding.name)
+        .collect())
+}
+
+pub(crate) fn controlled_editor_bindings(
+    document: &Document,
+) -> Result<Vec<ControlledEditorBinding>, Error> {
+    controlled_bindings(document, true)
+}
+
+fn controlled_bindings(
+    document: &Document,
+    editors: bool,
+) -> Result<Vec<ControlledEditorBinding>, Error> {
     fn collect(
         node: &ViewNode,
         document: &Document,
         editors: bool,
         env: &HashMap<String, ControlledBinding>,
         components: &mut HashSet<String>,
-        output: &mut Vec<String>,
+        output: &mut Vec<ControlledEditorBinding>,
     ) -> Result<(), Error> {
         let binding = match node {
-            ViewNode::Input { binding, span, .. } if !editors => Some((binding, "input", span)),
-            ViewNode::TextEditor { binding, span, .. } if editors => {
-                Some((binding, "editor", span))
+            ViewNode::Input { binding, span, .. } if !editors => {
+                Some((binding, "input", span, None))
             }
+            ViewNode::TextEditor {
+                binding,
+                options,
+                span,
+                ..
+            } if editors => Some((
+                binding,
+                "editor",
+                span,
+                options
+                    .action
+                    .as_ref()
+                    .map(|action| action.function.clone()),
+            )),
             _ => None,
         };
-        if let Some((binding, widget, span)) = binding {
+        if let Some((binding, widget, span, action)) = binding {
             match env.get(binding) {
                 Some(ControlledBinding::App(state)) => {
-                    if !output.contains(state) {
-                        output.push(state.clone());
+                    if let Some(existing) = output.iter().find(|binding| binding.name == *state) {
+                        if existing.action != action {
+                            return Err(Error::new(
+                                "E139",
+                                span,
+                                format!(
+                                    "editor state `{state}` must use the same action adapter everywhere"
+                                ),
+                            ));
+                        }
+                    } else {
+                        output.push(ControlledEditorBinding {
+                            name: state.clone(),
+                            action,
+                        });
                     }
                 }
                 Some(ControlledBinding::Writable) => {}

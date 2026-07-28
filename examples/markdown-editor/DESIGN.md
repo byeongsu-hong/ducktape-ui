@@ -8,21 +8,28 @@ custom rich-text widget, or web view.
 
 ```text
 src/
-├── main.rs                  Rust entry point; includes ui/app.ice
-├── editor.rs                incremental inline Markdown highlighter
+├── main.rs                  Rust entry point and native-buffer check
+├── document.rs              file dialogs, persistence, links, shortcuts
+├── editor.rs                highlighting and bounded edit history
 └── ui/
-    ├── app.ice              one app root, imports, and one view
-    ├── theme.ice            semantic color tokens
-    ├── state.ice            editor state and deterministic test preset
-    ├── components/editor.ice
-    ├── extern/editor.ice    typed native editor boundary
-    └── tests/app.ice        app behavior contract
+    ├── app.ice              app settings, imports, and root composition
+    ├── theme.ice            semantic color tokens
+    ├── recipes.ice          shared control recipes
+    ├── state.ice            document state and derived cursor state
+    ├── components/          editor chrome and writing surface
+    ├── extern/              typed Rust boundaries
+    ├── handlers/            file, edit, find, and close flows
+    └── tests/               app behavior contract
 ```
 
 The editor keeps one native `text_editor::Content` in application state and
 passes it by Ice `bind`; ordinary keystrokes mutate that buffer directly and
-never copy or parse the full document. An Ice v2 `editor-highlighter` extern
-styles headings, emphasis, code, links, quotes, lists, and fenced code blocks.
-Its line-state snapshots let Iced restart highlighting at the changed line
-while the native editor continues to own selection, clipboard, wrapping, and
-input-method behavior.
+do not copy the full document. A bounded native delta history observes edits
+through `editor-action`, while cursor built-ins feed the incremental
+`editor-highlighter`. Iced continues to own selection, clipboard, wrapping,
+input methods, and visible-line highlighting.
+
+Geist is the body face and the bundled Geist Mono is used for inline and fenced
+code at the same 16 px editor size. Both come from the
+[Geist project](https://github.com/vercel/geist-font) under the included SIL
+Open Font License.

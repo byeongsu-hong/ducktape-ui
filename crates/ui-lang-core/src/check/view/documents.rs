@@ -228,6 +228,11 @@ pub(in crate::check) fn infer_documents_group(
                     signatures,
                 )?;
             }
+            if let Some(action) = &options.action {
+                let function =
+                    extern_function(document, &action.function, ExternKind::EditorAction, span)?;
+                check_call_args(function, &action.args, env, document, span)?;
+            }
             if let Some(style) = &options.custom_style {
                 let function =
                     extern_function(document, &style.function, ExternKind::EditorStyle, span)?;

@@ -315,6 +315,12 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
                 )
                 .unwrap();
             }
+            ExternKind::EditorAction => writeln!(
+                out,
+                "#[allow(dead_code)] fn __ui_lang_check_editor_action_{}() {{ let _: fn(&mut ::iced::widget::text_editor::Content, ::iced::widget::text_editor::Action) = {}; }}",
+                item.name, item.rust_path
+            )
+            .unwrap(),
             ExternKind::EditorHighlighter => writeln!(
                 out,
                 "#[allow(dead_code)] fn __ui_lang_check_editor_highlighter_{}({params}) {{ let __content = ::iced::widget::text_editor::Content::new(); let __editor = ::iced::widget::text_editor(&__content).on_action(|_| ()); let _: __IceElement<'_, ()> = {}(__editor{}).into(); }}",

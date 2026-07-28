@@ -294,7 +294,7 @@ contract.
 cargo run -p iced-app
 cargo run -p apple-music-example
 cargo run -p cef-browser-example
-cargo run -p notion-example
+cargo run -p markdown-editor-example
 cargo run -p showcase
 ```
 
@@ -304,15 +304,14 @@ shows the Ice shell without downloading Chromium; follow
 [`examples/cef-browser/README.md`](examples/cef-browser/README.md) to build the
 CEF-enabled bundle.
 
-`notion-example` starts as a Markdown-first editor: one Bear-style inline
-surface backed by CommonMark and GFM source. Formatting markers stay hidden
-while reading and reveal only in the active block; rich headings, inline
-styles, links, code, document-wide selection, IME, shortcuts, undo/redo, and
-source-preserving block movement all stay in the same editing surface. Its
-page shell, comments, and workspace navigation demonstrate the later
-transition into a Notion-like product without interrupting writing.
+`markdown-editor-example` is a full-window native Markdown editor with inline
+styling, caret-local syntax markers, bundled Geist fonts, file open/save,
+bounded undo/redo, find, formatting shortcuts, dirty-close protection, and
+links that open in the default browser. See its
+[design notes](examples/markdown-editor/DESIGN.md) for the project layout and
+native editing path.
 
-![Markdown-first editor](examples/notion/screenshots/markdown-editor-human-tiny-skia.png)
+![Native Markdown editor](examples/markdown-editor/screenshots/editor.png)
 
 `apple-music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,

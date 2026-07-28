@@ -1896,6 +1896,29 @@ pub(crate) fn expr_type(
                     )?;
                     Ok(Type::Str)
                 }
+                "editor_copy" => {
+                    check_builtin_args(name, args, &[Type::Editor], env, document, span)?;
+                    Ok(Type::Editor)
+                }
+                "editor_cursor_line" | "editor_cursor_column" | "editor_line_count" => {
+                    check_builtin_args(name, args, &[Type::Editor], env, document, span)?;
+                    Ok(Type::I64)
+                }
+                "editor_has_selection" => {
+                    check_builtin_args(name, args, &[Type::Editor], env, document, span)?;
+                    Ok(Type::Bool)
+                }
+                "editor_line" => {
+                    check_builtin_args(
+                        name,
+                        args,
+                        &[Type::Editor, Type::I64],
+                        env,
+                        document,
+                        span,
+                    )?;
+                    Ok(Type::Option(Box::new(Type::Str)))
+                }
                 "encoded" => {
                     if args.len() != 1 {
                         return Err(Error::new("E152", span, "encoded expects one argument"));

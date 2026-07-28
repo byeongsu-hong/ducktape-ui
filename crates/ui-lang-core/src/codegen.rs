@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::check::{controlled_state_bindings, expr_type};
+use crate::check::{controlled_editor_bindings, controlled_state_bindings, expr_type};
 use crate::{CheckedDocument, Error, canonical_snake};
 use std::collections::HashMap;
 use std::fmt::Write;

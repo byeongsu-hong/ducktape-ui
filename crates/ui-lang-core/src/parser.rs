@@ -560,6 +560,21 @@ pub(crate) fn parse_with_symbols_and_namespaces(
                         &path,
                         ExternKind::EditorBinding,
                     )?);
+                } else if let Some(source) = item.text.strip_prefix("editor-action ") {
+                    let function = parse_extern_fn(
+                        &format!("{source} -> unit"),
+                        item,
+                        &path,
+                        ExternKind::EditorAction,
+                    )?;
+                    if !function.params.is_empty() {
+                        return Err(error(
+                            "E022",
+                            item,
+                            "editor actions receive content and action implicitly and declare no parameters",
+                        ));
+                    }
+                    functions.push(function);
                 } else if let Some(source) = item.text.strip_prefix("editor-highlighter ") {
                     functions.push(parse_extern_fn(
                         &format!("{source} -> unit"),

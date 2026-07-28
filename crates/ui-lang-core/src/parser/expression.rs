@@ -61,6 +61,7 @@ pub(in crate::parser) fn parse_type(source: &str, line: &Line) -> Result<Type, E
         "editor" => Type::Editor,
         "event" => Type::Event,
         "event-status" => Type::EventStatus,
+        "key-press" => Type::KeyPress,
         "key" => Type::Key,
         "physical-key" => Type::PhysicalKey,
         "key-location" => Type::KeyLocation,
