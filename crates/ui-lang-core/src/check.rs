@@ -65,12 +65,7 @@ fn check(
     let preset_handlers = document
         .presets
         .iter()
-        .map(|preset| Handler {
-            name: format!("preset_{}", preset.name),
-            params: Vec::new(),
-            statements: preset.statements.clone(),
-            span: preset.span.clone(),
-        })
+        .map(preset_handler)
         .collect::<Vec<_>>();
     for state in &document.states {
         let actual = expr_type(&state.initial, &HashMap::new(), document, &state.span)?;
@@ -398,14 +393,16 @@ fn check(
         })?;
     }
     for handler in &preset_handlers {
-        check_handler(
-            handler,
-            &states,
-            &app_values,
-            document,
-            &operation_ids,
-            &pane_grids,
-        )?;
+        with_handler_usage(None, &handler.name, || {
+            check_handler(
+                handler,
+                &states,
+                &app_values,
+                document,
+                &operation_ids,
+                &pane_grids,
+            )
+        })?;
     }
     for component in &document.components {
         let mut operation_env: HashMap<String, Type> = component
@@ -628,6 +625,15 @@ fn component_output(env: &HashMap<String, Type>) -> Option<&Type> {
 
 fn component_handler_key(component: &str, handler: &str) -> String {
     format!("{component}.{handler}")
+}
+
+fn preset_handler(preset: &Preset) -> Handler {
+    Handler {
+        name: format!("preset {}", preset.name),
+        params: Vec::new(),
+        statements: preset.statements.clone(),
+        span: preset.span.clone(),
+    }
 }
 
 fn scoped_run(statements: &[Statement]) -> Option<(FutureMode, &Span)> {

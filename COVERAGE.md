@@ -25,17 +25,19 @@ Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw
 feedback, positional stateful component identity, retained dynamic state, and
-workspace `.ice` files outside every root graph. Unused bindings, constant
-no-ops/dead gates, unreachable statements, and duplicate subscriptions are
-also semantic warnings. Component and handler reachability is combined across
-all workspace or open-editor roots. Cargo JSON diagnostics from marked generated
-Rust regions map back to root and imported Ice syntax for `cargo ice` commands.
-The LSP `ice.lint` workspace command publishes
+unused bindings. Constant no-ops/dead gates and unreachable statements include
+preset boot statements; statically disabled subscriptions are excluded from
+duplicate-delivery warnings. Component and handler reachability is combined
+across all workspace or open-editor roots. `cargo ice` additionally reports
+workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON
+diagnostics from marked generated Rust regions map back to root and imported Ice
+syntax for `cargo ice` commands. The LSP `ice.lint` workspace command publishes
 the same mapping for error-level Clippy/rustc diagnostics at their `.ice`
 document URI and source range. Warning-level backend findings remain CLI-only;
-warnings continue to be published directly by the language checker. Consumer
-build scripts generate every Ice root below Cargo's package/profile/target-
-scoped `OUT_DIR`; the proc macro only includes those outputs.
+core semantic warnings continue to be published directly by the language
+checker, while `W010` remains `cargo ice`-only. Consumer build scripts generate
+every Ice root below Cargo's package/profile/target-scoped `OUT_DIR`; the proc
+macro only includes those outputs.
 
 Native live development is separately covered by the versioned
 `ui-lang-live-protocol`, compiler lowering, generated state/event bridge,
@@ -135,16 +137,41 @@ example, and workspace compilation tests provide the executable evidence.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
-and real Rust externs. A persistent headless Iced cache drives click, hover,
-press/release, typing, keys, viewport changes, dispatch, update, and recursive
-task completion. Assertions cover state, presence, exact visible text and input
-content, computed layout bounds, and unambiguous structured tiny-skia paint
-output. Absolute and earlier-alias-relative test targets, definition, and rename
-stay within one test, and generated runtime failures retain imported `.ice`
-paths and lines. Parser, checker,
-formatter, codegen, runtime, schema/LSP, reference examples, and invalid/runtime
-failure tests provide direct evidence. There is no legacy external ICE-test
-parser or adapter.
+and real Rust externs. All semantic operations lower through the public,
+raw-event-independent `testing::Action` enum and one `Driver::perform_action`
+entry point rather than exposing the private generated application message.
+A persistent headless Iced cache drives click, hover,
+press/release, pointer buttons and coordinates, wheel/scroll/drag/drop, exact
+focus, held keys/modifiers/chords, typing/selection/IME, touch, window/system/file
+events, dispatch, update, bounded time, deterministic redraw advancement,
+accessibility actions, and recursive task completion. Assertions cover state,
+presence, exact visible text and input content, AccessKit semantics, computed
+layout bounds, primitive counts, text/image bounds and baseline, scale-aware
+pixel alignment, focus, and unambiguous structured tiny-skia paint output;
+named captures persist PNG plus a versioned JSON frame manifest with separate
+configured, resolved-render, and system theme fields, and retain RGBA output
+for runtime callers. Screenshot output is checked as RGBA8 and capped at
+16,777,216 physical pixels before renderer allocation.
+The artifact root defaults to `target/ice-test-artifacts`, is replaceable with
+`ICE_TEST_ARTIFACT_DIR`, and still isolates each test; the runtime configuration
+can also select an exact per-test directory. Test configuration can replace the
+headless program theme result with `Theme::default(mode)`, override its scale
+factor, and pin locale/platform/reduced-motion metadata; application-owned
+palette state still changes through a preset or dispatch. Rust harnesses may
+independently pin the startup system-theme query with `Config::system_theme`;
+later theme notifications remain semantic actions. The single headless current
+window keeps widget state across rerenders, while a task-issued window open
+starts a fresh widget cache and window-local input lifecycle.
+Targeted focus, scroll, selection, and cursor operations validate the native
+widget capability they invoke, reject ambiguous candidates, and use the actual
+matched widget ID. Convenience taps allocate around retained multi-touch
+contacts instead of reusing an active finger ID.
+Absolute and earlier-alias-relative test targets, definition, and rename stay
+within one test, and generated runtime failures retain imported `.ice` paths and
+lines. Parser, checker, formatter, codegen, runtime, schema/LSP, reference
+examples, and invalid/runtime failure tests provide direct evidence. There is
+no legacy external ICE-test parser or adapter, general virtual clock, or
+built-in pixel-golden comparator.
 
 ## Measured coverage
 
@@ -302,7 +329,7 @@ public behavior has direct documented Ice syntax and tests.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets, run, and generated first-class Ice tests covering component interaction, computed layout, real task/sync flow, and structured paint checks |
+| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets, run, and generated first-class Ice tests covering pinned theme/scale/locale/platform/motion environments, semantic input/window/accessibility interaction, computed layout, real task/sync flow, structured paint, and named in-memory RGBA capture |
 | `Daemon` | native | `daemon Name` lowers to `iced::daemon`, rejects an unnamed initial window, exposes the current typed window ID to each per-window view/title/theme/scale callback, preserves named window templates and all shared settings, and standalone `exit` lowers to the native lifecycle task |
 | `Animation<T>` | native | first-class checked `animation[bool]`, `animation[f64]`, and rustc-verified custom Float state map to native `Animation<T>`; every built-in or typed custom easing, preset/ms/s duration, delay, finite/forever repetition, auto-reverse, implicit/exact-instant transition, value/progress/remaining queries, f32/optional-f32 interpolation projection, and active-only native frame subscription are covered |
 | explicit image allocation | native | `task image allocate handle` lowers to native `image::allocate` with required exact success/error routes; `image-allocation` retains GPU memory and exposes handle plus exact `Size<u32>`, `image-error` preserves all five native variants with kind/message projections, and `image-memory` plus downgrade/upgrade covers weak retention; requires iced's `image` feature |

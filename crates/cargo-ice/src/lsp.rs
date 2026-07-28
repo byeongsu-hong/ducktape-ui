@@ -3792,11 +3792,10 @@ mod tests {
 
         let diagnostics = messages
             .iter()
-            .filter(|message| {
+            .rfind(|message| {
                 message["method"] == "textDocument/publishDiagnostics"
                     && message["params"]["uri"] == part_uri
             })
-            .next_back()
             .unwrap()["params"]["diagnostics"]
             .as_array()
             .unwrap();
@@ -4762,9 +4761,81 @@ mod tests {
                 .unwrap()
                 .starts_with("palette ${1:light} for ${2:Name}")
         );
+        assert_eq!(
+            completion("cursor")["insertText"],
+            "cursor ${1|front,end,0|}"
+        );
+        assert_eq!(
+            completion("composition")["insertText"],
+            "composition ${1:start}"
+        );
+        assert_eq!(
+            completion("key-down")["insertText"],
+            "key-down ${1:enter}${2: modified=enter}${3: location=standard}${4: physical=enter}${5: text=\"x\"}${6: repeat=false}"
+        );
         for label in [
-            "preset", "viewport", "timeout", "mount", "click", "hover", "press", "release", "type",
-            "key", "resize", "dispatch", "~=",
+            "preset",
+            "viewport",
+            "timeout",
+            "test theme",
+            "scale",
+            "locale",
+            "platform",
+            "reduced-motion",
+            "mount",
+            "click",
+            "double-click",
+            "click-at",
+            "hover",
+            "enter",
+            "leave",
+            "move",
+            "press",
+            "release",
+            "wheel",
+            "scroll-to",
+            "scroll-by",
+            "snap",
+            "snap-end",
+            "drag",
+            "drop",
+            "focus",
+            "focus-next",
+            "focus-previous",
+            "blur",
+            "window focus",
+            "window move",
+            "window resize",
+            "window rescale",
+            "window lifecycle",
+            "type",
+            "clear",
+            "replace",
+            "select",
+            "select-all",
+            "cursor",
+            "composition",
+            "key",
+            "key-down",
+            "key-up",
+            "modifiers",
+            "chord",
+            "repeat",
+            "tap",
+            "touch",
+            "resize",
+            "system-theme",
+            "file-hover",
+            "file-drop",
+            "file-leave",
+            "wait",
+            "advance",
+            "idle",
+            "capture",
+            "a11y",
+            "dispatch",
+            "expect a11y",
+            "~=",
         ] {
             assert_eq!(completion(label)["insertTextFormat"], 2, "{label}");
         }
@@ -4778,6 +4849,36 @@ mod tests {
                 "{label}"
             );
         }
+
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ntest semantic_driver\n  \nview\n  text \"ready\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let contextual = completion_items_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 12, "character": 2 },
+            }),
+        )
+        .unwrap();
+        for label in [
+            "test theme",
+            "scroll-to",
+            "focus-next",
+            "composition",
+            "key-down",
+            "touch",
+            "window resize",
+            "advance",
+            "capture",
+            "a11y",
+            "expect a11y",
+        ] {
+            assert!(
+                contextual.iter().any(|item| item["label"] == label),
+                "test-body completion is missing `{label}`"
+            );
+        }
+        assert!(!contextual.iter().any(|item| item["label"] == "state"));
     }
 
     #[test]

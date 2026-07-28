@@ -479,6 +479,62 @@ view
 }
 
 #[test]
+fn checks_preset_smells_and_ignores_disabled_duplicate_subscriptions() {
+    let document = analyze(&warning_app(
+        r#"state
+  total = 0
+preset noisy
+  boot
+    let unused_preset = total
+    let used_preset = total + 1
+    total = used_preset
+    total = total
+    return if false
+    return if true
+    total = 1
+on tick(now)
+subscribe
+  every 1s when false -> tick _
+  every 1s when false -> tick _
+view
+  text total
+"#,
+    ))
+    .unwrap();
+    let warnings = document.warnings();
+    assert!(warnings.iter().any(|warning| {
+        warning.code == "W011"
+            && warning.message.contains("`unused_preset`")
+            && warning.message.contains("`preset noisy`")
+    }));
+    assert!(
+        warnings.iter().all(|warning| {
+            warning.code != "W011" || !warning.message.contains("`used_preset`")
+        })
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W012")
+            .count(),
+        2,
+        "{warnings:?}"
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W013")
+            .count(),
+        1,
+        "{warnings:?}"
+    );
+    assert!(
+        warnings.iter().all(|warning| warning.code != "W014"),
+        "{warnings:?}"
+    );
+}
+
+#[test]
 fn warns_for_state_without_readers_or_writers() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n    button \"Mutate\" -> mutate\n",

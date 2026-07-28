@@ -1,0 +1,2 @@
+E194
+mouse button must be left, right, middle, back, or forward

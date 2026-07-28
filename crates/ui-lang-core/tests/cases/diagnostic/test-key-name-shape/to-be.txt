@@ -1,0 +1,2 @@
+E194
+named keys use lowercase names like arrow-left or exact iced variants like TVInputHDMI1; characters use strings

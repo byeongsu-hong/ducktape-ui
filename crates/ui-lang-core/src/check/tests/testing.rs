@@ -106,6 +106,102 @@ fn checks_digits_in_snake_case_test_names() {
 }
 
 #[test]
+fn checks_expanded_semantic_test_actions_and_inspection_fields() {
+    let source = VALID.replace(
+        "  expect count == 0",
+        r#"  enter draft_input
+  leave
+  move draft_input
+  move root.center_x root.center_y
+  click draft_input right
+  double-click draft_input
+  click-at root.left root.top middle
+  press draft_input back
+  release back
+  wheel lines 0 -1
+  scroll-to root 0 root.scroll_y
+  scroll-by root 0 12
+  snap root 0.0 1.0
+  snap-end root
+  drag draft_input root
+  press draft_input
+  drop root
+  focus draft_input
+  focus-next
+  focus-previous
+  blur
+  window focus
+  type "draft"
+  clear
+  replace normalize(draft)
+  select 0 2
+  select-all
+  cursor 1
+  cursor front
+  cursor end
+  composition start
+  composition update "preedit" 0 3
+  composition commit "done"
+  composition cancel
+  key arrow-left
+  key-down "a" modified="A" location=left physical=KeyA text="a" repeat=true
+  key-up shift location=right physical=ShiftRight
+  modifiers shift control
+  chord control "p"
+  repeat backspace 2
+  tap draft_input 2
+  touch down 1 10 20
+  touch up 1 10 20
+  window move -20 10
+  window resize 640 480
+  window rescale 1.5
+  window close-request
+  window opened
+  window closed
+  window redraw
+  system-theme none
+  file-hover "/tmp/file.txt"
+  file-drop "/tmp/file.txt"
+  file-leave
+  wait 1ms
+  advance 16ms
+  idle
+  capture semantic_states
+  a11y activate draft_input
+  a11y focus draft_input
+  expect a11y draft_input role "text_input"
+  expect a11y draft_input name "Draft"
+  expect a11y draft_input checked false
+  expect a11y draft_input action click
+  expect root.surface_count >= 0
+  expect root.text_count >= 0
+  expect root.image_count >= 0
+  expect root.text_x >= 0.0
+  expect root.text_y >= 0.0
+  expect root.text_width >= 0.0
+  expect root.text_height >= 0.0
+  expect root.text_baseline >= 0.0
+  expect root.image_x >= 0.0
+  expect root.image_y >= 0.0
+  expect root.image_width >= 0.0
+  expect root.image_height >= 0.0
+  expect root.pixel_aligned
+  expect root.focused == false
+  expect root.accessibility_role != ""
+  expect root.accessibility_name == ""
+  expect root.accessibility_description == ""
+  expect root.accessibility_value == ""
+  expect root.accessibility_checked == false
+  expect root.accessibility_disabled == false
+  expect root.accessibility_supports_activate == false
+  expect root.accessibility_supports_focus == false
+  expect count == 0"#,
+    );
+
+    analyze(&source).unwrap();
+}
+
+#[test]
 fn rejects_comparisons_of_rendered_targets() {
     for expression in ["root == root", "root < root", "[root] == [root]"] {
         let source = VALID.replace("count == 0", expression);
@@ -285,21 +381,46 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
     let layout_only = source
         .lines()
         .filter(|line| {
-            ![
-                "root.background",
-                "root.border",
-                "root.shadow",
-                "root.text_color",
-                "root.text_size",
-                "root.font",
-                "root.line_height",
-            ]
-            .iter()
-            .any(|field| line.contains(field))
+            !line.trim_start().starts_with("expect text ")
+                && !line.trim_start().starts_with("expect no text ")
+                && ![
+                    "root.background",
+                    "root.border",
+                    "root.shadow",
+                    "root.text_color",
+                    "root.text_size",
+                    "root.font",
+                    "root.line_height",
+                ]
+                .iter()
+                .any(|field| line.contains(field))
         })
         .collect::<Vec<_>>()
         .join("\n");
     analyze(&layout_only).unwrap();
+
+    let layout_with_pixel_alignment = layout_only.replacen(
+        "  expect root.visible\n",
+        "  expect root.visible\n  expect root.pixel_aligned\n",
+        1,
+    );
+    analyze(&layout_with_pixel_alignment).unwrap();
+
+    for assertion in [
+        "expect root.background == background.color(color.rgb8(17, 17, 17))",
+        "expect root.surface_count >= 0",
+        "expect text \"Draft\" within root",
+        "expect no text \"Failed\"",
+    ] {
+        let structured_paint = layout_only.replacen(
+            "  expect root.visible\n",
+            &format!("  expect root.visible\n  {assertion}\n"),
+            1,
+        );
+        let failure = analyze(&structured_paint).unwrap_err();
+        assert_eq!(failure.code, "E194");
+        assert!(failure.message.contains("paint assertions"));
+    }
 
     let target_geometry = layout_only
         .replace("#draft <-> value", "#draft(1) <-> value")

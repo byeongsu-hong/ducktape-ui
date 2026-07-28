@@ -1,0 +1,2 @@
+E194
+a11y properties use role|name|value string, checked|disabled|focused bool, or action name [bool]

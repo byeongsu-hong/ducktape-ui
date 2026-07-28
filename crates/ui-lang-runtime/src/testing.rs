@@ -10,6 +10,7 @@ use iced::keyboard;
 use iced::mouse;
 use iced::theme;
 use iced::theme::Base as _;
+use iced::touch;
 use iced::window;
 use iced::{Background, Border, Color, Font, Point, Rectangle, Shadow, Size};
 use iced_test::futures::futures::StreamExt as _;
@@ -17,7 +18,7 @@ use iced_test::futures::futures::channel::mpsc;
 use iced_test::futures::subscription;
 use iced_test::futures::{Executor as _, Runtime};
 use iced_test::program::Program;
-use iced_test::runtime::core::clipboard;
+use iced_test::runtime::core::{clipboard, input_method};
 use iced_test::runtime::task;
 use iced_test::runtime::user_interface::{self, UserInterface};
 use iced_test::runtime::{self, Task};
@@ -27,11 +28,15 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hasher as _;
 use std::marker::PhantomData;
+use std::ops::Range;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+
+const MAX_SCREENSHOT_PIXELS: usize = 16_777_216;
 
 /// Source location attached to a generated test operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +69,331 @@ impl fmt::Display for Location {
     }
 }
 
+/// A theme mode understood by the semantic test driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    None,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    fn iced(self) -> theme::Mode {
+        match self {
+            Self::None => theme::Mode::None,
+            Self::Light => theme::Mode::Light,
+            Self::Dark => theme::Mode::Dark,
+        }
+    }
+}
+
+/// The platform contract used by platform-sensitive semantic actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Linux,
+    Windows,
+    Macos,
+    Wasm,
+}
+
+impl Platform {
+    const fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_family = "wasm") {
+            Self::Wasm
+        } else {
+            Self::Linux
+        }
+    }
+}
+
+/// A mouse button independent from the renderer backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+    Other(u16),
+}
+
+impl MouseButton {
+    fn iced(self) -> mouse::Button {
+        match self {
+            Self::Left => mouse::Button::Left,
+            Self::Right => mouse::Button::Right,
+            Self::Middle => mouse::Button::Middle,
+            Self::Back => mouse::Button::Back,
+            Self::Forward => mouse::Button::Forward,
+            Self::Other(value) => mouse::Button::Other(value),
+        }
+    }
+}
+
+/// A mouse-wheel movement in either logical lines or physical pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WheelDelta {
+    Lines { x: f32, y: f32 },
+    Pixels { x: f32, y: f32 },
+}
+
+/// Keyboard modifier state retained between semantic key actions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub alt: bool,
+    pub logo: bool,
+}
+
+impl Modifiers {
+    pub const NONE: Self = Self::new(false, false, false, false);
+
+    pub const fn new(shift: bool, control: bool, alt: bool, logo: bool) -> Self {
+        Self {
+            shift,
+            control,
+            alt,
+            logo,
+        }
+    }
+
+    fn iced(self) -> keyboard::Modifiers {
+        let mut modifiers = keyboard::Modifiers::empty();
+        modifiers.set(keyboard::Modifiers::SHIFT, self.shift);
+        modifiers.set(keyboard::Modifiers::CTRL, self.control);
+        modifiers.set(keyboard::Modifiers::ALT, self.alt);
+        modifiers.set(keyboard::Modifiers::LOGO, self.logo);
+        modifiers
+    }
+}
+
+/// A logical key accepted by the semantic test driver.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Key {
+    Named(keyboard::key::Named),
+    Character(String),
+    Unidentified,
+}
+
+impl Key {
+    pub const fn named(name: keyboard::key::Named) -> Self {
+        Self::Named(name)
+    }
+
+    pub fn character(value: impl Into<String>) -> Self {
+        Self::Character(value.into())
+    }
+}
+
+/// The physical location of a keyboard key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum KeyLocation {
+    #[default]
+    Standard,
+    Left,
+    Right,
+    Numpad,
+}
+
+impl KeyLocation {
+    fn iced(self) -> keyboard::Location {
+        match self {
+            Self::Standard => keyboard::Location::Standard,
+            Self::Left => keyboard::Location::Left,
+            Self::Right => keyboard::Location::Right,
+            Self::Numpad => keyboard::Location::Numpad,
+        }
+    }
+}
+
+/// Optional metadata for an exact keyboard event.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyMetadata {
+    pub modified_key: Option<Key>,
+    pub physical_key: Option<keyboard::key::Physical>,
+    pub location: KeyLocation,
+    pub text: Option<String>,
+    pub repeat: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum HeldKeyIdentity {
+    Physical(keyboard::key::Physical),
+    Logical { key: Key, location: KeyLocation },
+}
+
+/// One phase of an input-method composition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompositionPhase {
+    Start,
+    Update {
+        text: String,
+        selection: Option<Range<usize>>,
+    },
+    Commit(String),
+    Cancel,
+}
+
+/// One phase of a retained touch contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Down,
+    Move,
+    Up,
+    Cancel,
+}
+
+/// An in-memory RGBA screenshot captured by a semantic test action.
+#[derive(Debug, Clone)]
+pub struct Capture {
+    pub name: String,
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f32,
+    pub png_path: PathBuf,
+    pub metadata_path: PathBuf,
+}
+
+/// A semantic accessibility action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityAction {
+    Click,
+    Focus,
+}
+
+/// A semantic accessibility property used by generated expectations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityProperty {
+    Role,
+    Name,
+    Value,
+    Checked,
+    Disabled,
+    Focused,
+    Action,
+}
+
+/// A semantic action accepted by [`Driver::perform_action`] without exposing raw Iced events.
+#[derive(Debug, Clone)]
+pub enum Action {
+    Enter(String),
+    Leave,
+    MoveTo(String),
+    MoveToPoint(Point),
+    Click {
+        target: String,
+        button: MouseButton,
+        count: u8,
+    },
+    ClickAt {
+        position: Point,
+        button: MouseButton,
+        count: u8,
+    },
+    Press {
+        target: String,
+        button: MouseButton,
+    },
+    Release(MouseButton),
+    Wheel(WheelDelta),
+    ScrollTo {
+        target: String,
+        x: f32,
+        y: f32,
+    },
+    ScrollBy {
+        target: String,
+        x: f32,
+        y: f32,
+    },
+    Snap {
+        target: String,
+        x: f32,
+        y: f32,
+    },
+    SnapEnd(String),
+    Drag {
+        from: String,
+        to: String,
+    },
+    DropAt(String),
+    Focus(String),
+    FocusNext,
+    FocusPrevious,
+    Blur,
+    WindowFocus(bool),
+    Type(String),
+    Clear,
+    Replace(String),
+    Select {
+        start: usize,
+        end: usize,
+    },
+    SelectAll,
+    Cursor(usize),
+    CursorFront,
+    CursorEnd,
+    Composition(CompositionPhase),
+    Key(Key),
+    KeyDown {
+        key: Key,
+        metadata: KeyMetadata,
+    },
+    KeyUp {
+        key: Key,
+        metadata: KeyMetadata,
+    },
+    Modifiers(Modifiers),
+    Chord {
+        modifiers: Modifiers,
+        key: Key,
+    },
+    Repeat {
+        key: Key,
+        count: usize,
+    },
+    Touch {
+        phase: TouchPhase,
+        id: u64,
+        position: Point,
+    },
+    Tap {
+        target: String,
+        count: u8,
+    },
+    WindowOpened,
+    WindowClosed,
+    WindowMove(Point),
+    Resize(Size),
+    Rescale(f32),
+    CloseRequested,
+    Redraw,
+    SystemTheme(ThemeMode),
+    FileHover(PathBuf),
+    FileDrop(PathBuf),
+    FileLeave,
+    Wait(Duration),
+    Advance(Duration),
+    Idle,
+    Capture(String),
+    Accessibility {
+        action: AccessibilityAction,
+        target: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct HeldKeyRecord {
+    key: Key,
+    location: KeyLocation,
+}
+
 /// Configuration for one generated Ice test.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -72,6 +402,13 @@ pub struct Config {
     pub viewport: Size,
     pub timeout: Duration,
     pub preset: Option<&'static str>,
+    pub theme: Option<ThemeMode>,
+    pub system_theme: ThemeMode,
+    pub scale_factor: Option<f32>,
+    pub locale: Option<&'static str>,
+    pub platform: Platform,
+    pub reduced_motion: Option<bool>,
+    pub artifact_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -82,6 +419,13 @@ impl Config {
             viewport: Size::new(1024.0, 768.0),
             timeout: Duration::from_secs(2),
             preset: None,
+            theme: None,
+            system_theme: ThemeMode::None,
+            scale_factor: None,
+            locale: None,
+            platform: Platform::current(),
+            reduced_motion: None,
+            artifact_dir: None,
         }
     }
 
@@ -104,6 +448,41 @@ impl Config {
         self.preset = Some(preset);
         self
     }
+
+    pub const fn theme(mut self, mode: ThemeMode) -> Self {
+        self.theme = Some(mode);
+        self
+    }
+
+    pub const fn system_theme(mut self, mode: ThemeMode) -> Self {
+        self.system_theme = mode;
+        self
+    }
+
+    pub const fn scale_factor(mut self, scale_factor: f32) -> Self {
+        self.scale_factor = Some(scale_factor);
+        self
+    }
+
+    pub const fn locale(mut self, locale: &'static str) -> Self {
+        self.locale = Some(locale);
+        self
+    }
+
+    pub const fn platform(mut self, platform: Platform) -> Self {
+        self.platform = platform;
+        self
+    }
+
+    pub const fn reduced_motion(mut self, reduced_motion: bool) -> Self {
+        self.reduced_motion = Some(reduced_motion);
+        self
+    }
+
+    pub fn artifact_dir(mut self, artifact_dir: impl Into<PathBuf>) -> Self {
+        self.artifact_dir = Some(artifact_dir.into());
+        self
+    }
 }
 
 /// Runs generated Rust for one Ice test statement with source-mapped panic context.
@@ -113,20 +492,39 @@ pub fn step<T>(test_name: &'static str, source: Location, operation: impl FnOnce
 }
 
 #[derive(Debug, Clone)]
-struct SurfacePaint {
-    background: Background,
-    border: Border,
-    shadow: Shadow,
+pub struct SurfacePaint {
+    pub background: Background,
+    pub border: Border,
+    pub shadow: Shadow,
 }
 
 #[derive(Debug, Clone)]
-struct TextPaint {
-    content: Option<String>,
-    bounds: Rectangle,
-    color: Color,
-    size: Option<f64>,
-    font: Option<Font>,
-    line_height: Option<iced::widget::text::LineHeight>,
+pub struct TextPaint {
+    pub content: Option<String>,
+    pub bounds: Rectangle,
+    pub color: Color,
+    pub size: Option<f64>,
+    pub font: Option<Font>,
+    pub line_height: Option<iced::widget::text::LineHeight>,
+    pub baseline: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImagePaint {
+    pub bounds: Rectangle,
+}
+
+#[derive(Debug, Clone)]
+struct AccessibilityData {
+    role: crate::Role,
+    name: Option<String>,
+    description: Option<String>,
+    value: Option<String>,
+    checked: Option<bool>,
+    disabled: bool,
+    focused: bool,
+    supports_activate: bool,
+    supports_focus: bool,
 }
 
 /// A fresh post-layout snapshot of an identified rendered widget.
@@ -163,6 +561,10 @@ pub struct Target {
     paint_error: Option<&'static str>,
     surfaces: Vec<SurfacePaint>,
     texts: Vec<TextPaint>,
+    images: Vec<ImagePaint>,
+    accessibility: Option<AccessibilityData>,
+    focused: Option<bool>,
+    scale_factor: f32,
 }
 
 impl Target {
@@ -314,6 +716,155 @@ impl Target {
         })
     }
 
+    pub fn surface_count(&self) -> usize {
+        self.require_paint("surface_count");
+        self.surfaces.len()
+    }
+
+    pub fn text_count(&self) -> usize {
+        self.require_paint("text_count");
+        self.texts.len()
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.require_paint("image_count");
+        self.images.len()
+    }
+
+    pub fn surfaces(&self) -> &[SurfacePaint] {
+        self.require_paint("surfaces");
+        &self.surfaces
+    }
+
+    pub fn texts(&self) -> &[TextPaint] {
+        self.require_paint("texts");
+        &self.texts
+    }
+
+    pub fn images(&self) -> &[ImagePaint] {
+        self.require_paint("images");
+        &self.images
+    }
+
+    pub fn text_x(&self) -> f64 {
+        f64::from(self.text("text_x").bounds.x)
+    }
+
+    pub fn text_y(&self) -> f64 {
+        f64::from(self.text("text_y").bounds.y)
+    }
+
+    pub fn text_width(&self) -> f64 {
+        f64::from(self.text("text_width").bounds.width)
+    }
+
+    pub fn text_height(&self) -> f64 {
+        f64::from(self.text("text_height").bounds.height)
+    }
+
+    pub fn text_baseline(&self) -> f64 {
+        self.text("text_baseline").baseline.unwrap_or_else(|| {
+            self.fail(
+                "text_baseline",
+                "expected: a retained shaped first-line baseline\nactual: unavailable for this text primitive",
+            )
+        })
+    }
+
+    pub fn image_x(&self) -> f64 {
+        f64::from(self.image("image_x").bounds.x)
+    }
+
+    pub fn image_y(&self) -> f64 {
+        f64::from(self.image("image_y").bounds.y)
+    }
+
+    pub fn image_width(&self) -> f64 {
+        f64::from(self.image("image_width").bounds.width)
+    }
+
+    pub fn image_height(&self) -> f64 {
+        f64::from(self.image("image_height").bounds.height)
+    }
+
+    pub fn pixel_aligned(&self) -> bool {
+        rectangle_pixel_aligned(self.bounds(), self.scale_factor)
+    }
+
+    pub fn focused(&self) -> bool {
+        self.accessibility
+            .as_ref()
+            .map(|data| data.focused)
+            .unwrap_or(false)
+            || self.focused.unwrap_or(false)
+    }
+
+    pub fn accessibility_role(&self) -> crate::Role {
+        self.accessibility("role").role
+    }
+
+    pub fn accessibility_role_name(&self) -> String {
+        accessibility_role_name(self.accessibility_role())
+    }
+
+    pub fn accessibility_name(&self) -> String {
+        self.accessibility("name").name.clone().unwrap_or_else(|| {
+            self.fail(
+                "name",
+                "expected: retained accessibility name\nactual: property is absent",
+            )
+        })
+    }
+
+    pub fn accessibility_description(&self) -> String {
+        self.accessibility("description")
+            .description
+            .clone()
+            .unwrap_or_else(|| {
+                self.fail(
+                    "description",
+                    "expected: retained accessibility description\nactual: property is absent",
+                )
+            })
+    }
+
+    pub fn accessibility_value(&self) -> String {
+        self.accessibility("value")
+            .value
+            .clone()
+            .unwrap_or_else(|| {
+                self.fail(
+                    "value",
+                    "expected: retained accessibility value\nactual: property is absent",
+                )
+            })
+    }
+
+    pub fn accessibility_checked(&self) -> bool {
+        self.accessibility("checked").checked.unwrap_or_else(|| {
+            self.fail(
+                "checked",
+                "expected: retained accessibility checked state\nactual: property is absent",
+            )
+        })
+    }
+
+    pub fn accessibility_disabled(&self) -> bool {
+        self.accessibility("disabled").disabled
+    }
+
+    pub fn accessibility_focused(&self) -> bool {
+        self.accessibility("focused").focused
+    }
+
+    pub fn accessibility_supports_activate(&self) -> bool {
+        self.accessibility("activate action").supports_activate
+    }
+
+    pub fn accessibility_supports_focus(&self) -> bool {
+        self.accessibility("focus action").supports_focus
+    }
+
     fn required_number(&self, field: &str, value: Option<f64>) -> f64 {
         value.unwrap_or_else(|| {
             self.fail(
@@ -363,14 +914,7 @@ impl Target {
     }
 
     fn text(&self, field: &str) -> &TextPaint {
-        if let Some(reason) = self.paint_error {
-            self.fail(
-                field,
-                &format!(
-                    "expected: structured tiny-skia text paint\nactual: unavailable ({reason})"
-                ),
-            );
-        }
+        self.require_paint(field);
         match self.texts.as_slice() {
             [text] => text,
             [] => self.fail(
@@ -384,6 +928,42 @@ impl Target {
                     texts.len()
                 ),
             ),
+        }
+    }
+
+    fn image(&self, field: &str) -> &ImagePaint {
+        self.require_paint(field);
+        match self.images.as_slice() {
+            [image] => image,
+            [] => self.fail(
+                field,
+                "expected: exactly 1 visible image primitive inside the target\nactual: 0 visible image primitives",
+            ),
+            images => self.fail(
+                field,
+                &format!(
+                    "expected: exactly 1 visible image primitive inside the target\nactual: {} visible image primitives; use a narrower #id",
+                    images.len()
+                ),
+            ),
+        }
+    }
+
+    fn accessibility(&self, field: &str) -> &AccessibilityData {
+        self.accessibility.as_ref().unwrap_or_else(|| {
+            self.fail(
+                field,
+                "expected: a semantic accessibility node\nactual: target has no accessibility contract",
+            )
+        })
+    }
+
+    fn require_paint(&self, field: &str) {
+        if let Some(reason) = self.paint_error {
+            self.fail(
+                field,
+                &format!("expected: structured tiny-skia paint\nactual: unavailable ({reason})"),
+            );
         }
     }
 
@@ -413,6 +993,8 @@ struct LayoutTarget {
     content_bounds: Option<Rectangle>,
     translation: Option<iced::Vector>,
     value: Option<String>,
+    accessibility: Option<AccessibilityData>,
+    focused: Option<bool>,
 }
 
 struct IdSelector<Message> {
@@ -421,6 +1003,59 @@ struct IdSelector<Message> {
     stable_id: widget::Id,
     semantic_frames: Vec<Option<usize>>,
     marker: PhantomData<fn() -> Message>,
+}
+
+#[derive(Clone)]
+struct SemanticActionTarget<Message> {
+    activate: Option<Message>,
+    focus: Option<crate::SemanticFocus>,
+    disabled: bool,
+}
+
+struct SemanticActionSelector<Message> {
+    logical_id: String,
+    occurrences: HashMap<StableId, u64>,
+    marker: PhantomData<fn() -> Message>,
+}
+
+impl<Message> SemanticActionSelector<Message> {
+    fn new(logical_id: &str) -> Self {
+        Self {
+            logical_id: logical_id.to_owned(),
+            occurrences: HashMap::new(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
+    type Output = SemanticActionTarget<Message>;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        let Candidate::Custom { state, .. } = candidate else {
+            return None;
+        };
+        let state = state.downcast_ref::<SemanticState<Message>>()?;
+        let occurrence = self.occurrences.entry(state.semantics.id).or_default();
+        let current = *occurrence;
+        *occurrence += 1;
+        (state.semantics.logical_id.as_deref() == Some(&self.logical_id)).then(|| {
+            SemanticActionTarget {
+                activate: state.semantics.activate.clone(),
+                focus: (state.semantics.focus != crate::FocusBehavior::None).then_some(
+                    crate::SemanticFocus {
+                        base: state.semantics.id,
+                        occurrence: current,
+                    },
+                ),
+                disabled: state.semantics.disabled,
+            }
+        })
+    }
+
+    fn description(&self) -> String {
+        format!("semantic logical id == {:?}", self.logical_id)
+    }
 }
 
 impl<Message> IdSelector<Message> {
@@ -473,55 +1108,95 @@ impl<Message: 'static> Selector for IdSelector<Message> {
 
         let bounds = candidate.bounds();
         let visible_bounds = candidate.visible_bounds();
-        let (semantic, state_key, kind, content_bounds, translation, value) = match candidate {
-            Candidate::Container { .. } => (false, None, "container", None, None, None),
-            Candidate::Focusable { state, .. } => (
-                false,
-                Some(data_address(state)),
-                "focusable",
-                None,
-                None,
-                None,
-            ),
-            Candidate::Scrollable {
-                content_bounds,
-                translation,
-                state,
-                ..
-            } => (
-                false,
-                Some(data_address(state)),
-                "scrollable",
-                Some(content_bounds),
-                Some(translation),
-                None,
-            ),
-            Candidate::TextInput { state, .. } => (
-                false,
-                Some(data_address(state)),
-                "text_input",
-                None,
-                None,
-                Some(state.text().to_owned()),
-            ),
-            Candidate::Text { content, .. } => {
-                (false, None, "text", None, None, Some(content.to_owned()))
-            }
-            Candidate::Custom { state, .. } => {
-                if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
-                    (
-                        true,
-                        Some(data_address(state)),
-                        role_name(state.semantics.role),
-                        None,
-                        None,
-                        state.semantics.value.clone(),
-                    )
-                } else {
-                    (false, Some(data_address(state)), "custom", None, None, None)
+        let (semantic, state_key, kind, content_bounds, translation, value, accessibility, focused) =
+            match candidate {
+                Candidate::Container { .. } => {
+                    (false, None, "container", None, None, None, None, None)
                 }
-            }
-        };
+                Candidate::Focusable { state, .. } => (
+                    false,
+                    Some(data_address(state)),
+                    "focusable",
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(state.is_focused()),
+                ),
+                Candidate::Scrollable {
+                    content_bounds,
+                    translation,
+                    state,
+                    ..
+                } => (
+                    false,
+                    Some(data_address(state)),
+                    "scrollable",
+                    Some(content_bounds),
+                    Some(translation),
+                    None,
+                    None,
+                    None,
+                ),
+                Candidate::TextInput { state, .. } => (
+                    false,
+                    Some(data_address(state)),
+                    "text_input",
+                    None,
+                    None,
+                    Some(state.text().to_owned()),
+                    None,
+                    None,
+                ),
+                Candidate::Text { content, .. } => (
+                    false,
+                    None,
+                    "text",
+                    None,
+                    None,
+                    Some(content.to_owned()),
+                    None,
+                    None,
+                ),
+                Candidate::Custom { state, .. } => {
+                    if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
+                        let semantics = &state.semantics;
+                        (
+                            true,
+                            Some(data_address(state)),
+                            role_name(semantics.role),
+                            None,
+                            None,
+                            semantics.value.clone(),
+                            Some(AccessibilityData {
+                                role: semantics.role,
+                                name: semantics.label.clone(),
+                                description: semantics.description.clone(),
+                                value: semantics.value.clone(),
+                                checked: semantics.checked,
+                                disabled: semantics.disabled,
+                                focused: state.focused,
+                                supports_activate: !semantics.disabled
+                                    && semantics.activate.is_some(),
+                                supports_focus: !semantics.disabled
+                                    && semantics.focus != crate::FocusBehavior::None,
+                            }),
+                            Some(state.focused),
+                        )
+                    } else {
+                        (
+                            false,
+                            Some(data_address(state)),
+                            "custom",
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    }
+                }
+            };
 
         Some(LayoutTarget {
             semantic,
@@ -533,6 +1208,8 @@ impl<Message: 'static> Selector for IdSelector<Message> {
             content_bounds,
             translation,
             value,
+            accessibility,
+            focused,
         })
     }
 
@@ -559,6 +1236,44 @@ fn role_name(role: accesskit::Role) -> &'static str {
         Role::ProgressIndicator => "progress",
         _ => "semantic",
     }
+}
+
+fn accessibility_role_name(role: accesskit::Role) -> String {
+    use accesskit::Role;
+
+    match role {
+        Role::Button | Role::DefaultButton => "button".to_owned(),
+        Role::CheckBox => "checkbox".to_owned(),
+        Role::TextInput => "text-input".to_owned(),
+        Role::MultilineTextInput => "multiline-text-input".to_owned(),
+        Role::SearchInput => "search-input".to_owned(),
+        Role::PasswordInput => "password-input".to_owned(),
+        Role::ListItem => "list-item".to_owned(),
+        role => camel_to_kebab(&format!("{role:?}")),
+    }
+}
+
+fn camel_to_kebab(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let characters = value.chars().collect::<Vec<_>>();
+    for (index, character) in characters.iter().copied().enumerate() {
+        if character.is_ascii_uppercase() {
+            let previous = index.checked_sub(1).and_then(|index| characters.get(index));
+            let next = characters.get(index + 1);
+            let boundary = previous.is_some_and(|previous| {
+                previous.is_ascii_lowercase()
+                    || previous.is_ascii_digit()
+                    || (previous.is_ascii_uppercase() && next.is_some_and(char::is_ascii_lowercase))
+            });
+            if boundary {
+                output.push('-');
+            }
+            output.push(character.to_ascii_lowercase());
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn data_address<T: ?Sized>(value: &T) -> usize {
@@ -800,8 +1515,24 @@ where
     cache: Option<user_interface::Cache>,
     clipboard: TestClipboard,
     cursor: mouse::Cursor,
+    cursor_inside: bool,
+    pressed_mouse: HashSet<MouseButton>,
+    modifiers: Modifiers,
+    pressed_keys: HashMap<HeldKeyIdentity, HeldKeyRecord>,
+    touches: HashMap<u64, Point>,
+    ime_open: bool,
     window: window::Id,
     size: Size,
+    window_position: Option<Point>,
+    window_focused: bool,
+    scale_factor_override: Option<f32>,
+    theme_override: Option<ThemeMode>,
+    system_theme: ThemeMode,
+    locale: Option<&'static str>,
+    platform: Platform,
+    reduced_motion: Option<bool>,
+    logical_time: Instant,
+    artifact_dir: PathBuf,
     timeout: Duration,
     test_name: &'static str,
     pending_tasks: usize,
@@ -815,6 +1546,7 @@ impl<P> Driver<P>
 where
     P: Program + 'static,
     P::Renderer: 'static,
+    P::Message: Clone,
 {
     #[track_caller]
     pub fn new(program: P, config: Config) -> Self {
@@ -835,6 +1567,32 @@ where
         if config.timeout.is_zero() {
             panic!(
                 "{}\nconfiguration failed\nexpected: positive timeout\nactual: 0ns",
+                boot_origin()
+            );
+        }
+        if config
+            .scale_factor
+            .is_some_and(|scale| !valid_dimension(scale))
+        {
+            panic!(
+                "{}\nconfiguration failed\nexpected: a finite, positive scale factor\nactual: {:?}",
+                boot_origin(),
+                config.scale_factor
+            );
+        }
+        if config.locale.is_some_and(str::is_empty) {
+            panic!(
+                "{}\nconfiguration failed\nexpected: a non-empty locale\nactual: empty locale",
+                boot_origin()
+            );
+        }
+        if config
+            .artifact_dir
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            panic!(
+                "{}\nconfiguration failed\nexpected: a non-empty artifact directory\nactual: empty path",
                 boot_origin()
             );
         }
@@ -911,8 +1669,30 @@ where
                 primary: None,
             },
             cursor: mouse::Cursor::Unavailable,
+            cursor_inside: false,
+            pressed_mouse: HashSet::new(),
+            modifiers: Modifiers::NONE,
+            pressed_keys: HashMap::new(),
+            touches: HashMap::new(),
+            ime_open: false,
             window: window::Id::unique(),
             size: config.viewport,
+            window_position: None,
+            window_focused: true,
+            scale_factor_override: config.scale_factor,
+            theme_override: config.theme,
+            system_theme: config.system_theme,
+            locale: config.locale,
+            platform: config.platform,
+            reduced_motion: config.reduced_motion,
+            logical_time: Instant::now(),
+            artifact_dir: config.artifact_dir.unwrap_or_else(|| {
+                std::env::var_os("ICE_TEST_ARTIFACT_DIR")
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("target").join("ice-test-artifacts"))
+                    .join(safe_path_component(config.name))
+            }),
             timeout: config.timeout,
             test_name: config.name,
             pending_tasks: 0,
@@ -937,6 +1717,30 @@ where
 
     pub fn viewport(&self) -> Size {
         self.size
+    }
+
+    pub fn scale_factor(&self) -> f32 {
+        let scale_factor = self
+            .scale_factor_override
+            .unwrap_or_else(|| self.program.scale_factor(&self.state, self.window));
+        assert!(
+            valid_dimension(scale_factor),
+            "test `{}` runtime invariant failed\nexpected: finite, positive scale factor\nactual: {scale_factor:?}",
+            self.test_name,
+        );
+        scale_factor
+    }
+
+    pub fn locale(&self) -> Option<&'static str> {
+        self.locale
+    }
+
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    pub fn reduced_motion(&self) -> Option<bool> {
+        self.reduced_motion
     }
 
     pub fn dispatch(&mut self, message: P::Message, source: Location) {
@@ -1049,61 +1853,1052 @@ where
         }
     }
 
-    pub fn click(&mut self, id: &str, source: Location) {
-        let bounds = self.interaction_bounds("click", id, source);
-        self.move_cursor(bounds.center(), source);
-        self.simulate(
-            [
-                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-            ],
-            source,
-        );
+    pub fn check_accessibility_str(
+        &mut self,
+        id: &str,
+        property: AccessibilityProperty,
+        expected: &str,
+        source: Location,
+    ) {
+        let target = self.target(id, source);
+        let actual = match property {
+            AccessibilityProperty::Role => target.accessibility_role_name(),
+            AccessibilityProperty::Name => target.accessibility_name(),
+            AccessibilityProperty::Value => target.accessibility_value(),
+            _ => self.invalid_action(
+                "accessibility string expectation",
+                "role, name, or value",
+                format!("{property:?}"),
+                source,
+            ),
+        };
+        if actual != expected {
+            self.accessibility_expectation_failed(
+                id,
+                property,
+                format!("{expected:?}"),
+                format!("{actual:?}"),
+                source,
+            );
+        }
+    }
+
+    pub fn check_accessibility_bool(
+        &mut self,
+        id: &str,
+        property: AccessibilityProperty,
+        expected: bool,
+        source: Location,
+    ) {
+        let target = self.target(id, source);
+        let actual = match property {
+            AccessibilityProperty::Checked => target.accessibility_checked(),
+            AccessibilityProperty::Disabled => target.accessibility_disabled(),
+            AccessibilityProperty::Focused => target.accessibility_focused(),
+            _ => self.invalid_action(
+                "accessibility boolean expectation",
+                "checked, disabled, or focused",
+                format!("{property:?}"),
+                source,
+            ),
+        };
+        if actual != expected {
+            self.accessibility_expectation_failed(
+                id,
+                property,
+                expected.to_string(),
+                actual.to_string(),
+                source,
+            );
+        }
+    }
+
+    pub fn check_accessibility_action(
+        &mut self,
+        id: &str,
+        action: AccessibilityAction,
+        expected: bool,
+        source: Location,
+    ) {
+        let target = self.target(id, source);
+        let actual = match action {
+            AccessibilityAction::Click => target.accessibility_supports_activate(),
+            AccessibilityAction::Focus => target.accessibility_supports_focus(),
+        };
+        if actual != expected {
+            self.accessibility_expectation_failed(
+                id,
+                AccessibilityProperty::Action,
+                format!("action {action:?}: {expected}"),
+                format!("action {action:?}: {actual}"),
+                source,
+            );
+        }
+    }
+
+    fn accessibility_expectation_failed(
+        &self,
+        id: &str,
+        property: AccessibilityProperty,
+        expected: String,
+        actual: String,
+        source: Location,
+    ) -> ! {
+        panic!(
+            "{source}: test `{}` accessibility expectation failed\nstatement: {}\nselector: {id}\nproperty: {property:?}\nexpected: {expected}\nactual: {actual}",
+            self.test_name, source.statement
+        )
+    }
+
+    /// Performs one semantic action. A capture action returns its artifact.
+    pub fn perform_action(&mut self, action: Action, source: Location) -> Option<Capture> {
+        match action {
+            Action::Enter(target) => self.enter(&target, source),
+            Action::Leave => self.leave(source),
+            Action::MoveTo(target) => self.move_to(&target, source),
+            Action::MoveToPoint(position) => {
+                self.move_to_point(position.x, position.y, source);
+            }
+            Action::Click {
+                target,
+                button,
+                count,
+            } => self.click_with(&target, button, count, source),
+            Action::ClickAt {
+                position,
+                button,
+                count,
+            } => self.click_at_with_count(position.x, position.y, button, count, source),
+            Action::Press { target, button } => self.press_with(&target, button, source),
+            Action::Release(button) => self.release_button(button, source),
+            Action::Wheel(delta) => self.wheel_delta(delta, source),
+            Action::ScrollTo { target, x, y } => self.scroll_to(&target, x, y, source),
+            Action::ScrollBy { target, x, y } => self.scroll_by(&target, x, y, source),
+            Action::Snap { target, x, y } => self.snap(&target, x, y, source),
+            Action::SnapEnd(target) => self.snap_end(&target, source),
+            Action::Drag { from, to } => self.drag(&from, &to, source),
+            Action::DropAt(target) => self.drop_at(&target, source),
+            Action::Focus(target) => self.focus(&target, source),
+            Action::FocusNext => self.focus_next(source),
+            Action::FocusPrevious => self.focus_previous(source),
+            Action::Blur => self.blur(source),
+            Action::WindowFocus(focused) => self.window_focus(focused, source),
+            Action::Type(value) => self.typewrite(&value, source),
+            Action::Clear => self.clear(source),
+            Action::Replace(value) => self.replace(&value, source),
+            Action::Select { start, end } => self.select(start, end, source),
+            Action::SelectAll => self.select_all(source),
+            Action::Cursor(position) => self.cursor(position, source),
+            Action::CursorFront => self.cursor_front(source),
+            Action::CursorEnd => self.cursor_end(source),
+            Action::Composition(phase) => self.composition(phase, source),
+            Action::Key(key) => self.key(key, source),
+            Action::KeyDown { key, metadata } => self.key_down_with(key, metadata, source),
+            Action::KeyUp { key, metadata } => self.key_up_with(key, metadata, source),
+            Action::Modifiers(modifiers) => self.modifiers(modifiers, source),
+            Action::Chord { modifiers, key } => self.key_chord(modifiers, key, source),
+            Action::Repeat { key, count } => self.key_repeat(key, count, source),
+            Action::Touch {
+                phase,
+                id,
+                position,
+            } => self.touch(phase, id, position.x, position.y, source),
+            Action::Tap { target, count } => self.tap(&target, count, source),
+            Action::WindowOpened => self.window_opened(source),
+            Action::WindowClosed => self.window_closed(source),
+            Action::WindowMove(position) => self.window_move(position.x, position.y, source),
+            Action::Resize(size) => self.resize(size.width, size.height, source),
+            Action::Rescale(scale_factor) => self.rescale(scale_factor, source),
+            Action::CloseRequested => self.close_requested(source),
+            Action::Redraw => self.redraw(source),
+            Action::SystemTheme(mode) => self.system_theme(mode, source),
+            Action::FileHover(path) => self.file_hover(path, source),
+            Action::FileDrop(path) => self.file_drop(path, source),
+            Action::FileLeave => self.file_leave(source),
+            Action::Wait(duration) => self.wait(duration, source),
+            Action::Advance(duration) => self.advance(duration, source),
+            Action::Idle => self.idle(source),
+            Action::Capture(name) => return Some(self.capture(&name, source)),
+            Action::Accessibility { action, target } => match action {
+                AccessibilityAction::Click => self.accessibility_activate(&target, source),
+                AccessibilityAction::Focus => self.accessibility_focus(&target, source),
+            },
+        }
+        None
+    }
+
+    pub fn enter(&mut self, id: &str, source: Location) {
+        let bounds = self.interaction_bounds("enter", id, source);
+        self.set_cursor(bounds.center(), true, source);
+    }
+
+    pub fn leave(&mut self, source: Location) {
+        self.cursor_inside = false;
+        self.cursor = mouse::Cursor::Unavailable;
+        self.simulate([iced::Event::Mouse(mouse::Event::CursorLeft)], source);
+    }
+
+    pub fn move_to(&mut self, id: &str, source: Location) {
+        let bounds = self.interaction_bounds("move to", id, source);
+        self.set_cursor(bounds.center(), true, source);
+    }
+
+    pub fn move_to_point(&mut self, x: f32, y: f32, source: Location) {
+        self.require_point("move", Point::new(x, y), source);
+        self.set_cursor(Point::new(x, y), true, source);
     }
 
     pub fn hover(&mut self, id: &str, source: Location) {
-        let bounds = self.interaction_bounds("hover", id, source);
-        self.move_cursor(bounds.center(), source);
+        self.move_to(id, source);
+    }
+
+    pub fn click(&mut self, id: &str, source: Location) {
+        self.click_with(id, MouseButton::Left, 1, source);
+    }
+
+    pub fn click_with(&mut self, id: &str, button: MouseButton, count: u8, source: Location) {
+        let bounds = self.interaction_bounds("click", id, source);
+        self.set_cursor(bounds.center(), true, source);
+        self.click_current(button, count, source);
+    }
+
+    pub fn click_at(&mut self, x: f32, y: f32, button: MouseButton, source: Location) {
+        self.click_at_with_count(x, y, button, 1, source);
+    }
+
+    pub fn click_at_with_count(
+        &mut self,
+        x: f32,
+        y: f32,
+        button: MouseButton,
+        count: u8,
+        source: Location,
+    ) {
+        let position = Point::new(x, y);
+        self.require_point("click", position, source);
+        self.set_cursor(position, true, source);
+        self.click_current(button, count, source);
     }
 
     pub fn press(&mut self, id: &str, source: Location) {
+        self.press_with(id, MouseButton::Left, source);
+    }
+
+    pub fn press_with(&mut self, id: &str, button: MouseButton, source: Location) {
         let bounds = self.interaction_bounds("press", id, source);
-        self.move_cursor(bounds.center(), source);
+        self.set_cursor(bounds.center(), true, source);
+        self.press_current(button, source);
+    }
+
+    pub fn release(&mut self, source: Location) {
+        self.release_button(MouseButton::Left, source);
+    }
+
+    pub fn release_button(&mut self, button: MouseButton, source: Location) {
+        if !self.pressed_mouse.remove(&button) {
+            self.invalid_action(
+                "release pointer button",
+                "a pressed pointer button",
+                format!("{button:?} is not pressed"),
+                source,
+            );
+        }
         self.simulate(
-            [iced::Event::Mouse(mouse::Event::ButtonPressed(
-                mouse::Button::Left,
+            [iced::Event::Mouse(mouse::Event::ButtonReleased(
+                button.iced(),
             ))],
             source,
         );
     }
 
-    pub fn release(&mut self, source: Location) {
+    pub fn wheel(&mut self, x: f32, y: f32, source: Location) {
+        self.wheel_delta(WheelDelta::Pixels { x, y }, source);
+    }
+
+    pub fn wheel_lines(&mut self, x: f32, y: f32, source: Location) {
+        self.wheel_delta(WheelDelta::Lines { x, y }, source);
+    }
+
+    pub fn wheel_delta(&mut self, delta: WheelDelta, source: Location) {
+        let (x, y) = match delta {
+            WheelDelta::Lines { x, y } | WheelDelta::Pixels { x, y } => (x, y),
+        };
+        self.require_finite_pair("wheel", x, y, source);
+        let delta = match delta {
+            WheelDelta::Lines { x, y } => mouse::ScrollDelta::Lines { x, y },
+            WheelDelta::Pixels { x, y } => mouse::ScrollDelta::Pixels { x, y },
+        };
         self.simulate(
-            [iced::Event::Mouse(mouse::Event::ButtonReleased(
-                mouse::Button::Left,
-            ))],
+            [iced::Event::Mouse(mouse::Event::WheelScrolled { delta })],
+            source,
+        );
+    }
+
+    pub fn scroll_to(&mut self, id: &str, x: f32, y: f32, source: Location) {
+        self.require_finite_pair("scroll to", x, y, source);
+        let scroll_id = self.require_scroll_target(id, source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+                scroll_id,
+                iced::advanced::widget::operation::scrollable::AbsoluteOffset {
+                    x: Some(x),
+                    y: Some(y),
+                },
+            ),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn scroll_by(&mut self, id: &str, x: f32, y: f32, source: Location) {
+        self.require_finite_pair("scroll by", x, y, source);
+        let scroll_id = self.require_scroll_target(id, source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::scrollable::scroll_by::<()>(
+                scroll_id,
+                iced::advanced::widget::operation::scrollable::AbsoluteOffset { x, y },
+            ),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn snap(&mut self, id: &str, x: f32, y: f32, source: Location) {
+        if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+            self.invalid_action(
+                "snap scroll",
+                "finite normalized x and y in 0..=1",
+                format!("({x:?}, {y:?})"),
+                source,
+            );
+        }
+        let scroll_id = self.require_scroll_target(id, source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::scrollable::snap_to::<()>(
+                scroll_id,
+                iced::advanced::widget::operation::scrollable::RelativeOffset {
+                    x: Some(x),
+                    y: Some(y),
+                },
+            ),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn snap_end(&mut self, id: &str, source: Location) {
+        self.snap(id, 1.0, 1.0, source);
+    }
+
+    pub fn drag(&mut self, from: &str, to: &str, source: Location) {
+        let from = self.interaction_bounds("drag from", from, source).center();
+        let to = self.interaction_bounds("drag to", to, source).center();
+        self.set_cursor(from, true, source);
+        self.press_current(MouseButton::Left, source);
+        self.set_cursor(to, true, source);
+        self.release_button(MouseButton::Left, source);
+    }
+
+    pub fn drop_at(&mut self, id: &str, source: Location) {
+        let bounds = self.interaction_bounds("drop at", id, source);
+        self.set_cursor(bounds.center(), true, source);
+        self.release_button(MouseButton::Left, source);
+    }
+
+    pub fn focus(&mut self, id: &str, source: Location) {
+        let target = self.require_target(id, false, source);
+        if target.accessibility.is_some() {
+            self.accessibility_focus(id, source);
+            return;
+        }
+        let focus_id = self.require_widget_capability(
+            "focus",
+            id,
+            WidgetCapability::Focusable,
+            "a focusable target",
+            source,
+        );
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::focusable::focus::<()>(focus_id),
+        ));
+        self.settle(Some(source));
+        if !self.require_target(id, false, source).focused() {
+            self.invalid_action(
+                "focus",
+                "the target to gain focus",
+                format!("{id} remained unfocused"),
+                source,
+            );
+        }
+    }
+
+    pub fn focus_next(&mut self, source: Location) {
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::focusable::focus_next::<()>(),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn focus_previous(&mut self, source: Location) {
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::focusable::focus_previous::<()>(),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn blur(&mut self, source: Location) {
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::focusable::unfocus::<()>(),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn window_focus(&mut self, focused: bool, source: Location) {
+        self.window_focused = focused;
+        self.simulate(
+            [iced::Event::Window(if focused {
+                window::Event::Focused
+            } else {
+                window::Event::Unfocused
+            })],
             source,
         );
     }
 
     pub fn typewrite(&mut self, text: &str, source: Location) {
-        self.simulate(iced_test::simulator::typewrite(text), source);
+        for character in text.chars() {
+            let key = Key::character(character.to_string());
+            self.key_down_with(
+                key.clone(),
+                KeyMetadata {
+                    text: Some(character.to_string()),
+                    ..KeyMetadata::default()
+                },
+                source,
+            );
+            self.key_up(key, source);
+        }
     }
 
-    pub fn key(&mut self, key: keyboard::Key, source: Location) {
-        self.simulate(iced_test::simulator::tap_key(key, None), source);
+    pub fn key(&mut self, key: Key, source: Location) {
+        self.key_down(key.clone(), source);
+        self.key_up(key, source);
+    }
+
+    pub fn key_down(&mut self, key: Key, source: Location) {
+        self.key_down_with(key, KeyMetadata::default(), source);
+    }
+
+    pub fn key_down_with(&mut self, key: Key, metadata: KeyMetadata, source: Location) {
+        let identity = held_key_identity(&key, &metadata);
+        let held = self.pressed_keys.get(&identity);
+        if metadata.repeat && held.is_none() {
+            self.invalid_action(
+                "key repeat",
+                "a key that is already pressed",
+                format!("{identity:?} is not pressed"),
+                source,
+            );
+        }
+        if metadata.repeat
+            && let Some(held) = held
+            && held.location != metadata.location
+        {
+            self.invalid_action(
+                "key repeat",
+                "the same key location as the initial press",
+                format!(
+                    "repeat location {:?} does not match pressed location {:?}",
+                    metadata.location, held.location,
+                ),
+                source,
+            );
+        }
+        if !metadata.repeat
+            && let Some(held) = held
+        {
+            self.invalid_action(
+                "key down",
+                "a key that is not already pressed",
+                format!("{identity:?} is already pressed as {:?}", held.key),
+                source,
+            );
+        }
+        let event = self.keyboard_pressed_event(&key, &metadata, source);
+        if !metadata.repeat {
+            self.pressed_keys.insert(
+                identity,
+                HeldKeyRecord {
+                    key,
+                    location: metadata.location,
+                },
+            );
+        }
+        self.simulate([iced::Event::Keyboard(event)], source);
+    }
+
+    pub fn key_up(&mut self, key: Key, source: Location) {
+        self.key_up_with(key, KeyMetadata::default(), source);
+    }
+
+    pub fn key_up_with(&mut self, key: Key, metadata: KeyMetadata, source: Location) {
+        let event = self.keyboard_released_event(&key, &metadata, source);
+        let identity = held_key_identity(&key, &metadata);
+        let Some(held) = self.pressed_keys.get(&identity) else {
+            self.invalid_action(
+                "key up",
+                "a key that is currently pressed",
+                format!("{identity:?} is not pressed"),
+                source,
+            );
+        };
+        if held.location != metadata.location {
+            self.invalid_action(
+                "key up",
+                "the same key location as the initial press",
+                format!(
+                    "release location {:?} does not match pressed location {:?}",
+                    metadata.location, held.location,
+                ),
+                source,
+            );
+        }
+        self.pressed_keys.remove(&identity);
+        self.simulate([iced::Event::Keyboard(event)], source);
+    }
+
+    pub fn modifiers(&mut self, modifiers: Modifiers, source: Location) {
+        self.modifiers = modifiers;
+        self.simulate(
+            [iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+                modifiers.iced(),
+            ))],
+            source,
+        );
+    }
+
+    pub fn key_chord(&mut self, modifiers: Modifiers, key: Key, source: Location) {
+        let previous = self.modifiers;
+        self.modifiers(modifiers, source);
+        self.key(key, source);
+        self.modifiers(previous, source);
+    }
+
+    pub fn key_repeat(&mut self, key: Key, count: usize, source: Location) {
+        if count == 0 {
+            self.invalid_action(
+                "repeat key",
+                "a positive repeat count",
+                "0".to_owned(),
+                source,
+            );
+        }
+        self.key_down(key.clone(), source);
+        for _ in 1..count {
+            self.key_down_with(
+                key.clone(),
+                KeyMetadata {
+                    repeat: true,
+                    ..KeyMetadata::default()
+                },
+                source,
+            );
+        }
+        self.key_up(key, source);
+    }
+
+    pub fn clear(&mut self, source: Location) {
+        self.select_all(source);
+        self.key(Key::named(keyboard::key::Named::Backspace), source);
+    }
+
+    pub fn replace(&mut self, text: &str, source: Location) {
+        self.clear(source);
+        self.typewrite(text, source);
+    }
+
+    pub fn select(&mut self, start: usize, end: usize, source: Location) {
+        let id = self.require_focused_text_input("select text", source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::text_input::select_range::<()>(id, start, end),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn select_all(&mut self, source: Location) {
+        let id = self.require_focused_text_input("select all text", source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::text_input::select_all::<()>(id),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn cursor(&mut self, position: usize, source: Location) {
+        let id = self.require_focused_text_input("move text cursor", source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::text_input::move_cursor_to::<()>(id, position),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn cursor_front(&mut self, source: Location) {
+        let id = self.require_focused_text_input("move text cursor to front", source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::text_input::move_cursor_to_front::<()>(id),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn cursor_end(&mut self, source: Location) {
+        let id = self.require_focused_text_input("move text cursor to end", source);
+        self.perform_widget(Box::new(
+            iced::advanced::widget::operation::text_input::move_cursor_to_end::<()>(id),
+        ));
+        self.settle(Some(source));
+    }
+
+    pub fn composition(&mut self, phase: CompositionPhase, source: Location) {
+        let events = match phase {
+            CompositionPhase::Start => {
+                if self.ime_open {
+                    self.invalid_action(
+                        "IME start",
+                        "a closed composition",
+                        "composition is already open".to_owned(),
+                        source,
+                    );
+                }
+                self.ime_open = true;
+                vec![iced::Event::InputMethod(input_method::Event::Opened)]
+            }
+            CompositionPhase::Update { text, selection } => {
+                self.require_ime("update", source);
+                if let Some(range) = &selection
+                    && (range.start > range.end
+                        || range.end > text.len()
+                        || !text.is_char_boundary(range.start)
+                        || !text.is_char_boundary(range.end))
+                {
+                    self.invalid_action(
+                        "IME update",
+                        "an ordered UTF-8 byte range within the composition text at character boundaries",
+                        format!("selection {range:?} for {text:?} ({} bytes)", text.len()),
+                        source,
+                    );
+                }
+                vec![iced::Event::InputMethod(input_method::Event::Preedit(
+                    text, selection,
+                ))]
+            }
+            CompositionPhase::Commit(text) => {
+                self.require_ime("commit", source);
+                vec![
+                    iced::Event::InputMethod(input_method::Event::Preedit(String::new(), None)),
+                    iced::Event::InputMethod(input_method::Event::Commit(text)),
+                ]
+            }
+            CompositionPhase::Cancel => {
+                self.require_ime("cancel", source);
+                self.ime_open = false;
+                vec![
+                    iced::Event::InputMethod(input_method::Event::Preedit(String::new(), None)),
+                    iced::Event::InputMethod(input_method::Event::Closed),
+                ]
+            }
+        };
+        self.simulate(events, source);
+    }
+
+    pub fn touch(&mut self, phase: TouchPhase, id: u64, x: f32, y: f32, source: Location) {
+        let position = Point::new(x, y);
+        self.require_point("touch", position, source);
+        let finger = touch::Finger(id);
+        let event = match phase {
+            TouchPhase::Down => {
+                if self.touches.contains_key(&id) {
+                    self.invalid_action(
+                        "touch down",
+                        "an unused touch id",
+                        format!("touch {id} is already active"),
+                        source,
+                    );
+                }
+                self.touches.insert(id, position);
+                touch::Event::FingerPressed {
+                    id: finger,
+                    position,
+                }
+            }
+            TouchPhase::Move => {
+                self.require_touch(id, "move", source);
+                self.touches.insert(id, position);
+                touch::Event::FingerMoved {
+                    id: finger,
+                    position,
+                }
+            }
+            TouchPhase::Up => {
+                self.require_touch(id, "lift", source);
+                self.touches.remove(&id);
+                touch::Event::FingerLifted {
+                    id: finger,
+                    position,
+                }
+            }
+            TouchPhase::Cancel => {
+                self.require_touch(id, "cancel", source);
+                self.touches.remove(&id);
+                touch::Event::FingerLost {
+                    id: finger,
+                    position,
+                }
+            }
+        };
+        self.simulate([iced::Event::Touch(event)], source);
+    }
+
+    pub fn tap(&mut self, id: &str, count: u8, source: Location) {
+        if count == 0 {
+            self.invalid_action("tap", "a positive tap count", "0".to_owned(), source);
+        }
+        let position = self.interaction_bounds("tap", id, source).center();
+        let mut finger = 0_u64;
+        while self.touches.contains_key(&finger) {
+            finger = finger.checked_add(1).unwrap_or_else(|| {
+                self.invalid_action(
+                    "tap",
+                    "an unused touch id",
+                    "all touch ids are active".to_owned(),
+                    source,
+                )
+            });
+        }
+        for _ in 0..count {
+            self.touch(TouchPhase::Down, finger, position.x, position.y, source);
+            self.touch(TouchPhase::Up, finger, position.x, position.y, source);
+        }
+    }
+
+    pub fn window_opened(&mut self, source: Location) {
+        self.simulate(
+            [iced::Event::Window(window::Event::Opened {
+                position: self.window_position,
+                size: self.size,
+            })],
+            source,
+        );
+    }
+
+    pub fn window_closed(&mut self, source: Location) {
+        self.simulate([iced::Event::Window(window::Event::Closed)], source);
+    }
+
+    pub fn window_move(&mut self, x: f32, y: f32, source: Location) {
+        let position = Point::new(x, y);
+        if !x.is_finite() || !y.is_finite() {
+            self.invalid_action(
+                "move window",
+                "finite coordinates",
+                format!("{position:?}"),
+                source,
+            );
+        }
+        self.window_position = Some(position);
+        self.simulate(
+            [iced::Event::Window(window::Event::Moved(position))],
+            source,
+        );
     }
 
     pub fn resize(&mut self, width: f32, height: f32, source: Location) {
         if !valid_dimension(width) || !valid_dimension(height) {
-            panic!(
-                "{source}: test `{}` resize failed\nstatement: {}\nexpected: finite, positive width and height\nactual: ({width:?}, {height:?})",
-                self.test_name, source.statement
+            self.invalid_action(
+                "resize",
+                "finite, positive width and height",
+                format!("({width:?}, {height:?})"),
+                source,
             );
         }
         let size = Size::new(width, height);
         self.size = size;
+        self.renderer.reset(Rectangle::with_size(size));
         self.simulate([iced::Event::Window(window::Event::Resized(size))], source);
+    }
+
+    pub fn rescale(&mut self, scale_factor: f32, source: Location) {
+        if !valid_dimension(scale_factor) {
+            self.invalid_action(
+                "rescale",
+                "a finite, positive scale factor",
+                format!("{scale_factor:?}"),
+                source,
+            );
+        }
+        self.scale_factor_override = Some(scale_factor);
+        self.simulate(
+            [iced::Event::Window(window::Event::Rescaled(scale_factor))],
+            source,
+        );
+    }
+
+    pub fn close_requested(&mut self, source: Location) {
+        self.simulate([iced::Event::Window(window::Event::CloseRequested)], source);
+    }
+
+    pub fn system_theme(&mut self, mode: ThemeMode, source: Location) {
+        self.system_theme = mode;
+        self.broadcast(subscription::Event::SystemThemeChanged(mode.iced()));
+        self.settle(Some(source));
+    }
+
+    pub fn file_hover(&mut self, path: impl Into<PathBuf>, source: Location) {
+        self.simulate(
+            [iced::Event::Window(window::Event::FileHovered(path.into()))],
+            source,
+        );
+    }
+
+    pub fn file_drop(&mut self, path: impl Into<PathBuf>, source: Location) {
+        self.simulate(
+            [iced::Event::Window(window::Event::FileDropped(path.into()))],
+            source,
+        );
+    }
+
+    pub fn file_leave(&mut self, source: Location) {
+        self.simulate(
+            [iced::Event::Window(window::Event::FilesHoveredLeft)],
+            source,
+        );
+    }
+
+    /// Waits for real executor time, then redraws and settles. This does not virtualize timers.
+    pub fn wait(&mut self, duration: Duration, source: Location) {
+        if duration.is_zero() {
+            self.invalid_action("wait", "a positive duration", "0ns".to_owned(), source);
+        }
+        let started_at = Instant::now();
+        std::thread::sleep(duration);
+        let elapsed = started_at.elapsed();
+        self.logical_time = self.logical_time.checked_add(elapsed).unwrap_or_else(|| {
+            self.invalid_action(
+                "wait",
+                "a duration within the platform Instant range",
+                format!("{duration:?}"),
+                source,
+            )
+        });
+        self.logical_time = self.logical_time.max(Instant::now());
+        self.redraw_at(self.logical_time, source);
+    }
+
+    /// Advances the deterministic redraw timestamp without sleeping.
+    pub fn advance(&mut self, duration: Duration, source: Location) {
+        if duration.is_zero() {
+            self.invalid_action("advance", "a positive duration", "0ns".to_owned(), source);
+        }
+        self.logical_time = self.logical_time.checked_add(duration).unwrap_or_else(|| {
+            self.invalid_action(
+                "advance",
+                "a duration within the platform Instant range",
+                format!("{duration:?}"),
+                source,
+            )
+        });
+        self.redraw_at(self.logical_time, source);
+    }
+
+    pub fn idle(&mut self, source: Location) {
+        self.settle(Some(source));
+    }
+
+    pub fn accessibility_activate(&mut self, id: &str, source: Location) {
+        let target = self.require_semantic_action_target(id, source);
+        if target.disabled {
+            self.invalid_action(
+                "accessibility activate",
+                "an enabled semantic target",
+                format!("{id} is disabled"),
+                source,
+            );
+        }
+        let message = target.activate.unwrap_or_else(|| {
+            self.invalid_action(
+                "accessibility activate",
+                "a target supporting the Click action",
+                format!("{id} has no activation action"),
+                source,
+            )
+        });
+        self.dispatch(message, source);
+    }
+
+    pub fn accessibility_focus(&mut self, id: &str, source: Location) {
+        let target = self.require_semantic_action_target(id, source);
+        if target.disabled {
+            self.invalid_action(
+                "accessibility focus",
+                "an enabled semantic target",
+                format!("{id} is disabled"),
+                source,
+            );
+        }
+        let focus = target.focus.unwrap_or_else(|| {
+            self.invalid_action(
+                "accessibility focus",
+                "a target supporting the Focus action",
+                format!("{id} is not focusable"),
+                source,
+            )
+        });
+        self.run_task(crate::focus_semantic(focus), Some(source));
+        self.settle(Some(source));
+    }
+
+    fn require_semantic_action_target(
+        &mut self,
+        id: &str,
+        source: Location,
+    ) -> SemanticActionTarget<P::Message> {
+        let mut targets = self.with_interface(|interface, renderer, _| {
+            let mut operation = SemanticActionSelector::<P::Message>::new(id).find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            match operation.finish() {
+                Outcome::Some(targets) => targets,
+                _ => Vec::new(),
+            }
+        });
+        match targets.len() {
+            1 => targets.pop().expect("length checked"),
+            0 => self.invalid_action(
+                "accessibility action",
+                "one semantic target",
+                format!("no semantic target `{id}`"),
+                source,
+            ),
+            count => self.invalid_action(
+                "accessibility action",
+                "one unambiguous semantic target",
+                format!("{count} semantic targets matched `{id}`"),
+                source,
+            ),
+        }
+    }
+
+    /// Captures a PNG and a structured JSON frame manifest.
+    pub fn capture(&mut self, name: &str, source: Location) -> Capture {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            self.invalid_action(
+                "capture",
+                "a non-empty snake_case artifact name",
+                format!("{name:?}"),
+                source,
+            );
+        }
+
+        let mut targets = self
+            .known_ids()
+            .into_iter()
+            .filter_map(|id| self.inspect(&id, false, source))
+            .collect::<Vec<_>>();
+        let resolved_theme = self.theme();
+        let screenshot = self.screenshot_with_theme(&resolved_theme, Some(source));
+        for target in &mut targets {
+            match inspect_paint(&mut self.renderer, target.bounds()) {
+                Ok(paint) => {
+                    target.paint_error = None;
+                    target.surfaces = paint.surfaces;
+                    target.texts = paint.texts;
+                    target.images = paint.images;
+                }
+                Err(error) => target.paint_error = Some(error),
+            }
+        }
+        let targets = targets.iter().map(target_manifest).collect::<Vec<_>>();
+        std::fs::create_dir_all(&self.artifact_dir).unwrap_or_else(|error| {
+            self.invalid_action(
+                "capture",
+                "a writable artifact directory",
+                format!("{} ({error})", self.artifact_dir.display()),
+                source,
+            )
+        });
+        let artifact_dir = self
+            .artifact_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.artifact_dir.clone());
+        let png_path = artifact_dir.join(format!("{name}.png"));
+        let metadata_path = artifact_dir.join(format!("{name}.json"));
+        write_png(
+            &png_path,
+            screenshot.as_ref(),
+            screenshot.size.width,
+            screenshot.size.height,
+        )
+        .unwrap_or_else(|error| {
+            self.invalid_action(
+                "capture",
+                "a writable PNG artifact",
+                format!("{} ({error})", png_path.display()),
+                source,
+            )
+        });
+
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "name": name,
+            "png": format!("{name}.png"),
+            "viewport": { "width": self.size.width, "height": self.size.height },
+            "physical_size": {
+                "width": screenshot.size.width,
+                "height": screenshot.size.height,
+            },
+            "scale_factor": screenshot.scale_factor,
+            "configured_theme": self.theme_override.map(theme_mode_name),
+            "resolved_theme": {
+                "mode": theme_mode_name(theme_mode(resolved_theme.mode())),
+                "name": resolved_theme.name(),
+            },
+            "system_theme": theme_mode_name(self.system_theme),
+            "locale": self.locale,
+            "platform": platform_name(self.platform),
+            "reduced_motion": self.reduced_motion,
+            "window": {
+                "position": self.window_position.map(|point| serde_json::json!({
+                    "x": point.x,
+                    "y": point.y,
+                })),
+                "focused": self.window_focused,
+            },
+            "clock": {
+                "supports_virtual_redraw_advance": true,
+                "iced_timer_futures_are_virtual": false,
+            },
+            "targets": targets,
+        });
+        std::fs::write(
+            &metadata_path,
+            serde_json::to_vec_pretty(&manifest).expect("JSON values are serializable"),
+        )
+        .unwrap_or_else(|error| {
+            self.invalid_action(
+                "capture",
+                "a writable JSON artifact",
+                format!("{} ({error})", metadata_path.display()),
+                source,
+            )
+        });
+
+        Capture {
+            name: name.to_owned(),
+            rgba: screenshot.rgba.to_vec(),
+            width: screenshot.size.width,
+            height: screenshot.size.height,
+            scale_factor: screenshot.scale_factor,
+            png_path,
+            metadata_path,
+        }
     }
 
     pub fn exists(&mut self, id: &str, source: Location) -> bool {
@@ -1187,13 +2982,14 @@ where
 
         let id = id.to_owned();
         let test_name = self.test_name;
-        let (paint_error, surfaces, texts) = if paint {
+        let paint = if paint {
+            self.logical_time = self.logical_time.max(Instant::now());
             let cursor = self.cursor;
             let theme = self.theme();
             let style = self.program.style(&self.state, &theme);
             let paint_bounds = layout.bounds;
             let events = vec![iced::Event::Window(window::Event::RedrawRequested(
-                iced::time::Instant::now(),
+                self.logical_time,
             ))];
             let (paint, messages, statuses) =
                 self.with_interface(|interface, renderer, clipboard| {
@@ -1208,16 +3004,13 @@ where
                         },
                         cursor,
                     );
-                    let paint = match inspect_paint(renderer, paint_bounds) {
-                        Ok((surfaces, texts)) => (None, surfaces, texts),
-                        Err(error) => (Some(error), Vec::new(), Vec::new()),
-                    };
+                    let paint = inspect_paint(renderer, paint_bounds);
                     (paint, messages, statuses)
                 });
             self.finish_simulation(events, messages, statuses, source);
             paint
         } else {
-            (None, Vec::new(), Vec::new())
+            Ok(PaintInspection::default())
         };
 
         Some(target_from_layout(
@@ -1225,9 +3018,8 @@ where
             test_name,
             source,
             layout,
-            paint_error,
-            surfaces,
-            texts,
+            paint,
+            self.scale_factor(),
         ))
     }
 
@@ -1240,6 +3032,7 @@ where
                 _ => Vec::new(),
             }
         });
+        ids.retain(|id| !internal_auto_id(id));
         ids.sort();
         ids.dedup();
         ids
@@ -1261,21 +3054,280 @@ where
         })
     }
 
-    fn move_cursor(&mut self, position: Point, source: Location) {
+    fn set_cursor(&mut self, position: Point, inside: bool, source: Location) {
+        let mut events = Vec::with_capacity(2);
+        if inside && !self.cursor_inside {
+            events.push(iced::Event::Mouse(mouse::Event::CursorEntered));
+        }
+        self.cursor_inside = inside;
         self.cursor = mouse::Cursor::Available(position);
+        events.push(iced::Event::Mouse(mouse::Event::CursorMoved { position }));
+        self.simulate(events, source);
+    }
+
+    pub fn redraw(&mut self, source: Location) {
+        self.logical_time = self.logical_time.max(Instant::now());
+        self.redraw_at(self.logical_time, source);
+    }
+
+    fn redraw_at(&mut self, time: Instant, source: Location) {
         self.simulate(
-            [iced::Event::Mouse(mouse::Event::CursorMoved { position })],
+            [iced::Event::Window(window::Event::RedrawRequested(time))],
             source,
         );
     }
 
-    fn redraw(&mut self, source: Location) {
+    fn click_current(&mut self, button: MouseButton, count: u8, source: Location) {
+        if count == 0 {
+            self.invalid_action("click", "a positive click count", "0".to_owned(), source);
+        }
+        for _ in 0..count {
+            self.press_current(button, source);
+            self.release_button(button, source);
+        }
+    }
+
+    fn press_current(&mut self, button: MouseButton, source: Location) {
+        if !self.pressed_mouse.insert(button) {
+            self.invalid_action(
+                "press pointer button",
+                "a pointer button that is not already pressed",
+                format!("{button:?} is already pressed"),
+                source,
+            );
+        }
         self.simulate(
-            [iced::Event::Window(window::Event::RedrawRequested(
-                iced::time::Instant::now(),
+            [iced::Event::Mouse(mouse::Event::ButtonPressed(
+                button.iced(),
             ))],
             source,
         );
+    }
+
+    fn require_point(&self, action: &str, position: Point, source: Location) {
+        self.require_finite_pair(action, position.x, position.y, source);
+    }
+
+    fn require_finite_pair(&self, action: &str, x: f32, y: f32, source: Location) {
+        if !x.is_finite() || !y.is_finite() {
+            self.invalid_action(
+                action,
+                "finite coordinates",
+                format!("({x:?}, {y:?})"),
+                source,
+            );
+        }
+    }
+
+    fn require_scroll_target(&mut self, id: &str, source: Location) -> widget::Id {
+        let target = self.require_target(id, false, source);
+        if target.translation_x.is_none() || target.translation_y.is_none() {
+            self.invalid_action(
+                "scroll",
+                "a scrollable target",
+                format!("{id} is {}", target.kind),
+                source,
+            );
+        }
+        self.require_widget_capability(
+            "scroll",
+            id,
+            WidgetCapability::Scrollable,
+            "a scrollable target",
+            source,
+        )
+    }
+
+    fn invalid_action(&self, action: &str, expected: &str, actual: String, source: Location) -> ! {
+        panic!(
+            "{source}: test `{}` {action} failed\nstatement: {}\nexpected: {expected}\nactual: {actual}",
+            self.test_name, source.statement
+        )
+    }
+
+    fn keyboard_pressed_event(
+        &self,
+        key: &Key,
+        metadata: &KeyMetadata,
+        source: Location,
+    ) -> keyboard::Event {
+        self.require_non_empty_key("key down", "logical key", key, source);
+        if let Some(modified_key) = &metadata.modified_key {
+            self.require_non_empty_key("key down", "modified key", modified_key, source);
+        }
+        let key = iced_key(key);
+        let modified_key = metadata
+            .modified_key
+            .as_ref()
+            .map(iced_key)
+            .unwrap_or_else(|| key.clone());
+        let text = metadata.text.clone().or_else(|| match &key {
+            keyboard::Key::Character(value) if !self.modifiers.control && !self.modifiers.logo => {
+                Some(value.to_string())
+            }
+            _ => None,
+        });
+        if text.as_ref().is_some_and(String::is_empty) {
+            self.invalid_action(
+                "key down",
+                "non-empty produced text when text metadata is present",
+                "empty text".to_owned(),
+                source,
+            );
+        }
+        keyboard::Event::KeyPressed {
+            key,
+            modified_key,
+            physical_key: metadata
+                .physical_key
+                .unwrap_or_else(unidentified_physical_key),
+            location: metadata.location.iced(),
+            modifiers: self.modifiers.iced(),
+            text: text.map(Into::into),
+            repeat: metadata.repeat,
+        }
+    }
+
+    fn keyboard_released_event(
+        &self,
+        key: &Key,
+        metadata: &KeyMetadata,
+        source: Location,
+    ) -> keyboard::Event {
+        self.require_non_empty_key("key up", "logical key", key, source);
+        if let Some(modified_key) = &metadata.modified_key {
+            self.require_non_empty_key("key up", "modified key", modified_key, source);
+        }
+        if metadata.text.is_some() || metadata.repeat {
+            self.invalid_action(
+                "key up",
+                "release metadata without produced text or repeat",
+                format!("text: {:?}, repeat: {}", metadata.text, metadata.repeat),
+                source,
+            );
+        }
+        let key = iced_key(key);
+        let modified_key = metadata
+            .modified_key
+            .as_ref()
+            .map(iced_key)
+            .unwrap_or_else(|| key.clone());
+        keyboard::Event::KeyReleased {
+            key,
+            modified_key,
+            physical_key: metadata
+                .physical_key
+                .unwrap_or_else(unidentified_physical_key),
+            location: metadata.location.iced(),
+            modifiers: self.modifiers.iced(),
+        }
+    }
+
+    fn require_non_empty_key(&self, action: &str, label: &str, key: &Key, source: Location) {
+        if matches!(key, Key::Character(value) if value.is_empty()) {
+            self.invalid_action(
+                action,
+                &format!("a non-empty character value for the {label}"),
+                "empty character key".to_owned(),
+                source,
+            );
+        }
+    }
+
+    fn require_focused_text_input(&mut self, action: &str, source: Location) -> widget::Id {
+        let (focused, text_inputs) = self.with_interface(|interface, renderer, _| {
+            let mut operation = FocusedIds::<P::Message>::new().find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            let focused = match operation.finish() {
+                Outcome::Some(ids) => ids,
+                _ => Vec::new(),
+            };
+            let mut operation = TextInputIds.find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            let text_inputs = match operation.finish() {
+                Outcome::Some(ids) => ids,
+                _ => Vec::new(),
+            };
+            (focused, text_inputs)
+        });
+        let focused_id = match focused.as_slice() {
+            [id] => id,
+            [] => self.invalid_action(
+                action,
+                "exactly one focused text input with an id",
+                "no focused widget with an id".to_owned(),
+                source,
+            ),
+            ids => self.invalid_action(
+                action,
+                "exactly one focused text input with an id",
+                format!("{} widgets are focused", ids.len()),
+                source,
+            ),
+        };
+        let matches = text_inputs
+            .iter()
+            .filter(|text_input| *text_input == focused_id)
+            .count();
+        if matches != 1 {
+            self.invalid_action(
+                action,
+                "exactly one focused text input with an id",
+                format!("focused widget exposes {matches} text-input operation candidates"),
+                source,
+            );
+        }
+        focused_id.clone()
+    }
+
+    fn require_widget_capability(
+        &mut self,
+        action: &str,
+        id: &str,
+        capability: WidgetCapability,
+        expected: &str,
+        source: Location,
+    ) -> widget::Id {
+        let ids = self.with_interface(|interface, renderer, _| {
+            let mut operation = MatchingWidgetIds::new(id, capability).find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            match operation.finish() {
+                Outcome::Some(ids) => ids,
+                _ => Vec::new(),
+            }
+        });
+        match ids.as_slice() {
+            [id] => id.clone(),
+            [] => self.invalid_action(action, expected, format!("{id} lacks {capability}"), source),
+            ids => self.invalid_action(
+                action,
+                "one unambiguous widget operation target",
+                format!("{id} matched {} {capability} widget ids", ids.len()),
+                source,
+            ),
+        }
+    }
+
+    fn require_ime(&self, action: &str, source: Location) {
+        if !self.ime_open {
+            self.invalid_action(
+                &format!("IME {action}"),
+                "an open composition",
+                "composition is closed".to_owned(),
+                source,
+            );
+        }
+    }
+
+    fn require_touch(&self, id: u64, action: &str, source: Location) {
+        if !self.touches.contains_key(&id) {
+            self.invalid_action(
+                &format!("touch {action}"),
+                "an active touch id",
+                format!("touch {id} is not active"),
+                source,
+            );
+        }
     }
 
     fn simulate(&mut self, events: impl IntoIterator<Item = iced::Event>, source: Location) {
@@ -1414,7 +3466,7 @@ where
         loop {
             while let Ok(event) = self.receiver.try_recv() {
                 match event {
-                    DriverEvent::Action(action) => self.perform(action, source),
+                    DriverEvent::Action(action) => self.perform_runtime_action(action, source),
                     DriverEvent::Finished => {
                         self.pending_tasks = self.pending_tasks.saturating_sub(1);
                     }
@@ -1465,7 +3517,11 @@ where
         }
     }
 
-    fn perform(&mut self, action: runtime::Action<P::Message>, source: Option<Location>) {
+    fn perform_runtime_action(
+        &mut self,
+        action: runtime::Action<P::Message>,
+        source: Option<Location>,
+    ) {
         match action {
             runtime::Action::Output(message) => self.update(message, source),
             runtime::Action::LoadFont { bytes, channel } => {
@@ -1506,9 +3562,10 @@ where
                     });
                 }
                 runtime::system::Action::GetTheme(channel) => {
-                    let _ = channel.send(theme::Mode::None);
+                    let _ = channel.send(self.system_theme.iced());
                 }
                 runtime::system::Action::NotifyTheme(mode) => {
+                    self.system_theme = theme_mode(mode);
                     self.broadcast(subscription::Event::SystemThemeChanged(mode));
                 }
             },
@@ -1545,8 +3602,18 @@ where
                         settings.size
                     );
                 }
+                self.reset_window_local_state();
                 self.window = id;
                 self.size = settings.size;
+                self.renderer.reset(Rectangle::with_size(settings.size));
+                self.window_position = match settings.position {
+                    window::Position::Specific(position) => Some(position),
+                    window::Position::SpecificWith(position) => {
+                        Some(position(settings.size, settings.size))
+                    }
+                    window::Position::Centered => Some(Point::ORIGIN),
+                    window::Position::Default => None,
+                };
                 let _ = channel.send(id);
             }
             Action::Close(_) => {}
@@ -1561,6 +3628,13 @@ where
                     );
                 }
                 self.size = size;
+                self.renderer.reset(Rectangle::with_size(size));
+            }
+            Action::Move(id, position) if id == self.window => {
+                self.window_position = Some(position);
+            }
+            Action::GainFocus(id) if id == self.window => {
+                self.window_focused = true;
             }
             Action::GetSize(id, channel) if id == self.window => {
                 let _ = channel.send(self.size);
@@ -1572,10 +3646,10 @@ where
                 let _ = channel.send(None);
             }
             Action::GetPosition(id, channel) if id == self.window => {
-                let _ = channel.send(Some(Point::ORIGIN));
+                let _ = channel.send(self.window_position);
             }
             Action::GetScaleFactor(id, channel) if id == self.window => {
-                let _ = channel.send(1.0);
+                let _ = channel.send(self.scale_factor());
             }
             Action::GetMode(id, channel) if id == self.window => {
                 let _ = channel.send(window::Mode::Windowed);
@@ -1587,7 +3661,7 @@ where
                 let _ = channel.send(Some(self.size));
             }
             Action::Screenshot(id, channel) if id == self.window => {
-                let _ = channel.send(self.screenshot());
+                let _ = channel.send(self.screenshot_at(source));
             }
             Action::Run(id, _) if id == self.window => {
                 let origin = failure_origin(self.test_name, source);
@@ -1599,12 +3673,10 @@ where
             | Action::DragResize(_, _)
             | Action::Maximize(_, _)
             | Action::Minimize(_, _)
-            | Action::Move(_, _)
             | Action::SetMode(_, _)
             | Action::ToggleMaximize(_)
             | Action::ToggleDecorations(_)
             | Action::RequestUserAttention(_, _)
-            | Action::GainFocus(_)
             | Action::SetLevel(_, _)
             | Action::ShowSystemMenu(_)
             | Action::SetIcon(_, _)
@@ -1644,41 +3716,121 @@ where
             Action::Screenshot(_, channel) => {
                 let _ = channel.send(window::Screenshot::new(Vec::new(), Size::new(0, 0), 1.0));
             }
-            Action::Run(_, _) | Action::Resize(_, _) => {}
+            Action::Run(_, _)
+            | Action::Resize(_, _)
+            | Action::Move(_, _)
+            | Action::GainFocus(_) => {}
         }
     }
 
-    fn screenshot(&mut self) -> window::Screenshot {
+    /// Replaces the one window modeled by the headless driver.
+    ///
+    /// Application state and process-scoped test context remain intact. Widget
+    /// cache and input state belong to the displaced window and must not leak
+    /// into the newly opened one.
+    fn reset_window_local_state(&mut self) {
+        self.cache = Some(user_interface::Cache::default());
+        self.cursor = mouse::Cursor::Unavailable;
+        self.cursor_inside = false;
+        self.pressed_mouse.clear();
+        self.modifiers = Modifiers::NONE;
+        self.pressed_keys.clear();
+        self.touches.clear();
+        self.ime_open = false;
+        self.window_focused = true;
+    }
+
+    fn screenshot_at(&mut self, source: Option<Location>) -> window::Screenshot {
         let theme = self.theme();
-        let style = self.program.style(&self.state, &theme);
+        self.screenshot_with_theme(&theme, source)
+    }
+
+    fn screenshot_with_theme(
+        &mut self,
+        theme: &P::Theme,
+        source: Option<Location>,
+    ) -> window::Screenshot {
+        let scale_factor = self.scale_factor();
+        let (physical_size, expected_rgba_len) = self.checked_physical_size(scale_factor, source);
+        let style = self.program.style(&self.state, theme);
         let cursor = self.cursor;
         self.with_interface(|interface, renderer, _| {
             interface.draw(
                 renderer,
-                &theme,
+                theme,
                 &iced::advanced::renderer::Style {
                     text_color: style.text_color,
                 },
                 cursor,
             );
         });
-        let scale_factor = self.program.scale_factor(&self.state, self.window);
-        let physical_size = Size::new(
-            (self.size.width * scale_factor).round() as u32,
-            (self.size.height * scale_factor).round() as u32,
-        );
-        window::Screenshot::new(
-            self.renderer
-                .screenshot(physical_size, scale_factor, style.background_color),
-            physical_size,
-            scale_factor,
-        )
+        let rgba = self
+            .renderer
+            .screenshot(physical_size, scale_factor, style.background_color);
+        if rgba.len() != expected_rgba_len {
+            let origin = failure_origin(self.test_name, source);
+            panic!(
+                "{origin}\nscreenshot failed\nexpected: {expected_rgba_len} RGBA8 bytes for {}x{} pixels\nactual: {} bytes returned by the headless renderer",
+                physical_size.width,
+                physical_size.height,
+                rgba.len(),
+            );
+        }
+        window::Screenshot::new(rgba, physical_size, scale_factor)
+    }
+
+    fn checked_physical_size(
+        &self,
+        scale_factor: f32,
+        source: Option<Location>,
+    ) -> (Size<u32>, usize) {
+        let width = (f64::from(self.size.width) * f64::from(scale_factor)).round();
+        let height = (f64::from(self.size.height) * f64::from(scale_factor)).round();
+        let dimension = |value: f64| {
+            (value.is_finite() && (1.0..=f64::from(u32::MAX)).contains(&value))
+                .then_some(value as u32)
+        };
+        let (Some(width_u32), Some(height_u32)) = (dimension(width), dimension(height)) else {
+            let origin = failure_origin(self.test_name, source);
+            panic!(
+                "{origin}\nscreenshot failed\nexpected: rounded physical width and height in 1..=u32::MAX\nactual: viewport {:?} at scale {scale_factor:?} rounds to ({width:?}, {height:?})",
+                self.size,
+            );
+        };
+        let pixels = usize::try_from(width_u32).ok().and_then(|width| {
+            usize::try_from(height_u32)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        });
+        let Some(pixels) = pixels else {
+            let origin = failure_origin(self.test_name, source);
+            panic!(
+                "{origin}\nscreenshot failed\nexpected: an addressable RGBA8 physical buffer\nactual: {width_u32}x{height_u32} pixels",
+            );
+        };
+        if pixels > MAX_SCREENSHOT_PIXELS {
+            let origin = failure_origin(self.test_name, source);
+            panic!(
+                "{origin}\nscreenshot failed\nexpected: at most {MAX_SCREENSHOT_PIXELS} physical pixels\nactual: {pixels} pixels ({width_u32}x{height_u32})",
+            );
+        }
+        let Some(rgba_len) = pixels.checked_mul(4) else {
+            let origin = failure_origin(self.test_name, source);
+            panic!(
+                "{origin}\nscreenshot failed\nexpected: an addressable RGBA8 physical buffer\nactual: {pixels} pixels",
+            );
+        };
+
+        (Size::new(width_u32, height_u32), rgba_len)
     }
 
     fn theme(&self) -> P::Theme {
+        if let Some(mode) = self.theme_override {
+            return P::Theme::default(mode.iced());
+        }
         self.program
             .theme(&self.state, self.window)
-            .unwrap_or_else(|| P::Theme::default(theme::Mode::None))
+            .unwrap_or_else(|| P::Theme::default(self.system_theme.iced()))
     }
 
     fn with_interface<R>(
@@ -1755,6 +3907,13 @@ fn merge_target_match(existing: &mut LayoutTarget, mut candidate: LayoutTarget) 
     }
     existing.content_bounds = existing.content_bounds.or(candidate.content_bounds);
     existing.translation = existing.translation.or(candidate.translation);
+    let focused = existing.focused.unwrap_or(false) || candidate.focused.unwrap_or(false);
+    existing.accessibility = existing.accessibility.take().or(candidate.accessibility);
+    if let Some(accessibility) = &mut existing.accessibility {
+        accessibility.focused |= focused;
+    }
+    existing.focused =
+        (existing.focused.is_some() || candidate.focused.is_some()).then_some(focused);
     if !existing.semantic {
         existing.value = existing.value.take().or(candidate.value);
     }
@@ -1775,14 +3934,17 @@ fn target_from_layout(
     test_name: &'static str,
     source: Location,
     layout: LayoutTarget,
-    paint_error: Option<&'static str>,
-    surfaces: Vec<SurfacePaint>,
-    texts: Vec<TextPaint>,
+    paint: Result<PaintInspection, &'static str>,
+    scale_factor: f32,
 ) -> Target {
     let bounds = layout.bounds;
     let visible = layout.visible_bounds;
     let content = layout.content_bounds;
     let translation = layout.translation;
+    let (paint_error, paint) = match paint {
+        Ok(paint) => (None, paint),
+        Err(error) => (Some(error), PaintInspection::default()),
+    };
     Target {
         id,
         kind: layout.kind,
@@ -1807,25 +3969,37 @@ fn target_from_layout(
         content_y: content.map(|bounds| bounds.y.into()),
         translation_x: translation.map(|translation| translation.x.into()),
         translation_y: translation.map(|translation| translation.y.into()),
-        scroll_x: translation.map(|translation| (-translation.x).into()),
-        scroll_y: translation.map(|translation| (-translation.y).into()),
+        scroll_x: translation.map(|translation| translation.x.into()),
+        scroll_y: translation.map(|translation| translation.y.into()),
         value: layout.value,
         test_name,
         source,
         paint_error,
-        surfaces,
-        texts,
+        surfaces: paint.surfaces,
+        texts: paint.texts,
+        images: paint.images,
+        accessibility: layout.accessibility,
+        focused: layout.focused,
+        scale_factor,
     }
+}
+
+#[derive(Default)]
+struct PaintInspection {
+    surfaces: Vec<SurfacePaint>,
+    texts: Vec<TextPaint>,
+    images: Vec<ImagePaint>,
 }
 
 fn inspect_paint<Renderer: 'static>(
     renderer: &mut Renderer,
     bounds: Rectangle,
-) -> Result<(Vec<SurfacePaint>, Vec<TextPaint>), &'static str> {
+) -> Result<PaintInspection, &'static str> {
     let renderer = tiny_skia_renderer(renderer)?;
 
     let mut surfaces = Vec::new();
     let mut texts = Vec::new();
+    let mut images = Vec::new();
     for layer in renderer.layers() {
         for (quad, background) in &layer.quads {
             if rectangle_eq(quad.bounds, bounds) {
@@ -1855,8 +4029,26 @@ fn inspect_paint<Renderer: 'static>(
                 }
             }
         }
+        for image in &layer.images {
+            let clip_bounds = match image {
+                iced_tiny_skia::graphics::Image::Raster { clip_bounds, .. }
+                | iced_tiny_skia::graphics::Image::Vector { clip_bounds, .. } => *clip_bounds,
+            };
+            if let Some(visible) = image
+                .bounds()
+                .intersection(&clip_bounds)
+                .and_then(|visible| visible.intersection(&layer.bounds))
+                && bounds.contains(visible.center())
+            {
+                images.push(ImagePaint { bounds: visible });
+            }
+        }
     }
-    Ok((surfaces, texts))
+    Ok(PaintInspection {
+        surfaces,
+        texts,
+        images,
+    })
 }
 
 fn rendered_text_exists<Renderer: 'static>(
@@ -1920,33 +4112,57 @@ fn text_paint(
     let scale = f64::from(transformation.scale_factor());
     match text {
         Text::Paragraph {
-            paragraph, color, ..
+            paragraph,
+            position,
+            color,
+            transformation: text_transformation,
+            ..
         } => {
             let paragraph = paragraph.upgrade()?;
             let size = paragraph.size();
+            let total_scale = scale * f64::from(text_transformation.scale_factor());
             Some(TextPaint {
                 content: Some(buffer_text(paragraph.buffer())),
                 bounds,
                 color: *color,
-                size: Some(f64::from(size.0) * scale),
+                size: Some(f64::from(size.0) * total_scale),
                 font: Some(paragraph.font()),
                 line_height: Some(iced::widget::text::LineHeight::Absolute(iced::Pixels(
-                    (f64::from(paragraph.line_height().to_absolute(size).0) * scale) as f32,
+                    (f64::from(paragraph.line_height().to_absolute(size).0) * total_scale) as f32,
                 ))),
+                baseline: first_baseline(
+                    paragraph.buffer(),
+                    *position,
+                    *text_transformation,
+                    transformation,
+                ),
             })
         }
-        Text::Editor { editor, color, .. } => {
+        Text::Editor {
+            editor,
+            position,
+            color,
+            transformation: text_transformation,
+            ..
+        } => {
             let editor = editor.upgrade()?;
             let metrics = editor.buffer().metrics();
+            let total_scale = scale * f64::from(text_transformation.scale_factor());
             Some(TextPaint {
                 content: Some(buffer_text(editor.buffer())),
                 bounds,
                 color: *color,
-                size: Some(f64::from(metrics.font_size) * scale),
+                size: Some(f64::from(metrics.font_size) * total_scale),
                 font: None,
                 line_height: Some(iced::widget::text::LineHeight::Absolute(iced::Pixels(
-                    (f64::from(metrics.line_height) * scale) as f32,
+                    (f64::from(metrics.line_height) * total_scale) as f32,
                 ))),
+                baseline: first_baseline(
+                    editor.buffer(),
+                    *position,
+                    *text_transformation,
+                    transformation,
+                ),
             })
         }
         Text::Cached {
@@ -1965,14 +4181,15 @@ fn text_paint(
             line_height: Some(iced::widget::text::LineHeight::Absolute(iced::Pixels(
                 (f64::from(line_height.0) * scale) as f32,
             ))),
+            baseline: None,
         }),
         Text::Raw {
             raw,
-            transformation,
+            transformation: text_transformation,
         } => {
             let buffer = raw.buffer.upgrade()?;
             let metrics = buffer.metrics();
-            let scale = scale * f64::from(transformation.scale_factor());
+            let scale = scale * f64::from(text_transformation.scale_factor());
             Some(TextPaint {
                 content: Some(buffer_text(&buffer)),
                 bounds,
@@ -1982,9 +4199,28 @@ fn text_paint(
                 line_height: Some(iced::widget::text::LineHeight::Absolute(iced::Pixels(
                     (f64::from(metrics.line_height) * scale) as f32,
                 ))),
+                baseline: first_baseline(
+                    &buffer,
+                    raw.position,
+                    *text_transformation,
+                    transformation,
+                ),
             })
         }
     }
+}
+
+fn first_baseline(
+    buffer: &iced_tiny_skia::graphics::text::cosmic_text::Buffer,
+    position: Point,
+    text_transformation: iced::Transformation,
+    group_transformation: iced::Transformation,
+) -> Option<f64> {
+    let run = buffer.layout_runs().next()?;
+    let baseline = Point::new(position.x, position.y + run.line_y)
+        * text_transformation
+        * group_transformation;
+    Some(f64::from(baseline.y))
 }
 
 fn rectangle_eq(left: Rectangle, right: Rectangle) -> bool {
@@ -1993,6 +4229,17 @@ fn rectangle_eq(left: Rectangle, right: Rectangle) -> bool {
         && (left.y - right.y).abs() <= EPSILON
         && (left.width - right.width).abs() <= EPSILON
         && (left.height - right.height).abs() <= EPSILON
+}
+
+fn rectangle_pixel_aligned(bounds: Rectangle, scale_factor: f32) -> bool {
+    let aligned = |value: f32| {
+        let physical = value * scale_factor;
+        physical.is_finite() && (physical - physical.round()).abs() <= 0.001
+    };
+    aligned(bounds.x)
+        && aligned(bounds.y)
+        && aligned(bounds.x + bounds.width)
+        && aligned(bounds.y + bounds.height)
 }
 
 fn valid_dimension(value: f32) -> bool {
@@ -2070,6 +4317,98 @@ impl<Message: 'static> Selector for KnownIds<Message> {
     }
 }
 
+struct FocusedIds<Message>(PhantomData<fn() -> Message>);
+
+impl<Message> FocusedIds<Message> {
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Message: 'static> Selector for FocusedIds<Message> {
+    type Output = widget::Id;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        match candidate {
+            Candidate::Focusable { id, state, .. } if state.is_focused() => id.cloned(),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> String {
+        "focused widget ids".to_owned()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum WidgetCapability {
+    Focusable,
+    Scrollable,
+}
+
+impl fmt::Display for WidgetCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Focusable => "focusable",
+            Self::Scrollable => "scrollable",
+        })
+    }
+}
+
+struct MatchingWidgetIds {
+    native_id: widget::Id,
+    stable_id: widget::Id,
+    capability: WidgetCapability,
+}
+
+impl MatchingWidgetIds {
+    fn new(logical_id: &str, capability: WidgetCapability) -> Self {
+        Self {
+            native_id: logical_id.to_owned().into(),
+            stable_id: StableId::new(logical_id).widget_id(),
+            capability,
+        }
+    }
+
+    fn matches(&self, id: Option<&widget::Id>) -> bool {
+        id.is_some_and(|id| id == &self.native_id || id == &self.stable_id)
+    }
+}
+
+impl Selector for MatchingWidgetIds {
+    type Output = widget::Id;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        let id = match (&self.capability, candidate) {
+            (WidgetCapability::Focusable, Candidate::Focusable { id, .. })
+            | (WidgetCapability::Scrollable, Candidate::Scrollable { id, .. }) => id,
+            _ => return None,
+        };
+        self.matches(id).then(|| id.cloned()).flatten()
+    }
+
+    fn description(&self) -> String {
+        format!("{} widget id", self.capability)
+    }
+}
+
+struct TextInputIds;
+
+impl Selector for TextInputIds {
+    type Output = widget::Id;
+
+    fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
+        match candidate {
+            Candidate::TextInput { id, .. } => id.cloned(),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> String {
+        "text-input widget ids".to_owned()
+    }
+}
+
 fn readable_widget_id(id: &widget::Id) -> Option<String> {
     let debug = format!("{id:?}");
     let value = debug
@@ -2080,6 +4419,11 @@ fn readable_widget_id(id: &widget::Id) -> Option<String> {
     (!value.starts_with("__ice_accessibility/")).then(|| value.to_owned())
 }
 
+fn internal_auto_id(id: &str) -> bool {
+    let segment = id.rsplit('/').next().unwrap_or(id);
+    segment.starts_with('@')
+}
+
 fn known_ids_display(ids: &[String]) -> String {
     if ids.is_empty() {
         "<none>".to_owned()
@@ -2088,17 +4432,288 @@ fn known_ids_display(ids: &[String]) -> String {
     }
 }
 
+fn iced_key(key: &Key) -> keyboard::Key {
+    match key {
+        Key::Named(name) => keyboard::Key::Named(*name),
+        Key::Character(value) => keyboard::Key::Character(value.clone().into()),
+        Key::Unidentified => keyboard::Key::Unidentified,
+    }
+}
+
+fn held_key_identity(key: &Key, metadata: &KeyMetadata) -> HeldKeyIdentity {
+    let physical_key = metadata.physical_key.filter(|physical_key| {
+        !matches!(
+            physical_key,
+            keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified)
+        )
+    });
+    physical_key.map_or_else(
+        || HeldKeyIdentity::Logical {
+            key: key.clone(),
+            location: metadata.location,
+        },
+        HeldKeyIdentity::Physical,
+    )
+}
+
+fn unidentified_physical_key() -> keyboard::key::Physical {
+    keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified)
+}
+
+fn theme_mode(mode: theme::Mode) -> ThemeMode {
+    match mode {
+        theme::Mode::None => ThemeMode::None,
+        theme::Mode::Light => ThemeMode::Light,
+        theme::Mode::Dark => ThemeMode::Dark,
+    }
+}
+
+fn safe_path_component(value: &str) -> String {
+    let value = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if value.is_empty() {
+        "test".to_owned()
+    } else {
+        value
+    }
+}
+
+fn theme_mode_name(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::None => "none",
+        ThemeMode::Light => "light",
+        ThemeMode::Dark => "dark",
+    }
+}
+
+fn platform_name(platform: Platform) -> &'static str {
+    match platform {
+        Platform::Linux => "linux",
+        Platform::Windows => "windows",
+        Platform::Macos => "macos",
+        Platform::Wasm => "wasm",
+    }
+}
+
+fn target_manifest(target: &Target) -> serde_json::Value {
+    let accessibility = target.accessibility.as_ref().map(|data| {
+        serde_json::json!({
+            "role": accessibility_role_name(data.role),
+            "name": data.name,
+            "description": data.description,
+            "value": data.value,
+            "checked": data.checked,
+            "disabled": data.disabled,
+            "focused": data.focused,
+            "actions": {
+                "click": data.supports_activate,
+                "focus": data.supports_focus,
+            },
+        })
+    });
+    serde_json::json!({
+        "id": target.id,
+        "kind": target.kind,
+        "geometry": {
+            "x": target.x,
+            "y": target.y,
+            "width": target.width,
+            "height": target.height,
+            "left": target.left,
+            "top": target.top,
+            "right": target.right,
+            "bottom": target.bottom,
+            "center_x": target.center_x,
+            "center_y": target.center_y,
+            "pixel_aligned": target.pixel_aligned(),
+        },
+        "visible": {
+            "present": target.visible,
+            "x": target.visible_x,
+            "y": target.visible_y,
+            "width": target.visible_width,
+            "height": target.visible_height,
+        },
+        "content": {
+            "x": target.content_x,
+            "y": target.content_y,
+            "width": target.content_width,
+            "height": target.content_height,
+        },
+        "translation": {
+            "x": target.translation_x,
+            "y": target.translation_y,
+        },
+        "scroll": {
+            "x": target.scroll_x,
+            "y": target.scroll_y,
+        },
+        "value": target.value,
+        "focused": target.focused(),
+        "accessibility": accessibility,
+        "paint": {
+            "available": target.paint_error.is_none(),
+            "unavailable_reason": target.paint_error,
+            "surfaces": target.surfaces.iter().map(surface_manifest).collect::<Vec<_>>(),
+            "texts": target.texts.iter().map(text_manifest).collect::<Vec<_>>(),
+            "images": target.images.iter().map(|image| rectangle_manifest(image.bounds)).collect::<Vec<_>>(),
+        },
+    })
+}
+
+fn surface_manifest(surface: &SurfacePaint) -> serde_json::Value {
+    let background = match surface.background {
+        Background::Color(color) => serde_json::json!({
+            "kind": "color",
+            "color": color_manifest(color),
+        }),
+        Background::Gradient(iced::gradient::Gradient::Linear(linear)) => serde_json::json!({
+            "kind": "linear-gradient",
+            "angle_radians": linear.angle.0,
+            "stops": linear.stops.iter().flatten().map(|stop| serde_json::json!({
+                "offset": stop.offset,
+                "color": color_manifest(stop.color),
+            })).collect::<Vec<_>>(),
+        }),
+    };
+    serde_json::json!({
+        "background": background,
+        "border": {
+            "color": color_manifest(surface.border.color),
+            "width": surface.border.width,
+            "radius": {
+                "top_left": surface.border.radius.top_left,
+                "top_right": surface.border.radius.top_right,
+                "bottom_right": surface.border.radius.bottom_right,
+                "bottom_left": surface.border.radius.bottom_left,
+            },
+        },
+        "shadow": {
+            "color": color_manifest(surface.shadow.color),
+            "offset_x": surface.shadow.offset.x,
+            "offset_y": surface.shadow.offset.y,
+            "blur_radius": surface.shadow.blur_radius,
+        },
+    })
+}
+
+fn text_manifest(text: &TextPaint) -> serde_json::Value {
+    let line_height = text.line_height.map(|line_height| match line_height {
+        iced::widget::text::LineHeight::Relative(value) => {
+            serde_json::json!({ "kind": "relative", "value": value })
+        }
+        iced::widget::text::LineHeight::Absolute(value) => {
+            serde_json::json!({ "kind": "absolute", "value": value.0 })
+        }
+    });
+    serde_json::json!({
+        "content": text.content,
+        "bounds": rectangle_manifest(text.bounds),
+        "color": color_manifest(text.color),
+        "size": text.size,
+        "font": text.font.map(font_manifest),
+        "line_height": line_height,
+        "baseline": text.baseline,
+    })
+}
+
+fn font_manifest(font: Font) -> serde_json::Value {
+    let (family_kind, family_name) = match font.family {
+        iced::font::Family::Name(name) => ("named", name),
+        iced::font::Family::Serif => ("generic", "serif"),
+        iced::font::Family::SansSerif => ("generic", "sans-serif"),
+        iced::font::Family::Cursive => ("generic", "cursive"),
+        iced::font::Family::Fantasy => ("generic", "fantasy"),
+        iced::font::Family::Monospace => ("generic", "monospace"),
+    };
+    let weight = match font.weight {
+        iced::font::Weight::Thin => "thin",
+        iced::font::Weight::ExtraLight => "extra-light",
+        iced::font::Weight::Light => "light",
+        iced::font::Weight::Normal => "normal",
+        iced::font::Weight::Medium => "medium",
+        iced::font::Weight::Semibold => "semibold",
+        iced::font::Weight::Bold => "bold",
+        iced::font::Weight::ExtraBold => "extra-bold",
+        iced::font::Weight::Black => "black",
+    };
+    let stretch = match font.stretch {
+        iced::font::Stretch::UltraCondensed => "ultra-condensed",
+        iced::font::Stretch::ExtraCondensed => "extra-condensed",
+        iced::font::Stretch::Condensed => "condensed",
+        iced::font::Stretch::SemiCondensed => "semi-condensed",
+        iced::font::Stretch::Normal => "normal",
+        iced::font::Stretch::SemiExpanded => "semi-expanded",
+        iced::font::Stretch::Expanded => "expanded",
+        iced::font::Stretch::ExtraExpanded => "extra-expanded",
+        iced::font::Stretch::UltraExpanded => "ultra-expanded",
+    };
+    let style = match font.style {
+        iced::font::Style::Normal => "normal",
+        iced::font::Style::Italic => "italic",
+        iced::font::Style::Oblique => "oblique",
+    };
+
+    serde_json::json!({
+        "family": { "kind": family_kind, "name": family_name },
+        "weight": weight,
+        "stretch": stretch,
+        "style": style,
+    })
+}
+
+fn rectangle_manifest(bounds: Rectangle) -> serde_json::Value {
+    serde_json::json!({
+        "x": bounds.x,
+        "y": bounds.y,
+        "width": bounds.width,
+        "height": bounds.height,
+    })
+}
+
+fn color_manifest(color: Color) -> serde_json::Value {
+    serde_json::json!({
+        "r": color.r,
+        "g": color.g,
+        "b": color.b,
+        "a": color.a,
+    })
+}
+
+fn write_png(path: &std::path::Path, rgba: &[u8], width: u32, height: u32) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|error| error.to_string())?;
+    writer.finish().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use iced::Element;
-    use iced::widget::{button, column, container, scrollable, text, text_input};
+    use iced::widget::{button, column, container, scrollable, text, text_editor, text_input};
 
     #[derive(Debug, Default)]
     struct State {
         count: usize,
         input: String,
         redraws: usize,
+        events: Vec<&'static str>,
+        observed_system_theme: Option<theme::Mode>,
     }
 
     #[derive(Debug, Clone)]
@@ -2108,6 +4723,11 @@ mod tests {
         Input(String),
         ObservedKey,
         ObservedRedraw,
+        ObservedEvent(&'static str),
+        OpenWindow,
+        OpenedWindow(window::Id),
+        ReadSystemTheme,
+        ObservedSystemTheme(theme::Mode),
         HangTask,
         PanicTask,
         PanicUpdate,
@@ -2136,6 +4756,23 @@ mod tests {
                 state.redraws += 1;
                 Task::none()
             }
+            Message::ObservedEvent(event) => {
+                state.events.push(event);
+                Task::none()
+            }
+            Message::OpenWindow => {
+                let (_, task) = window::open(window::Settings {
+                    size: Size::new(180.0, 90.0),
+                    ..window::Settings::default()
+                });
+                task.map(Message::OpenedWindow)
+            }
+            Message::OpenedWindow(_id) => Task::none(),
+            Message::ReadSystemTheme => iced::system::theme().map(Message::ObservedSystemTheme),
+            Message::ObservedSystemTheme(mode) => {
+                state.observed_system_theme = Some(mode);
+                Task::none()
+            }
             Message::HangTask => Task::perform(std::future::pending(), |()| Message::Incremented),
             Message::PanicTask => Task::perform(
                 async {
@@ -2151,6 +4788,7 @@ mod tests {
 
     std::thread_local! {
         static PROBE_REDRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        static PROBE_REDRAW_TIMES: std::cell::RefCell<Vec<Instant>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
     impl<Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer> for PaintAndRedrawProbe
@@ -2213,11 +4851,9 @@ mod tests {
             shell: &mut iced::advanced::Shell<'_, Message>,
             _viewport: &Rectangle,
         ) {
-            if matches!(
-                event,
-                iced::Event::Window(window::Event::RedrawRequested(_))
-            ) {
+            if let iced::Event::Window(window::Event::RedrawRequested(time)) = event {
                 PROBE_REDRAWS.with(|redraws| redraws.set(redraws.get() + 1));
+                PROBE_REDRAW_TIMES.with(|times| times.borrow_mut().push(*time));
                 shell.publish(Message::ObservedRedraw);
             }
         }
@@ -2250,7 +4886,8 @@ mod tests {
                     StableId::new("App/root/increment"),
                     crate::Role::Button,
                 )
-                .logical_id("App/root/increment"),
+                .logical_id("App/root/increment")
+                .on_activate(Message::Increment),
                 text_input("", &state.input)
                     .id("App/root/input")
                     .on_input(Message::Input),
@@ -2310,6 +4947,48 @@ mod tests {
         })
     }
 
+    fn modified_key_subscription(_state: &State) -> iced::Subscription<Message> {
+        iced::event::listen_with(|event, _status, _window| {
+            matches!(
+                event,
+                iced::Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. })
+                    if modifiers.shift() && modifiers.control()
+            )
+            .then_some(Message::ObservedKey)
+        })
+    }
+
+    fn action_subscription(_state: &State) -> iced::Subscription<Message> {
+        iced::event::listen_with(|event, _status, _window| {
+            let kind = match event {
+                iced::Event::Mouse(mouse::Event::CursorMoved { .. }) => Some("pointer"),
+                iced::Event::Mouse(
+                    mouse::Event::ButtonPressed(_) | mouse::Event::ButtonReleased(_),
+                ) => Some("mouse-button"),
+                iced::Event::Mouse(mouse::Event::WheelScrolled { .. }) => Some("wheel"),
+                iced::Event::Keyboard(keyboard::Event::KeyPressed { .. }) => Some("key"),
+                iced::Event::Touch(touch::Event::FingerLost { .. }) => Some("touch-cancel"),
+                iced::Event::Touch(_) => Some("touch"),
+                iced::Event::InputMethod(_) => Some("ime"),
+                iced::Event::Window(window::Event::Opened { .. }) => Some("window-opened"),
+                iced::Event::Window(window::Event::Closed) => Some("window-closed"),
+                iced::Event::Window(window::Event::Moved(_)) => Some("window-moved"),
+                iced::Event::Window(window::Event::Resized(_)) => Some("window-resized"),
+                iced::Event::Window(window::Event::Rescaled(_)) => Some("window-rescaled"),
+                iced::Event::Window(window::Event::Focused | window::Event::Unfocused) => {
+                    Some("window-focus")
+                }
+                iced::Event::Window(window::Event::CloseRequested) => Some("close-requested"),
+                iced::Event::Window(window::Event::RedrawRequested(_)) => Some("redraw"),
+                iced::Event::Window(window::Event::FileHovered(_)) => Some("file-hover"),
+                iced::Event::Window(window::Event::FileDropped(_)) => Some("file-drop"),
+                iced::Event::Window(window::Event::FilesHoveredLeft) => Some("file-leave"),
+                _ => None,
+            };
+            kind.map(Message::ObservedEvent)
+        })
+    }
+
     fn panicking_subscription(_state: &State) -> iced::Subscription<Message> {
         iced::Subscription::run(|| {
             iced_test::futures::futures::stream::once(async {
@@ -2353,6 +5032,81 @@ mod tests {
         .into()
     }
 
+    fn theme_probe_view(_state: &State) -> Element<'_, Message> {
+        container(iced::widget::Space::new())
+            .id("Theme/root")
+            .width(100)
+            .height(40)
+            .style(|theme: &iced::Theme| container::Style {
+                background: Some(
+                    if matches!(theme, iced::Theme::Dark) {
+                        Color::from_rgb8(1, 2, 3)
+                    } else {
+                        Color::from_rgb8(250, 251, 252)
+                    }
+                    .into(),
+                ),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    fn stable_scroll_view(_state: &State) -> Element<'_, Message> {
+        scrollable(container(text("Stable content")).height(200))
+            .id(StableId::new("Stable/scroll").widget_id())
+            .height(50)
+            .into()
+    }
+
+    fn duplicate_scroll_view(_state: &State) -> Element<'_, Message> {
+        column![
+            scrollable(container(text("First")).height(200))
+                .id("Duplicate/scroll")
+                .height(50),
+            scrollable(container(text("Second")).height(200))
+                .id("Duplicate/scroll")
+                .height(50),
+        ]
+        .into()
+    }
+
+    fn accessible_input_view(state: &State) -> Element<'_, Message> {
+        crate::accessible(
+            text_input("", &state.input)
+                .id("Accessible/input")
+                .on_input(Message::Input),
+            StableId::new("Accessible/input"),
+            crate::Role::TextInput,
+        )
+        .logical_id("Accessible/input")
+        .value(state.input.clone())
+        .into()
+    }
+
+    #[derive(Default)]
+    struct EditorState {
+        content: text_editor::Content,
+    }
+
+    #[derive(Debug, Clone)]
+    enum EditorMessage {
+        Edit(text_editor::Action),
+    }
+
+    fn editor_update(state: &mut EditorState, message: EditorMessage) -> Task<EditorMessage> {
+        match message {
+            EditorMessage::Edit(action) => state.content.perform(action),
+        }
+        Task::none()
+    }
+
+    fn editor_view(state: &EditorState) -> Element<'_, EditorMessage> {
+        text_editor(&state.content)
+            .id("Editor/root")
+            .on_action(EditorMessage::Edit)
+            .into()
+    }
+
     #[test]
     fn drives_real_updates_and_keeps_widget_state() {
         let mut driver = Driver::new(
@@ -2376,13 +5130,1187 @@ mod tests {
         driver.click("App/root/input", HERE);
         driver.typewrite("iced", HERE);
         assert_eq!(driver.target("App/root/input", HERE).value(), "iced");
-        driver.key(keyboard::Key::Named(keyboard::key::Named::Escape), HERE);
+        driver.key(Key::named(keyboard::key::Named::Escape), HERE);
         assert!(driver.text_exists("2", None, HERE));
         driver.resize(640.0, 480.0, HERE);
         assert_eq!(driver.viewport(), Size::new(640.0, 480.0));
         let scroll = driver.target("App/root/scroll", HERE);
         assert!(scroll.content_height() >= 200.0);
         assert_eq!(scroll.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn targeted_widget_operations_require_the_capability_they_invoke() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("target_capabilities").viewport(320.0, 240.0),
+        );
+        let failure = panic_message(|| driver.focus("App/root", HERE));
+        assert!(
+            failure.contains("expected: a focusable target"),
+            "{failure}"
+        );
+        PROBE_REDRAWS.with(|redraws| redraws.set(0));
+        driver.focus("App/root/input", HERE);
+        PROBE_REDRAWS.with(|redraws| assert_eq!(redraws.get(), 0));
+
+        let mut editor = Driver::new(
+            iced::application::<EditorState, EditorMessage, iced::Theme, iced::Renderer>(
+                EditorState::default,
+                editor_update,
+                editor_view,
+            ),
+            Config::new("editor_selection").viewport(320.0, 240.0),
+        );
+        editor.focus("Editor/root", HERE);
+        assert!(editor.target("Editor/root", HERE).focused());
+        for action in [
+            Action::Select { start: 0, end: 0 },
+            Action::SelectAll,
+            Action::Cursor(0),
+            Action::CursorFront,
+            Action::CursorEnd,
+            Action::Clear,
+            Action::Replace("replacement".to_owned()),
+        ] {
+            let failure = panic_message(|| {
+                editor.perform_action(action, HERE);
+            });
+            assert!(
+                failure.contains("expected: exactly one focused text input with an id"),
+                "{failure}"
+            );
+        }
+
+        let mut input = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                accessible_input_view,
+            ),
+            Config::new("accessible_input_selection").viewport(320.0, 240.0),
+        );
+        input.focus("Accessible/input", HERE);
+        input.select_all(HERE);
+        input.cursor_front(HERE);
+        assert!(input.target("Accessible/input", HERE).focused());
+    }
+
+    #[test]
+    fn targeted_scroll_uses_the_widget_id_that_validation_matched() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                stable_scroll_view,
+            ),
+            Config::new("stable_scroll").viewport(320.0, 240.0),
+        );
+        driver.scroll_by("Stable/scroll", 0.0, 24.0, HERE);
+        assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
+        driver.snap("Stable/scroll", 0.0, 1.0, HERE);
+        assert!(driver.target("Stable/scroll", HERE).scroll_y() > 0.0);
+
+        let mut duplicate = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                duplicate_scroll_view,
+            ),
+            Config::new("duplicate_scroll").viewport(320.0, 240.0),
+        );
+        let failure = panic_message(|| {
+            duplicate.scroll_by("Duplicate/scroll", 0.0, 24.0, HERE);
+        });
+        assert!(failure.contains("target lookup is ambiguous"), "{failure}");
+    }
+
+    #[test]
+    fn tap_allocates_around_retained_multitouch_contacts() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("tap_touch_ids").viewport(320.0, 240.0),
+        );
+        let position = driver.target("App/root", HERE).bounds().center();
+        driver.touch(TouchPhase::Down, 0, position.x, position.y, HERE);
+        driver.tap("App/root/increment", 2, HERE);
+        assert_eq!(driver.touches, HashMap::from([(0, position)]));
+        driver.touch(TouchPhase::Cancel, 0, position.x, position.y, HERE);
+        assert!(driver.touches.is_empty());
+    }
+
+    #[test]
+    fn semantic_actions_share_one_driver_boundary() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("semantic_actions").viewport(320.0, 240.0),
+        );
+
+        driver.perform_action(
+            Action::Click {
+                target: "App/root/increment".to_owned(),
+                button: MouseButton::Left,
+                count: 2,
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 2);
+
+        driver.perform_action(Action::Focus("App/root/input".to_owned()), HERE);
+        driver.perform_action(Action::Type("abcdef".to_owned()), HERE);
+        driver.perform_action(Action::Select { start: 1, end: 5 }, HERE);
+        driver.perform_action(Action::Type("X".to_owned()), HERE);
+        assert_eq!(driver.state().input, "aXf");
+
+        driver.perform_action(
+            Action::ScrollTo {
+                target: "App/root/scroll".to_owned(),
+                x: 0.0,
+                y: 40.0,
+            },
+            HERE,
+        );
+        let scroll = driver.target("App/root/scroll", HERE);
+        assert!(scroll.scroll_y() > 0.0, "{scroll:?}");
+
+        driver.perform_action(Action::Leave, HERE);
+        assert!(!driver.cursor_inside);
+        driver.perform_action(Action::MoveToPoint(Point::new(5.0, 5.0)), HERE);
+        assert!(driver.cursor_inside);
+    }
+
+    #[test]
+    fn perform_action_drives_pointer_editing_ime_and_touch_contracts() {
+        let program =
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view)
+                .subscription(action_subscription);
+        let mut driver = Driver::new(
+            program,
+            Config::new("action_input_matrix").viewport(320.0, 240.0),
+        );
+
+        let button = driver.target("App/root/increment", HERE);
+        let button_center = Point::new(button.center_x as f32, button.center_y as f32);
+        driver.perform_action(Action::Enter("App/root/increment".to_owned()), HERE);
+        driver.perform_action(Action::MoveTo("App/root/input".to_owned()), HERE);
+        driver.perform_action(Action::MoveToPoint(Point::new(8.0, 8.0)), HERE);
+        driver.perform_action(
+            Action::ClickAt {
+                position: button_center,
+                button: MouseButton::Left,
+                count: 1,
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 1);
+        driver.perform_action(
+            Action::Press {
+                target: "App/root/increment".to_owned(),
+                button: MouseButton::Right,
+            },
+            HERE,
+        );
+        assert!(driver.pressed_mouse.contains(&MouseButton::Right));
+        for action in [
+            Action::Press {
+                target: "App/root/increment".to_owned(),
+                button: MouseButton::Right,
+            },
+            Action::Click {
+                target: "App/root/increment".to_owned(),
+                button: MouseButton::Right,
+                count: 1,
+            },
+        ] {
+            let duplicate = panic_message(|| {
+                driver.perform_action(action.clone(), HERE);
+            });
+            assert!(
+                duplicate.contains("expected: a pointer button that is not already pressed"),
+                "{duplicate}"
+            );
+            assert!(driver.pressed_mouse.contains(&MouseButton::Right));
+        }
+        driver.perform_action(Action::Release(MouseButton::Right), HERE);
+        assert!(driver.pressed_mouse.is_empty());
+        driver.perform_action(Action::Wheel(WheelDelta::Lines { x: 0.0, y: -2.0 }), HERE);
+        driver.perform_action(Action::Wheel(WheelDelta::Pixels { x: 0.0, y: -12.0 }), HERE);
+        driver.perform_action(
+            Action::ScrollBy {
+                target: "App/root/scroll".to_owned(),
+                x: 0.0,
+                y: 24.0,
+            },
+            HERE,
+        );
+        assert!(driver.target("App/root/scroll", HERE).scroll_y() > 0.0);
+        driver.perform_action(
+            Action::Snap {
+                target: "App/root/scroll".to_owned(),
+                x: 0.0,
+                y: 0.5,
+            },
+            HERE,
+        );
+        driver.perform_action(Action::SnapEnd("App/root/scroll".to_owned()), HERE);
+        driver.perform_action(
+            Action::Drag {
+                from: "App/root".to_owned(),
+                to: "App/root/input".to_owned(),
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Press {
+                target: "App/root".to_owned(),
+                button: MouseButton::Left,
+            },
+            HERE,
+        );
+        for action in [
+            Action::Press {
+                target: "App/root".to_owned(),
+                button: MouseButton::Left,
+            },
+            Action::Click {
+                target: "App/root/increment".to_owned(),
+                button: MouseButton::Left,
+                count: 1,
+            },
+            Action::Drag {
+                from: "App/root/increment".to_owned(),
+                to: "App/root/input".to_owned(),
+            },
+        ] {
+            let duplicate = panic_message(|| {
+                driver.perform_action(action.clone(), HERE);
+            });
+            assert!(
+                duplicate.contains("expected: a pointer button that is not already pressed"),
+                "{duplicate}"
+            );
+            assert!(driver.pressed_mouse.contains(&MouseButton::Left));
+        }
+        driver.perform_action(Action::DropAt("App/root/input".to_owned()), HERE);
+        assert!(driver.pressed_mouse.is_empty());
+
+        driver.perform_action(Action::Focus("App/root/input".to_owned()), HERE);
+        assert!(driver.target("App/root/input", HERE).focused());
+        driver.perform_action(Action::FocusNext, HERE);
+        driver.perform_action(Action::FocusPrevious, HERE);
+        driver.perform_action(Action::Blur, HERE);
+        assert!(!driver.target("App/root/input", HERE).focused());
+        driver.perform_action(Action::Focus("App/root/input".to_owned()), HERE);
+        driver.perform_action(Action::Type("abcd".to_owned()), HERE);
+        driver.perform_action(Action::SelectAll, HERE);
+        driver.perform_action(Action::Type("q".to_owned()), HERE);
+        driver.perform_action(Action::Replace("hello".to_owned()), HERE);
+        driver.perform_action(Action::Select { start: 1, end: 4 }, HERE);
+        driver.perform_action(Action::Type("X".to_owned()), HERE);
+        driver.perform_action(Action::CursorFront, HERE);
+        driver.perform_action(Action::Type("<".to_owned()), HERE);
+        driver.perform_action(Action::CursorEnd, HERE);
+        driver.perform_action(Action::Type(">".to_owned()), HERE);
+        driver.perform_action(Action::Cursor(1), HERE);
+        driver.perform_action(Action::Type("!".to_owned()), HERE);
+        assert_eq!(driver.state().input, "<!hXo>");
+        driver.perform_action(Action::Clear, HERE);
+        assert!(driver.state().input.is_empty());
+
+        driver.perform_action(Action::Composition(CompositionPhase::Start), HERE);
+        driver.perform_action(
+            Action::Composition(CompositionPhase::Update {
+                text: "한글".to_owned(),
+                selection: Some(0..3),
+            }),
+            HERE,
+        );
+        driver.perform_action(
+            Action::Composition(CompositionPhase::Commit("한".to_owned())),
+            HERE,
+        );
+        assert!(driver.ime_open);
+        driver.perform_action(Action::Composition(CompositionPhase::Cancel), HERE);
+        assert!(!driver.ime_open);
+
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Down,
+                id: 7,
+                position: button_center,
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Move,
+                id: 7,
+                position: Point::new(button_center.x + 1.0, button_center.y + 1.0),
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Up,
+                id: 7,
+                position: button_center,
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Down,
+                id: 8,
+                position: button_center,
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Cancel,
+                id: 8,
+                position: button_center,
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Tap {
+                target: "App/root/increment".to_owned(),
+                count: 2,
+            },
+            HERE,
+        );
+        assert!(driver.touches.is_empty());
+        driver.perform_action(Action::Leave, HERE);
+        assert!(!driver.cursor_inside);
+
+        for event in [
+            "pointer",
+            "mouse-button",
+            "wheel",
+            "key",
+            "ime",
+            "touch",
+            "touch-cancel",
+        ] {
+            assert!(driver.state().events.contains(&event), "missing {event}");
+        }
+    }
+
+    #[test]
+    fn perform_action_drives_window_system_file_and_monotonic_time_contracts() {
+        PROBE_REDRAW_TIMES.with(|times| times.borrow_mut().clear());
+        let program =
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view)
+                .subscription(action_subscription);
+        let mut driver = Driver::new(
+            program,
+            Config::new("action_environment_matrix").viewport(320.0, 240.0),
+        );
+
+        driver.perform_action(Action::WindowMove(Point::new(12.0, 34.0)), HERE);
+        assert_eq!(driver.window_position, Some(Point::new(12.0, 34.0)));
+        driver.perform_action(Action::Resize(Size::new(300.0, 180.0)), HERE);
+        assert_eq!(driver.viewport(), Size::new(300.0, 180.0));
+        driver.perform_action(Action::Rescale(1.5), HERE);
+        assert_eq!(driver.scale_factor(), 1.5);
+        driver.perform_action(Action::WindowFocus(false), HERE);
+        assert!(!driver.window_focused);
+        driver.perform_action(Action::WindowFocus(true), HERE);
+        assert!(driver.window_focused);
+        driver.perform_action(Action::WindowOpened, HERE);
+        driver.perform_action(Action::WindowClosed, HERE);
+        driver.perform_action(Action::CloseRequested, HERE);
+
+        driver.perform_action(Action::SystemTheme(ThemeMode::Dark), HERE);
+        assert_eq!(driver.system_theme, ThemeMode::Dark);
+        driver.perform_action(Action::FileHover(PathBuf::from("hover.txt")), HERE);
+        driver.perform_action(Action::FileDrop(PathBuf::from("drop.txt")), HERE);
+        driver.perform_action(Action::FileLeave, HERE);
+
+        for action in [
+            Action::Wait(Duration::ZERO),
+            Action::Advance(Duration::ZERO),
+        ] {
+            let zero = panic_message(|| {
+                driver.perform_action(action.clone(), HERE);
+            });
+            assert!(zero.contains("expected: a positive duration"), "{zero}");
+        }
+        let overflow = panic_message(|| {
+            driver.perform_action(Action::Advance(Duration::MAX), HERE);
+        });
+        assert!(
+            overflow.contains("expected: a duration within the platform Instant range"),
+            "{overflow}"
+        );
+        driver.perform_action(Action::Advance(Duration::from_millis(20)), HERE);
+        driver.perform_action(Action::Wait(Duration::from_millis(1)), HERE);
+        driver.perform_action(Action::Idle, HERE);
+        driver.perform_action(Action::Redraw, HERE);
+        let _ = driver.target("App/root", HERE);
+        PROBE_REDRAW_TIMES.with(|times| {
+            let times = times.borrow();
+            assert!(
+                times.len() >= 4,
+                "expected action and paint redraw timestamps"
+            );
+            assert!(times.windows(2).all(|pair| pair[0] <= pair[1]), "{times:?}");
+        });
+        assert!(driver.state().redraws >= 4);
+
+        for event in [
+            "window-moved",
+            "window-resized",
+            "window-rescaled",
+            "window-focus",
+            "window-opened",
+            "window-closed",
+            "close-requested",
+            "file-hover",
+            "file-drop",
+            "file-leave",
+        ] {
+            assert!(driver.state().events.contains(&event), "missing {event}");
+        }
+
+        driver.perform_action(
+            Action::ScrollTo {
+                target: "App/root/scroll".to_owned(),
+                x: 0.0,
+                y: 40.0,
+            },
+            HERE,
+        );
+        driver.perform_action(Action::MoveToPoint(Point::new(10.0, 10.0)), HERE);
+        driver.perform_action(
+            Action::Press {
+                target: "App/root".to_owned(),
+                button: MouseButton::Right,
+            },
+            HERE,
+        );
+        driver.perform_action(Action::Focus("App/root/input".to_owned()), HERE);
+        driver.perform_action(Action::Type("persisted".to_owned()), HERE);
+        driver.perform_action(
+            Action::Modifiers(Modifiers::new(true, false, false, false)),
+            HERE,
+        );
+        driver.perform_action(
+            Action::KeyDown {
+                key: Key::named(keyboard::key::Named::Escape),
+                metadata: KeyMetadata::default(),
+            },
+            HERE,
+        );
+        driver.perform_action(
+            Action::Touch {
+                phase: TouchPhase::Down,
+                id: 99,
+                position: Point::new(10.0, 10.0),
+            },
+            HERE,
+        );
+        driver.perform_action(Action::Composition(CompositionPhase::Start), HERE);
+        driver.perform_action(Action::WindowFocus(false), HERE);
+        assert!(driver.target("App/root/input", HERE).focused());
+        assert!(driver.target("App/root/scroll", HERE).scroll_y() > 0.0);
+        assert!(driver.cursor_inside);
+        assert!(!driver.pressed_mouse.is_empty());
+        assert!(!driver.pressed_keys.is_empty());
+        assert!(!driver.touches.is_empty());
+        assert!(driver.ime_open);
+        let old_window = driver.window();
+        let old_time = driver.logical_time;
+
+        driver.dispatch(Message::OpenWindow, HERE);
+        assert_ne!(driver.window(), old_window);
+        assert_eq!(driver.viewport(), Size::new(180.0, 90.0));
+        assert_eq!(driver.window_position, None);
+        assert!(driver.window_focused);
+        assert!(matches!(driver.cursor, mouse::Cursor::Unavailable));
+        assert!(!driver.cursor_inside);
+        assert!(driver.pressed_mouse.is_empty());
+        assert_eq!(driver.modifiers, Modifiers::NONE);
+        assert!(driver.pressed_keys.is_empty());
+        assert!(driver.touches.is_empty());
+        assert!(!driver.ime_open);
+        assert_eq!(driver.logical_time, old_time);
+        assert_eq!(driver.state().input, "persisted");
+        assert!(!driver.target("App/root/input", HERE).focused());
+        assert_eq!(driver.target("App/root/scroll", HERE).scroll_y(), 0.0);
+        let screenshot = driver.screenshot_at(Some(HERE));
+        assert_eq!(screenshot.size, Size::new(270, 135));
+    }
+
+    #[test]
+    fn accessibility_actions_and_expectations_use_live_semantics() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("accessibility_actions").viewport(320.0, 240.0),
+        );
+
+        driver.check_accessibility_str(
+            "App/root/increment",
+            AccessibilityProperty::Role,
+            "button",
+            HERE,
+        );
+        driver.check_accessibility_action(
+            "App/root/increment",
+            AccessibilityAction::Click,
+            true,
+            HERE,
+        );
+        driver.accessibility_activate("App/root/increment", HERE);
+        assert_eq!(driver.state().count, 1);
+        driver.accessibility_focus("App/root/increment", HERE);
+        driver.check_accessibility_bool(
+            "App/root/increment",
+            AccessibilityProperty::Focused,
+            true,
+            HERE,
+        );
+    }
+
+    #[test]
+    fn named_capture_writes_png_and_structured_manifest() {
+        let artifact_dir = std::env::temp_dir().join(format!(
+            "ice-test-capture-{}-{}",
+            std::process::id(),
+            StableId::new("capture-test").node_id().0
+        ));
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("capture")
+                .viewport(160.0, 120.0)
+                .scale_factor(2.0)
+                .theme(ThemeMode::Dark)
+                .locale("ko-KR")
+                .platform(Platform::Linux)
+                .reduced_motion(true)
+                .artifact_dir(artifact_dir.clone()),
+        );
+
+        let before = (
+            driver.state().count,
+            driver.state().input.clone(),
+            driver.state().redraws,
+        );
+        let capture = driver.capture("primitive_matrix", HERE);
+        assert_eq!(
+            (
+                driver.state().count,
+                driver.state().input.clone(),
+                driver.state().redraws,
+            ),
+            before,
+            "capture must not update application state"
+        );
+        assert_eq!(
+            driver.state().redraws,
+            0,
+            "capture must not mutate app state"
+        );
+        assert_eq!((capture.width, capture.height), (320, 240));
+        assert_eq!(
+            capture.rgba.len(),
+            capture.width as usize * capture.height as usize * 4,
+            "capture must contain one RGBA8 texel per physical pixel"
+        );
+        assert!(capture.png_path.is_file());
+        assert!(capture.metadata_path.is_file());
+        let metadata: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&capture.metadata_path).expect("capture manifest"),
+        )
+        .expect("valid capture manifest");
+        assert_eq!(metadata["scale_factor"], 2.0);
+        assert_eq!(metadata["png"], "primitive_matrix.png");
+        assert_eq!(metadata["clock"]["supports_virtual_redraw_advance"], true);
+        assert!(metadata["clock"].get("redraw_time_is_virtual").is_none());
+        assert_eq!(metadata["configured_theme"], "dark");
+        assert_eq!(metadata["resolved_theme"]["mode"], "dark");
+        assert_eq!(metadata["resolved_theme"]["name"], "Dark");
+        assert_eq!(metadata["system_theme"], "none");
+        assert_eq!(metadata["locale"], "ko-KR");
+        assert!(
+            metadata["targets"]
+                .as_array()
+                .is_some_and(|targets| !targets.is_empty())
+        );
+        assert!(
+            metadata["targets"].as_array().is_some_and(|targets| {
+                targets.iter().all(|target| {
+                    target["id"]
+                        .as_str()
+                        .is_some_and(|id| !internal_auto_id(id))
+                })
+            }),
+            "capture targets must contain only stable, addressable IDs"
+        );
+        assert!(
+            metadata["targets"].as_array().is_some_and(|targets| {
+                targets.iter().any(|target| {
+                    target["paint"]["texts"].as_array().is_some_and(|texts| {
+                        texts.iter().any(|text| {
+                            text["font"]["family"]["name"].is_string()
+                                && text["font"]["weight"].is_string()
+                                && text["font"]["stretch"].is_string()
+                                && text["font"]["style"].is_string()
+                        })
+                    })
+                })
+            }),
+            "capture text fonts must use the structured conformance schema"
+        );
+
+        std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");
+    }
+
+    #[test]
+    fn theme_override_controls_the_rendered_theme_instead_of_the_program_callback() {
+        let program = iced::application::<State, Message, iced::Theme, iced::Renderer>(
+            || {
+                (
+                    State::default(),
+                    iced::system::theme().map(Message::ObservedSystemTheme),
+                )
+            },
+            update,
+            theme_probe_view,
+        )
+        .theme(|_state: &State| iced::Theme::Light);
+        let mut driver = Driver::new(
+            program,
+            Config::new("theme_override")
+                .viewport(120.0, 60.0)
+                .theme(ThemeMode::Dark)
+                .system_theme(ThemeMode::Light),
+        );
+
+        assert_eq!(driver.system_theme, ThemeMode::Light);
+        assert_eq!(
+            driver.state().observed_system_theme,
+            Some(theme::Mode::Light)
+        );
+        assert!(matches!(driver.theme(), iced::Theme::Dark));
+        assert_eq!(
+            driver.target("Theme/root", HERE).background(),
+            Background::Color(Color::from_rgb8(1, 2, 3))
+        );
+        driver.perform_action(Action::SystemTheme(ThemeMode::None), HERE);
+        driver.dispatch(Message::ReadSystemTheme, HERE);
+        assert_eq!(driver.system_theme, ThemeMode::None);
+        assert_eq!(
+            driver.state().observed_system_theme,
+            Some(theme::Mode::None)
+        );
+        assert!(matches!(driver.theme(), iced::Theme::Dark));
+    }
+
+    #[test]
+    fn screenshots_reject_unrenderable_physical_sizes_before_renderer_allocation() {
+        let mut configured = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("configured_scale_overflow")
+                .viewport(320.0, 240.0)
+                .scale_factor(f32::MAX),
+        );
+        let configured_failure = panic_message(|| _ = configured.screenshot_at(Some(HERE)));
+        assert!(
+            configured_failure
+                .contains("expected: rounded physical width and height in 1..=u32::MAX"),
+            "{configured_failure}"
+        );
+        assert!(configured_failure.contains("test.ice:1:1"));
+
+        let mut rescaled = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("rescaled_overflow").viewport(320.0, 240.0),
+        );
+        rescaled.perform_action(Action::Rescale(f32::MAX), HERE);
+        let rescaled_failure = panic_message(|| _ = rescaled.screenshot_at(Some(HERE)));
+        assert!(
+            rescaled_failure
+                .contains("expected: rounded physical width and height in 1..=u32::MAX"),
+            "{rescaled_failure}"
+        );
+
+        let mut rounded_to_zero = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("rounded_to_zero").viewport(0.25, 0.25),
+        );
+        let zero_failure = panic_message(|| _ = rounded_to_zero.screenshot_at(Some(HERE)));
+        assert!(
+            zero_failure.contains("rounds to (0.0, 0.0)"),
+            "{zero_failure}"
+        );
+
+        let mut over_budget = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("screenshot_budget").viewport(4097.0, 4097.0),
+        );
+        let budget_failure = panic_message(|| _ = over_budget.screenshot_at(Some(HERE)));
+        assert!(
+            budget_failure.contains("expected: at most 16777216 physical pixels"),
+            "{budget_failure}"
+        );
+    }
+
+    #[test]
+    fn validates_ime_selection_ranges_and_state_order() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("ime_validation").viewport(320.0, 240.0),
+        );
+
+        let closed = panic_message(|| {
+            driver.composition(
+                CompositionPhase::Update {
+                    text: "한글".to_owned(),
+                    selection: Some(0..3),
+                },
+                HERE,
+            );
+        });
+        for expected in [
+            "test.ice:1:1",
+            "test `ime_validation` IME update failed",
+            "statement: test statement",
+            "expected: an open composition",
+        ] {
+            assert!(closed.contains(expected), "missing {expected:?}: {closed}");
+        }
+
+        driver.composition(CompositionPhase::Start, HERE);
+        for selection in [0..7, 1..3, Range { start: 3, end: 0 }] {
+            let invalid = panic_message(|| {
+                driver.composition(
+                    CompositionPhase::Update {
+                        text: "한글".to_owned(),
+                        selection: Some(selection.clone()),
+                    },
+                    HERE,
+                );
+            });
+            for expected in [
+                "test.ice:1:1",
+                "test `ime_validation` IME update failed",
+                "statement: test statement",
+                "expected: an ordered UTF-8 byte range within the composition text at character boundaries",
+            ] {
+                assert!(
+                    invalid.contains(expected),
+                    "missing {expected:?}: {invalid}"
+                );
+            }
+            assert!(
+                driver.ime_open,
+                "invalid preedit must not close the composition"
+            );
+        }
+
+        driver.composition(
+            CompositionPhase::Update {
+                text: "한글".to_owned(),
+                selection: Some(0..3),
+            },
+            HERE,
+        );
+        driver.composition(CompositionPhase::Cancel, HERE);
+        assert!(!driver.ime_open);
+    }
+
+    #[test]
+    fn rejects_key_release_only_metadata_at_the_action_boundary() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("key_up_validation").viewport(320.0, 240.0),
+        );
+
+        for metadata in [
+            KeyMetadata {
+                text: Some("x".to_owned()),
+                ..KeyMetadata::default()
+            },
+            KeyMetadata {
+                repeat: true,
+                ..KeyMetadata::default()
+            },
+        ] {
+            let invalid = panic_message(|| {
+                driver.perform_action(
+                    Action::KeyUp {
+                        key: Key::character("x"),
+                        metadata: metadata.clone(),
+                    },
+                    HERE,
+                );
+            });
+            for expected in [
+                "test.ice:1:1",
+                "test `key_up_validation` key up failed",
+                "statement: test statement",
+                "expected: release metadata without produced text or repeat",
+            ] {
+                assert!(
+                    invalid.contains(expected),
+                    "missing {expected:?}: {invalid}"
+                );
+            }
+        }
+        assert_eq!(driver.state().count, 0);
+    }
+
+    #[test]
+    fn keyboard_actions_preserve_modifiers_and_validate_held_state() {
+        let program =
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view)
+                .subscription(modified_key_subscription);
+        let mut driver = Driver::new(
+            program,
+            Config::new("keyboard_state").viewport(320.0, 240.0),
+        );
+        let held_modifiers = Modifiers::new(true, true, false, false);
+
+        driver.perform_action(Action::Modifiers(held_modifiers), HERE);
+        driver.perform_action(Action::Type("x".to_owned()), HERE);
+        assert_eq!(driver.state().count, 10);
+        assert_eq!(driver.modifiers, held_modifiers);
+        assert!(driver.pressed_keys.is_empty());
+
+        driver.perform_action(
+            Action::Chord {
+                modifiers: held_modifiers,
+                key: Key::character("p"),
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 20);
+        assert_eq!(driver.modifiers, held_modifiers);
+        driver.perform_action(
+            Action::Repeat {
+                key: Key::named(keyboard::key::Named::Escape),
+                count: 3,
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 50);
+        assert!(driver.pressed_keys.is_empty());
+
+        let key = Key::character("y");
+        driver.perform_action(
+            Action::KeyDown {
+                key: key.clone(),
+                metadata: KeyMetadata::default(),
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 60);
+        let duplicate = panic_message(|| {
+            driver.perform_action(
+                Action::KeyDown {
+                    key: key.clone(),
+                    metadata: KeyMetadata::default(),
+                },
+                HERE,
+            );
+        });
+        assert!(
+            duplicate.contains("expected: a key that is not already pressed"),
+            "{duplicate}"
+        );
+        assert!(driver.pressed_keys.values().any(|held| held.key == key));
+        driver.perform_action(
+            Action::KeyDown {
+                key: key.clone(),
+                metadata: KeyMetadata {
+                    repeat: true,
+                    ..KeyMetadata::default()
+                },
+            },
+            HERE,
+        );
+        assert_eq!(driver.state().count, 70);
+        driver.perform_action(
+            Action::KeyUp {
+                key: key.clone(),
+                metadata: KeyMetadata::default(),
+            },
+            HERE,
+        );
+        assert!(driver.pressed_keys.is_empty());
+
+        let repeat_without_press = panic_message(|| {
+            driver.perform_action(
+                Action::KeyDown {
+                    key: key.clone(),
+                    metadata: KeyMetadata {
+                        repeat: true,
+                        ..KeyMetadata::default()
+                    },
+                },
+                HERE,
+            );
+        });
+        assert!(
+            repeat_without_press.contains("expected: a key that is already pressed"),
+            "{repeat_without_press}"
+        );
+        let release_without_press = panic_message(|| {
+            driver.perform_action(
+                Action::KeyUp {
+                    key,
+                    metadata: KeyMetadata::default(),
+                },
+                HERE,
+            );
+        });
+        assert!(
+            release_without_press.contains("expected: a key that is currently pressed"),
+            "{release_without_press}"
+        );
+    }
+
+    #[test]
+    fn exact_keyboard_actions_track_physical_or_logical_location_identity() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("exact_keyboard_identity").viewport(320.0, 240.0),
+        );
+        let shift = Key::named(keyboard::key::Named::Shift);
+        let left = KeyMetadata {
+            location: KeyLocation::Left,
+            ..KeyMetadata::default()
+        };
+        let right = KeyMetadata {
+            location: KeyLocation::Right,
+            ..KeyMetadata::default()
+        };
+        driver.key_down_with(shift.clone(), left.clone(), HERE);
+        driver.key_down_with(shift.clone(), right.clone(), HERE);
+        assert_eq!(driver.pressed_keys.len(), 2);
+
+        for metadata in [
+            KeyMetadata::default(),
+            KeyMetadata {
+                location: KeyLocation::Numpad,
+                repeat: true,
+                ..KeyMetadata::default()
+            },
+        ] {
+            let mismatch = panic_message(|| {
+                if metadata.repeat {
+                    driver.key_down_with(shift.clone(), metadata.clone(), HERE);
+                } else {
+                    driver.key_up_with(shift.clone(), metadata.clone(), HERE);
+                }
+            });
+            assert!(mismatch.contains("expected: a key that is"), "{mismatch}");
+            assert_eq!(driver.pressed_keys.len(), 2);
+        }
+        driver.key_up_with(shift.clone(), left, HERE);
+        driver.key_up_with(shift, right, HERE);
+        assert!(driver.pressed_keys.is_empty());
+
+        let physical_a = KeyMetadata {
+            physical_key: Some(keyboard::key::Physical::Code(keyboard::key::Code::KeyA)),
+            location: KeyLocation::Left,
+            ..KeyMetadata::default()
+        };
+        driver.key_down_with(Key::character("a"), physical_a.clone(), HERE);
+        let wrong_repeat_location = panic_message(|| {
+            driver.key_down_with(
+                Key::character("A"),
+                KeyMetadata {
+                    physical_key: physical_a.physical_key,
+                    location: KeyLocation::Right,
+                    repeat: true,
+                    ..KeyMetadata::default()
+                },
+                HERE,
+            );
+        });
+        assert!(
+            wrong_repeat_location.contains("expected: the same key location as the initial press"),
+            "{wrong_repeat_location}"
+        );
+        driver.key_down_with(
+            Key::character("A"),
+            KeyMetadata {
+                physical_key: physical_a.physical_key,
+                location: KeyLocation::Left,
+                repeat: true,
+                ..KeyMetadata::default()
+            },
+            HERE,
+        );
+        let wrong_physical = panic_message(|| {
+            driver.key_up_with(
+                Key::character("a"),
+                KeyMetadata {
+                    physical_key: Some(keyboard::key::Physical::Code(keyboard::key::Code::KeyB)),
+                    ..KeyMetadata::default()
+                },
+                HERE,
+            );
+        });
+        assert!(
+            wrong_physical.contains("expected: a key that is currently pressed"),
+            "{wrong_physical}"
+        );
+        let wrong_release_location = panic_message(|| {
+            driver.key_up_with(
+                Key::character("q"),
+                KeyMetadata {
+                    physical_key: physical_a.physical_key,
+                    location: KeyLocation::Numpad,
+                    ..KeyMetadata::default()
+                },
+                HERE,
+            );
+        });
+        assert!(
+            wrong_release_location.contains("expected: the same key location as the initial press"),
+            "{wrong_release_location}"
+        );
+        driver.key_up_with(
+            Key::character("q"),
+            KeyMetadata {
+                physical_key: physical_a.physical_key,
+                location: KeyLocation::Left,
+                ..KeyMetadata::default()
+            },
+            HERE,
+        );
+        assert!(driver.pressed_keys.is_empty());
+
+        let native = |code| KeyMetadata {
+            physical_key: Some(keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Xkb(code),
+            )),
+            ..KeyMetadata::default()
+        };
+        driver.key_down_with(Key::Unidentified, native(41), HERE);
+        driver.key_down_with(Key::Unidentified, native(42), HERE);
+        assert_eq!(driver.pressed_keys.len(), 2);
+        driver.key_up_with(Key::Unidentified, native(41), HERE);
+        driver.key_up_with(Key::Unidentified, native(42), HERE);
+        assert!(driver.pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn keyboard_actions_reject_empty_primary_and_modified_character_keys() {
+        let program =
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view);
+        let mut driver = Driver::new(
+            program,
+            Config::new("empty_character_key").viewport(320.0, 240.0),
+        );
+        driver.perform_action(
+            Action::Modifiers(Modifiers::new(false, true, false, false)),
+            HERE,
+        );
+
+        for metadata in [
+            KeyMetadata::default(),
+            KeyMetadata {
+                text: Some("x".to_owned()),
+                ..KeyMetadata::default()
+            },
+        ] {
+            let invalid = panic_message(|| {
+                driver.perform_action(
+                    Action::KeyDown {
+                        key: Key::character(""),
+                        metadata: metadata.clone(),
+                    },
+                    HERE,
+                );
+            });
+            assert!(
+                invalid.contains("expected: a non-empty character value for the logical key"),
+                "{invalid}"
+            );
+        }
+
+        let key = Key::character("x");
+        let invalid_modified_down = panic_message(|| {
+            driver.perform_action(
+                Action::KeyDown {
+                    key: key.clone(),
+                    metadata: KeyMetadata {
+                        modified_key: Some(Key::character("")),
+                        ..KeyMetadata::default()
+                    },
+                },
+                HERE,
+            );
+        });
+        assert!(
+            invalid_modified_down
+                .contains("expected: a non-empty character value for the modified key"),
+            "{invalid_modified_down}"
+        );
+
+        driver.perform_action(
+            Action::KeyDown {
+                key: key.clone(),
+                metadata: KeyMetadata::default(),
+            },
+            HERE,
+        );
+        let invalid_modified_up = panic_message(|| {
+            driver.perform_action(
+                Action::KeyUp {
+                    key: key.clone(),
+                    metadata: KeyMetadata {
+                        modified_key: Some(Key::character("")),
+                        ..KeyMetadata::default()
+                    },
+                },
+                HERE,
+            );
+        });
+        assert!(
+            invalid_modified_up
+                .contains("expected: a non-empty character value for the modified key"),
+            "{invalid_modified_up}"
+        );
+        assert!(driver.pressed_keys.values().any(|held| held.key == key));
+        driver.perform_action(
+            Action::KeyUp {
+                key,
+                metadata: KeyMetadata::default(),
+            },
+            HERE,
+        );
+        assert!(driver.pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn role_names_keep_acronym_boundaries_stable() {
+        assert_eq!(
+            camel_to_kebab("PDFActionableHighlight"),
+            "pdf-actionable-highlight"
+        );
+        assert_eq!(camel_to_kebab("ImeCandidate"), "ime-candidate");
+        assert_eq!(camel_to_kebab("ListItem"), "list-item");
+        assert!(internal_auto_id("Conformance/@layout:942"));
+        assert!(internal_auto_id("Conformance/@for:42(0)"));
+        assert!(!internal_auto_id("Conformance/@for:42(0)/button"));
+    }
+
+    #[test]
+    fn pixel_alignment_uses_physical_edges_at_the_configured_scale() {
+        let half_pixel = Rectangle::new(Point::new(0.5, 0.5), Size::new(1.0, 1.0));
+        assert!(!rectangle_pixel_aligned(half_pixel, 1.0));
+        assert!(rectangle_pixel_aligned(half_pixel, 2.0));
+        assert!(!rectangle_pixel_aligned(
+            Rectangle::new(Point::new(f32::NAN, 0.0), Size::new(1.0, 1.0)),
+            1.0,
+        ));
+        assert!(!rectangle_pixel_aligned(half_pixel, f32::INFINITY));
     }
 
     #[test]
@@ -2438,6 +6366,8 @@ mod tests {
                     count: 4,
                     input: String::new(),
                     redraws: 0,
+                    events: Vec::new(),
+                    observed_system_theme: None,
                 },
                 Task::done(Message::Incremented),
             )
@@ -2450,7 +6380,7 @@ mod tests {
         );
 
         assert_eq!(driver.state().count, 5);
-        driver.key(keyboard::Key::Named(keyboard::key::Named::Escape), HERE);
+        driver.key(Key::named(keyboard::key::Named::Escape), HERE);
         assert_eq!(driver.state().count, 15);
     }
 
@@ -2501,6 +6431,32 @@ mod tests {
         assert!(invalid.contains("statement: test statement"), "{invalid}");
         assert!(invalid.contains("expected:"), "{invalid}");
         assert!(invalid.contains("actual:"), "{invalid}");
+
+        let locale = panic_message(|| {
+            Driver::new(
+                iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                    boot, update, view,
+                ),
+                Config::new("invalid_locale").source(HERE).locale(""),
+            );
+        });
+        assert!(locale.contains("expected: a non-empty locale"), "{locale}");
+        assert!(locale.contains("test.ice:1:1"), "{locale}");
+
+        let artifact = panic_message(|| {
+            Driver::new(
+                iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                    boot, update, view,
+                ),
+                Config::new("invalid_artifact")
+                    .source(HERE)
+                    .artifact_dir(PathBuf::new()),
+            );
+        });
+        assert!(
+            artifact.contains("expected: a non-empty artifact directory"),
+            "{artifact}"
+        );
 
         let mut driver = Driver::new(
             iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
@@ -2593,6 +6549,31 @@ mod tests {
         );
         assert!(paint.contains("custom renderer"), "{paint}");
         assert!(paint.contains("bounds: Rectangle"), "{paint}");
+        for unavailable in [
+            panic_message(|| _ = target.surface_count()),
+            panic_message(|| _ = target.text_count()),
+            panic_message(|| _ = target.image_count()),
+            panic_message(|| _ = target.surfaces()),
+            panic_message(|| _ = target.texts()),
+            panic_message(|| _ = target.images()),
+        ] {
+            assert!(
+                unavailable.contains("expected: structured tiny-skia paint"),
+                "{unavailable}"
+            );
+            assert!(unavailable.contains("custom renderer"), "{unavailable}");
+        }
+        assert!(target.pixel_aligned());
+
+        let screenshot = panic_message(|| _ = driver.screenshot_at(Some(HERE)));
+        assert!(
+            screenshot.contains("expected: 307200 RGBA8 bytes"),
+            "{screenshot}"
+        );
+        assert!(
+            screenshot.contains("actual: 0 bytes returned by the headless renderer"),
+            "{screenshot}"
+        );
 
         let text = panic_message(|| driver.check_text("anything", None, false, HERE));
         assert!(text.contains("test `custom_renderer`"), "{text}");

@@ -17,14 +17,16 @@ binary immediately follows its generated Rust view.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
 construct it, and the Iced backend has no unchecked `Document` entry point.
-Generated applications also declare `ui-lang-runtime = "=0.1.0"` directly
-because generated Rust refers to its public crate path, plus
+Generated applications also declare `iced = "=0.14.0"` and
+`ui-lang-runtime = "=0.1.0"` directly because generated Rust refers to their
+public crate paths, plus
 `ui-lang-build = "=0.1.0"` as a build dependency.
 
 The standard Cargo setup generates every app or daemon root below `src/ui`:
 
 ```toml
 [dependencies]
+iced = "=0.14.0"
 ui-lang = "0.1.0"
 ui-lang-runtime = "=0.1.0"
 
@@ -378,6 +380,57 @@ test counter_contract
   expect text "1" within result
 ```
 
+The test driver is a semantic boundary over Iced rather than a public generated
+application event enum. Ice steps and Rust harnesses share the std-like
+`ui_lang_runtime::testing::Action` enum and
+`Driver::perform_action(Action, Location)` entry point, so adapters can replay
+the same input without depending on private generated messages. A conformance
+case can pin its environment and drive the same input, window, accessibility,
+and renderer paths used by the application:
+
+```ice
+test dark_keyboard_and_focus
+  viewport 800 600
+  theme dark
+  scale 2.0
+  locale "ko-KR"
+  platform linux
+  reduced-motion true
+  target field = #form/name
+  target submit = #form/submit
+
+  focus field
+  replace "Ice"
+  chord control enter
+  hover submit
+  expect a11y submit role "button"
+  expect a11y submit action click
+  capture dark_keyboard_and_focus
+```
+
+`theme` replaces the headless program theme result with `Theme::default(mode)`;
+it does not switch application-owned palette state, which should be selected
+through a preset or `dispatch`. `scale` overrides the headless program scale
+result. Locale, platform, and reduced-motion pin test metadata and driver
+context; they do not invent application state or an OS setting event. Rust
+harnesses can pin the independent boot OS preference with
+`Config::system_theme`; an Ice `system-theme` step is a later notification.
+Semantic steps cover pointer buttons and coordinates, drag/drop, exact focus,
+held keys/modifiers and chords, selection and IME composition, scrolling,
+multi-touch, window/system/file events, bounded waiting and redraw-time
+advancement, named RGBA capture, and AccessKit actions/assertions. The driver
+keeps cursor, focus, modifiers, touches, viewport, and widget-local state in
+sync with the native events it emits. `advance` controls deterministic redraw
+timestamps but does not virtualize arbitrary `iced::time` futures. `capture`
+writes a PNG and structured JSON frame manifest to
+`target/ice-test-artifacts/<sanitized-test-name>/` while retaining RGBA output
+for a Rust harness. `ICE_TEST_ARTIFACT_DIR` replaces the artifact root, and the
+runtime `Config::artifact_dir` sets an exact per-test directory. Capture does
+not impose exact pixel equality. It records configured, resolved-render, and
+system theme fields separately and limits physical output to 16,777,216 pixels
+(64 MiB RGBA8). A task-issued window open replaces the single headless current
+window with fresh widget/focus/input state while retaining application state.
+
 Tests use the same checked components, handlers, presets, expressions, and Rust
 extern boundary as production code. IDs select rendered widgets after real
 Iced layout. A component call ID is a scope rather than a synthetic layout box,
@@ -386,7 +439,10 @@ aliases may reuse an earlier target as a path prefix, while `#` paths remain
 absolute. Geometry assertions use logical-pixel bounds; paint assertions
 inspect unambiguous tiny-skia quad or text commands for backgrounds, borders,
 radii, shadows, colors, fonts, sizes, and line heights without comparing
-screenshots.
+screenshots. Primitive counts, text/image bounds, shaped text baseline,
+scale-aware pixel alignment, focus, and accessibility fields are also available
+when a conformance report needs more than the single-primitive convenience
+accessors.
 
 Interactions replay emitted messages through generated update code and drain
 real tasks recursively before the next statement. Checked `sync` and task
@@ -529,8 +585,9 @@ handler bindings, constant no-ops and dead gates, unreachable statements, and
 duplicate subscriptions are diagnosed at their Ice source lines. Component and
 handler reachability is combined across every discovered app root, subscription,
 preset, implicit mount, and first-class test mount or dispatch, so shared
-libraries are warned only when no root uses the definition. The same warnings
-appear in the LSP. Generated Rust diagnostics from `cargo ice check` and
+libraries are warned only when no root uses the definition. All language-checker
+warnings appear in the LSP; the workspace-orphan `W010` remains `cargo ice`-only.
+Generated Rust diagnostics from `cargo ice check` and
 `clippy` are mapped back to the responsible root or imported `.ice` syntax;
 `test` and `compat` run the same source-mapped check preflight before invoking
 Cargo's normal test runner. The
@@ -541,8 +598,9 @@ diagnostics at their responsible `.ice` URI, line, and column; ordinary Rust
 diagnostics remain owned by the Rust language server. The action publishes
 error-level generated diagnostics, including type and extern-contract failures.
 Warning-level Rust and Clippy findings from backend output are omitted because
-they are not actionable Ice diagnostics; Ice's own W001-W004 warnings continue
-to appear directly from the language checker.
+they are not actionable Ice diagnostics; Ice's non-CLI-only semantic warnings
+(`W001-W009` and `W011-W014`) continue to appear directly from the language
+checker.
 
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:

@@ -5231,6 +5231,7 @@ dependencies = [
  "iced",
  "iced_test",
  "iced_tiny_skia",
+ "png 0.18.1",
  "serde_json",
  "ui-lang-live-protocol",
  "unicode-segmentation",

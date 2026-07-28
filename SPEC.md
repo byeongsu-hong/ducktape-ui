@@ -173,9 +173,10 @@ struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
 at runtime.
 
-Generated Rust refers to the public `::ui_lang_runtime` path, so a consuming
-application must declare `ui-lang-runtime = "=0.1.0"` as a direct dependency.
-It must also declare `ui-lang-build = "=0.1.0"` as a direct build dependency.
+Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
+a consuming application must declare `iced = "=0.14.0"` and
+`ui-lang-runtime = "=0.1.0"` as direct dependencies. It must also declare
+`ui-lang-build = "=0.1.0"` as a direct build dependency.
 The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
 on Windows; the reference application uses workspace paths with exact
 versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
@@ -601,23 +602,92 @@ test_configuration
                = "preset" name
                | "viewport" number number
                | "timeout" positive_integer ("ms" | "s")
+               | "theme" ("light" | "dark" | "none")
+               | "scale" number
+               | "locale" string
+               | "platform" ("linux" | "windows" | "macos" | "wasm")
+               | "reduced-motion" ("true" | "false")
                | "mount" INDENT node
 target_decl    = "target" name "=" (widget_target | relative_test_target)
 relative_test_target = name "/" widget_target_segment
                        ("/" "#"? widget_target_segment)*
 test_target    = name | widget_target
-test_step      = "click" test_target
+test_step      = "click" test_target test_pointer_button?
+               | "double-click" test_target test_pointer_button?
+               | "click-at" expr expr test_pointer_button?
                | "hover" test_target
-               | "press" test_target
-               | "release"
+               | "enter" test_target
+               | "leave"
+               | "move" (test_target | expr expr)
+               | "press" test_target test_pointer_button?
+               | "release" test_pointer_button?
+               | "wheel" ("pixels" | "lines")? expr expr
+               | "scroll-to" test_target expr expr
+               | "scroll-by" test_target expr expr
+               | "snap" test_target expr expr
+               | "snap-end" test_target
+               | "drag" test_target test_target
+               | "drop" test_target
+               | "focus" test_target
+               | "focus-next"
+               | "focus-previous"
+               | "blur"
+               | "window" ("focus" | "blur" | "close-request"
+                            | "opened" | "closed" | "redraw")
+               | "window" "move" expr expr
+               | "window" "resize" expr expr
+               | "window" "rescale" expr
                | "type" expr
-               | "key" ("enter" | "escape" | "tab" | "backspace")
+               | "clear"
+               | "replace" expr
+               | "select" expr expr
+               | "select-all"
+               | "cursor" (expr | "front" | "end")
+               | "composition" ("start" | "cancel")
+               | "composition" "update" expr (expr expr)?
+               | "composition" "commit" expr
+               | "key" test_key
+               | "key-down" test_key test_key_down_option*
+               | "key-up" test_key test_key_up_option*
+               | "modifiers" test_modifier*
+               | "chord" test_modifier* test_key
+               | "repeat" test_key expr
                | "resize" expr expr
+               | "tap" test_target positive_integer?
+               | "touch" ("down" | "move" | "up" | "cancel")
+                 expr expr expr
+               | "system-theme" ("light" | "dark" | "none")
+               | "file-hover" expr
+               | "file-drop" expr
+               | "file-leave"
+               | "wait" duration
+               | "advance" duration
+               | "idle"
+               | "capture" name
+               | "a11y" ("activate" | "focus") test_target
                | "dispatch" name ("(" expr_list? ")")?
                | "expect" expr
                | "expect" expr "~=" expr
                | "expect" ("exists" | "missing") test_target
                | "expect" "no"? "text" expr ("within" test_target)?
+               | "expect" "a11y" test_target
+                 ("role" | "name" | "value") expr
+               | "expect" "a11y" test_target
+                 ("checked" | "disabled" | "focused") expr
+               | "expect" "a11y" test_target "action"
+                 ("click" | "focus") expr?
+test_pointer_button = "left" | "right" | "middle" | "back" | "forward"
+test_modifier = "shift" | "control" | "alt" | "logo"
+test_key       = test_key_name | string
+test_key_name  = kebab_name | PascalName
+test_key_down_option
+               = test_key_up_option
+               | "text=" string
+               | "repeat=" ("true" | "false")
+test_key_up_option
+               = "modified=" test_key
+               | "location=" ("standard" | "left" | "right" | "numpad")
+               | "physical=" test_key_name
 
 node           = layout | text | input | button | checkbox | toggler
                | slider | progress | radio | pick_list | combo_box
@@ -4375,12 +4445,13 @@ test counter_contract
 
 A test name uses `snake_case` and is unique across the complete import graph.
 Tests may be declared in the root or an imported `.ice` fragment. A test may
-have an empty body. `preset`, `viewport`, `timeout`, `mount`, and `target`
-declarations are optional and may be mixed with one another, but every such
-declaration must precede the first executable step. Each configuration form may
-appear at most once, and a target alias name is unique within its test. The same
-alias may be reused in another test; definition, references, collision checks,
-and LSP rename remain in that one test scope.
+have an empty body. `preset`, `viewport`, `timeout`, `theme`, `scale`, `locale`,
+`platform`, `reduced-motion`, `mount`, and `target` declarations are optional
+and may be mixed with one another, but every such declaration must precede the
+first executable step. Each configuration form may appear at most once, and a
+target alias name is unique within its test. The same alias may be reused in
+another test; definition, references, collision checks, and LSP rename remain
+in that one test scope.
 
 Without `preset`, the normal application boot function supplies fresh state
 and its initial task. Without `mount`, the complete application view is tested.
@@ -4395,6 +4466,21 @@ logical pixels. Explicit dimensions must be positive finite values in the Iced
 integer followed by `ms` or `s`. Boot or preset tasks settle before the first
 step. Because a pane-grid ID names generated persistent state, pane-grid IDs
 are unique across the production view and every test mount in one source graph.
+
+The environment declarations are explicit test inputs, not a second
+application configuration. `theme light|dark|none` replaces the headless
+program's theme result with `Theme::default(mode)` for rendering. It does not
+change application-owned palette or theme state; use a preset or `dispatch` to
+exercise such state. `scale` overrides the program's positive
+logical-to-physical scale factor. When either is absent, the generated program
+retains its normal callback result. `locale`, `platform`, and `reduced-motion`
+pin metadata and platform-sensitive driver context so fixtures do not inherit
+those labels from the host. They do not synthesize an operating-system setting
+event or create app state by themselves. The same view, update, task, and
+subscription code remains in use. A Rust harness may independently pin the
+startup OS preference with `Config::system_theme`; the Ice `system-theme`
+action is a post-boot change notification and does not alter the render-theme
+override.
 
 ### Targets and rendered identity
 
@@ -4421,41 +4507,195 @@ IDs instead of guessing.
 
 ### Actions and execution
 
-The executable actions are:
+The pointer and focus actions are:
 
 ```ice
 click target
+click target right
+double-click target
+click-at 120.0 48.0
 hover target
+enter target
+leave
+move target
+move 120.0 48.0
 press target
 release
+wheel 0.0 -48.0
+wheel lines 0.0 -3.0
+scroll-to scroller 0.0 240.0
+scroll-by scroller 0.0 48.0
+snap scroller 0.0 0.5
+snap-end scroller
+drag source destination
+press source
+drop destination
+focus field
+focus-next
+focus-previous
+blur
+window focus
+window blur
+```
+
+Coordinates and scroll amounts are logical pixels. `scroll-to` sets an absolute
+offset and `scroll-by` applies a delta; `snap` uses native relative x/y unit
+offsets and `snap-end` selects the end. Targeted pointer operations
+resolve the current visible bounds and use their center; coordinate operations
+use the supplied point directly. The optional pointer button is `left`,
+`right`, `middle`, `back`, or `forward`, and defaults to `left`. `press` keeps
+that button down until its matching `release`. `drag from to` is a complete
+left-button gesture: it moves to `from`, presses, moves to `to`, and releases.
+Standalone `drop target` moves to `target` and releases an already-held left
+button, normally established by an earlier `press` and optional `move`. The
+driver retains cursor, button, focus, and widget-local state across steps,
+including rerenders. Targeted focus and scroll operations first prove that the
+resolved widget exposes the matching native capability and then use the exact
+widget ID that was matched, including a `StableId`-derived ID. A present but
+non-focusable or non-scrollable target therefore fails instead of silently
+performing no operation.
+
+Keyboard, text, and input-method actions operate on the current focus:
+
+```ice
 type "text"
+clear
+replace "complete value"
+select 0 5
+select-all
+cursor 5
+cursor front
+cursor end
+composition start
+composition update "조"
+composition update "조합" 0 3
+composition commit "조"
+composition cancel
 key enter
-resize 800 600
+key "x"
+key TVInputHDMI1
+key-down escape modified=escape location=standard physical=IntlBackslash text="x" repeat=false
+key-up escape modified=escape location=standard physical=IntlBackslash
+modifiers shift control
+modifiers
+chord control shift "p"
+repeat backspace 3
+```
+
+`key` is one complete press/release. `key-down` and `key-up` expose the two
+halves when held state matters. A non-empty quoted string is a character key
+value, carried as Iced's string-valued `Key::Character`; it is not restricted
+to one Unicode scalar value. Named and physical keys accept ergonomic
+lowercase/kebab forms such as `enter`, `arrow-left`, `f1`, `key-a`, and
+`numpad-enter`, or the exact Iced UpperCamel variant such as `TVInputHDMI1` and
+`IntlBackslash` for complete enum coverage. A down/up step may specify its
+modified key, logical location, and physical code. Down events also accept
+non-empty event text and the repeat flag; those two options are rejected on
+key-up. Shape-valid exact names lower directly to the pinned typed Iced enums;
+an unknown variant is rejected by the generated Rust compilation instead of a
+duplicated Ice-side enum table. Held-key identity prefers a supplied physical
+code while still requiring repeat/release at the original location; without a
+physical code it uses the logical key plus location. Simultaneous left/right or
+distinct native unidentified keys therefore retain independent lifecycles.
+`modifiers` replaces the held modifier set and its bare form clears it. `chord`
+applies its listed modifiers for one key. `repeat key count` treats `count` as
+the total activation count: one initial non-repeat key-down, `count - 1` repeat
+key-down events, then one key-up. `select`, indexed `cursor`, `select-all`, and
+the `front`/`end` cursor positions use native widget operations and require
+exactly one focused widget ID that exposes Iced's text-input operation.
+`clear` and `replace` share that requirement because they begin with
+`select-all`. A focused text editor or other focusable widget fails explicitly
+instead of being treated as a text input. Negative
+indexes and values that do not fit `usize` fail;
+otherwise Ice passes the positions to the native operation without an Ice-side
+upper-bound or text-length check. Composition steps emit the normal Iced
+input-method lifecycle. An optional update selection is a checked UTF-8 byte
+range inside the preedit string. A commit does not close the input-method
+session, permitting further update/commit cycles; cancel clears preedit state
+and emits `Closed`.
+
+Touch, window, system, time, capture, and direct dispatch are also semantic
+steps:
+
+```ice
+tap target
+tap target 2
+touch down 1 40.0 60.0
+touch move 1 44.0 72.0
+touch up 1 44.0 72.0
+touch down 2 80.0 90.0
+touch cancel 2 80.0 90.0
+window move 40.0 60.0
+window resize 800.0 600.0
+window rescale 2.0
+window redraw
+window close-request
+window opened
+window closed
+system-theme dark
+file-hover "/tmp/report.txt"
+file-drop "/tmp/report.txt"
+file-leave
+wait 50ms
+advance 16ms
+idle
+capture focused_input
 dispatch top_level_handler
 dispatch top_level_handler(argument, ...)
 ```
 
-`click`, `hover`, and `press` resolve a visible target and use the center of its
-visible bounds. `press` leaves the primary mouse button down and `release`
-releases it at the current cursor. `type` sends text to the currently focused
-widget. The named keys are `enter`, `escape`, `tab`, and `backspace`. `resize`
-requires positive runtime dimensions and emits the normal Iced window resize
-event. `dispatch` constructs the checked message for a top-level handler;
+A touch ID is numeric and remains active from `down` until `up` or `cancel`;
+multiple IDs permit multi-touch fixtures. `tap` allocates the lowest unused
+touch ID for its complete down/up gesture, so explicitly managed contacts may
+remain active at the same time. `window resize` updates the retained
+viewport before emitting the ordinary Iced resize event; `resize width height`
+is its concise equivalent. Move, rescale, focus, close-request, opened/closed,
+redraw, file, and system-theme steps likewise travel through the normal
+event/subscription path. `close-request` asks the application to close; it does
+not bypass the application's close-request handler.
+
+`idle` drains work that is already ready, including task results and
+subscription handoffs. `wait` permits the stated amount of real elapsed time
+and then settles. `advance` deterministically advances the driver's redraw
+timestamp and emits `RedrawRequested`; it deliberately does not virtualize
+arbitrary `iced::time` futures. `capture` records the current window as
+in-memory RGBA and writes a PNG plus a structured JSON frame manifest. The
+default directory is `target/ice-test-artifacts/<sanitized-test-name>/`.
+`ICE_TEST_ARTIFACT_DIR` replaces the root while retaining the per-test
+directory; a Rust harness may instead set `Config::artifact_dir` to the exact
+per-test directory. The manifest records its schema version, capture/PNG
+identity, logical and physical sizes, scale, configured theme preference,
+resolved render-theme mode/name, system theme, locale/platform/motion context,
+window state, redraw-clock guarantees, and every inspectable named target.
+Physical captures are limited to 16,777,216 pixels (64 MiB of RGBA8) and reject
+zero, overflowing, or mismatched renderer buffers before writing artifacts.
+Capture names use lowercase ASCII letters, digits, and underscores. The
+returned `Capture` retains RGBA bytes, dimensions, scale, and both artifact
+paths. Capture does not perform a golden-image comparison implicitly.
+
+`dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their
-rendered controls.
+rendered controls. Semantic steps keep generated-message construction internal:
+tests drive native input, widget state, accessibility, and program events
+instead of depending on the private generated message enum.
 
 Every test starts with fresh application state, its own executor/runtime, and
 one persistent headless Iced UI cache. Widget-local state, focus, and other
 retained widget state therefore survive rerenders within that test but never
-leak into another test. After boot and after every action, emitted widget and
+leak into another test. The headless runtime models one current window: a
+task-issued window open replaces it, retaining application/process context but
+resetting widget cache, focus, scroll, cursor, held input, touch, and IME state.
+After boot and after every action, emitted widget and
 subscription messages are replayed in order through generated update code.
 Finite returned tasks and their recursively emitted messages drain before the
 next statement. Generated subscriptions are re-established after updates and
 receive the same simulated interaction/window events. The timeout protects boot
-and finite-task settling from non-quiescent work; it is not a sleep or
-virtual-clock API. Long-lived timer, I/O, and worker subscriptions are sampled
-around boot and simulated events; they are not awaited to global quiescence,
-because an active subscription may intentionally be infinite.
+and finite-task settling from non-quiescent work. Long-lived timer, I/O, and
+worker subscriptions are sampled around boot and simulated events; they are not
+awaited to global quiescence, because an active subscription may intentionally
+be infinite. `wait` is the bounded real-time escape hatch and `advance` controls
+only the redraw timestamp; neither turns an infinite subscription into finite
+work.
 
 Checked `sync`, future, task, stream, and subscription externs call their real
 Rust implementations. Their panics and errors are not hidden. Deterministic
@@ -4475,6 +4715,14 @@ expect text string_expression
 expect no text string_expression
 expect text string_expression within target
 expect no text string_expression within target
+expect a11y target role "button"
+expect a11y target name "Save"
+expect a11y target value "Draft"
+expect a11y target checked true
+expect a11y target disabled false
+expect a11y target focused true
+expect a11y target action click
+expect a11y target action focus false
 ```
 
 A boolean expectation uses normal checked app-state expressions, equality, and
@@ -4483,6 +4731,23 @@ numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
 search to the selected target bounds. `exists` and `missing` are useful for IDs
 whose nodes are conditional at runtime.
+
+Accessibility actions and expectations use the same semantic tree exported to
+AccessKit:
+
+```ice
+a11y focus field
+a11y activate submit
+```
+
+Role, accessible name/value, checked, disabled, focused, and supported-action
+expectations fail when the target has no semantic node instead of falling back
+to visual text. `expect a11y ... action name` defaults its expected boolean to
+`true`; append `false` to assert that an action is unavailable. The checked
+action names are `click` and `focus`, matching the authoritative Snapshot
+dispatch surface. `a11y activate` and `a11y focus` dispatch through real
+accessibility operations, and reject an unsupported or disabled action with the
+originating Ice source location.
 
 A resolved test target exposes these checked fields:
 
@@ -4496,6 +4761,13 @@ A resolved test target exposes these checked fields:
 | retained transform | `translation_x`, `translation_y`, `scroll_x`, `scroll_y` | `f64` |
 | surface paint | `background`, `border`, `shadow` | native checked value |
 | text paint | `text_color`, `text_size`, `font`, `line_height` | native checked value |
+| primitive counts | `surface_count`, `text_count`, `image_count` | `i64` |
+| text primitive | `text_x`, `text_y`, `text_width`, `text_height`, `text_baseline` | `f64` |
+| image primitive | `image_x`, `image_y`, `image_width`, `image_height` | `f64` |
+| raster geometry | `pixel_aligned` | `bool` |
+| focus | `focused` | `bool` |
+| accessibility text | `accessibility_role`, `accessibility_name`, `accessibility_description`, `accessibility_value` | `str` |
+| accessibility state | `accessibility_checked`, `accessibility_disabled`, `accessibility_supports_activate`, `accessibility_supports_focus` | `bool` |
 
 `border` exposes its normal `color`, `width`, and `radius` fields. `value` is
 available only when the selected runtime candidate exposes text content. The
@@ -4513,33 +4785,50 @@ Surface and text fields use structured paint output from a real redraw through
 the default headless tiny-skia renderer. A surface lookup requires exactly one
 quad whose bounds equal the target. A text lookup requires exactly one visible
 text primitive inside it. Zero or multiple matches fail with a request for a
-narrower ID rather than selecting arbitrarily. A custom headless renderer may
-still support layout and interaction, but the structured tiny-skia paint fields
-are unavailable and fail explicitly.
+narrower ID rather than selecting arbitrarily; count fields let a test establish
+that precondition explicitly. Text/image bounds are post-transform logical
+pixels, while `pixel_aligned` evaluates the target bounds at the active scale
+factor. `text_baseline` is the first visible shaped-line baseline retained by a
+paragraph, editor, or raw shaped buffer and fails for cached text when no shaped
+run survives. Accessibility fields are strict: an absent semantic node or
+property fails rather than returning a fabricated empty value. A custom
+headless renderer may still support layout and interaction, but structured
+tiny-skia paint fields and visible-text assertions are unavailable. The
+checker rejects those assertions when the custom renderer is known statically;
+a generic Rust harness receives an explicit runtime failure.
 
 ### Failure and generated-code contract
 
 Parser and checker diagnostics reject duplicate test/alias names, declarations
 after executable steps, duplicate or invalid configuration, unknown presets,
-handlers, aliases, fields, or ID paths, component-scope targets, invalid keys,
-wrong expression types, and unsupported renderer contracts when known
-statically. Runtime failures include the test name, normalized Ice statement,
-and source path/line; selector, expected/actual values, current bounds, and
-nearby IDs are included when relevant. Tests imported through `use` retain the
-imported fragment's path and original line rather than the merged source line.
+handlers, aliases, fields, or ID paths, component-scope targets, invalid key
+shapes or options, wrong expression types, and unsupported renderer contracts
+when known statically. Runtime failures include the test name, normalized Ice
+statement, and source path/line; selector, expected/actual values, current
+bounds, and nearby IDs are included when relevant. Tests imported through `use`
+retain the imported fragment's path and original line rather than the merged
+source line.
 
 Each declaration lowers to an ordinary `#[cfg(test)] #[test]` function, so both
 `cargo test` and `cargo ice test` discover it. Generated support uses the public
-`ui_lang_runtime::testing::{Location, Config, Driver, Target, step}` API; the
-hidden `step` helper adds Ice source context to panics from generated statement
+`ui_lang_runtime::testing` API. Every interaction, environment event, time
+step, capture, and accessibility action lowers to the semantic,
+raw-event-independent `Action` enum and crosses the single
+`Driver::perform_action(Action, Location)` boundary. `Config`, `Capture`,
+`Target`, paint records, accessibility properties, and `step` complete that
+Rust-facing test surface. The `Action` enum is distinct from the application's
+private generated message enum, so a non-DSL conformance harness can construct
+and replay the same semantic operations without knowing generated internals.
+The `step` helper adds Ice source context to panics from generated statement
 evaluation. Generated Ice tests need no Rust wrapper, registration, or
-application-level dependency on the internal simulator crate.
+application-level dependency on a separate simulator crate.
 
 Revision 2.0 deliberately has no DOM, CSS selector engine, computed-style
 object, synthetic component bounds, component-local-state access, test mock
-DSL, virtual time, pixel-snapshot syntax, or multi-window orchestration. The
-removed external ICE test format is not accepted and has no compatibility
-adapter.
+DSL, general virtual clock, built-in golden-image comparator, or multi-window
+orchestration. Named captures expose renderer output without making exact pixel
+equality the test contract. The removed external ICE test format is not
+accepted and has no compatibility adapter.
 
 ## 10. Theme and style
 
@@ -4791,12 +5080,15 @@ not orphans; standalone files that no root imports are.
 
 `W011` follows transitive derived-value dependencies and ignores unreachable
 handlers. Prefixing an intentionally ignored handler parameter or local with
-`_` suppresses it. `W012` reports self-assignment, literal `return if false`,
-literal `if true`/`if false` gates, and repetitions over a literal empty list.
-`W013` reports the first unreachable statement after a constant-true return.
+`_` suppresses it. Preset boot locals and statements participate in the same
+`W011-W013` analysis as application handlers. `W012` reports self-assignment,
+literal `return if false`, literal `if true`/`if false` gates, and repetitions
+over a literal empty list. `W013` reports the first unreachable statement after
+a constant-true return.
 `W014` compares the full subscription identity, context, filter, condition, event status,
-payload arguments, and route; it therefore warns only when an external event
-would be delivered twice with identical semantics.
+payload arguments, and route; statically disabled `when false` subscriptions are
+excluded, so it warns only when an external event would be delivered twice with
+identical semantics.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
@@ -4822,8 +5114,9 @@ provenance remain with the Rust language server. The command is explicit so
 normal edit-time parser and semantic diagnostics do not wait for Cargo.
 The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
-output rather than actionable Ice syntax and remain CLI-only; W001-W004 Ice
-warnings continue to come directly from the language checker.
+output rather than actionable Ice syntax and remain CLI-only; Ice's non-CLI-only
+semantic warnings (`W001-W009` and `W011-W014`) continue to come directly from
+the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.
@@ -4893,7 +5186,7 @@ restarting it cannot leave a `cargo run` child orphaned.
 | `cargo ice check` | language analysis followed by workspace `cargo check` |
 | `cargo ice test [cargo-test args...]` | analyzes every Ice app graph, then runs `cargo test --workspace` with the remaining arguments; ordinary Cargo discovers the same generated tests |
 | `cargo ice clippy` | language analysis followed by workspace clippy |
-| `cargo ice compat` | analyzes app graphs, verifies exact Iced/runtime/AccessKit lockfile versions and direct reference-app/runtime manifest pins, and runs the reference app tests |
+| `cargo ice compat` | analyzes app graphs, verifies exact `iced`, `iced_widget`, `ui-lang-build`, runtime, and AccessKit lockfile versions plus direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | runs one native binary with checked state-preserving live views and a build-then-restart fallback |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |

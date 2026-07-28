@@ -97,21 +97,166 @@ const COMPLETIONS: &[Completion] = &[
         "viewport ${1:800} ${2:600}",
     ),
     Completion::new("timeout", "test configuration", "timeout ${1:2s}"),
+    Completion::new(
+        "test theme",
+        "test configuration",
+        "theme ${1|light,dark,none|}",
+    ),
+    Completion::new("scale", "test configuration", "scale ${1:1.0}"),
+    Completion::new("locale", "test configuration", "locale \"${1:en-US}\""),
+    Completion::new(
+        "platform",
+        "test configuration",
+        "platform ${1|linux,windows,macos,wasm|}",
+    ),
+    Completion::new(
+        "reduced-motion",
+        "test configuration",
+        "reduced-motion ${1|true,false|}",
+    ),
     Completion::new("mount", "test configuration", "mount\n  $0"),
     Completion::new("target", "test statement", "target ${1:name} = #${2:id}"),
-    Completion::new("click", "test interaction", "click ${1:target}"),
+    Completion::new(
+        "click",
+        "test interaction",
+        "click ${1:target}${2|, left, right, middle, back, forward|}",
+    ),
+    Completion::new(
+        "double-click",
+        "test interaction",
+        "double-click ${1:target}${2|, left, right, middle, back, forward|}",
+    ),
+    Completion::new(
+        "click-at",
+        "test interaction",
+        "click-at ${1:x} ${2:y}${3|, left, right, middle, back, forward|}",
+    ),
     Completion::new("hover", "test interaction", "hover ${1:target}"),
-    Completion::new("press", "test interaction", "press ${1:target}"),
-    Completion::new("release", "test interaction", "release"),
+    Completion::new("enter", "test interaction", "enter ${1:target}"),
+    Completion::new("leave", "test interaction", "leave"),
+    Completion::new("move", "test interaction", "move ${1:target}"),
+    Completion::new(
+        "press",
+        "test interaction",
+        "press ${1:target}${2|, left, right, middle, back, forward|}",
+    ),
+    Completion::new(
+        "release",
+        "test interaction",
+        "release${1|, left, right, middle, back, forward|}",
+    ),
+    Completion::new(
+        "wheel",
+        "test interaction",
+        "wheel ${1|pixels,lines|} ${2:x} ${3:y}",
+    ),
+    Completion::new(
+        "scroll-to",
+        "test interaction",
+        "scroll-to ${1:target} ${2:x} ${3:y}",
+    ),
+    Completion::new(
+        "scroll-by",
+        "test interaction",
+        "scroll-by ${1:target} ${2:x} ${3:y}",
+    ),
+    Completion::new("snap", "test interaction", "snap ${1:target} ${2:x} ${3:y}"),
+    Completion::new("snap-end", "test interaction", "snap-end ${1:target}"),
+    Completion::new(
+        "drag",
+        "test interaction",
+        "drag ${1:source} ${2:destination}",
+    ),
+    Completion::new("drop", "test interaction", "drop ${1:target}"),
+    Completion::new("focus", "test interaction", "focus ${1:target}"),
+    Completion::new("focus-next", "test interaction", "focus-next"),
+    Completion::new("focus-previous", "test interaction", "focus-previous"),
+    Completion::new("blur", "test interaction", "blur"),
+    Completion::new(
+        "window focus",
+        "test interaction",
+        "window ${1|focus,blur|}",
+    ),
+    Completion::new(
+        "window move",
+        "test interaction",
+        "window move ${1:x} ${2:y}",
+    ),
+    Completion::new(
+        "window resize",
+        "test interaction",
+        "window resize ${1:width} ${2:height}",
+    ),
+    Completion::new(
+        "window rescale",
+        "test interaction",
+        "window rescale ${1:factor}",
+    ),
+    Completion::new(
+        "window lifecycle",
+        "test interaction",
+        "window ${1|close-request,opened,closed,redraw|}",
+    ),
     Completion::new("type", "test interaction", "type ${1:\"text\"}"),
+    Completion::new("clear", "test interaction", "clear"),
+    Completion::new("replace", "test interaction", "replace ${1:\"text\"}"),
+    Completion::new("select", "test interaction", "select ${1:start} ${2:end}"),
+    Completion::new("select-all", "test interaction", "select-all"),
+    Completion::new("cursor", "test interaction", "cursor ${1|front,end,0|}"),
+    Completion::new("composition", "test interaction", "composition ${1:start}"),
     Completion::new("key", "test interaction", "key ${1:enter}"),
+    Completion::new(
+        "key-down",
+        "test interaction",
+        "key-down ${1:enter}${2: modified=enter}${3: location=standard}${4: physical=enter}${5: text=\"x\"}${6: repeat=false}",
+    ),
+    Completion::new(
+        "key-up",
+        "test interaction",
+        "key-up ${1:enter}${2: modified=enter}${3: location=standard}${4: physical=enter}",
+    ),
+    Completion::new(
+        "modifiers",
+        "test interaction",
+        "modifiers ${1|shift,control,alt,logo|}",
+    ),
+    Completion::new("chord", "test interaction", "chord ${1:control} ${2:key}"),
+    Completion::new("repeat", "test interaction", "repeat ${1:key} ${2:count}"),
+    Completion::new("tap", "test interaction", "tap ${1:target}${2: 1}"),
+    Completion::new(
+        "touch",
+        "test interaction",
+        "touch ${1|down,move,up,cancel|} ${2:id} ${3:x} ${4:y}",
+    ),
     Completion::new("resize", "test interaction", "resize ${1:800} ${2:600}"),
+    Completion::new(
+        "system-theme",
+        "test interaction",
+        "system-theme ${1|light,dark,none|}",
+    ),
+    Completion::new("file-hover", "test interaction", "file-hover ${1:\"path\"}"),
+    Completion::new("file-drop", "test interaction", "file-drop ${1:\"path\"}"),
+    Completion::new("file-leave", "test interaction", "file-leave"),
+    Completion::new("wait", "test interaction", "wait ${1:50ms}"),
+    Completion::new("advance", "test interaction", "advance ${1:16ms}"),
+    Completion::new("idle", "test interaction", "idle"),
+    Completion::new("capture", "test interaction", "capture ${1:name}"),
+    Completion::new(
+        "a11y",
+        "test interaction",
+        "a11y ${1|activate,focus|} ${2:target}",
+    ),
     Completion::new(
         "dispatch",
         "test interaction",
         "dispatch ${1:handler}(${2})",
     ),
     Completion::new("expect", "test assertion", "expect ${1:condition}"),
+    Completion::new(
+        "expect a11y",
+        "test assertion",
+        "expect a11y ${1:target} ${2|role,name,value,checked,disabled,focused,action|} ${3:value}",
+    ),
     Completion::new("if", "control", "if ${1:condition}\n  $0"),
     Completion::new(
         "match",
@@ -512,6 +657,26 @@ fn construct_schema(item: &Completion) -> Value {
     let leaf = || child_shape(0, Some(0), "none");
     let no_binding = || Value::Null;
     let no_route = || Value::Null;
+    let test_configuration = |syntax: &str| {
+        details(
+            &["test-configuration"],
+            syntax,
+            leaf(),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        )
+    };
+    let test_statement = |syntax: &str| {
+        details(
+            &["test"],
+            syntax,
+            leaf(),
+            no_binding(),
+            no_route(),
+            Vec::new(),
+        )
+    };
     let shape = match item.label {
         "app" => details(
             &["document"],
@@ -703,6 +868,11 @@ fn construct_schema(item: &Completion) -> Value {
             no_route(),
             Vec::new(),
         ),
+        "test theme" => test_configuration("theme <light|dark|none>"),
+        "scale" => test_configuration("scale <positive-number>"),
+        "locale" => test_configuration("locale <non-empty-string>"),
+        "platform" => test_configuration("platform <linux|windows|macos|wasm>"),
+        "reduced-motion" => test_configuration("reduced-motion <true|false>"),
         "mount" => details(
             &["test-configuration"],
             "mount",
@@ -719,54 +889,50 @@ fn construct_schema(item: &Completion) -> Value {
             no_route(),
             Vec::new(),
         ),
-        "click" => details(
-            &["test"],
-            "click <target>",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
+        "click" => test_statement("click <target> [<mouse-button>]"),
+        "double-click" => test_statement("double-click <target> [<mouse-button>]"),
+        "click-at" => test_statement("click-at <x> <y> [<mouse-button>]"),
+        "hover" => test_statement("hover <target>"),
+        "enter" => test_statement("enter <target>"),
+        "leave" => test_statement("leave"),
+        "move" => test_statement("move <target> | move <x> <y>"),
+        "press" => test_statement("press <target> [<mouse-button>]"),
+        "release" => test_statement("release [<mouse-button>]"),
+        "wheel" => test_statement("wheel [pixels|lines] <x> <y>"),
+        "scroll-to" => test_statement("scroll-to <target> <x> <y>"),
+        "scroll-by" => test_statement("scroll-by <target> <x> <y>"),
+        "snap" => test_statement("snap <target> <x-unit-offset> <y-unit-offset>"),
+        "snap-end" => test_statement("snap-end <target>"),
+        "drag" => test_statement("drag <source-target> <destination-target>"),
+        "drop" => test_statement("drop <target>"),
+        "focus" => test_statement("focus <target>"),
+        "focus-next" => test_statement("focus-next"),
+        "focus-previous" => test_statement("focus-previous"),
+        "blur" => test_statement("blur"),
+        "window focus" => test_statement("window focus|blur"),
+        "window move" => test_statement("window move <x> <y>"),
+        "window resize" => test_statement("window resize <width> <height>"),
+        "window rescale" => test_statement("window rescale <positive-factor>"),
+        "window lifecycle" => test_statement("window close-request|opened|closed|redraw"),
+        "type" => test_statement("type <str-expression>"),
+        "clear" => test_statement("clear"),
+        "replace" => test_statement("replace <str-expression>"),
+        "select" => test_statement("select <start-index> <end-index>"),
+        "select-all" => test_statement("select-all"),
+        "cursor" => test_statement("cursor <index>|front|end"),
+        "composition" => test_statement(
+            "composition start|cancel | composition update <str-expression> [<selection-start> <selection-end>] | composition commit <str-expression>",
         ),
-        "hover" => details(
-            &["test"],
-            "hover <target>",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
+        "key" => test_statement("key <kebab-key|exact-Iced-variant|string>"),
+        "key-down" => test_statement(
+            "key-down <key> [modified=<key>] [location=...] [physical=...] [text=\"<non-empty>\"] [repeat=true|false]",
         ),
-        "press" => details(
-            &["test"],
-            "press <target>",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
-        ),
-        "release" => details(
-            &["test"],
-            "release",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
-        ),
-        "type" => details(
-            &["test"],
-            "type <str-expression>",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
-        ),
-        "key" => details(
-            &["test"],
-            "key <enter|escape|tab|backspace>",
-            leaf(),
-            no_binding(),
-            no_route(),
-            Vec::new(),
-        ),
+        "key-up" => test_statement("key-up <key> [modified=<key>] [location=...] [physical=...]"),
+        "modifiers" => test_statement("modifiers [shift] [control] [alt] [logo]"),
+        "chord" => test_statement("chord [<modifier> ...] <key>"),
+        "repeat" => test_statement("repeat <key> <positive-count-expression>"),
+        "tap" => test_statement("tap <target> [<count-1..255>]"),
+        "touch" => test_statement("touch down|move|up|cancel <id> <x> <y>"),
         "resize" => details(
             &["test"],
             "resize <width> <height>",
@@ -775,6 +941,15 @@ fn construct_schema(item: &Completion) -> Value {
             no_route(),
             Vec::new(),
         ),
+        "system-theme" => test_statement("system-theme <light|dark|none>"),
+        "file-hover" => test_statement("file-hover <str-expression>"),
+        "file-drop" => test_statement("file-drop <str-expression>"),
+        "file-leave" => test_statement("file-leave"),
+        "wait" => test_statement("wait <positive-duration>"),
+        "advance" => test_statement("advance <positive-duration>"),
+        "idle" => test_statement("idle"),
+        "capture" => test_statement("capture <snake_case_name>"),
+        "a11y" => test_statement("a11y activate|focus <target>"),
         "dispatch" => details(
             &["test"],
             "dispatch <handler>[(<argument>, ...)]",
@@ -790,6 +965,9 @@ fn construct_schema(item: &Completion) -> Value {
             no_binding(),
             no_route(),
             Vec::new(),
+        ),
+        "expect a11y" => test_statement(
+            "expect a11y <target> role|name|value <str-expression> | checked|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
         ),
         "if" => details(
             &["view"],
@@ -1667,6 +1845,411 @@ fn style_contract() -> Value {
     })
 }
 
+fn test_target_fields() -> Value {
+    const FIELDS: &[(&str, &str)] = &[
+        ("kind", "str"),
+        ("value", "str"),
+        ("visible", "bool"),
+        ("x", "f64"),
+        ("y", "f64"),
+        ("width", "f64"),
+        ("height", "f64"),
+        ("left", "f64"),
+        ("top", "f64"),
+        ("right", "f64"),
+        ("bottom", "f64"),
+        ("center_x", "f64"),
+        ("center_y", "f64"),
+        ("visible_x", "f64"),
+        ("visible_y", "f64"),
+        ("visible_width", "f64"),
+        ("visible_height", "f64"),
+        ("content_x", "f64"),
+        ("content_y", "f64"),
+        ("content_width", "f64"),
+        ("content_height", "f64"),
+        ("scroll_x", "f64"),
+        ("scroll_y", "f64"),
+        ("translation_x", "f64"),
+        ("translation_y", "f64"),
+        ("background", "background"),
+        ("border", "border"),
+        ("shadow", "shadow"),
+        ("text_color", "color"),
+        ("text_size", "f64"),
+        ("font", "font"),
+        ("line_height", "text-line-height"),
+        ("surface_count", "i64"),
+        ("text_count", "i64"),
+        ("image_count", "i64"),
+        ("text_x", "f64"),
+        ("text_y", "f64"),
+        ("text_width", "f64"),
+        ("text_height", "f64"),
+        ("text_baseline", "f64"),
+        ("image_x", "f64"),
+        ("image_y", "f64"),
+        ("image_width", "f64"),
+        ("image_height", "f64"),
+        ("pixel_aligned", "bool"),
+        ("focused", "bool"),
+        ("accessibility_role", "str"),
+        ("accessibility_name", "str"),
+        ("accessibility_description", "str"),
+        ("accessibility_value", "str"),
+        ("accessibility_checked", "bool"),
+        ("accessibility_disabled", "bool"),
+        ("accessibility_supports_activate", "bool"),
+        ("accessibility_supports_focus", "bool"),
+    ];
+    Value::Array(
+        FIELDS
+            .iter()
+            .map(|(name, ty)| {
+                let mut field = json!({ "name": name, "type": ty });
+                let object = field.as_object_mut().unwrap();
+                if *name == "border" {
+                    object.insert(
+                        "members".into(),
+                        json!({ "color": "color", "width": "f64", "radius": "radius" }),
+                    );
+                } else if *name == "text_baseline" {
+                    object.insert(
+                        "availability".into(),
+                        json!(
+                            "shaped retained text; unavailable for cached text without a shaped run"
+                        ),
+                    );
+                }
+                field
+            })
+            .collect(),
+    )
+}
+
+fn capture_manifest_schema() -> Value {
+    json!({
+        "required": [
+            "schema_version", "name", "png", "viewport", "physical_size",
+            "scale_factor", "configured_theme", "resolved_theme", "system_theme",
+            "locale", "platform", "reduced_motion", "window", "clock", "targets"
+        ],
+        "fields": {
+            "schema_version": { "type": "integer", "const": 1 },
+            "name": { "type": "string" },
+            "png": { "type": "string", "path": "sibling basename" },
+            "viewport": { "ref": "logical_size" },
+            "physical_size": { "ref": "physical_size" },
+            "scale_factor": { "type": "number" },
+            "configured_theme": {
+                "type": ["string", "null"],
+                "enum": [null, "none", "light", "dark"]
+            },
+            "resolved_theme": { "ref": "resolved_theme" },
+            "system_theme": { "type": "string", "enum": ["none", "light", "dark"] },
+            "locale": { "type": ["string", "null"] },
+            "platform": { "type": "string", "enum": ["linux", "windows", "macos", "wasm"] },
+            "reduced_motion": { "type": ["boolean", "null"] },
+            "window": { "ref": "window" },
+            "clock": { "ref": "clock" },
+            "targets": {
+                "type": "array",
+                "items": { "ref": "target" },
+                "excludesIdsWithFinalSegmentPrefix": "@"
+            }
+        },
+        "definitions": {
+            "logical_size": {
+                "type": "object",
+                "required": ["width", "height"],
+                "fields": { "width": { "type": "number" }, "height": { "type": "number" } }
+            },
+            "physical_size": {
+                "type": "object",
+                "required": ["width", "height"],
+                "fields": { "width": { "type": "integer" }, "height": { "type": "integer" } },
+                "maxPixelArea": 16777216
+            },
+            "resolved_theme": {
+                "type": "object",
+                "required": ["mode", "name"],
+                "additionalProperties": false,
+                "fields": {
+                    "mode": { "type": "string", "enum": ["none", "light", "dark"] },
+                    "name": { "type": "string" }
+                }
+            },
+            "point": {
+                "type": "object",
+                "required": ["x", "y"],
+                "fields": { "x": { "type": "number" }, "y": { "type": "number" } }
+            },
+            "rectangle": {
+                "type": "object",
+                "required": ["x", "y", "width", "height"],
+                "fields": {
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "width": { "type": "number" },
+                    "height": { "type": "number" }
+                }
+            },
+            "optional_rectangle": {
+                "type": "object",
+                "required": ["x", "y", "width", "height"],
+                "fields": {
+                    "x": { "type": ["number", "null"] },
+                    "y": { "type": ["number", "null"] },
+                    "width": { "type": ["number", "null"] },
+                    "height": { "type": ["number", "null"] }
+                }
+            },
+            "optional_vector": {
+                "type": "object",
+                "required": ["x", "y"],
+                "fields": {
+                    "x": { "type": ["number", "null"] },
+                    "y": { "type": ["number", "null"] }
+                }
+            },
+            "color": {
+                "type": "object",
+                "required": ["r", "g", "b", "a"],
+                "fields": {
+                    "r": { "type": "number" },
+                    "g": { "type": "number" },
+                    "b": { "type": "number" },
+                    "a": { "type": "number" }
+                }
+            },
+            "window": {
+                "type": "object",
+                "required": ["position", "focused"],
+                "fields": {
+                    "position": { "type": ["object", "null"], "ref": "point" },
+                    "focused": { "type": "boolean" }
+                }
+            },
+            "clock": {
+                "type": "object",
+                "required": ["supports_virtual_redraw_advance", "iced_timer_futures_are_virtual"],
+                "fields": {
+                    "supports_virtual_redraw_advance": { "type": "boolean", "const": true },
+                    "iced_timer_futures_are_virtual": { "type": "boolean", "const": false }
+                }
+            },
+            "target_geometry": {
+                "type": "object",
+                "required": [
+                    "x", "y", "width", "height", "left", "top", "right", "bottom",
+                    "center_x", "center_y", "pixel_aligned"
+                ],
+                "fields": {
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "width": { "type": "number" },
+                    "height": { "type": "number" },
+                    "left": { "type": "number" },
+                    "top": { "type": "number" },
+                    "right": { "type": "number" },
+                    "bottom": { "type": "number" },
+                    "center_x": { "type": "number" },
+                    "center_y": { "type": "number" },
+                    "pixel_aligned": { "type": "boolean" }
+                }
+            },
+            "visible_geometry": {
+                "type": "object",
+                "required": ["present", "x", "y", "width", "height"],
+                "fields": {
+                    "present": { "type": "boolean" },
+                    "x": { "type": ["number", "null"] },
+                    "y": { "type": ["number", "null"] },
+                    "width": { "type": ["number", "null"] },
+                    "height": { "type": ["number", "null"] }
+                }
+            },
+            "accessibility": {
+                "type": "object",
+                "required": [
+                    "role", "name", "description", "value", "checked", "disabled",
+                    "focused", "actions"
+                ],
+                "fields": {
+                    "role": { "type": "string" },
+                    "name": { "type": ["string", "null"] },
+                    "description": { "type": ["string", "null"] },
+                    "value": { "type": ["string", "null"] },
+                    "checked": { "type": ["boolean", "null"] },
+                    "disabled": { "type": "boolean" },
+                    "focused": { "type": "boolean" },
+                    "actions": {
+                        "type": "object",
+                        "required": ["click", "focus"],
+                        "fields": {
+                            "click": { "type": "boolean" },
+                            "focus": { "type": "boolean" }
+                        }
+                    }
+                }
+            },
+            "gradient_stop": {
+                "type": "object",
+                "required": ["offset", "color"],
+                "fields": {
+                    "offset": { "type": "number" },
+                    "color": { "ref": "color" }
+                }
+            },
+            "background": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "required": ["kind", "color"],
+                        "fields": {
+                            "kind": { "const": "color" },
+                            "color": { "ref": "color" }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["kind", "angle_radians", "stops"],
+                        "fields": {
+                            "kind": { "const": "linear-gradient" },
+                            "angle_radians": { "type": "number" },
+                            "stops": { "type": "array", "items": { "ref": "gradient_stop" } }
+                        }
+                    }
+                ]
+            },
+            "radius": {
+                "type": "object",
+                "required": ["top_left", "top_right", "bottom_right", "bottom_left"],
+                "fields": {
+                    "top_left": { "type": "number" },
+                    "top_right": { "type": "number" },
+                    "bottom_right": { "type": "number" },
+                    "bottom_left": { "type": "number" }
+                }
+            },
+            "border": {
+                "type": "object",
+                "required": ["color", "width", "radius"],
+                "fields": {
+                    "color": { "ref": "color" },
+                    "width": { "type": "number" },
+                    "radius": { "ref": "radius" }
+                }
+            },
+            "shadow": {
+                "type": "object",
+                "required": ["color", "offset_x", "offset_y", "blur_radius"],
+                "fields": {
+                    "color": { "ref": "color" },
+                    "offset_x": { "type": "number" },
+                    "offset_y": { "type": "number" },
+                    "blur_radius": { "type": "number" }
+                }
+            },
+            "surface": {
+                "type": "object",
+                "required": ["background", "border", "shadow"],
+                "fields": {
+                    "background": { "ref": "background" },
+                    "border": { "ref": "border" },
+                    "shadow": { "ref": "shadow" }
+                }
+            },
+            "font_family": {
+                "type": "object",
+                "required": ["kind", "name"],
+                "fields": {
+                    "kind": { "type": "string", "enum": ["named", "generic"] },
+                    "name": {
+                        "type": "string",
+                        "genericValues": ["serif", "sans-serif", "cursive", "fantasy", "monospace"]
+                    }
+                }
+            },
+            "font": {
+                "type": "object",
+                "required": ["family", "weight", "stretch", "style"],
+                "fields": {
+                    "family": { "ref": "font_family" },
+                    "weight": {
+                        "type": "string",
+                        "enum": [
+                            "thin", "extra-light", "light", "normal", "medium", "semibold",
+                            "bold", "extra-bold", "black"
+                        ]
+                    },
+                    "stretch": {
+                        "type": "string",
+                        "enum": [
+                            "ultra-condensed", "extra-condensed", "condensed", "semi-condensed",
+                            "normal", "semi-expanded", "expanded", "extra-expanded",
+                            "ultra-expanded"
+                        ]
+                    },
+                    "style": { "type": "string", "enum": ["normal", "italic", "oblique"] }
+                }
+            },
+            "line_height": {
+                "type": "object",
+                "required": ["kind", "value"],
+                "fields": {
+                    "kind": { "type": "string", "enum": ["relative", "absolute"] },
+                    "value": { "type": "number" }
+                }
+            },
+            "text": {
+                "type": "object",
+                "required": ["content", "bounds", "color", "size", "font", "line_height", "baseline"],
+                "fields": {
+                    "content": { "type": ["string", "null"] },
+                    "bounds": { "ref": "rectangle" },
+                    "color": { "ref": "color" },
+                    "size": { "type": ["number", "null"] },
+                    "font": { "type": ["object", "null"], "ref": "font" },
+                    "line_height": { "type": ["object", "null"], "ref": "line_height" },
+                    "baseline": { "type": ["number", "null"] }
+                }
+            },
+            "paint": {
+                "type": "object",
+                "required": ["available", "unavailable_reason", "surfaces", "texts", "images"],
+                "fields": {
+                    "available": { "type": "boolean" },
+                    "unavailable_reason": { "type": ["string", "null"] },
+                    "surfaces": { "type": "array", "items": { "ref": "surface" } },
+                    "texts": { "type": "array", "items": { "ref": "text" } },
+                    "images": { "type": "array", "items": { "ref": "rectangle" } }
+                }
+            },
+            "target": {
+                "type": "object",
+                "required": [
+                    "id", "kind", "geometry", "visible", "content", "translation", "scroll",
+                    "value", "focused", "accessibility", "paint"
+                ],
+                "fields": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string" },
+                    "geometry": { "ref": "target_geometry" },
+                    "visible": { "ref": "visible_geometry" },
+                    "content": { "ref": "optional_rectangle" },
+                    "translation": { "ref": "optional_vector" },
+                    "scroll": { "ref": "optional_vector" },
+                    "value": { "type": ["string", "null"] },
+                    "focused": { "type": "boolean" },
+                    "accessibility": { "type": ["object", "null"], "ref": "accessibility" },
+                    "paint": { "ref": "paint" }
+                }
+            }
+        }
+    })
+}
+
 fn test_contract() -> Value {
     json!({
         "declaration": { "syntax": "test <snake_case_name>", "name": "graph-global and unique" },
@@ -1677,6 +2260,17 @@ fn test_contract() -> Value {
             "preset": { "syntax": "preset <name>", "required": false, "maxOccurrences": 1, "default": "normal application boot" },
             "viewport": { "syntax": "viewport <positive-number> <positive-number>", "required": false, "maxOccurrences": 1, "units": "logical pixels" },
             "timeout": { "syntax": "timeout <positive-integer><ms|s>", "required": false, "maxOccurrences": 1, "default": "2s" },
+            "theme": {
+                "syntax": "theme <light|dark|none>",
+                "required": false,
+                "maxOccurrences": 1,
+                "effect": "replace the headless Program theme result with Theme::default(mode)",
+                "applicationPaletteState": "unchanged; use preset or dispatch",
+            },
+            "scale": { "syntax": "scale <positive-number>", "required": false, "maxOccurrences": 1, "effect": "override generated program scale factor" },
+            "locale": { "syntax": "locale <non-empty-string>", "required": false, "maxOccurrences": 1, "effect": "pinned test metadata and driver context" },
+            "platform": { "syntax": "platform <linux|windows|macos|wasm>", "required": false, "maxOccurrences": 1, "effect": "pinned platform-sensitive driver context" },
+            "reducedMotion": { "syntax": "reduced-motion <true|false>", "required": false, "maxOccurrences": 1, "effect": "pinned test metadata and driver context" },
             "mount": { "syntax": "mount", "required": false, "maxOccurrences": 1, "children": { "min": 1, "max": 1, "role": "view-root" }, "default": "complete app view" },
         },
         "targets": {
@@ -1693,13 +2287,45 @@ fn test_contract() -> Value {
             ],
         },
         "interactions": {
-            "click": "click <target>",
+            "pointerButtons": ["left", "right", "middle", "back", "forward"],
+            "click": "click <target> [<button>]",
+            "doubleClick": "double-click <target> [<button>]",
+            "clickAt": "click-at <x> <y> [<button>]",
             "hover": "hover <target>",
-            "press": "press <target>",
-            "release": "release",
+            "enter": "enter <target>",
+            "leave": "leave",
+            "move": ["move <target>", "move <x> <y>"],
+            "press": "press <target> [<button>]",
+            "release": "release [<button>]",
+            "wheel": "wheel [pixels|lines] <x> <y>",
+            "scrollTo": "scroll-to <target> <x> <y>",
+            "scrollBy": "scroll-by <target> <x> <y>",
+            "snap": "snap <target> <x-unit-offset> <y-unit-offset>",
+            "snapEnd": "snap-end <target>",
+            "drag": "drag <source-target> <destination-target>",
+            "drop": "drop <target>",
+            "focus": ["focus <target>", "focus-next", "focus-previous", "blur"],
+            "windowFocus": ["window focus", "window blur"],
             "type": "type <str-expression>",
-            "key": "key <enter|escape|tab|backspace>",
+            "text": ["clear", "replace <str-expression>", "select <start> <end>", "select-all", "cursor <index|front|end>"],
+            "composition": ["composition start", "composition update <str-expression> [<selection-start> <selection-end>]", "composition commit <str-expression>", "composition cancel"],
+            "key": "key <kebab-key|exact-Iced-variant|non-empty-string>",
+            "keyDown": "key-down <key> [modified=<key>] [location=...] [physical=...] [text=\"<non-empty>\"] [repeat=true|false]",
+            "keyUp": "key-up <key> [modified=<key>] [location=...] [physical=...]",
+            "modifiers": "modifiers [shift] [control] [alt] [logo]",
+            "chord": "chord [<modifier> ...] <key>",
+            "repeat": {
+                "syntax": "repeat <key> <positive-count-expression>",
+                "countMeaning": "total activations: one initial non-repeat key-down, count - 1 repeat key-down events, then one key-up"
+            },
+            "touch": ["tap <target> [<count>]", "touch down|move|up|cancel <id> <x> <y>"],
             "resize": "resize <number-expression> <number-expression>",
+            "window": ["window move <x> <y>", "window resize <width> <height>", "window rescale <factor>", "window close-request", "window opened", "window closed", "window redraw"],
+            "systemTheme": "system-theme <light|dark|none>",
+            "files": ["file-hover <str-expression>", "file-drop <str-expression>", "file-leave"],
+            "settling": ["idle", "wait <positive-duration>", "advance <positive-duration>"],
+            "capture": "capture <snake_case_name>",
+            "accessibility": ["a11y activate <target>", "a11y focus <target>"],
             "dispatch": "dispatch <handler> | dispatch <handler>(<argument>, ...)",
         },
         "assertions": {
@@ -1707,48 +2333,35 @@ fn test_contract() -> Value {
             "approximate": { "syntax": "expect <numeric-expression> ~= <numeric-expression>", "absoluteTolerance": 0.001 },
             "presence": ["expect exists <target>", "expect missing <target>"],
             "text": ["expect text <str-expression> [within <target>]", "expect no text <str-expression> [within <target>]"],
+            "accessibility": {
+                "text": "expect a11y <target> role|name|value <str-expression>",
+                "boolean": "expect a11y <target> checked|disabled|focused <bool-expression>",
+                "action": "expect a11y <target> action <click|focus> [<bool-expression>]"
+            },
         },
-        "targetFields": [
-            { "name": "kind", "type": "str" },
-            { "name": "value", "type": "str" },
-            { "name": "visible", "type": "bool" },
-            { "name": "x", "type": "f64" },
-            { "name": "y", "type": "f64" },
-            { "name": "width", "type": "f64" },
-            { "name": "height", "type": "f64" },
-            { "name": "left", "type": "f64" },
-            { "name": "top", "type": "f64" },
-            { "name": "right", "type": "f64" },
-            { "name": "bottom", "type": "f64" },
-            { "name": "center_x", "type": "f64" },
-            { "name": "center_y", "type": "f64" },
-            { "name": "visible_x", "type": "f64" },
-            { "name": "visible_y", "type": "f64" },
-            { "name": "visible_width", "type": "f64" },
-            { "name": "visible_height", "type": "f64" },
-            { "name": "content_x", "type": "f64" },
-            { "name": "content_y", "type": "f64" },
-            { "name": "content_width", "type": "f64" },
-            { "name": "content_height", "type": "f64" },
-            { "name": "scroll_x", "type": "f64" },
-            { "name": "scroll_y", "type": "f64" },
-            { "name": "translation_x", "type": "f64" },
-            { "name": "translation_y", "type": "f64" },
-            { "name": "background", "type": "background" },
-            { "name": "border", "type": "border", "members": { "color": "color", "width": "f64", "radius": "radius" } },
-            { "name": "shadow", "type": "shadow" },
-            { "name": "text_color", "type": "color" },
-            { "name": "text_size", "type": "f64" },
-            { "name": "font", "type": "font" },
-            { "name": "line_height", "type": "text-line-height" },
-        ],
+        "targetFields": test_target_fields(),
         "execution": {
             "driver": "::ui_lang_runtime::testing::Driver",
+            "actionBoundary": "semantic, raw-event-independent ::ui_lang_runtime::testing::Action through Driver::perform_action(Action, Location)",
+            "generatedApplicationMessagePublic": false,
             "state": "fresh per test",
-            "uiCache": "persistent across rerenders within one test",
+            "uiCache": "persistent across rerenders within one current window; reset by a task-issued window open",
+            "startupSystemThemeRustConfig": "Config::system_theme; independent from the render theme override",
             "settling": "widget messages, updates, real tasks, and recursively emitted messages drain after each executable step",
             "externs": "real sync and task Rust extern implementations",
             "subscriptions": "active under the generated program contract",
+            "wait": "bounded real elapsed time followed by settling",
+            "advance": "deterministic redraw timestamp plus RedrawRequested; arbitrary iced::time futures remain real",
+            "capture": {
+                "scope": "current window",
+                "memory": "RGBA bytes, physical dimensions, scale factor, PNG path, and metadata path returned to runtime callers",
+                "files": ["<capture-name>.png", "<capture-name>.json"],
+                "defaultDirectory": "target/ice-test-artifacts/<sanitized-test-name>/",
+                "environmentRoot": "ICE_TEST_ARTIFACT_DIR",
+                "runtimeExactDirectory": "Config::artifact_dir",
+                "maxPhysicalPixels": 16777216,
+                "metadata": capture_manifest_schema(),
+            },
             "mockLayer": false,
         },
         "inspection": {
@@ -1756,11 +2369,13 @@ fn test_contract() -> Value {
             "paint": "structured tiny-skia draw commands from a real redraw",
             "surfaceMatch": "one quad whose bounds equal the target",
             "textMatch": "one visible text primitive within the target",
+            "primitiveCounts": ["surface_count", "text_count", "image_count"],
+            "pixelGoldenComparison": false,
             "ambiguousMatch": "runtime failure; never guessed",
             "customRendererPaint": false,
         },
         "legacyIcedTestIceSyntax": false,
-        "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "virtual time", "pixel snapshots", "multi-window orchestration"],
+        "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "general virtual clock", "built-in pixel-golden comparison", "multi-window orchestration"],
     })
 }
 
@@ -1797,12 +2412,22 @@ pub fn document() -> Value {
                 "generatedRustPath": "::ui_lang_runtime",
                 "publicApi": [
                     "accessible", "dynamic_themer", "navigation", "snapshot", "Bridge", "Role", "StableId",
-                    "testing::Location", "testing::Config", "testing::Driver", "testing::Target",
+                    "testing::Location", "testing::ThemeMode", "testing::Platform", "testing::MouseButton",
+                    "testing::WheelDelta", "testing::Modifiers", "testing::Key", "testing::KeyLocation",
+                    "testing::KeyMetadata", "testing::CompositionPhase", "testing::TouchPhase",
+                    "testing::Capture", "testing::AccessibilityAction", "testing::AccessibilityProperty", "testing::Action",
+                    "testing::Config", "testing::Driver", "testing::Target", "testing::SurfacePaint",
+                    "testing::TextPaint", "testing::ImagePaint",
                     "testing::step",
                 ],
                 "testing": {
                     "module": "::ui_lang_runtime::testing",
-                    "publicApi": ["Location", "Config", "Driver", "Target", "step"],
+                    "publicApi": [
+                        "Location", "ThemeMode", "Platform", "MouseButton", "WheelDelta",
+                        "Modifiers", "Key", "KeyLocation", "KeyMetadata", "CompositionPhase",
+                        "TouchPhase", "Capture", "AccessibilityAction", "AccessibilityProperty", "Action", "Config",
+                        "Driver", "Target", "SurfacePaint", "TextPaint", "ImagePaint", "step"
+                    ],
                     "legacyIcedTestIceApi": false,
                 },
                 "accesskit": ACCESSKIT_VERSION,
@@ -2126,17 +2751,66 @@ mod tests {
             "preset",
             "viewport",
             "timeout",
+            "test theme",
+            "scale",
+            "locale",
+            "platform",
+            "reduced-motion",
             "mount",
             "target",
             "click",
+            "double-click",
+            "click-at",
             "hover",
+            "enter",
+            "leave",
+            "move",
             "press",
             "release",
+            "wheel",
+            "scroll-to",
+            "scroll-by",
+            "snap",
+            "snap-end",
+            "drag",
+            "drop",
+            "focus",
+            "focus-next",
+            "focus-previous",
+            "blur",
+            "window focus",
+            "window move",
+            "window resize",
+            "window rescale",
+            "window lifecycle",
             "type",
+            "clear",
+            "replace",
+            "select",
+            "select-all",
+            "cursor",
+            "composition",
             "key",
+            "key-down",
+            "key-up",
+            "modifiers",
+            "chord",
+            "repeat",
+            "tap",
+            "touch",
             "resize",
+            "system-theme",
+            "file-hover",
+            "file-drop",
+            "file-leave",
+            "wait",
+            "advance",
+            "idle",
+            "capture",
+            "a11y",
             "dispatch",
             "expect",
+            "expect a11y",
             "if",
             "match",
             "some",
@@ -2298,11 +2972,92 @@ mod tests {
             .map(|construct| construct["label"].as_str().unwrap())
             .collect::<BTreeSet<_>>();
         for label in [
-            "test", "preset", "viewport", "timeout", "mount", "target", "click", "hover", "press",
-            "release", "type", "key", "resize", "dispatch", "expect", "~=",
+            "test",
+            "preset",
+            "viewport",
+            "timeout",
+            "test theme",
+            "scale",
+            "locale",
+            "platform",
+            "reduced-motion",
+            "mount",
+            "target",
+            "click",
+            "double-click",
+            "click-at",
+            "hover",
+            "enter",
+            "leave",
+            "move",
+            "press",
+            "release",
+            "wheel",
+            "scroll-to",
+            "scroll-by",
+            "snap",
+            "snap-end",
+            "drag",
+            "drop",
+            "focus",
+            "focus-next",
+            "focus-previous",
+            "blur",
+            "window focus",
+            "window move",
+            "window resize",
+            "window rescale",
+            "window lifecycle",
+            "type",
+            "clear",
+            "replace",
+            "select",
+            "select-all",
+            "cursor",
+            "composition",
+            "key",
+            "key-down",
+            "key-up",
+            "modifiers",
+            "chord",
+            "repeat",
+            "tap",
+            "touch",
+            "resize",
+            "system-theme",
+            "file-hover",
+            "file-drop",
+            "file-leave",
+            "wait",
+            "advance",
+            "idle",
+            "capture",
+            "a11y",
+            "dispatch",
+            "expect",
+            "expect a11y",
+            "~=",
         ] {
             assert!(labels.contains(label), "{label}");
         }
+        let completion = |label: &str| {
+            constructs
+                .iter()
+                .find(|construct| construct["label"] == label)
+                .unwrap_or_else(|| panic!("missing `{label}` completion"))
+        };
+        assert_eq!(
+            completion("cursor")["insertText"],
+            "cursor ${1|front,end,0|}"
+        );
+        assert_eq!(
+            completion("composition")["insertText"],
+            "composition ${1:start}"
+        );
+        assert_eq!(
+            completion("key-down")["insertText"],
+            "key-down ${1:enter}${2: modified=enter}${3: location=standard}${4: physical=enter}${5: text=\"x\"}${6: repeat=false}"
+        );
 
         let contract = &schema["core"]["testMode"];
         assert_eq!(contract["cargoCommand"], "cargo ice test");
@@ -2319,13 +3074,158 @@ mod tests {
             contract["configuration"]["timeout"]["syntax"],
             "timeout <positive-integer><ms|s>"
         );
+        assert_eq!(contract["configuration"]["theme"]["maxOccurrences"], 1);
+        assert_eq!(
+            contract["configuration"]["theme"]["effect"],
+            "replace the headless Program theme result with Theme::default(mode)"
+        );
+        assert_eq!(
+            contract["configuration"]["theme"]["applicationPaletteState"],
+            "unchanged; use preset or dispatch"
+        );
+        assert_eq!(contract["configuration"]["scale"]["maxOccurrences"], 1);
+        assert_eq!(
+            contract["configuration"]["platform"]["syntax"],
+            "platform <linux|windows|macos|wasm>"
+        );
         assert_eq!(
             contract["interactions"]["dispatch"],
             "dispatch <handler> | dispatch <handler>(<argument>, ...)"
         );
         assert_eq!(
+            contract["interactions"]["scrollTo"],
+            "scroll-to <target> <x> <y>"
+        );
+        assert!(
+            contract["interactions"]["keyDown"]
+                .as_str()
+                .unwrap()
+                .contains("text=\"<non-empty>\"")
+        );
+        assert_eq!(
+            contract["assertions"]["accessibility"]["action"],
+            "expect a11y <target> action <click|focus> [<bool-expression>]"
+        );
+        assert_eq!(
             contract["assertions"]["approximate"]["absoluteTolerance"],
             0.001
+        );
+        assert_eq!(
+            contract["execution"]["capture"]["environmentRoot"],
+            "ICE_TEST_ARTIFACT_DIR"
+        );
+        assert_eq!(
+            contract["execution"]["capture"]["runtimeExactDirectory"],
+            "Config::artifact_dir"
+        );
+        assert_eq!(
+            contract["interactions"]["repeat"]["countMeaning"],
+            "total activations: one initial non-repeat key-down, count - 1 repeat key-down events, then one key-up"
+        );
+        assert!(
+            contract["execution"]["actionBoundary"]
+                .as_str()
+                .unwrap()
+                .contains("raw-event-independent")
+        );
+        assert!(
+            contract["execution"]["actionBoundary"]
+                .as_str()
+                .unwrap()
+                .contains("Driver::perform_action")
+        );
+        assert_eq!(
+            contract["execution"]["generatedApplicationMessagePublic"],
+            false
+        );
+        let manifest = &contract["execution"]["capture"]["metadata"];
+        let definitions = &manifest["definitions"];
+        let required = manifest["required"].as_array().unwrap();
+        assert!(required.contains(&json!("configured_theme")));
+        assert!(required.contains(&json!("resolved_theme")));
+        assert!(!required.contains(&json!("theme")));
+        assert_eq!(manifest["fields"]["schema_version"]["const"], 1);
+        assert_eq!(manifest["fields"]["png"]["path"], "sibling basename");
+        assert!(manifest["fields"]["theme"].is_null());
+        assert_eq!(
+            manifest["fields"]["configured_theme"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(
+            manifest["fields"]["resolved_theme"]["ref"],
+            "resolved_theme"
+        );
+        assert_eq!(definitions["resolved_theme"]["additionalProperties"], false);
+        assert_eq!(
+            definitions["resolved_theme"]["fields"]["mode"]["enum"],
+            json!(["none", "light", "dark"])
+        );
+        assert_eq!(
+            definitions["resolved_theme"]["fields"]["name"]["type"],
+            "string"
+        );
+        assert_eq!(definitions["physical_size"]["maxPixelArea"], 16_777_216);
+        assert_eq!(
+            contract["execution"]["capture"]["maxPhysicalPixels"],
+            16_777_216
+        );
+        assert_eq!(manifest["fields"]["targets"]["items"]["ref"], "target");
+        assert_eq!(
+            manifest["fields"]["targets"]["excludesIdsWithFinalSegmentPrefix"],
+            "@"
+        );
+        assert_eq!(
+            definitions["clock"]["fields"]["supports_virtual_redraw_advance"]["const"],
+            true
+        );
+        assert_eq!(
+            definitions["clock"]["fields"]["iced_timer_futures_are_virtual"]["const"],
+            false
+        );
+        assert!(definitions["clock"]["fields"]["redraw_time_is_virtual"].is_null());
+        assert_eq!(
+            definitions["target"]["fields"]["geometry"]["ref"],
+            "target_geometry"
+        );
+        assert_eq!(
+            definitions["target_geometry"]["fields"]["pixel_aligned"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            definitions["accessibility"]["fields"]["actions"]["fields"]["click"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            definitions["paint"]["fields"]["surfaces"]["items"]["ref"],
+            "surface"
+        );
+        assert_eq!(
+            definitions["paint"]["fields"]["texts"]["items"]["ref"],
+            "text"
+        );
+        assert_eq!(
+            definitions["paint"]["fields"]["images"]["items"]["ref"],
+            "rectangle"
+        );
+        assert_eq!(
+            definitions["background"]["oneOf"][1]["fields"]["kind"]["const"],
+            "linear-gradient"
+        );
+        assert_eq!(
+            definitions["background"]["oneOf"][1]["fields"]["stops"]["items"]["ref"],
+            "gradient_stop"
+        );
+        assert_eq!(definitions["text"]["fields"]["font"]["ref"], "font");
+        assert_eq!(
+            definitions["font"]["fields"]["family"]["ref"],
+            "font_family"
+        );
+        assert!(
+            schema["backend"]["runtime"]["testing"]["publicApi"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == "AccessibilityProperty")
         );
         assert_eq!(contract["legacyIcedTestIceSyntax"], false);
         assert_eq!(
@@ -2427,6 +3327,28 @@ mod tests {
                 "text_size",
                 "font",
                 "line_height",
+                "surface_count",
+                "text_count",
+                "image_count",
+                "text_x",
+                "text_y",
+                "text_width",
+                "text_height",
+                "text_baseline",
+                "image_x",
+                "image_y",
+                "image_width",
+                "image_height",
+                "pixel_aligned",
+                "focused",
+                "accessibility_role",
+                "accessibility_name",
+                "accessibility_description",
+                "accessibility_value",
+                "accessibility_checked",
+                "accessibility_disabled",
+                "accessibility_supports_activate",
+                "accessibility_supports_focus",
             ]
             .into_iter()
             .collect()
@@ -2440,6 +3362,7 @@ mod tests {
                 .unwrap()["type"],
             "text-line-height"
         );
+        assert_eq!(contract["inspection"]["pixelGoldenComparison"], false);
     }
 
     #[test]
