@@ -4773,10 +4773,10 @@ not orphans; standalone files that no root imports are.
 
 `W011` follows transitive derived-value dependencies and ignores unreachable
 handlers. Prefixing an intentionally ignored handler parameter or local with
-`_` suppresses it. `W012` reports self-assignment, constant `return if false`,
-constant `if` gates, and repetitions over a literal empty list. `W013` reports
-the first unreachable statement after a constant-true return. `W014` compares
-the full subscription identity, context, filter, condition, event status,
+`_` suppresses it. `W012` reports self-assignment, literal `return if false`,
+literal `if true`/`if false` gates, and repetitions over a literal empty list.
+`W013` reports the first unreachable statement after a constant-true return.
+`W014` compares the full subscription identity, context, filter, condition, event status,
 payload arguments, and route; it therefore warns only when an external event
 would be delivered twice with identical semantics.
 

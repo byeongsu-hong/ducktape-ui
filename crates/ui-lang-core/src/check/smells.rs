@@ -98,15 +98,17 @@ fn duplicate_subscription_warnings(document: &Document, warnings: &mut Vec<Warni
     let mut seen = std::collections::HashMap::<String, usize>::new();
     for subscription in &document.subscriptions {
         let key = format!(
-            "{:?}|{}|{:?}|{:?}|{:?}|{:?}|{}|{:?}",
-            subscription.source,
-            subscription.window_id,
-            subscription.context,
-            subscription.filter,
-            subscription.condition,
-            subscription.status,
-            subscription.route.handler,
-            subscription.route.args,
+            "{:?}",
+            (
+                &subscription.source,
+                subscription.window_id,
+                &subscription.context,
+                &subscription.filter,
+                &subscription.condition,
+                subscription.status,
+                &subscription.route.handler,
+                &subscription.route.args,
+            )
         );
         if let Some(first_line) = seen.get(&key) {
             warnings.push(
