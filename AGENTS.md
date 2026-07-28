@@ -67,6 +67,14 @@ branch. Never edit the primary checkout or commit directly to `main`/`master`.
 Reuse a task worktree only when the new change belongs to the same review scope;
 otherwise create a new worktree and branch.
 
+Create every task worktree under `.worktree/<task-name>` inside the primary
+checkout. Do not create sibling worktree roots, worktrees under `/tmp`, or any
+other external worktree directory. Treat the primary checkout as a read-only
+worktree-management surface: inspect and manage worktrees there, but make task
+edits only in the matching `.worktree/<task-name>` checkout. Remove a task
+worktree promptly after its pull request is merged, closed, or abandoned; never
+discard uncommitted changes while cleaning worktrees.
+
 For every completed change, run the relevant local checks, commit the focused
 diff, push the branch, and open a pull request. Review the complete PR diff and
 available CI/review results before merging; resolve every actionable finding and
