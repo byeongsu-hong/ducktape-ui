@@ -1,0 +1,38 @@
+[package]
+name = "cef-browser-example"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[features]
+default = []
+cef = ["dep:cef"]
+
+[dependencies]
+cef = { version = "=150.2.1", default-features = false, features = ["build-util"], optional = true }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "tokio", "wgpu", "x11"] }
+ui-lang = { path = "../../crates/ui-lang" }
+ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+semver = "1"
+
+[[bin]]
+name = "cef-browser-example"
+path = "src/main.rs"
+
+[[bin]]
+name = "cef-browser-helper"
+path = "src/bin/helper.rs"
+required-features = ["cef"]
+
+[[bin]]
+name = "bundle-cef-browser"
+path = "src/bin/bundle.rs"
+required-features = ["cef"]
+
+[package.metadata.cef.bundle]
+helper_name = "cef-browser-helper"
+
+[lints]
+workspace = true

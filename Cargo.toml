@@ -6,6 +6,7 @@ members = [
     "crates/cargo-ice",
     "crates/ui",
     "examples/apple-music",
+    "examples/cef-browser",
     "examples/iced-app",
     "examples/markdown-editor",
     "examples/showcase",
