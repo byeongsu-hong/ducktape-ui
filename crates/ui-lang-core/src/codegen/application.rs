@@ -356,6 +356,11 @@ pub(in crate::codegen) fn generate_boot(
         "__ice_live: ::ui_lang_runtime::live::LiveRuntime::new(__ICE_LIVE_CONTRACT),"
     )
     .unwrap();
+    writeln!(
+        out,
+        "__ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog::new(),"
+    )
+    .unwrap();
     let accessibility_bridge = if document.daemon {
         "::ui_lang_runtime::Bridge::without_native_adapter()"
     } else {
@@ -556,6 +561,7 @@ pub(in crate::codegen) fn generate_update(
         "#[allow(clippy::assign_op_pattern)]\nfn __update(&mut self, message: {message}) -> ::iced::Task<{message}> {{"
     )
     .unwrap();
+    writeln!(out, "self.__ice_update_watchdog.observe();").unwrap();
     if !document.daemon {
         writeln!(
             out,
