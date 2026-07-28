@@ -158,8 +158,16 @@ After a meaningful edit:
    paths, signatures, generated types, and Cargo features.
 4. Run `cargo ice test` when changing first-class tests or behavior they cover;
    ordinary Cargo discovers the same generated tests.
-5. Run the narrow relevant Rust test or fixture suite.
-6. Run `cargo ice compat` only when changing backend versions, runtime
+5. For every visual UI change, run `cargo ice inspect` with an explicit root,
+   viewport, theme, and relevant preset. Open the PNG and inspect the JSON
+   geometry, paint, text, accessibility, and `.ice` source fields. Do not infer
+   appearance from code or stop after compilation succeeds.
+6. After a visual correction, inspect again with the same inputs. When a prior
+   capture is available, run `cargo ice diff` and resolve every unexplained
+   manifest or pixel delta. Keep an intentional delta only when it matches the
+   requested design change.
+7. Run the narrow relevant Rust test or fixture suite.
+8. Run `cargo ice compat` only when changing backend versions, runtime
    dependencies, compatibility contracts, accessibility bridges, or the
    reference app integration.
 
@@ -181,12 +189,36 @@ If `cargo ice` is unavailable, inspect `.cargo/config.toml`. In this repository
 it is a local Cargo alias for the `cargo-ice` workspace binary; run commands
 from the workspace root.
 
+Use a deterministic visual loop such as:
+
+```bash
+cargo ice inspect path/to/app.ice --viewport 1440x900 --theme light \
+  --preset populated --name populated_light
+cargo ice diff path/to/baseline/populated_light.json \
+  target/ice-inspect/path_to_app/populated_light.json
+```
+
+Name and preserve the input tuple in review evidence: app root, preset,
+viewport, theme, scale, locale, platform, and reduced-motion setting. Run the
+loop for each materially different responsive breakpoint or interaction state;
+one convenient viewport is not evidence for all of them. Treat custom-renderer
+paint marked unavailable in JSON as a declared inspection limit, not as a
+passing visual result.
+
+Use a preset to expose deterministic application states. For a state reached
+through clicks, typing, focus, scrolling, or time, author a first-class Ice
+test that performs those semantic actions and `capture`s the result; run it
+with `cargo ice test <test-name> -- --nocapture`, then inspect and diff those
+artifacts by the same rules.
+
 ## Respond with evidence
 
 Report:
 
 - the `.ice` and Rust boundaries changed;
 - the command or LSP evidence that verified them;
+- the inspected input tuple and PNG/JSON paths for visual changes, plus the
+  diff report when a baseline existed;
 - any current language or platform limit that remains.
 
 Do not describe the result as React-like. Explain it using Ice's state,

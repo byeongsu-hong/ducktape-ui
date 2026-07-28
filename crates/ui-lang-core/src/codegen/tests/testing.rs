@@ -48,6 +48,9 @@ view
 
     for expected in [
         "#[cfg(test)]\nmod __ice_tests",
+        "fn __ice_agent_inspect()",
+        "agent_inspect(|| Demo::__program(), \"contract.ice\")",
+        "let __ice_render_source_location = ::ui_lang_runtime::testing::Location::new(\"contract.ice\"",
         "fn render_contract()",
         "Config::new(\"render_contract\")",
         ".viewport(320.0f32, 240.0f32)",

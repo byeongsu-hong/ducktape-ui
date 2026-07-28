@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+png = "0.18"
 serde_json = "1"
 ui-lang-core = { path = "../ui-lang-core" }
 

@@ -150,7 +150,12 @@ layout bounds, primitive counts, text/image bounds and baseline, scale-aware
 pixel alignment, focus, and unambiguous structured tiny-skia paint output;
 named captures persist PNG plus a versioned JSON frame manifest with separate
 configured, resolved-render, and system theme fields, and retain RGBA output
-for runtime callers. Screenshot output is checked as RGBA8 and capped at
+for runtime callers. Generated identified targets retain their originating
+imported `.ice` path, line, and column. `cargo ice inspect` activates an
+otherwise inert generated entry for one real app `Program`, fixed environment,
+and preset; `cargo ice diff` externally compares structured values and RGBA
+pixels and writes JSON/PNG reports. Screenshot output is checked as RGBA8 and
+capped at
 16,777,216 physical pixels before renderer allocation.
 The artifact root defaults to `target/ice-test-artifacts`, is replaceable with
 `ICE_TEST_ARTIFACT_DIR`, and still isolates each test; the runtime configuration
@@ -171,7 +176,8 @@ within one test, and generated runtime failures retain imported `.ice` paths and
 lines. Parser, checker, formatter, codegen, runtime, schema/LSP, reference
 examples, and invalid/runtime failure tests provide direct evidence. There is
 no legacy external ICE-test parser or adapter, general virtual clock, or
-built-in pixel-golden comparator.
+built-in runtime pixel-golden comparator; comparison policy belongs to
+`cargo ice diff`.
 
 ## Measured coverage
 

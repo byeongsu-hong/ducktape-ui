@@ -13,7 +13,7 @@ pub(super) fn identify_rendered(
     };
     let id = id_code(id, scope, env, document)?;
     Ok(format!(
-        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; ::iced::widget::container(__identified).id(::iced::widget::Id::from({id})).into() }}"
+        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; let __ice_id = {id}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&__ice_id); ::iced::widget::container(__identified).id(::iced::widget::Id::from(__ice_id)).into() }}"
     ))
 }
 
@@ -181,7 +181,16 @@ pub(in crate::codegen) fn render_node(
     } else {
         unreachable!("every view node belongs to a render group")
     };
-    Ok(source_mapped_expression(rendered, node.span()))
+    let track_descendants = matches!(
+        node,
+        ViewNode::ExternComponent { .. } | ViewNode::TextEditor { .. }
+    );
+    Ok(source_mapped_expression(
+        rendered,
+        node.span(),
+        message,
+        track_descendants,
+    ))
 }
 
 mod container;

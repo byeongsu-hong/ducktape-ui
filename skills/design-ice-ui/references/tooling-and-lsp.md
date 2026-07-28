@@ -40,7 +40,7 @@ cargo ice help
 Expected form:
 
 ```text
-cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | schema | lsp>
+cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | schema | lsp>
 ```
 
 ## Command reference
@@ -54,6 +54,8 @@ cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | 
 | `cargo ice clippy` | analyze app graphs, then lint all workspace targets |
 | `cargo ice compat` | verify backend/runtime pins and run reference app tests |
 | `cargo ice expand FILE` | print generated Rust for one app root |
+| `cargo ice inspect FILE [options]` | render the actual app headlessly and write a PNG plus structured JSON manifest |
+| `cargo ice diff BASE.json CURRENT.json [options]` | compare manifests and pixels, write `report.json` plus `diff.png`, and fail on unexplained deltas |
 | `cargo ice schema` | print generative Core/LSP/backend JSON |
 | `cargo ice lsp` | run the live stdio language server, including the `Run Ice lint` source action |
 
@@ -68,6 +70,48 @@ fragments.
    hints;
 2. rustc diagnostics for extern paths/signatures, generated types, selected
    renderer, and Cargo features.
+
+`cargo ice inspect` accepts a root `.ice` file and deterministic inputs:
+
+```bash
+cargo ice inspect path/to/app.ice \
+  --viewport 1440x900 \
+  --theme light \
+  --system-theme light \
+  --preset populated \
+  --scale 1 \
+  --locale en-US \
+  --platform linux \
+  --reduced-motion \
+  --name populated_light
+```
+
+Use `--output DIR` to control the artifact directory and `--package NAME` when
+the root is included from outside its containing Cargo package. The JSON
+records viewport and environment, target geometry, visible/content bounds,
+scroll state, structured tiny-skia paint, rendered text/font/baseline data,
+accessibility, and the originating `.ice` path/line/column for identified
+nodes. The command runs the generated app `Program`; it does not substitute a
+separate mock view.
+
+`inspect` captures the initial or selected-preset state. When the required
+state is reached through interaction, use a first-class Ice test to perform
+semantic actions and `capture` after them, then pass that manifest to `diff`.
+
+Compare two captures with:
+
+```bash
+cargo ice diff baseline.json current.json \
+  --pixel-threshold 0 \
+  --max-changed-ratio 0 \
+  --value-tolerance 0 \
+  --output target/ice-diff/example
+```
+
+The command exits unsuccessfully when structured fields differ or the changed
+pixel ratio exceeds the allowed maximum. Read both `report.json` and
+`diff.png`; tolerance is an explicit review decision, not a way to hide an
+unknown change.
 
 ## Use the live LSP
 
@@ -284,6 +328,17 @@ cargo test -p iced-app <focused-test-filter>
 
 Use `cargo ice fmt` before `--check` when formatting changes are expected.
 
+### Verify a visual change
+
+```bash
+cargo ice inspect path/to/app.ice --viewport 1440x900 --theme light --name current
+cargo ice diff path/to/baseline/current.json target/ice-inspect/path_to_app/current.json
+```
+
+Open the emitted PNG. Read the JSON for exact layout, paint, text, a11y, and
+source provenance. Repeat with the same input tuple after each correction and
+cover every materially different preset or responsive breakpoint.
+
 ### Edit the language parser/checker/code generator
 
 ```bash
@@ -347,6 +402,12 @@ and signature. Use `cargo ice expand` only if the generated probe is unclear.
 
 Accept the canonical two-space tree, then verify that parent/child meaning is
 still intended. `cargo ice fmt` does not migrate removed vocabulary.
+
+### `cargo ice inspect` reports no matching generated test
+
+Confirm that the requested file contains the top-level `app` or `daemon` and is
+included by `ui_lang::include_app!` in the selected package. For an external
+include, pass the owning Cargo package with `--package`.
 
 ### An editor assumes JavaScript, JSX, or CSS for `.ice`
 
