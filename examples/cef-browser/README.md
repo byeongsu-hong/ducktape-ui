@@ -18,6 +18,16 @@ The command prints the staged executable or macOS app path. Add `-- --release`
 for a release bundle. On Linux, iced is deliberately built with X11 only because
 CEF's windowed child embedding requires an X11 parent handle.
 
+Run both the bundler and the staged app as your normal user; this example has no
+sudo, elevation, installer, or system-wide setup path. Each run uses a private
+temporary CEF profile and removes it after a clean shutdown. Credential saving,
+automatic sign-in, passkeys, and the Web Authentication API are disabled. Linux
+forces Chromium's local `basic` password backend instead of GNOME Keyring or
+KWallet. On macOS, the main app and every CEF helper use Chromium's mock
+keychain instead of accessing the user's Keychain; the generated app bundles
+also omit the public-key credential usage description and add no Keychain
+entitlements.
+
 The initial `ice://welcome` address is resolved by the Rust boundary to an
 in-memory HTML page, so the first render does not depend on network access.
 Replace it in the Ice-owned address bar with any HTTP(S) URL.
