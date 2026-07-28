@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const INSPECT_TEST: &str = "__ice_agent_inspect";
 const MAX_DIFF_PIXELS: usize = 16_777_216;
+const IGNORED_MANIFEST_PATHS: &[&str] = &["/name", "/png", "/capture_source/statement"];
 
 #[derive(Debug, Default, PartialEq)]
 struct InspectOptions {
@@ -363,10 +364,9 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         &mut differences,
     );
     differences.retain(|difference| {
-        !matches!(
-            difference["path"].as_str(),
-            Some("/name" | "/png" | "/capture_source/statement")
-        )
+        difference["path"]
+            .as_str()
+            .is_none_or(|path| !IGNORED_MANIFEST_PATHS.contains(&path))
     });
     let changed_ratio = if pixels.total == 0 {
         0.0
@@ -382,6 +382,7 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         "current": { "manifest": current_path, "png": current_png },
         "manifest": {
             "value_tolerance": options.value_tolerance,
+            "ignored_paths": IGNORED_MANIFEST_PATHS,
             "difference_count": differences.len(),
             "differences": differences,
         },

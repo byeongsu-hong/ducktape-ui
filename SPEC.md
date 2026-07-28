@@ -4690,8 +4690,10 @@ root not included by the selected package is rejected.
 manifest values and 8-bit RGBA pixels under explicit numeric, channel, and
 changed-ratio tolerances. It writes machine-readable `report.json` and a
 transparent/red `diff.png`, then exits unsuccessfully for a disallowed delta.
-Capture remains observation-only; golden policy belongs to tooling rather than
-runtime behavior.
+Artifact names, PNG filenames, and capture-statement labels are reported as
+ignored identity fields; all rendered and environmental fields participate.
+Capture remains observation-only; golden policy belongs to tooling rather
+than runtime behavior.
 
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their
