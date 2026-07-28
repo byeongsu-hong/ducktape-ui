@@ -107,6 +107,7 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
         writeln!(out, "#[cfg(not(target_arch = \"wasm32\"))] type __IceEventStream<T> = ::iced::futures::stream::BoxStream<'static, T>; #[cfg(target_arch = \"wasm32\")] type __IceEventStream<T> = ::iced::futures::stream::LocalBoxStream<'static, T>;").unwrap();
     }
     for item in &document.structs {
+        writeln!(out, "{}", source_marker(&item.span)).unwrap();
         writeln!(
             out,
             "#[allow(dead_code)] fn __ui_lang_check_{}(value: &{}) {{",
@@ -122,8 +123,10 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
             .unwrap();
         }
         writeln!(out, "}}").unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     for item in &document.functions {
+        writeln!(out, "{}", source_marker(&item.span)).unwrap();
         let borrowed_component = item.kind == ExternKind::Component
             && item.borrowed.iter().copied().any(|borrowed| borrowed);
         let params = item
@@ -171,6 +174,7 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
                 item.name, item.rust_path
             )
             .unwrap();
+            writeln!(out, "{SOURCE_MARKER_END}").unwrap();
             continue;
         }
         match item.kind {
@@ -325,6 +329,7 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
             .unwrap(),
             _ => unreachable!("style probes returned above"),
         }
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
 }
 

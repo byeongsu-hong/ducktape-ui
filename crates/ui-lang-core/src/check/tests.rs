@@ -300,3 +300,66 @@ view
         error.message
     );
 }
+
+#[test]
+fn warns_for_unreachable_component_graphs() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Used()\n  text \"Used\"\ncomponent Hidden()\n  HiddenLeaf\ncomponent HiddenLeaf()\n  text \"Hidden\"\ncomponent TestOnly()\n  text \"Test only\"\nview\n  Used\ntest mounts_component\n  mount\n    TestOnly\n",
+    )
+    .unwrap();
+    let warnings = document.warnings();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W001")
+            .map(|warning| warning.line)
+            .collect::<Vec<_>>(),
+        [14, 16]
+    );
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| !warning.message.contains("Used` is unreachable")
+                && !warning.message.contains("TestOnly` is unreachable"))
+    );
+}
+
+#[test]
+fn warns_for_state_without_readers_or_writers() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n",
+    )
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .map(|warning| (warning.code, warning.message.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        warnings
+            .iter()
+            .any(|(code, message)| { *code == "W003" && message.contains("state `read_only`") })
+    );
+    assert!(warnings.iter().any(|(code, message)| {
+        *code == "W002" && message.contains("state `write_only`") && message.contains("never read")
+    }));
+    assert!(warnings.iter().any(|(code, message)| {
+        *code == "W002"
+            && message.contains("state `unused`")
+            && message.contains("never read or written")
+    }));
+    assert!(
+        warnings
+            .iter()
+            .all(|(_, message)| !message.contains("state `healthy`"))
+    );
+}
+
+#[test]
+fn follows_controlled_component_bindings_for_state_usage() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  draft = \"\"\ncomponent Field(bind value:str)\n  input \"Value\" <-> value\nview\n  Field value<->draft\n",
+    )
+    .unwrap();
+    assert!(document.warnings().is_empty(), "{:?}", document.warnings());
+}

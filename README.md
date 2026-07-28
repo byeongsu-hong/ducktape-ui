@@ -467,6 +467,16 @@ implicit `mount` handler are definition-only. Rename is offered only when every
 reference has an exact retained source span and every workspace app root
 checks.
 
+Analysis also reports unreachable component declarations, state with no
+reader, and state with readers but no writer. Component reachability is
+combined across every discovered app root and first-class test mount, so shared
+libraries are warned only when no root mounts the definition. The same warnings
+appear in the LSP. Generated
+Rust diagnostics from `cargo ice check` and `clippy` are mapped back to the
+responsible root or imported `.ice` syntax; `test` and `compat` run the same
+source-mapped check preflight before invoking Cargo's normal test runner. The
+generated Rust coordinate remains available as a note for backend debugging.
+
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:
 
@@ -516,12 +526,12 @@ Core end-to-end cases use the built-in Rust test runner and paired fixture
 files under `crates/ui-lang-core/tests/cases`:
 
 ```text
-cases/<suite>/<case>/
+cases/<format|diagnostic|warning|compile>/<case>/
 ├── as-is.ice   input
 └── to-be.*     exact formatted output or expected diagnostic/Rust fragments
 ```
 
-The `format`, `diagnostic`, and `compile` suites are auto-discovered, so a new
+The `format`, `diagnostic`, `warning`, and `compile` suites are auto-discovered, so a new
 case needs no Rust test function. Focused AST and edge-case assertions remain
 next to their parser, checker, or code generator module.
 

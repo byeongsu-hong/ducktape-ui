@@ -1,0 +1,4 @@
+W003 state `fixed` is read at 1 site(s) but never written
+W002 state `output` is written at 1 site(s) but never read
+W002 state `disconnected` is never read or written
+W001 component `Hidden` is unreachable from the app view and every test mount

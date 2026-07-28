@@ -78,6 +78,7 @@ pub(in crate::codegen) fn generate_subscription(
         .unwrap();
     }
     for subscription in &document.subscriptions {
+        writeln!(out, "{}", source_marker(&subscription.span)).unwrap();
         let source_arity = subscription_payload_arity(&subscription.source, subscription.window_id);
         let filter = subscription
             .filter
@@ -346,6 +347,7 @@ pub(in crate::codegen) fn generate_subscription(
                     if condition.is_some() {
                         writeln!(out, "]) }} else {{ ::iced::Subscription::none() }},").unwrap();
                     }
+                    writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                     continue;
                 }
                 let filter = match event {
@@ -402,6 +404,7 @@ pub(in crate::codegen) fn generate_subscription(
         if condition.is_some() {
             writeln!(out, "]) }} else {{ ::iced::Subscription::none() }},").unwrap();
         }
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     if has_animations(document) {
         let active = document

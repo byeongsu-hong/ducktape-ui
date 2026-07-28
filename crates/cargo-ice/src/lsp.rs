@@ -12,8 +12,8 @@ use ui_lang_core::{
 };
 
 struct DiagnosticReport {
-    target: String,
-    diagnostic: Option<Value>,
+    diagnostics: Vec<(String, Value)>,
+    reachable_components: BTreeSet<(String, usize)>,
 }
 
 enum Incoming {
@@ -411,7 +411,7 @@ fn reanalyze_open_roots(
     let targets = reports
         .values()
         .chain(next.values())
-        .map(|report| report.target.clone())
+        .flat_map(|report| report.diagnostics.iter().map(|(target, _)| target.clone()))
         .collect::<BTreeSet<_>>();
     *reports = next;
     for target in targets {
@@ -442,26 +442,72 @@ fn analyze_diagnostics(
         |path| ui_lang_core::analyze_file_with_overlays(path, overlays),
     );
     match analysis {
-        Ok(_) => DiagnosticReport {
-            target: uri.to_owned(),
-            diagnostic: None,
-        },
+        Ok(document) => {
+            let reachable_components = document
+                .reachable_component_definitions()
+                .into_iter()
+                .map(|range| {
+                    (
+                        range
+                            .path
+                            .as_deref()
+                            .map_or_else(|| uri.to_owned(), file_path_uri),
+                        range.line,
+                    )
+                })
+                .collect();
+            let diagnostics = document
+                .warnings()
+                .iter()
+                .map(|warning| {
+                    let (target, target_source) =
+                        diagnostic_target(uri, source, overlays, warning.path.as_deref());
+                    let mut message = warning.message.clone();
+                    if let Some(hint) = &warning.hint {
+                        message.push_str("\nhint: ");
+                        message.push_str(hint);
+                    }
+                    (
+                        target,
+                        json!({
+                            "range": diagnostic_range(
+                                &target_source,
+                                warning.line,
+                                warning.column,
+                            ),
+                            "severity": 2,
+                            "code": warning.code,
+                            "source": "ice",
+                            "message": message,
+                        }),
+                    )
+                })
+                .collect();
+            DiagnosticReport {
+                diagnostics,
+                reachable_components,
+            }
+        }
         Err(error) => {
-            let (target, target_source) = diagnostic_target(uri, source, overlays, &error);
+            let (target, target_source) =
+                diagnostic_target(uri, source, overlays, error.path.as_deref());
             let mut message = error.message;
             if let Some(hint) = error.hint {
                 message.push_str("\nhint: ");
                 message.push_str(&hint);
             }
             DiagnosticReport {
-                target,
-                diagnostic: Some(json!({
-                    "range": diagnostic_range(&target_source, error.line, error.column),
-                    "severity": 1,
-                    "code": error.code,
-                    "source": "ice",
-                    "message": message,
-                })),
+                diagnostics: vec![(
+                    target,
+                    json!({
+                        "range": diagnostic_range(&target_source, error.line, error.column),
+                        "severity": 1,
+                        "code": error.code,
+                        "source": "ice",
+                        "message": message,
+                    }),
+                )],
+                reachable_components: BTreeSet::new(),
             }
         }
     }
@@ -2525,11 +2571,33 @@ fn publish_aggregated(
     reports: &HashMap<String, DiagnosticReport>,
     uri: &str,
 ) -> io::Result<()> {
-    let diagnostics = reports
+    let reachable_components = reports
         .values()
-        .filter(|report| report.target == uri)
-        .filter_map(|report| report.diagnostic.clone())
-        .collect::<Vec<_>>();
+        .flat_map(|report| report.reachable_components.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let mut diagnostics = Vec::new();
+    let mut warning_locations = BTreeSet::new();
+    for (target, diagnostic) in reports
+        .values()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|(target, _)| target == uri)
+    {
+        let line = diagnostic["range"]["start"]["line"].as_u64();
+        if diagnostic["code"] == "W001"
+            && line.is_some_and(|line| {
+                reachable_components.contains(&(target.clone(), line as usize + 1))
+            })
+        {
+            continue;
+        }
+        if diagnostic["severity"] == 2 {
+            let code = diagnostic["code"].as_str().unwrap_or_default();
+            if !warning_locations.insert((code, line.unwrap_or_default())) {
+                continue;
+            }
+        }
+        diagnostics.push(diagnostic.clone());
+    }
     write_message(
         writer,
         &json!({
@@ -2544,9 +2612,9 @@ fn diagnostic_target(
     root_uri: &str,
     root_source: &str,
     overlays: &HashMap<PathBuf, String>,
-    error: &ui_lang_core::Error,
+    path: Option<&str>,
 ) -> (String, String) {
-    let Some(error_path) = error.path.as_deref().map(Path::new) else {
+    let Some(error_path) = path.map(Path::new) else {
         return (root_uri.to_owned(), root_source.to_owned());
     };
     if file_uri_path(root_uri).is_some_and(|root_path| same_file(&root_path, error_path)) {
@@ -2800,13 +2868,14 @@ mod tests {
         source_range, whole_document_range, workspace_edit,
     };
     use serde_json::{Value, json};
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::fs;
     use std::io::{BufReader, Cursor};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
+    const APP_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
     struct Fixture(PathBuf);
 
@@ -3171,6 +3240,129 @@ mod tests {
                 .is_empty(),
             "{diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn publishes_reachability_and_state_warnings() {
+        let uri = "file:///tmp/warnings.ice";
+        let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  fixed = 0\ncomponent Hidden()\n  text \"Hidden\"\nview\n  text fixed\n";
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": uri, "text": source } },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+        let diagnostics = messages
+            .iter()
+            .find(|message| message["method"] == "textDocument/publishDiagnostics")
+            .unwrap()["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(diagnostics.len(), 2);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic["severity"] == 2)
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["W001", "W003"])
+        );
+    }
+
+    #[test]
+    fn reachable_from_any_open_root_suppresses_fragment_warning() {
+        let fixture = Fixture::new();
+        fixture.write("part.ice", "component Shared()\n  text \"Shared\"\n");
+        let part_uri = file_path_uri(&fixture.path("part.ice"));
+        let one_uri = file_path_uri(&fixture.path("one.ice"));
+        let two_uri = file_path_uri(&fixture.path("two.ice"));
+        let one = format!("app One\nuse \"part.ice\"\n{APP_THEME}view\n  text \"One\"\n");
+        let two = format!("app Two\nuse \"part.ice\"\n{APP_THEME}view\n  Shared\n");
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": one_uri, "text": one } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": two_uri, "text": two } },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        let published = messages
+            .iter()
+            .filter(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"] == part_uri
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(published.len(), 2, "{messages:#?}");
+        assert_eq!(published[0]["params"]["diagnostics"][0]["code"], "W001");
+        assert!(
+            published[1]["params"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn shared_fragment_warnings_are_published_once() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "part.ice",
+            "component Shared()\n  state\n    fixed = 0\n  text fixed\n",
+        );
+        let part_uri = file_path_uri(&fixture.path("part.ice"));
+        let one_uri = file_path_uri(&fixture.path("one.ice"));
+        let two_uri = file_path_uri(&fixture.path("two.ice"));
+        let one = format!("app One\nuse \"part.ice\"\n{APP_THEME}view\n  Shared\n");
+        let two = format!("app Two\nuse \"part.ice\"\n{APP_THEME}view\n  Shared\n");
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": one_uri, "text": one } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": two_uri, "text": two } },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        let diagnostics = messages
+            .iter()
+            .filter(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"] == part_uri
+            })
+            .next_back()
+            .unwrap()["params"]["diagnostics"]
+            .as_array()
+            .unwrap();
+        assert_eq!(diagnostics.len(), 1, "{messages:#?}");
+        assert_eq!(diagnostics[0]["code"], "W003");
     }
 
     #[test]

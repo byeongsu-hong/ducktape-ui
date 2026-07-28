@@ -18,6 +18,7 @@ pub(in crate::codegen) fn generate_statements(
         ("", "")
     };
     for statement in statements {
+        writeln!(out, "{}", source_marker(statement.span())).unwrap();
         match statement {
             Statement::Let { name, value, .. } => {
                 let code = expr_code(value, env, document, ValueMode::Owned)?;
@@ -121,6 +122,7 @@ pub(in crate::codegen) fn generate_statements(
                             task_prefix, task_suffix
                         )
                         .unwrap();
+                        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                         continue;
                     }
                     if function == "__ice_image_allocate" {
@@ -139,6 +141,7 @@ pub(in crate::codegen) fn generate_statements(
                             task_prefix, task_suffix
                         )
                         .unwrap();
+                        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                         continue;
                     }
                     let task = match function.as_str() {
@@ -158,6 +161,7 @@ pub(in crate::codegen) fn generate_statements(
                         task_prefix, task_suffix
                     )
                     .unwrap();
+                    writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                     continue;
                 }
                 let extern_kind = match kind {
@@ -919,6 +923,7 @@ pub(in crate::codegen) fn generate_statements(
                 writeln!(out, "{}{task}{}", task_prefix, task_suffix).unwrap();
             }
         }
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     Ok(has_task)
 }

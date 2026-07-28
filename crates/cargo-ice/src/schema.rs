@@ -1816,6 +1816,13 @@ pub fn document() -> Value {
                 "ownership": "app roots own reports; reports are aggregated by diagnostic URI; fragments are not analyzed as standalone apps",
                 "scope": "all open app roots and their overlaid import graphs",
                 "reanalyze": "all open app roots after any open, change, or close",
+                "severities": ["error", "warning"],
+                "warnings": {
+                    "W001": "component unreachable from every open app root and test mount",
+                    "W002": "reachable state has no reader",
+                    "W003": "reachable state has no writer",
+                },
+                "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; test and compat run that check before the normal test runner",
             },
             "formatting": {
                 "supported": true,
