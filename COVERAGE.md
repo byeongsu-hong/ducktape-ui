@@ -30,10 +30,10 @@ no-ops/dead gates, unreachable statements, and duplicate subscriptions are
 also semantic warnings. Component and handler reachability is combined across
 all workspace or open-editor roots. Cargo JSON diagnostics from marked generated
 Rust regions map back to root and imported Ice syntax for `cargo ice` commands.
-The LSP `ice.lint` workspace command publishes the same
-mapping for error-level Clippy/rustc diagnostics at their `.ice` document URI
-and source range. Warning-level backend findings remain CLI-only; Ice semantic
-warnings continue to be published directly by the language checker.
+The LSP `ice.lint` workspace command publishes
+the same mapping for error-level Clippy/rustc diagnostics at their `.ice`
+document URI and source range. Warning-level backend findings remain CLI-only;
+Ice semantic warnings continue to be published directly by the language checker.
 
 Native live development is separately covered by the versioned
 `ui-lang-live-protocol`, compiler lowering, generated state/event bridge,
