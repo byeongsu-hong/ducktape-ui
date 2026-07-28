@@ -121,6 +121,8 @@ pub struct TextEditor<
     wrapping: Wrapping,
     class: Theme::Class<'a>,
     key_binding: Option<Box<dyn Fn(KeyPress) -> Option<Binding<Message>> + 'a>>,
+    mouse_interaction:
+        Option<Box<dyn Fn(&str, Position) -> mouse::Interaction + 'a>>,
     on_edit: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     highlighter_settings: Highlighter::Settings,
     highlighter_format: fn(
@@ -153,6 +155,7 @@ where
             wrapping: Wrapping::default(),
             class: <Theme as Catalog>::default(),
             key_binding: None,
+            mouse_interaction: None,
             on_edit: None,
             highlighter_settings: (),
             highlighter_format: |_highlight, _theme| {
@@ -300,6 +303,7 @@ where
             wrapping: self.wrapping,
             class: self.class,
             key_binding: self.key_binding,
+            mouse_interaction: self.mouse_interaction,
             on_edit: self.on_edit,
             highlighter_settings: settings,
             highlighter_format: to_format,
@@ -315,6 +319,15 @@ where
         key_binding: impl Fn(KeyPress) -> Option<Binding<Message>> + 'a,
     ) -> Self {
         self.key_binding = Some(Box::new(key_binding));
+        self
+    }
+
+    /// Sets the mouse interaction for text at the hovered position.
+    pub fn mouse_interaction(
+        mut self,
+        interaction: impl Fn(&str, Position) -> mouse::Interaction + 'a,
+    ) -> Self {
+        self.mouse_interaction = Some(Box::new(interaction));
         self
     }
 
@@ -867,6 +880,12 @@ where
                             Binding::Enter => {
                                 publish(Action::Edit(Edit::Enter));
                             }
+                            Binding::Indent => {
+                                publish(Action::Edit(Edit::Indent));
+                            }
+                            Binding::Unindent => {
+                                publish(Action::Edit(Edit::Unindent));
+                            }
                             Binding::Backspace => {
                                 publish(Action::Edit(Edit::Backspace));
                             }
@@ -1037,7 +1056,13 @@ where
 
         if let Some(focus) = state.focus.as_ref() {
             match internal.editor.selection() {
-                Selection::Caret(position) if focus.is_cursor_visible() => {
+                Selection::Caret(position)
+                    if focus.is_cursor_visible()
+                        && state
+                            .preedit
+                            .as_ref()
+                            .is_none_or(|preedit| preedit.content.is_empty()) =>
+                {
                     let cursor =
                         Rectangle::new(
                             position + translation,
@@ -1083,13 +1108,24 @@ where
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let is_disabled = self.on_edit.is_none();
+        let text_bounds = layout.bounds().shrink(self.padding);
 
-        if cursor.is_over(layout.bounds()) {
-            if is_disabled {
-                mouse::Interaction::NotAllowed
-            } else {
-                mouse::Interaction::Text
-            }
+        if is_disabled && cursor.is_over(layout.bounds()) {
+            mouse::Interaction::NotAllowed
+        } else if let Some(interaction) = cursor
+            .position_in(text_bounds)
+            .and_then(|position| {
+                let internal = self.content.0.borrow();
+                let position = internal.editor.hit_test(position)?;
+                let line = internal.editor.line(position.line)?;
+                self.mouse_interaction
+                    .as_ref()
+                    .map(|interaction| interaction(&line.text, position))
+            })
+        {
+            interaction
+        } else if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Text
         } else {
             mouse::Interaction::default()
         }
@@ -1149,6 +1185,10 @@ pub enum Binding<Message> {
     Insert(char),
     /// Break the current line.
     Enter,
+    /// Indent at the current cursor or selection.
+    Indent,
+    /// Unindent the current line or selection.
+    Unindent,
     /// Delete the previous character.
     Backspace,
     /// Delete the next character.
@@ -1218,6 +1258,10 @@ impl<Message> Binding<Message> {
 
         match modified_key.as_ref() {
             keyboard::Key::Named(key::Named::Enter) => Some(Self::Enter),
+            keyboard::Key::Named(key::Named::Tab) if modifiers.shift() => {
+                Some(Self::Unindent)
+            }
+            keyboard::Key::Named(key::Named::Tab) => Some(Self::Indent),
             keyboard::Key::Named(key::Named::Backspace)
                 if modifiers.jump() =>
             {

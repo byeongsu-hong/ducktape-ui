@@ -176,6 +176,10 @@ impl text::Editor for () {
         text::editor::Selection::Caret(Point::ORIGIN)
     }
 
+    fn hit_test(&self, _point: Point) -> Option<text::editor::Position> {
+        None
+    }
+
     fn copy(&self) -> Option<String> {
         None
     }
