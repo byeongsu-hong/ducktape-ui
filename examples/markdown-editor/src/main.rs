@@ -8,25 +8,19 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{__MarkdownEditorMessage, EditorMode, MarkdownEditor};
+    use super::{__MarkdownEditorMessage, MarkdownEditor};
     use iced::widget::text_editor::{Action, Content, Edit};
 
     #[test]
-    fn large_document_edits_do_not_reparse_preview() {
+    fn large_document_edits_stay_in_the_native_buffer() {
         let (mut app, _) = MarkdownEditor::__boot();
         let source = "A native editor line.\n".repeat(10_000);
         app.document = Content::with_text(&source);
-        let preview_before = format!("{:?}", app.rendered.items());
-
         let _ = app.__update(__MarkdownEditorMessage::__EditDocument(Action::Edit(
             Edit::Insert('x'),
         )));
 
         assert_eq!(app.document.text().len(), source.len() + 1);
-        assert_eq!(format!("{:?}", app.rendered.items()), preview_before);
-
-        let _ = app.__update(__MarkdownEditorMessage::ShowPreview);
-        assert_eq!(app.mode, EditorMode::Preview);
-        assert_ne!(format!("{:?}", app.rendered.items()), preview_before);
+        assert_eq!(app.document.line_count(), 10_001);
     }
 }

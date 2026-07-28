@@ -1,17 +1,6 @@
-enum EditorMode
-  write
-  preview
-
 state
-  document:editor = "# Native Markdown\n\nStart writing here. The editor owns selection, clipboard, undo, and IME input.\n\n## First slice\n\n- One document\n- One window\n- No web view"
-  rendered:markdown = "# Native Markdown\n\nStart writing here. The editor owns selection, clipboard, undo, and IME input.\n\n## First slice\n\n- One document\n- One window\n- No web view"
-  mode:EditorMode = EditorMode.write
-
-derived
-  previewing = mode == EditorMode.preview
+  document:editor = "# Native Markdown\n\nWrite **bold**, *italic*, `code`, and [links](https://iced.rs) in one focused surface.\n\n## Built for flow\n\n- Native selection and clipboard\n- Incremental Markdown styling\n- No preview mode or web view\n\n```rust\nfn fast_path() {\n    // Only changed lines are highlighted again.\n}\n```"
 
 preset test
   state
     document = editor("# Native Markdown\n\nA focused writing surface.")
-    rendered = markdown("# Native Markdown\n\nA focused writing surface.")
-    mode = EditorMode.write

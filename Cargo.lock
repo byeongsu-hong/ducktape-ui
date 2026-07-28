@@ -2824,6 +2824,7 @@ name = "markdown-editor-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "pulldown-cmark",
  "ui-lang",
  "ui-lang-runtime",
 ]
