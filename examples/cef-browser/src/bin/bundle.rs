@@ -37,17 +37,52 @@ fn main() -> Result<(), Box<dyn Error>> {
             "English",
             semver::Version::new(0, 1, 0),
         );
-        bundle(
+        let app = bundle(
             &output,
             &target_path,
             APP,
             &bundle_metadata.helper_name,
             bundle_metadata.resources_path,
             info,
-        )?
+        )?;
+        remove_credential_usage_descriptions(&app)?;
+        app
     };
 
     println!("Run {}", executable.display());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn remove_credential_usage_descriptions(app: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    const PUBLIC_KEY_CREDENTIAL_USAGE: &str = "NSWebBrowserPublicKeyCredentialUsageDescription";
+
+    fn scrub(plist_path: &std::path::Path) -> Result<(), Box<dyn Error>> {
+        let mut value = plist::Value::from_file(plist_path)?;
+        let dictionary = value
+            .as_dictionary_mut()
+            .ok_or_else(|| format!("{} is not a plist dictionary", plist_path.display()))?;
+        if dictionary.remove(PUBLIC_KEY_CREDENTIAL_USAGE).is_none() {
+            return Err(format!(
+                "{} did not declare public-key credential access",
+                plist_path.display()
+            )
+            .into());
+        }
+        value.to_file_xml(plist_path)?;
+        Ok(())
+    }
+
+    scrub(&app.join("Contents/Info.plist"))?;
+    for entry in fs::read_dir(app.join("Contents/Frameworks"))? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir()
+            && path.extension().is_some_and(|extension| extension == "app")
+        {
+            scrub(&path.join("Contents/Info.plist"))?;
+        }
+    }
     Ok(())
 }
 

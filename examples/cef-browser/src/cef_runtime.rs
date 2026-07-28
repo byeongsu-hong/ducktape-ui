@@ -8,6 +8,24 @@ pub struct AttachResult {
     pub status: String,
 }
 
+#[cfg(any(feature = "cef", test))]
+const DISABLED_CREDENTIAL_PREFERENCES: &[&str] = &[
+    "credentials_enable_service",
+    "credentials_enable_autosignin",
+    "credentials_enable_passkeys",
+];
+
+#[cfg(any(feature = "cef", test))]
+fn credential_switches(target_os: &str) -> Vec<(&'static str, Option<&'static str>)> {
+    let mut switches = vec![("disable-blink-features", Some("WebAuth"))];
+    match target_os {
+        "linux" => switches.push(("password-store", Some("basic"))),
+        "macos" => switches.push(("use-mock-keychain", None)),
+        _ => {}
+    }
+    switches
+}
+
 pub fn normalize_url(value: &str) -> String {
     let value = value.trim();
     if value.contains("://") || value.starts_with("about:") || value.starts_with("data:") {
@@ -68,19 +86,22 @@ pub fn can_go_forward() -> bool {
 #[cfg(feature = "cef")]
 mod enabled {
     use cef::rc::Rc;
+    use cef::wrap_app;
     use cef::{
-        Browser, BrowserSettings, CefString, Client, ImplBrowser, ImplBrowserHost, ImplClient,
-        ImplFrame, ImplLifeSpanHandler, LifeSpanHandler, Rect, Settings, WindowInfo, WrapClient,
-        WrapLifeSpanHandler,
+        App, Browser, BrowserSettings, CefString, Client, CommandLine, ImplApp, ImplBrowser,
+        ImplBrowserHost, ImplClient, ImplCommandLine, ImplFrame, ImplLifeSpanHandler,
+        ImplPreferenceManager, ImplValue, LifeSpanHandler, Rect, Settings, WindowInfo, WrapApp,
+        WrapClient, WrapLifeSpanHandler,
     };
     use iced::window::raw_window_handle::RawWindowHandle;
     use std::cell::RefCell;
     use std::io;
+    use std::path::{Path, PathBuf};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const WINDOW_WIDTH: f32 = 1100.0;
     const WINDOW_HEIGHT: f32 = 760.0;
@@ -112,8 +133,59 @@ mod enabled {
         closed: Arc<AtomicBool>,
     }
 
+    struct UserProfileDir(PathBuf);
+
+    impl UserProfileDir {
+        fn create() -> io::Result<Self> {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("ice-cef-browser-{}-{unique}", std::process::id()));
+            std::fs::create_dir(&path)?;
+            restrict_to_current_user(&path)?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for UserProfileDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     thread_local! {
         static BROWSER: RefCell<Option<BrowserState>> = const { RefCell::new(None) };
+    }
+
+    wrap_app! {
+        struct BrowserApp;
+
+        impl App {
+            fn on_before_command_line_processing(
+                &self,
+                _process_type: Option<&CefString>,
+                command_line: Option<&mut CommandLine>,
+            ) {
+                let Some(command_line) = command_line else {
+                    return;
+                };
+                for (name, value) in super::credential_switches(std::env::consts::OS) {
+                    let name = CefString::from(name);
+                    if let Some(value) = value {
+                        let value = CefString::from(value);
+                        command_line.append_switch_with_value(Some(&name), Some(&value));
+                    } else {
+                        command_line.append_switch(Some(&name));
+                    }
+                }
+            }
+        }
     }
 
     cef::wrap_life_span_handler! {
@@ -145,33 +217,42 @@ mod enabled {
         let _library = load_library();
         initialize_api();
         let args = cef::args::Args::new();
-        let exit_code = cef::execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
+        let mut app = BrowserApp::new();
+        let exit_code = cef::execute_process(
+            Some(args.as_main_args()),
+            Some(&mut app),
+            std::ptr::null_mut(),
+        );
         if exit_code >= 0 {
             std::process::exit(exit_code);
         }
 
-        let root_cache_path = std::env::temp_dir().join("ice-cef-browser-cache");
-        std::fs::create_dir_all(&root_cache_path)
-            .map_err(|error| iced_error(&format!("failed to create CEF cache: {error}")))?;
+        let profile = UserProfileDir::create()
+            .map_err(|error| iced_error(&format!("failed to create CEF profile: {error}")))?;
         let settings = Settings {
             external_message_pump: 1,
             no_sandbox: 1,
-            root_cache_path: CefString::from(root_cache_path.to_string_lossy().as_ref()),
+            root_cache_path: CefString::from(profile.path().to_string_lossy().as_ref()),
             ..Settings::default()
         };
         if cef::initialize(
             Some(args.as_main_args()),
             Some(&settings),
-            None,
+            Some(&mut app),
             std::ptr::null_mut(),
         ) != 1
         {
             return Err(iced_error("CEF initialization failed"));
         }
+        if let Err(error) = disable_credential_services() {
+            cef::shutdown();
+            return Err(error);
+        }
 
         let result = crate::CefBrowser::run();
         close_browser();
         cef::shutdown();
+        drop(profile);
         result
     }
 
@@ -180,7 +261,12 @@ mod enabled {
         let _library = load_library();
         initialize_api();
         let args = cef::args::Args::new();
-        cef::execute_process(Some(args.as_main_args()), None, std::ptr::null_mut())
+        let mut app = BrowserApp::new();
+        cef::execute_process(
+            Some(args.as_main_args()),
+            Some(&mut app),
+            std::ptr::null_mut(),
+        )
     }
 
     pub fn attach(url: String) -> iced::Task<super::AttachResult> {
@@ -388,6 +474,40 @@ mod enabled {
         iced::Error::WindowCreationFailed(Box::new(io::Error::other(message)))
     }
 
+    fn disable_credential_services() -> iced::Result {
+        let context = cef::request_context_get_global_context()
+            .ok_or_else(|| iced_error("CEF global request context is unavailable"))?;
+        for preference in super::DISABLED_CREDENTIAL_PREFERENCES {
+            let name = CefString::from(*preference);
+            let mut value = cef::value_create()
+                .ok_or_else(|| iced_error("CEF did not create a preference value"))?;
+            if value.set_bool(0) != 1 {
+                return Err(iced_error(&format!(
+                    "CEF did not accept the {preference} preference value"
+                )));
+            }
+            let mut error = CefString::from("");
+            if context.set_preference(Some(&name), Some(&mut value), Some(&mut error)) != 1 {
+                return Err(iced_error(&format!(
+                    "failed to disable CEF preference {preference}: {error}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn restrict_to_current_user(path: &Path) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    }
+
+    #[cfg(not(unix))]
+    fn restrict_to_current_user(_path: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
     fn initialize_api() {
         let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
     }
@@ -408,7 +528,7 @@ pub use enabled::*;
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_url;
+    use super::{DISABLED_CREDENTIAL_PREFERENCES, credential_switches, normalize_url};
 
     #[test]
     fn normalizes_host_names_without_changing_explicit_schemes() {
@@ -418,5 +538,35 @@ mod tests {
             "http://localhost:8080"
         );
         assert_eq!(normalize_url("about:blank"), "about:blank");
+    }
+
+    #[test]
+    fn credential_policy_avoids_platform_secret_stores() {
+        assert_eq!(
+            credential_switches("linux"),
+            vec![
+                ("disable-blink-features", Some("WebAuth")),
+                ("password-store", Some("basic"))
+            ]
+        );
+        assert_eq!(
+            credential_switches("macos"),
+            vec![
+                ("disable-blink-features", Some("WebAuth")),
+                ("use-mock-keychain", None)
+            ]
+        );
+        assert_eq!(
+            credential_switches("windows"),
+            vec![("disable-blink-features", Some("WebAuth"))]
+        );
+        assert_eq!(
+            DISABLED_CREDENTIAL_PREFERENCES,
+            [
+                "credentials_enable_service",
+                "credentials_enable_autosignin",
+                "credentials_enable_passkeys"
+            ]
+        );
     }
 }
