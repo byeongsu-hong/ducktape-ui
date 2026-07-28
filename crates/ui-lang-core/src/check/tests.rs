@@ -331,6 +331,59 @@ fn warns_for_unreachable_component_graphs() {
 }
 
 #[test]
+fn warns_for_positional_and_unbounded_component_identity() {
+    let document = analyze(&warning_app(
+        r#"state
+  items = [1, 2]
+  selected = 1
+component RetainedRow()
+  state
+    count = 0
+  on increment
+    count = count + 1
+  button "Increment" -> increment
+component MountedRow()
+  lifetime mounted
+  state
+    count = 0
+  on increment
+    count = count + 1
+  button "Increment" -> increment
+view
+  col
+    for item in items
+      RetainedRow
+    keyed item in items by=item
+      RetainedRow
+    keyed item in items by=item
+      MountedRow
+    RetainedRow #selected(selected)
+"#,
+    ))
+    .unwrap();
+    let warnings = document.warnings();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W008")
+            .count(),
+        1,
+        "{warnings:?}"
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| warning.code == "W009")
+            .count(),
+        3,
+        "{warnings:?}"
+    );
+    assert!(warnings.iter().all(|warning| {
+        warning.code != "W008" && warning.code != "W009" || !warning.message.contains("MountedRow")
+    }));
+}
+
+#[test]
 fn warns_for_state_without_readers_or_writers() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n    button \"Mutate\" -> mutate\n",
