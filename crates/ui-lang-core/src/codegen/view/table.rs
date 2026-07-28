@@ -43,7 +43,7 @@ pub(in crate::codegen) fn render_table(
             slot,
         )?;
         let mut code = format!(
-            "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
+            "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
         if let Some(width) = &column.width {
             write!(

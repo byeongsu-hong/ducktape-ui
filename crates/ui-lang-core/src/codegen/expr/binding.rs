@@ -561,7 +561,7 @@ pub(in crate::codegen) fn native_field_projection(
         ),
         (Type::TextLineHeight, "kind") => (
             format!(
-                "match ({code}) {{ ::iced::widget::text::LineHeight::Relative(_) => \"relative\", ::iced::widget::text::LineHeight::Absolute(_) => \"absolute\" }}.to_owned()"
+                "match {code} {{ ::iced::widget::text::LineHeight::Relative(_) => \"relative\", ::iced::widget::text::LineHeight::Absolute(_) => \"absolute\" }}.to_owned()"
             ),
             Type::Str,
         ),

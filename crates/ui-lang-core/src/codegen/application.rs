@@ -183,6 +183,9 @@ pub(in crate::codegen) fn generate_theme(
         )
     };
     writeln!(out, "fn __palette(&self{callback_arg}) -> __IcePalette {{").unwrap();
+    if document.daemon {
+        writeln!(out, "let _ = &window;").unwrap();
+    }
     if let Some(setting) = &document.settings.palette {
         let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
         let contract = generated_named_rust(&contract.name);
@@ -631,6 +634,9 @@ pub(in crate::codegen) fn generate_update(
         // Keep statement-level `return` inside this arm so every user update
         // reaches the post-state accessibility snapshot below.
         writeln!(out, "{pattern} => (|| {{").unwrap();
+        for param in &handler.params {
+            writeln!(out, "let _ = &{};", param.name).unwrap();
+        }
         let mut env = state_env(document, "self");
         for param in &handler.params {
             env.insert(param.name.clone(), handler_param_binding(param));
@@ -682,6 +688,9 @@ pub(in crate::codegen) fn generate_update(
                 bindings.join(", ")
             )
             .unwrap();
+            for param in &handler.params {
+                writeln!(out, "let _ = &{};", param.name).unwrap();
+            }
             let future = handler_future(handler);
             if future.is_some() {
                 writeln!(

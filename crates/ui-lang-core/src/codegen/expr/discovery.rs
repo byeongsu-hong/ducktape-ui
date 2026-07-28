@@ -167,7 +167,7 @@ pub(in crate::codegen) fn generate_pane_types(
         let cfg = if test_only { "#[cfg(test)]\n" } else { "" };
         writeln!(
             out,
-            "{cfg}#[derive(Debug, Clone, PartialEq)]\nenum {pane_type} {{\n__Static(&'static str),"
+            "{cfg}#[derive(Debug, Clone, PartialEq)]\npub(crate) enum {pane_type} {{\n__Static(&'static str),"
         )
         .unwrap();
         for template in templates {

@@ -213,6 +213,8 @@ pub(in crate::codegen) fn checkbox_style_code(
         custom.unwrap_or_else(|| format!("::iced::widget::checkbox::{preset}(__theme, __status)"));
     let mut code =
         format!(".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{");
+    let status_count = overrides.len();
+    let mut rendered_statuses = 0;
     for (status, checked, style) in overrides {
         let inherited = match (status, checked) {
             ("Active", _) => None,
@@ -222,6 +224,7 @@ pub(in crate::codegen) fn checkbox_style_code(
         if inherited.is_none() && style.is_none() {
             continue;
         }
+        rendered_statuses += 1;
         write!(
             code,
             " ::iced::widget::checkbox::Status::{status} {{ is_checked: {checked} }} => {{"
@@ -235,7 +238,10 @@ pub(in crate::codegen) fn checkbox_style_code(
         }
         code.push_str(" }");
     }
-    code.push_str(" _ => {} } __style })");
+    if rendered_statuses < status_count {
+        code.push_str(" _ => {}");
+    }
+    code.push_str(" } __style })");
     Ok(code)
 }
 
@@ -337,6 +343,8 @@ pub(in crate::codegen) fn toggler_style_code(
         custom.unwrap_or_else(|| "::iced::widget::toggler::default(__theme, __status)".to_owned());
     let mut code =
         format!(".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{");
+    let status_count = overrides.len();
+    let mut rendered_statuses = 0;
     for (status, checked, style) in overrides {
         let inherited = match (status, checked) {
             ("Active", _) => None,
@@ -346,6 +354,7 @@ pub(in crate::codegen) fn toggler_style_code(
         if inherited.is_none() && style.is_none() {
             continue;
         }
+        rendered_statuses += 1;
         write!(
             code,
             " ::iced::widget::toggler::Status::{status} {{ is_toggled: {checked} }} => {{"
@@ -359,7 +368,10 @@ pub(in crate::codegen) fn toggler_style_code(
         }
         code.push_str(" }");
     }
-    code.push_str(" _ => {} } __style })");
+    if rendered_statuses < status_count {
+        code.push_str(" _ => {}");
+    }
+    code.push_str(" } __style })");
     Ok(code)
 }
 
@@ -487,6 +499,8 @@ pub(in crate::codegen) fn radio_style_code(
         custom.unwrap_or_else(|| "::iced::widget::radio::default(__theme, __status)".to_owned());
     let mut code =
         format!(".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{");
+    let status_count = overrides.len();
+    let mut rendered_statuses = 0;
     for (status, selected, style) in overrides {
         let inherited = match (status, selected) {
             ("Active", _) => None,
@@ -496,6 +510,7 @@ pub(in crate::codegen) fn radio_style_code(
         if inherited.is_none() && style.is_none() {
             continue;
         }
+        rendered_statuses += 1;
         write!(
             code,
             " ::iced::widget::radio::Status::{status} {{ is_selected: {selected} }} => {{"
@@ -509,7 +524,10 @@ pub(in crate::codegen) fn radio_style_code(
         }
         code.push_str(" }");
     }
-    code.push_str(" _ => {} } __style })");
+    if rendered_statuses < status_count {
+        code.push_str(" _ => {}");
+    }
+    code.push_str(" } __style })");
     Ok(code)
 }
 

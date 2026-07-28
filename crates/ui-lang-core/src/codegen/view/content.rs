@@ -67,9 +67,17 @@ pub(in crate::codegen) fn render_content(
                 let background = background
                     .as_deref()
                     .map(|value| theme_color(document, value));
+                let (theme, default) = if cell.is_none() || background.is_none() {
+                    (
+                        "theme",
+                        "let default = ::iced::widget::qr_code::default(theme); ",
+                    )
+                } else {
+                    ("_theme", "")
+                };
                 write!(
                     code,
-                    ".style(move |theme| {{ let default = ::iced::widget::qr_code::default(theme); ::iced::widget::qr_code::Style {{ cell: {}, background: {} }} }})",
+                    ".style(move |{theme}| {{ {default}::iced::widget::qr_code::Style {{ cell: {}, background: {} }} }})",
                     cell.unwrap_or_else(|| "default.cell".into()),
                     background.unwrap_or_else(|| "default.background".into())
                 )

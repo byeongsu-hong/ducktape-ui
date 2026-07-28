@@ -12,8 +12,9 @@ pub(in crate::codegen) fn generate_keyboard_types(out: &mut String, document: &D
         return;
     }
     out.push_str(
-        r#"#[derive(Debug, Clone)]
-struct __IceKeyPress {
+        r#"#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct __IceKeyPress {
     key: ::iced::keyboard::Key,
     modified_key: ::iced::keyboard::Key,
     physical_key: ::iced::keyboard::key::Physical,
@@ -22,8 +23,9 @@ struct __IceKeyPress {
     text: ::std::option::Option<::std::string::String>,
     repeat: bool,
 }
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct __IceKeyRelease {
+pub(crate) struct __IceKeyRelease {
     key: ::iced::keyboard::Key,
     modified_key: ::iced::keyboard::Key,
     physical_key: ::iced::keyboard::key::Physical,
@@ -43,8 +45,9 @@ pub(in crate::codegen) fn generate_system_types(out: &mut String, document: &Doc
             .any(|subscription| matches!(&subscription.source, SubscriptionSource::SystemTheme));
     if information {
         out.push_str(
-            r#"#[derive(Debug, Clone)]
-struct __IceSystemInfo {
+            r#"#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct __IceSystemInfo {
     system_name: ::std::option::Option<::std::string::String>,
     system_kernel: ::std::option::Option<::std::string::String>,
     system_version: ::std::option::Option<::std::string::String>,
@@ -107,8 +110,9 @@ pub(in crate::codegen) fn generate_widget_selector_types(out: &mut String, docum
         return;
     }
     out.push_str(
-        r#"#[derive(Debug, Clone)]
-struct __IceWidgetTarget {
+        r#"#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct __IceWidgetTarget {
     kind: ::std::string::String,
     id: ::std::option::Option<::iced::widget::Id>,
     x: f64,

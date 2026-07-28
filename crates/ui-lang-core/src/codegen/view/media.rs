@@ -99,6 +99,7 @@ pub(in crate::codegen) fn render_media(
                         Some(None) => Some("None".to_owned()),
                         None => idle.clone(),
                     };
+                    let exhaustive = idle.is_some() && hovered.is_some();
                     write!(
                         code,
                         ".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{"
@@ -118,7 +119,10 @@ pub(in crate::codegen) fn render_media(
                         )
                         .unwrap();
                     }
-                    code.push_str(" _ => {} } __style })");
+                    if !exhaustive {
+                        code.push_str(" _ => {}");
+                    }
+                    code.push_str(" } __style })");
                 }
             }
             if let Some(filter) = options.filter {

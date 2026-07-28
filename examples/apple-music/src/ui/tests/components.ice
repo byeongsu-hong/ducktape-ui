@@ -196,29 +196,61 @@ test component_card_contracts
                     play -> play _ _ _
   target featured = #stage/content/album(1)/featured(1)/root/control
   target featured_title = #stage/content/album(1)/featured(1)/root/control/title
+  target featured_artist = #stage/content/album(1)/featured(1)/root/control/artist
   target recent = #stage/content/album(1)/recent(1)/root
   target recent_cover = #stage/content/album(1)/recent(1)/root/cover/root/image
+  target recent_metadata = #stage/content/album(1)/recent(1)/root/metadata
+  target recent_title = #stage/content/album(1)/recent(1)/root/metadata/title
+  target recent_artist = #stage/content/album(1)/recent(1)/root/metadata/artist
   target station = #stage/content/album(1)/station(1)/root
   target station_title = #stage/content/album(1)/station(1)/root/title
+  target station_artist = #stage/content/album(1)/station(1)/root/artist
   target artist = #stage/content/album(1)/artist(1)/root
   target artist_name = #stage/content/album(1)/artist(1)/root/artist
+  target artist_detail = #stage/content/album(1)/artist(1)/root/detail
   target song = #stage/content/album(1)/song(1)/root
+  target song_title = #stage/content/album(1)/song(1)/root/title
+  target song_artist = #stage/content/album(1)/song(1)/root/artist
   target song_duration = #stage/content/album(1)/song(1)/root/duration
   target queue_row = #stage/content/album(1)/queue(1)/root
+  target queue_title = #stage/content/album(1)/queue(1)/root/title
+  target queue_artist = #stage/content/album(1)/queue(1)/root/artist
   expect featured.kind == "button"
   expect featured.width ~= 190.0
   expect featured_title.text_size ~= 13.0
+  expect featured_title.x >= featured.x + 10.0
+  expect featured_artist.x >= featured.x + 10.0
   expect recent.kind == "button"
   expect recent.height ~= 204.0
   expect recent_cover.width ~= 152.0
+  expect recent_metadata.width ~= recent.width
+  expect recent_title.x >= recent.x + 8.0
+  expect recent_title.right <= recent.right - 8.0
+  expect recent_title.y >= recent_cover.bottom + 8.0
+  expect recent_artist.x >= recent.x + 8.0
+  expect recent_artist.right <= recent.right - 8.0
+  expect recent_artist.bottom <= recent.bottom - 8.0
   expect station.kind == "button"
   expect station.width ~= 268.0
   expect station_title.text_size ~= 18.0
+  expect station_title.x >= station.x + 16.0
+  expect station_artist.x >= station.x + 16.0
   expect artist.kind == "button"
   expect artist_name.value == "Mira Vale"
+  expect artist_name.x >= artist.x + 10.0
+  expect artist_detail.x >= artist.x + 10.0
   expect song.kind == "button"
+  expect song_title.x >= song.x + 8.0
+  expect song_artist.x >= song.x + 8.0
   expect song_duration.value == "3:47"
   expect queue_row.kind == "button"
+  expect queue_title.x >= queue_row.x + 7.0
+  expect queue_artist.x >= queue_row.x + 7.0
+  press recent
+  expect recent.border.width ~= 0.0
+  expect recent_title.x >= recent.x + 8.0
+  expect recent_artist.x >= recent.x + 8.0
+  release
   dispatch seek(50.0)
   click featured
   expect position ~= 0.0
@@ -276,6 +308,9 @@ test component_collection_contracts
   target recent_card = #stage/content/recent-strip/root/recent(1)/root
   target album_grid = #stage/content/album-grid/root
   target grid_album = #stage/content/album-grid/root/album(1)
+  target grid_metadata = #stage/content/album-grid/root/album(1)/metadata
+  target grid_title = #stage/content/album-grid/root/album(1)/metadata/title
+  target grid_artist = #stage/content/album-grid/root/album(1)/metadata/artist
   target station_strip = #stage/content/station-strip/root
   target station_card = #stage/content/station-strip/root/station(1)/root
   target artist_grid = #stage/content/artist-grid/root
@@ -288,6 +323,18 @@ test component_collection_contracts
   expect recent_card.kind == "button"
   expect album_grid.width ~= content.width - 40.0
   expect grid_album.kind == "button"
+  expect grid_metadata.width ~= grid_album.width
+  expect grid_title.x >= grid_album.x + 8.0
+  expect grid_title.right <= grid_album.right - 8.0
+  expect grid_title.y >= grid_metadata.y + 8.0
+  expect grid_artist.x >= grid_album.x + 8.0
+  expect grid_artist.right <= grid_album.right - 8.0
+  expect grid_artist.bottom <= grid_album.bottom - 8.0
+  press grid_album
+  expect grid_album.border.width ~= 0.0
+  expect grid_title.x >= grid_album.x + 8.0
+  expect grid_artist.x >= grid_album.x + 8.0
+  release
   expect station_strip.height ~= 178.0
   expect station_card.kind == "button"
   expect artist_grid.width ~= content.width - 40.0
