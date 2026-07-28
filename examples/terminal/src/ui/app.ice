@@ -1,0 +1,255 @@
+app TerminalWorkspace
+  title "Ice Terminal"
+  palette active_palette
+  id "dev.ducktape.ice.terminal"
+  text-size 14
+  antialiasing true
+  window
+    size 1180 760
+    min-size 760 520
+    position centered
+
+use "theme.ice"
+use "extern/terminal.ice"
+
+font body family=sans default=true
+font strong family=sans weight=semibold
+font code family=mono
+
+state
+  active_palette:palette[AppTheme] = AppTheme.terminal
+  environment:Environment = detect_environment()
+  session:Session = idle_session()
+  kind = "shell"
+  target = ""
+  directory = ""
+  running = false
+  busy = false
+  title = ""
+  error = ""
+
+derived
+  ssh_ready = kind != "ssh" || !empty(trim(target))
+  tool_available = (kind == "shell") || (kind == "ssh" && environment.ssh_available) || (kind == "claude" && environment.claude_available) || (kind == "codex" && environment.codex_available)
+  can_start = !busy && ssh_ready && tool_available
+  has_error = !empty(error)
+
+on mount
+  directory = environment.directory
+
+on kind_changed(next)
+  kind = next
+  error = ""
+
+on start
+  return if !can_start
+  busy = true
+  error = ""
+  run start_session(kind, target, directory) -> started _ | failed _
+
+on started(result)
+  session = result.session
+  title = result.title
+  running = true
+  busy = false
+
+on stop
+  session = idle_session()
+  running = false
+  busy = false
+  title = ""
+
+on terminal_notice(notice)
+  running = notice.running
+  return if empty(notice.title)
+  title = notice.title
+
+on failed(cause)
+  busy = false
+  error = cause.message
+
+subscribe
+  terminal_events(session) when running -> terminal_notice _
+
+view
+  box
+    with
+      w=fill
+      h=fill
+      bg=bg
+    col
+      with
+        w=fill
+        h=fill
+        gap=0.0
+      box
+        with
+          w=fill
+          bg=surface
+          border=border
+          border-w=1.0
+          px=24.0
+          py=16.0
+        row
+          with
+            w=fill
+            gap=12.0
+            align=center
+          col w=fill gap=3.0
+            text "Ice Terminal"
+              with
+                size=20.0
+                font=strong
+                @text-fg
+            text "Local shell, SSH, Claude Code, and Codex in a native PTY" size=12.0 @text-muted
+          if running
+            text "● Running" size=12.0 @text-success
+          if !running
+            text "● Idle" size=12.0 @text-subtle
+      row
+        with
+          w=fill
+          h=fill
+          gap=16.0
+          p=16.0
+        box
+          with
+            w=300.0
+            h=fill
+            bg=surface
+            border=border
+            border-w=1.0
+            r=12.0
+            p=18.0
+          col w=fill gap=18.0
+            col w=fill gap=9.0
+              text "Session"
+                with
+                  size=15.0
+                  font=strong
+                  @text-fg
+              radio "Shell" -> kind_changed _
+                with
+                  value="shell"
+                  selected=(kind == "shell")
+                  w=fill
+              radio "SSH" -> kind_changed _
+                with
+                  value="ssh"
+                  selected=(kind == "ssh")
+                  w=fill
+              radio "Claude Code" -> kind_changed _
+                with
+                  value="claude"
+                  selected=(kind == "claude")
+                  w=fill
+              radio "Codex" -> kind_changed _
+                with
+                  value="codex"
+                  selected=(kind == "codex")
+                  w=fill
+            col w=fill gap=6.0
+              text "Availability" size=12.0 @text-muted
+              row gap=10.0 wrap
+                if environment.ssh_available
+                  text "SSH ready" size=11.0 @text-success
+                if !environment.ssh_available
+                  text "SSH missing" size=11.0 @text-danger
+                if environment.claude_available
+                  text "Claude ready" size=11.0 @text-success
+                if !environment.claude_available
+                  text "Claude missing" size=11.0 @text-subtle
+                if environment.codex_available
+                  text "Codex ready" size=11.0 @text-success
+                if !environment.codex_available
+                  text "Codex missing" size=11.0 @text-subtle
+            if kind == "ssh"
+              col w=fill gap=6.0
+                text "SSH destination" size=12.0 @text-muted
+                input "user@host" #target <-> target hint="ssh user@host or ssh -p 2222 user@host"
+            col w=fill gap=6.0
+              text "Local working directory" size=12.0 @text-muted
+              input "Local working directory" #directory <-> directory hint="Directory path or ~"
+            if !tool_available
+              text "The selected command is not available on PATH."
+                with
+                  size=12.0
+                  wrap=word
+                  @text-danger
+            if has_error
+              box
+                with
+                  w=fill
+                  bg=danger/10
+                  border=danger/35
+                  border-w=1.0
+                  r=8.0
+                  p=10.0
+                text error
+                  with
+                    size=12.0
+                    wrap=word
+                    @text-danger
+            row w=fill gap=8.0
+              button "Start session" disabled=!can_start @primary_action -> start
+              button "Stop" disabled=!running @secondary_action -> stop
+            col w=fill gap=3.0
+              text "Shell" size=11.0 @text-subtle
+              text environment.shell
+                with
+                  size=11.0
+                  font=code
+                  wrap=glyph
+                  @text-muted
+        col
+          with
+            w=fill
+            h=fill
+            gap=8.0
+          row
+            with
+              w=fill
+              gap=8.0
+              align=center
+            if empty(title)
+              text "No active session"
+                with
+                  size=13.0
+                  font=strong
+                  @text-fg
+            if !empty(title)
+              text title
+                with
+                  size=13.0
+                  font=strong
+                  @text-fg
+            space w=fill
+            if running
+              text "Click to focus · use your platform copy/paste shortcuts" size=11.0 @text-subtle
+          box
+            with
+              w=fill
+              h=fill
+              bg=terminal
+              border=terminal_border
+              border-w=1.0
+              r=12.0
+              clip=true
+            stack w=fill h=fill
+              if running
+                extern terminal_surface(session)
+              if !running
+                box
+                  with
+                    w=fill
+                    h=fill
+                    align-x=center
+                    align-y=center
+                    p=24.0
+                  col gap=8.0 align=center
+                    text ">_"
+                      with
+                        size=32.0
+                        font=code
+                        @text-subtle
+                    text "Choose a session and start it." @text-muted

@@ -13,6 +13,7 @@ members = [
     "examples/live-reload",
     "examples/markdown-editor",
     "examples/showcase",
+    "examples/terminal",
     "conformance/ice",
 ]
 exclude = [
