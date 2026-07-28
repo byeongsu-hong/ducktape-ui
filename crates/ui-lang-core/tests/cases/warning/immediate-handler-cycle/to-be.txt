@@ -1,0 +1,1 @@
+W004 handler `refresh` immediately routes back to itself and can refresh forever

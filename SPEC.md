@@ -4725,6 +4725,7 @@ Successful analysis may also emit stable semantic warnings:
 | `W001` | a component is unreachable from every application view and first-class test mount |
 | `W002` | reachable state has no reader, including state that is written but has no observable consumer |
 | `W003` | reachable state has readers but no writer and therefore always keeps its initial value |
+| `W004` | handlers form an unconditional immediate routing cycle that can refresh the application forever |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -4733,7 +4734,12 @@ state is analyzed only when the component is reachable. `cargo ice` combines
 all discovered app roots before reporting `W001`, so a shared component
 definition used by any root is not reported as unreachable merely because
 another root imports but does not mount it. The LSP applies the same union over
-all open app roots.
+all open app roots. `W004` follows task-flow routes that unconditionally emit
+before any external effect, immediate `units` routes, and pane-query routes,
+including routes nested in task groups. A `return if` termination guard
+suppresses outgoing cycle edges. Extern futures, tasks, and streams do not make
+their result routes immediate. Conditional `try` routes and system window or
+widget operations are also excluded.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing

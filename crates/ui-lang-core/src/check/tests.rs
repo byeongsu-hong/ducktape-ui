@@ -356,6 +356,48 @@ fn warns_for_state_without_readers_or_writers() {
 }
 
 #[test]
+fn warns_for_immediate_handler_routing_cycles() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non refresh\n  flow\n    from done 1\n    done -> refresh\non first\n  flow\n    from done 1\n    then value -> done value + 1\n    done -> second\non second\n  flow\n    from done 1\n    done -> first\non empty\n  flow\n    from none i64\n    collect\n    done -> empty\nview\n  col\n    button \"Refresh\" -> refresh\n    button \"Empty\" -> empty\n",
+    )
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W004")
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 3);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("`refresh`")
+                && warning.message.contains("back to itself"))
+    );
+    assert!(warnings.iter().any(|warning| {
+        warning.message.contains("`first`") && warning.message.contains("`second`")
+    }));
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("`empty`"))
+    );
+}
+
+#[test]
+fn ignores_guarded_and_asynchronous_handler_routing_cycles() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  stopped = false\non guarded\n  return if stopped\n  flow\n    from done 1\n    done -> guarded\non poll\n  flow\n    from task system theme\n    done -> polled _\non polled(theme)\n  flow\n    from done theme\n    done -> poll\nview\n  col\n    button \"Guarded\" -> guarded\n    button \"Poll\" -> poll\n",
+    )
+    .unwrap();
+    assert!(
+        document
+            .warnings()
+            .iter()
+            .all(|warning| warning.code != "W004")
+    );
+}
+
+#[test]
 fn follows_controlled_component_bindings_for_state_usage() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  draft = \"\"\ncomponent Field(bind value:str)\n  input \"Value\" <-> value\nview\n  Field value<->draft\n",

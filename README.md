@@ -467,10 +467,11 @@ reference has an exact retained source span and every workspace app root
 checks.
 
 Analysis also reports unreachable component declarations, state with no
-reader, and state with readers but no writer. Component reachability is
-combined across every discovered app root and first-class test mount, so shared
-libraries are warned only when no root mounts the definition. The same warnings
-appear in the LSP. Generated
+reader, state with readers but no writer, and unconditional immediate handler
+routing cycles that can keep refreshing the application forever. Component
+reachability is combined across every discovered app root and first-class test
+mount, so shared libraries are warned only when no root mounts the definition.
+The same warnings appear in the LSP. Generated
 Rust diagnostics from `cargo ice check` and `clippy` are mapped back to the
 responsible root or imported `.ice` syntax; `test` and `compat` run the same
 source-mapped check preflight before invoking Cargo's normal test runner. The

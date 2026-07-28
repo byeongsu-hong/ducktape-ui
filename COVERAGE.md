@@ -21,10 +21,11 @@ counts toward the row below.
 
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
-Successful analysis reports unreachable components and readerless/writerless
-state, combining component reachability across all workspace or open-editor
-roots. Cargo JSON diagnostics from marked generated Rust regions map back to
-root and imported Ice syntax for `cargo ice` commands.
+Successful analysis reports unreachable components, readerless/writerless
+state, and unconditional immediate handler routing cycles, combining component
+reachability across all workspace or open-editor roots. Cargo JSON diagnostics
+from marked generated Rust regions map back to root and imported Ice syntax for
+`cargo ice` commands.
 
 Source graphs support both bare fragment imports and aliased module imports.
 Aliases preserve checked `::` identity for components, recipes, extern

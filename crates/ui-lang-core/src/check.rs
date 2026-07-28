@@ -8,6 +8,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     check(&mut document, &reachable)?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(usage.finish());
+    warnings.extend(immediate_handler_cycle_warnings(&document));
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(document, warnings, reachable))
 }
@@ -583,6 +584,7 @@ fn scoped_run(statements: &[Statement]) -> Option<(FutureMode, &Span)> {
 
 mod application;
 mod canvas;
+mod cycles;
 mod declarations;
 mod expr;
 mod handler;
@@ -597,6 +599,7 @@ mod widgets;
 
 use application::*;
 use canvas::*;
+use cycles::*;
 use declarations::*;
 use handler::*;
 use options::*;

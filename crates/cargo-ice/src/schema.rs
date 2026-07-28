@@ -1821,6 +1821,7 @@ pub fn document() -> Value {
                     "W001": "component unreachable from every open app root and test mount",
                     "W002": "reachable state has no reader",
                     "W003": "reachable state has no writer",
+                    "W004": "unconditional immediate handler routing cycle",
                 },
                 "generatedRustSourceMap": "cargo ice check and clippy consume Cargo JSON and map nested generated provenance regions to root or imported Ice syntax; test and compat run that check before the normal test runner",
             },
