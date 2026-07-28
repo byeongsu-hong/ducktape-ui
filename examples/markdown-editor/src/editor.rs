@@ -5,6 +5,7 @@ use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position, TextEdi
 use iced::{Border, Color, Element, Font, Padding, Pixels, Theme};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -17,7 +18,7 @@ const BODY_LINE_HEIGHT: f32 = 1.6;
 const HEADING_SCALE: [f32; 6] = [1.875, 1.5, 1.375, 1.25, 1.125, 1.0];
 const HEADING_LINE_HEIGHT: f32 = 1.4;
 const CODE_BLOCK_SCALE: f32 = 0.9;
-const INLINE_CODE_SCALE: f32 = 0.8;
+const INLINE_CODE_SCALE: f32 = 1.0;
 const CODE_BLOCK_PADDING: f32 = BODY_SIZE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +40,7 @@ impl Caret {
 pub struct MarkdownHighlighter {
     current_line: usize,
     fences: Vec<Option<Fence>>,
+    code: HashMap<usize, iced_highlighter::Highlighter>,
     caret: Caret,
 }
 
@@ -46,9 +48,10 @@ pub struct MarkdownHighlighter {
 struct Fence {
     marker: u8,
     length: usize,
+    start_line: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MarkdownHighlight {
     HiddenMarker,
     Marker,
@@ -59,6 +62,10 @@ pub enum MarkdownHighlight {
     Emphasis,
     InlineCode,
     CodeBlock,
+    CodeToken {
+        color: Option<Color>,
+        font: Option<Font>,
+    },
     Link,
     Quote,
     ListMarker,
@@ -211,6 +218,18 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
             padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
+        MarkdownHighlight::CodeToken { color, font } => Format {
+            color: Some(color.unwrap_or(palette.text)),
+            font: Some(font.map_or_else(geist_mono, |font| Font {
+                family: Family::Name("Geist Mono"),
+                ..font
+            })),
+            size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
+            line_height: Some(LineHeight::Absolute(Pixels(
+                BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
+            ))),
+            ..Format::default()
+        },
         MarkdownHighlight::Link => Format {
             color: Some(palette.primary),
             font: Some(geist(Weight::Semibold, FontStyle::Normal)),
@@ -239,6 +258,7 @@ impl Highlighter for MarkdownHighlighter {
         Self {
             current_line: 0,
             fences: vec![None],
+            code: HashMap::new(),
             caret: *caret,
         }
     }
@@ -250,24 +270,39 @@ impl Highlighter for MarkdownHighlighter {
     }
 
     fn change_line(&mut self, line: usize) {
-        if line < self.fences.len() {
-            self.fences.truncate(line + 1);
-            self.current_line = line;
-        } else {
+        if line >= self.fences.len() {
             self.fences.truncate(1);
+            self.code.clear();
             self.current_line = 0;
+            return;
         }
+
+        if let Some(fence) = self.fences[line]
+            && let Some(code) = self.code.get_mut(&fence.start_line)
+        {
+            code.change_line(line.saturating_sub(fence.start_line + 1));
+            let resume = fence.start_line + 1 + code.current_line();
+            self.fences.truncate(resume + 1);
+            self.code.retain(|start, _| *start <= fence.start_line);
+            self.current_line = resume;
+            return;
+        }
+
+        self.fences.truncate(line + 1);
+        self.code.retain(|start, _| *start < line);
+        self.current_line = line;
     }
 
     fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
         let line_index = self.current_line;
         let fence = self.fences[line_index];
-        let (mut highlights, next_fence) = highlight_line(
+        let (highlights, next_fence) = highlight_line(
             line,
+            line_index,
             fence,
             (line_index == self.caret.line).then_some(self.caret.column),
+            &mut self.code,
         );
-        highlights.retain(|(range, _)| !range.is_empty());
 
         self.current_line += 1;
         if self.fences.len() == self.current_line {
@@ -286,8 +321,10 @@ impl Highlighter for MarkdownHighlighter {
 
 fn highlight_line(
     line: &str,
+    line_index: usize,
     active_fence: Option<Fence>,
     caret: Option<usize>,
+    code: &mut HashMap<usize, iced_highlighter::Highlighter>,
 ) -> (Vec<(Range<usize>, MarkdownHighlight)>, Option<Fence>) {
     let leading = line.len() - line.trim_start_matches([' ', '\t']).len();
     let delimiter = fence_delimiter(&line[leading..]);
@@ -295,7 +332,25 @@ fn highlight_line(
     if let Some(fence) = active_fence {
         let closes = delimiter.is_some_and(|candidate| {
             candidate.marker == fence.marker && candidate.length >= fence.length
-        });
+        }) && delimiter
+            .is_some_and(|candidate| line[leading + candidate.length..].trim().is_empty());
+
+        if !closes {
+            let mut highlights = vec![(0..line.len(), MarkdownHighlight::CodeBlock)];
+            if let Some(highlighter) = code.get_mut(&fence.start_line) {
+                highlights.extend(highlighter.highlight_line(line).map(|(range, highlight)| {
+                    (
+                        range,
+                        MarkdownHighlight::CodeToken {
+                            color: highlight.color(),
+                            font: highlight.font(),
+                        },
+                    )
+                }));
+            }
+            return (highlights, Some(fence));
+        }
+
         return (
             vec![(
                 0..line.len(),
@@ -313,7 +368,24 @@ fn highlight_line(
         );
     }
 
-    if let Some(fence) = delimiter {
+    if let Some(delimiter) = delimiter {
+        let token = line[leading + delimiter.length..]
+            .split_whitespace()
+            .next()
+            .unwrap_or("txt")
+            .to_owned();
+        code.insert(
+            line_index,
+            iced_highlighter::Highlighter::new(&iced_highlighter::Settings {
+                theme: iced_highlighter::Theme::InspiredGitHub,
+                token,
+            }),
+        );
+        let fence = Fence {
+            marker: delimiter.marker,
+            length: delimiter.length,
+            start_line: line_index,
+        };
         return (
             vec![(
                 leading..line.len(),
@@ -337,7 +409,11 @@ fn fence_delimiter(line: &str) -> Option<Fence> {
     }
 
     let length = line.bytes().take_while(|byte| *byte == marker).count();
-    (length >= 3).then_some(Fence { marker, length })
+    (length >= 3).then_some(Fence {
+        marker,
+        length,
+        start_line: 0,
+    })
 }
 
 fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, MarkdownHighlight)> {
@@ -656,6 +732,10 @@ pub fn track_action(content: &mut Content, action: Action) {
         return;
     };
 
+    if matches!(edit, Edit::Enter) && complete_fence(content) {
+        return;
+    }
+
     let before = content.cursor();
     if matches!(edit, Edit::Indent | Edit::Unindent) {
         // ponytail: Iced exposes no indent delta; snapshot only this rare block action.
@@ -696,6 +776,104 @@ pub fn track_action(content: &mut Content, action: Action) {
         changed_at: Instant::now(),
     };
     history().record(change);
+}
+
+fn complete_fence(content: &mut Content) -> bool {
+    let before = content.cursor();
+    if before.selection.is_some() {
+        return false;
+    }
+
+    let Some(line) = content.line(before.position.line) else {
+        return false;
+    };
+    let text = line.text.into_owned();
+    if before.position.column != text.len() || inside_fence_before(content, before.position.line) {
+        return false;
+    }
+
+    let leading = text.len() - text.trim_start_matches([' ', '\t']).len();
+    if leading > 3 {
+        return false;
+    }
+    let Some(fence) = fence_delimiter(&text[leading..]) else {
+        return false;
+    };
+    if fence.marker == b'`' && text[leading + fence.length..].contains('`') {
+        return false;
+    }
+    if has_closing_fence_after(content, before.position.line, fence) {
+        return false;
+    }
+
+    let ending = line_ending(content, before.position.line);
+    let indent = &text[..leading];
+    let marker = char::from(fence.marker).to_string().repeat(fence.length);
+    let inserted = format!("{ending}{indent}{ending}{indent}{marker}");
+    replace_range(content, before.position, before.position, &inserted);
+    let after = Cursor {
+        position: Position {
+            line: before.position.line + 1,
+            column: leading,
+        },
+        selection: None,
+    };
+    content.move_to(after);
+    history().record(Change {
+        data: ChangeData::Replace {
+            start: before.position,
+            removed: String::new(),
+            inserted,
+        },
+        before,
+        after,
+        before_id: 0,
+        after_id: 0,
+        kind: EditKind::Other,
+        changed_at: Instant::now(),
+    });
+    true
+}
+
+fn inside_fence_before(content: &Content, line: usize) -> bool {
+    let mut active: Option<Fence> = None;
+
+    for line_index in 0..line {
+        let Some(line) = content.line(line_index) else {
+            break;
+        };
+        let leading = line.text.len() - line.text.trim_start_matches([' ', '\t']).len();
+        let Some(candidate) = fence_delimiter(&line.text[leading..]) else {
+            continue;
+        };
+
+        if let Some(fence) = active {
+            if candidate.marker == fence.marker
+                && candidate.length >= fence.length
+                && line.text[leading + candidate.length..].trim().is_empty()
+            {
+                active = None;
+            }
+        } else {
+            active = Some(candidate);
+        }
+    }
+
+    active.is_some()
+}
+
+fn has_closing_fence_after(content: &Content, line: usize, fence: Fence) -> bool {
+    ((line + 1)..content.line_count()).any(|line_index| {
+        let Some(line) = content.line(line_index) else {
+            return false;
+        };
+        let leading = line.text.len() - line.text.trim_start_matches([' ', '\t']).len();
+        fence_delimiter(&line.text[leading..]).is_some_and(|candidate| {
+            candidate.marker == fence.marker
+                && candidate.length >= fence.length
+                && line.text[leading + candidate.length..].trim().is_empty()
+        })
+    })
 }
 
 fn describe_edit(content: &Content, edit: &Edit) -> Option<(Position, String, String, EditKind)> {
@@ -942,6 +1120,51 @@ pub fn format_document(mut content: Content, command: String) -> Content {
         _ => return content,
     };
     let before = content.cursor();
+    if let Some((raw, inner)) = formatted_range(&content, &command) {
+        let line = before.position.line;
+        let Some(source) = content.line(line).map(|line| line.text.into_owned()) else {
+            return content;
+        };
+        let removed = source[raw.clone()].to_owned();
+        let inserted = source[inner.clone()].to_owned();
+        let start = Position {
+            line,
+            column: raw.start,
+        };
+        replace_range(
+            &mut content,
+            start,
+            Position {
+                line,
+                column: raw.end,
+            },
+            &inserted,
+        );
+        let map_position = |position: Position| Position {
+            line,
+            column: raw.start + position.column.saturating_sub(inner.start).min(inner.len()),
+        };
+        let after = Cursor {
+            position: map_position(before.position),
+            selection: before.selection.map(map_position),
+        };
+        content.move_to(after);
+        history().record(Change {
+            data: ChangeData::Replace {
+                start,
+                removed,
+                inserted,
+            },
+            before,
+            after,
+            before_id: 0,
+            after_id: 0,
+            kind: EditKind::Other,
+            changed_at: Instant::now(),
+        });
+        return content;
+    }
+
     let start = before.selection.map_or(before.position, |anchor| {
         min_position(before.position, anchor)
     });
@@ -992,6 +1215,35 @@ pub fn format_document(mut content: Content, command: String) -> Content {
         changed_at: Instant::now(),
     });
     content
+}
+
+fn formatted_range(content: &Content, command: &str) -> Option<(Range<usize>, Range<usize>)> {
+    let cursor = content.cursor();
+    let anchor = cursor.selection.unwrap_or(cursor.position);
+    if cursor.position.line != anchor.line {
+        return None;
+    }
+
+    let start = cursor.position.column.min(anchor.column);
+    let end = cursor.position.column.max(anchor.column);
+    let line = content.line(cursor.position.line)?;
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+
+    Parser::new_ext(&line.text, options)
+        .into_offset_iter()
+        .filter_map(|(event, raw)| {
+            let inner = match (&event, command) {
+                (Event::Start(Tag::Strong), "bold") if raw.len() >= 4 => raw.start + 2..raw.end - 2,
+                (Event::Start(Tag::Emphasis), "italic") if raw.len() >= 2 => {
+                    raw.start + 1..raw.end - 1
+                }
+                (Event::Code(_), "code") => delimited_content(&line.text, raw.clone(), b'`'),
+                _ => return None,
+            };
+            ((inner.start <= start && end <= inner.end) || (raw.start == start && end == raw.end))
+                .then_some((raw, inner))
+        })
+        .min_by_key(|(raw, _)| raw.len())
 }
 
 pub fn find_document(mut content: Content, query: String, reverse: bool) -> Content {
@@ -1171,7 +1423,15 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(highlighter.current_line(), 3);
-        assert_eq!(changed, vec![(0..14, MarkdownHighlight::CodeBlock)]);
+        assert_eq!(
+            changed.first(),
+            Some(&(0..14, MarkdownHighlight::CodeBlock))
+        );
+        assert!(
+            changed
+                .iter()
+                .any(|(_, style)| matches!(style, MarkdownHighlight::CodeToken { .. }))
+        );
     }
 
     #[test]
@@ -1216,9 +1476,22 @@ mod tests {
         assert_eq!(code.line_highlight.unwrap().border.width, 1.0);
 
         let inline = super::markdown_format(&MarkdownHighlight::InlineCode, &iced::Theme::Light);
-        assert!((inline.size.unwrap().0 - 12.8).abs() < 0.01);
-        assert!((inline.padding.top - 2.56).abs() < 0.01);
-        assert!((inline.padding.left - 5.12).abs() < 0.01);
+        assert!((inline.size.unwrap().0 - 16.0).abs() < 0.01);
+        assert!((inline.padding.top - 3.2).abs() < 0.01);
+        assert!((inline.padding.left - 6.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn highlights_fenced_code_with_the_declared_language() {
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let _ = highlighter.highlight_line("```rust").count();
+        let code = highlighter
+            .highlight_line("fn main() { let answer = 42; }")
+            .collect::<Vec<_>>();
+
+        assert!(code.iter().any(|(_, style)| {
+            matches!(style, MarkdownHighlight::CodeToken { color: Some(_), .. })
+        }));
     }
 
     #[test]
@@ -1292,6 +1565,40 @@ mod tests {
     }
 
     #[test]
+    fn empty_fenced_code_line_keeps_code_metrics_and_one_surface() {
+        use iced::advanced::text::editor::Editor as _;
+        use iced::advanced::text::{LineHeight, Wrapping};
+        use iced::widget::text_editor::{Cursor, Position};
+        use iced::{Font, Pixels, Size};
+
+        let mut editor = iced::advanced::graphics::text::Editor::with_text("```\n\n```");
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 1, column: 0 });
+        editor.update(
+            Size::new(300.0, 200.0),
+            Font::default(),
+            Pixels(16.0),
+            LineHeight::Absolute(Pixels(25.6)),
+            Wrapping::None,
+            &mut highlighter,
+        );
+        editor.highlight(Font::default(), &mut highlighter, |highlight| {
+            super::markdown_format(highlight, &iced::Theme::Light)
+        });
+        editor.move_to(Cursor {
+            position: Position { line: 1, column: 0 },
+            selection: None,
+        });
+
+        assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
+        assert!(
+            editor
+                .decorations()
+                .iter()
+                .any(|decoration| { (decoration.bounds.height - 55.04).abs() < 0.01 })
+        );
+    }
+
+    #[test]
     fn resumes_near_the_end_of_a_large_document() {
         let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
         for _ in 0..10_000 {
@@ -1302,6 +1609,25 @@ mod tests {
 
         assert_eq!(highlighter.current_line(), 10_000);
         assert_eq!(highlighter.fences.len(), 10_001);
+    }
+
+    #[test]
+    fn resumes_from_a_syntax_checkpoint_in_a_large_code_block() {
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let _ = highlighter.highlight_line("```rust").count();
+        for _ in 0..10_000 {
+            let _ = highlighter.highlight_line("let value = 42;").count();
+        }
+
+        highlighter.change_line(9_999);
+
+        assert!(highlighter.current_line() >= 9_950);
+        assert!(highlighter.current_line() <= 9_999);
+        assert!(
+            highlighter
+                .highlight_line("let changed = true;")
+                .any(|(_, style)| matches!(style, MarkdownHighlight::CodeToken { .. }))
+        );
     }
 
     #[test]
@@ -1353,5 +1679,68 @@ mod tests {
 
         assert_eq!(document.text(), "**text**");
         assert_eq!(document.selection().as_deref(), Some("text"));
+    }
+
+    #[test]
+    fn bold_command_toggles_existing_strong_markup() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("**word**".into());
+        document.move_to(iced::widget::text_editor::Cursor {
+            position: iced::widget::text_editor::Position { line: 0, column: 4 },
+            selection: None,
+        });
+        let document = format_document(document, "bold".into());
+
+        assert_eq!(document.text(), "word");
+        assert_eq!(document.cursor().position.column, 2);
+    }
+
+    #[test]
+    fn enter_after_an_opening_fence_inserts_an_atomic_code_block() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("```rust".into());
+        document.move_to(iced::widget::text_editor::Cursor {
+            position: iced::widget::text_editor::Position { line: 0, column: 7 },
+            selection: None,
+        });
+
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "```rust\n\n```");
+        assert_eq!(
+            document.cursor().position,
+            iced::widget::text_editor::Position { line: 1, column: 0 }
+        );
+
+        document = undo_document(document);
+        assert_eq!(document.text(), "```rust");
+    }
+
+    #[test]
+    fn enter_after_a_closing_fence_stays_a_plain_newline() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("```\ncode\n```".into());
+        document.move_to(iced::widget::text_editor::Cursor {
+            position: iced::widget::text_editor::Position { line: 2, column: 3 },
+            selection: None,
+        });
+
+        track_action(&mut document, Action::Edit(Edit::Enter));
+
+        assert_eq!(document.text(), "```\ncode\n```\n");
+    }
+
+    #[test]
+    fn enter_reuses_an_existing_closing_fence() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("```rust\n```".into());
+        document.move_to(iced::widget::text_editor::Cursor {
+            position: iced::widget::text_editor::Position { line: 0, column: 7 },
+            selection: None,
+        });
+
+        track_action(&mut document, Action::Edit(Edit::Enter));
+
+        assert_eq!(document.text(), "```rust\n\n```");
+        assert_eq!(document.cursor().position.line, 1);
     }
 }

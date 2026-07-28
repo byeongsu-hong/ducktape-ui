@@ -677,6 +677,7 @@ impl editor::Editor for Editor {
         {
             let mut list = cosmic_text::AttrsList::new(&attributes);
             let mut decorations = Vec::new();
+            let line_length = line.text().len();
 
             for (range, highlight) in highlighter.highlight_line(line.text()) {
                 let format = format_highlight(&highlight);
@@ -703,13 +704,16 @@ impl editor::Editor for Editor {
                         );
                     }
 
-                    list.add_span(
-                        range.clone(),
-                        &cosmic_text::Attrs {
-                            color_opt: format.color.map(text::to_color),
-                            ..span_attributes
-                        },
-                    );
+                    let span_attributes = cosmic_text::Attrs {
+                        color_opt: format.color.map(text::to_color),
+                        ..span_attributes
+                    };
+
+                    if range.start == 0 && range.end == line_length {
+                        list = cosmic_text::AttrsList::new(&span_attributes);
+                    } else {
+                        list.add_span(range.clone(), &span_attributes);
+                    }
                 }
 
                 if let Some(highlight) = format.line_highlight {
