@@ -5,6 +5,8 @@ window. Ice owns the 96-pixel application chrome, address state, navigation
 handlers, and CEF message-pump subscription; Rust owns CEF initialization and
 the native-window boundary.
 
+![CEF rendering below the Ice-owned toolbar](screenshot.svg)
+
 CEF is opt-in because its binary distribution is large. Build and stage the app
 with the included bundler:
 
