@@ -1,11 +1,12 @@
 app MarkdownEditor
   title "Markdown Editor"
+  palette active_palette
   id "dev.ducktape.ice.markdown-editor"
-  font "../../assets/fonts/Geist-Regular.ttf"
-  font "../../assets/fonts/Geist-Bold.ttf"
-  font "../../assets/fonts/Geist-Italic.ttf"
-  font "../../assets/fonts/Geist-SemiBold.ttf"
-  font "../../assets/fonts/GeistMono-Regular.ttf"
+  font "../../assets/fonts/IBMPlexSansKR-Regular.ttf"
+  font "../../assets/fonts/IBMPlexSansKR-Bold.ttf"
+  font "../../assets/fonts/IBMPlexSans-Italic.ttf"
+  font "../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
+  font "../../assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   antialiasing true
   window
@@ -27,8 +28,8 @@ use "components/confirm_dialog.ice"
 use "handlers/app.ice"
 use "tests/app.ice"
 
-font geist family="Geist" default=true
-font geist_mono family="Geist Mono"
+font body family="IBM Plex Sans KR" default=true
+font code family="Monoplex KR"
 
 view
   overlay
@@ -53,6 +54,7 @@ view
               busy=busy
               undo_available=can_undo()
               redo_available=can_redo()
+              dark=dark
             events
               new_document -> request_new
               open_document -> request_open
@@ -65,6 +67,7 @@ view
               inline_code -> inline_code
               link -> link
               find -> toggle_find
+              toggle_theme -> toggle_theme
           if find_open
             FindBar #find_bar query<->find_query
               events
@@ -76,6 +79,7 @@ view
               with
                 line=caret_line
                 column=caret_column
+                dark=dark
                 disabled=!editor_enabled
           StatusBar #status-bar
             with

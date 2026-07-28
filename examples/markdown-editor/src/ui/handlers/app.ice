@@ -1,3 +1,18 @@
+on mount
+  task system theme -> system_theme_changed _
+
+on system_theme_changed(next)
+  dark = next == "dark"
+  active_palette = AppTheme.light
+  return if !dark
+  active_palette = AppTheme.dark
+
+on toggle_theme
+  dark = !dark
+  active_palette = AppTheme.light
+  return if !dark
+  active_palette = AppTheme.dark
+
 on request_new
   pending = PendingAction.new_document
   return if is_dirty()
@@ -149,6 +164,7 @@ on failed(cause)
   error = cause.message
 
 subscribe
+  system theme -> system_theme_changed _
   window close-request status=any -> request_close
   keyboard press filter=new_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_new
   keyboard press filter=open_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_open

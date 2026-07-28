@@ -27,5 +27,5 @@ component StatusBar(cursor_label:str, busy:bool, has_error:bool, error:str)
       text cursor_label
         with
           size=11.0
-          font=geist_mono
+          font=code
           @text-muted

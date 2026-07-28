@@ -1,6 +1,6 @@
 extern crate::editor
   editor-action track_action()
-  editor-highlighter markdown_highlight(line:i64, column:i64)
+  editor-highlighter markdown_highlight(line:i64, column:i64, dark:bool)
   sync reset_document(source:str) -> editor
   sync undo_document(document:editor) -> editor
   sync redo_document(document:editor) -> editor
