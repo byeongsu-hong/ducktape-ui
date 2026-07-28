@@ -9,7 +9,9 @@ component EditorSurface(bind document:editor, line:i64, column:i64, disabled:boo
       with
         w=fill
         h=fill
-        max-w=920.0
+        max-w=800.0
+        px=34.0
+        pb=100.0
       editor #document <-> document
         with
           action=track_action()
@@ -20,8 +22,7 @@ component EditorSurface(bind document:editor, line:i64, column:i64, disabled:boo
           min-h=320.0
           font=geist
           size=16.0
-          line-h=1.72
-          p=56.0
+          line-h=1.6
           wrap=word
         active bg=surface border=surface value=fg placeholder=muted selection=selection
         hovered bg=surface border=surface value=fg placeholder=muted selection=selection
