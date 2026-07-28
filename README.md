@@ -493,9 +493,9 @@ also reports `.ice` sources outside every root import graph. Component and
 handler reachability is combined across every discovered app root, subscription,
 preset, implicit mount, and first-class test mount or dispatch, so shared
 libraries are warned only when no root uses the definition. The same warnings
-appear in the LSP. Generated
-Rust diagnostics from `cargo ice check` and `clippy` are mapped back to the
-responsible root or imported `.ice` syntax; `test` and `compat` run the same
+appear in the LSP. Generated Rust diagnostics from `cargo ice check` and
+`clippy` are mapped back to the responsible root or imported `.ice` syntax;
+`test` and `compat` run the same
 source-mapped check preflight before invoking Cargo's normal test runner. The
 generated Rust coordinate remains available as a note for backend debugging.
 The LSP also exposes a `Run Ice lint` source action backed by the `ice.lint`
