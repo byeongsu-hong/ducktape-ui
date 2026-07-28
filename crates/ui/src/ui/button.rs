@@ -138,9 +138,9 @@ where
     }
 
     pub fn into_widget(self) -> Element<'a, Message> {
-        let geometry = geometry(self.variant, self.size);
+        let geometry = geometry(&self.theme, self.variant, self.size);
         let width = if self.size == ButtonSize::Icon {
-            Length::Fixed(30.0)
+            Length::Fixed(self.theme.controls.icon_size)
         } else {
             self.width
         };
@@ -185,20 +185,25 @@ struct ButtonGeometry {
     height: Option<f32>,
 }
 
-fn geometry(variant: ButtonVariant, size: ButtonSize) -> ButtonGeometry {
-    let (vertical, horizontal, height) = match size {
-        ButtonSize::Small => (6.0, 12.0, Some(32.0)),
-        ButtonSize::Large => (10.0, 24.0, Some(40.0)),
-        ButtonSize::Icon => (0.0, 0.0, Some(30.0)),
+fn geometry(theme: &Theme, variant: ButtonVariant, size: ButtonSize) -> ButtonGeometry {
+    let controls = theme.controls;
+    let (padding, height) = match size {
+        ButtonSize::Small => (controls.small_padding, Some(controls.small_height)),
+        ButtonSize::Large => (controls.large_padding, Some(controls.large_height)),
+        ButtonSize::Icon => ([0.0, 0.0], Some(controls.icon_size)),
         ButtonSize::Default => match variant {
-            ButtonVariant::Default | ButtonVariant::Destructive => (11.0, 16.0, None),
-            ButtonVariant::Secondary => (10.0, 16.0, None),
-            ButtonVariant::Outline | ButtonVariant::Ghost => (7.0, 12.0, None),
-            ButtonVariant::Link => (0.0, 0.0, None),
+            ButtonVariant::Default | ButtonVariant::Destructive => {
+                (controls.primary_padding, controls.default_height)
+            }
+            ButtonVariant::Secondary => (controls.secondary_padding, controls.default_height),
+            ButtonVariant::Outline | ButtonVariant::Ghost => {
+                (controls.compact_padding, controls.default_height)
+            }
+            ButtonVariant::Link => ([0.0, 0.0], controls.default_height),
         },
     };
     ButtonGeometry {
-        padding: [vertical, horizontal].into(),
+        padding: padding.into(),
         height,
     }
 }
@@ -257,6 +262,7 @@ pub fn style(
             ButtonVariant::Destructive => {
                 background = background.map(|color| mix(color, palette.foreground, 0.08));
             }
+            ButtonVariant::Default => background = Some(palette.primary_hover),
             _ => background = background.map(|color| mix(color, foreground, 0.08)),
         },
         iced_button::Status::Pressed => match variant {
@@ -271,8 +277,13 @@ pub fn style(
             _ => background = background.map(|color| mix(color, foreground, 0.16)),
         },
         iced_button::Status::Disabled => {
-            background = background.map(|color| alpha(color, 0.5));
-            foreground = alpha(foreground, 0.5);
+            if variant == ButtonVariant::Default {
+                background = Some(palette.disabled);
+                foreground = palette.disabled_foreground;
+            } else {
+                background = background.map(|color| alpha(color, 0.5));
+                foreground = alpha(foreground, 0.5);
+            }
         }
         iced_button::Status::Active => {}
     }
@@ -300,19 +311,24 @@ pub fn style(
 #[cfg(test)]
 mod tests {
     use super::super::focus_control::State as FocusState;
-    use super::super::theme::{DARK, LIGHT};
+    use super::super::theme::{DARK, LIGHT, SHADCN_DARK, SHADCN_LIGHT};
     use super::*;
     use iced::advanced::widget;
 
     #[test]
-    fn disabled_button_reduces_foreground_opacity() {
+    fn disabled_button_uses_the_semantic_disabled_pair() {
         let active = style(&LIGHT, ButtonVariant::Default, iced_button::Status::Active);
         let disabled = style(
             &LIGHT,
             ButtonVariant::Default,
             iced_button::Status::Disabled,
         );
-        assert!(disabled.text_color.a < active.text_color.a);
+        assert_ne!(disabled.text_color, active.text_color);
+        assert_eq!(disabled.text_color, LIGHT.palette.disabled_foreground);
+        assert_eq!(
+            disabled.background,
+            Some(Background::Color(LIGHT.palette.disabled))
+        );
     }
 
     #[test]
@@ -341,11 +357,11 @@ mod tests {
         for (variant, vertical, horizontal) in [
             (ButtonVariant::Default, 11.0, 16.0),
             (ButtonVariant::Destructive, 11.0, 16.0),
-            (ButtonVariant::Secondary, 10.0, 16.0),
-            (ButtonVariant::Outline, 7.0, 12.0),
+            (ButtonVariant::Secondary, 11.0, 16.0),
+            (ButtonVariant::Outline, 8.0, 12.0),
         ] {
             assert_eq!(
-                geometry(variant, ButtonSize::Default),
+                geometry(&LIGHT, variant, ButtonSize::Default),
                 ButtonGeometry {
                     padding: [vertical, horizontal].into(),
                     height: None,
@@ -361,6 +377,27 @@ mod tests {
     }
 
     #[test]
+    fn shadcn_profile_changes_control_geometry_without_changing_the_button_api() {
+        assert_eq!(
+            geometry(&SHADCN_LIGHT, ButtonVariant::Default, ButtonSize::Default),
+            ButtonGeometry {
+                padding: [8.0, 16.0].into(),
+                height: Some(36.0),
+            }
+        );
+        assert_eq!(
+            style(
+                &SHADCN_LIGHT,
+                ButtonVariant::Default,
+                iced_button::Status::Active
+            )
+            .border
+            .radius,
+            8.0.into()
+        );
+    }
+
+    #[test]
     fn interactive_buttons_join_keyboard_focus_order() {
         let button: Element<'_, ()> = button("Save", &LIGHT).on_press(()).into_widget();
         let tree = widget::Tree::new(button.as_widget());
@@ -369,7 +406,7 @@ mod tests {
 
     #[test]
     fn enabled_button_labels_keep_normal_text_contrast() {
-        for theme in [LIGHT, DARK] {
+        for theme in [LIGHT, DARK, SHADCN_LIGHT, SHADCN_DARK] {
             for variant in [
                 ButtonVariant::Default,
                 ButtonVariant::Destructive,

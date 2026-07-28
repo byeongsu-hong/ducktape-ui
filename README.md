@@ -228,6 +228,8 @@ spacing/radius values and non-positive or non-finite text sizes.
 Recipes may specialize one same-target base with
 `recipe danger_action for button extends action`. The base expands first, the
 child overrides it, and direct typed node properties remain the final override.
+Button state utilities support semantic `disabled:bg-*` and
+`disabled:text-*` colors as well as `disabled:opacity-*`.
 
 `box` and `flex` provide a checked CSS-like flexbox. `flex` supports reverse
 directions, wrapping, `justify`, `items`, `content`, and axis-specific gaps.
@@ -291,9 +293,16 @@ contract.
 ```bash
 cargo run -p iced-app
 cargo run -p apple-music-example
+cargo run -p cef-browser-example
 cargo run -p notion-example
 cargo run -p showcase
 ```
+
+`cef-browser-example` demonstrates a native Chromium Embedded Framework child
+inside an iced app whose toolbar and state are written in Ice. Its default build
+shows the Ice shell without downloading Chromium; follow
+[`examples/cef-browser/README.md`](examples/cef-browser/README.md) to build the
+CEF-enabled bundle.
 
 `notion-example` starts as a Markdown-first editor: one Bear-style inline
 surface backed by CommonMark and GFM source. Formatting markers stay hidden

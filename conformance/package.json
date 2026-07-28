@@ -1,0 +1,11 @@
+{
+  "name": "ice-ui-conformance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.0"
+  }
+}

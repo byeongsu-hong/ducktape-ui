@@ -11,6 +11,7 @@ pub struct Palette {
     pub popover: Color,
     pub popover_foreground: Color,
     pub primary: Color,
+    pub primary_hover: Color,
     pub primary_foreground: Color,
     pub secondary: Color,
     pub secondary_foreground: Color,
@@ -31,6 +32,8 @@ pub struct Palette {
     pub control_line: Color,
     pub input: Color,
     pub ring: Color,
+    pub disabled: Color,
+    pub disabled_foreground: Color,
     pub success: Color,
     pub success_foreground: Color,
     pub success_background: Color,
@@ -64,6 +67,22 @@ pub struct Spacing {
     pub lg: f32,
     pub xl: f32,
     pub xxl: f32,
+}
+
+/// Control geometry that changes with a visual profile.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Controls {
+    /// `[vertical, horizontal]` padding.
+    pub primary_padding: [f32; 2],
+    pub secondary_padding: [f32; 2],
+    pub compact_padding: [f32; 2],
+    pub small_padding: [f32; 2],
+    pub large_padding: [f32; 2],
+    pub input_padding: [f32; 2],
+    pub default_height: Option<f32>,
+    pub small_height: f32,
+    pub large_height: f32,
+    pub icon_size: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -109,6 +128,7 @@ pub struct Theme {
     pub palette: Palette,
     pub radius: Radius,
     pub spacing: Spacing,
+    pub controls: Controls,
     pub typography: Typography,
     pub glass: Glass,
     pub elevation: Elevation,
@@ -124,6 +144,7 @@ pub const LIGHT: Theme = Theme {
         popover: hex(0xffffff),
         popover_foreground: hex(0x2c2b27),
         primary: hex(0x26251f),
+        primary_hover: hex(0x322f28),
         primary_foreground: Color::WHITE,
         secondary: Color::WHITE,
         secondary_foreground: hex(0x5e5c55),
@@ -144,6 +165,8 @@ pub const LIGHT: Theme = Theme {
         control_line: hex(0xe0dfd7),
         input: hex(0x8a8983),
         ring: hex(0x26251f),
+        disabled: hex(0xecebe6),
+        disabled_foreground: hex(0xb3b1a8),
         success: hex(0x5f9e74),
         success_foreground: hex(0x151410),
         success_background: hex(0xeef5f0),
@@ -161,6 +184,7 @@ pub const LIGHT: Theme = Theme {
     },
     radius: RADIUS,
     spacing: SPACING,
+    controls: CONTROLS,
     typography: TYPOGRAPHY,
     glass: GLASS,
     elevation: ELEVATION,
@@ -176,6 +200,7 @@ pub const DARK: Theme = Theme {
         popover: hex(0x1b1a17),
         popover_foreground: hex(0xeceae4),
         primary: hex(0xecebe5),
+        primary_hover: hex(0xdad9d2),
         primary_foreground: hex(0x1b1a17),
         secondary: hex(0x26251f),
         secondary_foreground: hex(0xeceae4),
@@ -196,6 +221,8 @@ pub const DARK: Theme = Theme {
         control_line: hex(0x4d4b45),
         input: hex(0x6b6a63),
         ring: hex(0xecebe5),
+        disabled: hex(0x2b2a25),
+        disabled_foreground: hex(0x6b6a63),
         success: hex(0x6cc06f),
         success_foreground: hex(0x1b1a17),
         success_background: hex(0x182a1d),
@@ -213,8 +240,123 @@ pub const DARK: Theme = Theme {
     },
     radius: RADIUS,
     spacing: SPACING,
+    controls: CONTROLS,
     typography: TYPOGRAPHY,
     glass: GLASS,
+    elevation: ELEVATION,
+};
+
+/// Neutral shadcn-style profile using the current official semantic token scale.
+pub const SHADCN_LIGHT: Theme = Theme {
+    name: "shadcn Neutral Light",
+    palette: Palette {
+        background: Color::WHITE,
+        foreground: hex(0x171717),
+        card: Color::WHITE,
+        card_foreground: hex(0x171717),
+        popover: Color::WHITE,
+        popover_foreground: hex(0x171717),
+        primary: hex(0x262626),
+        primary_hover: hex(0x3c3c3c),
+        primary_foreground: hex(0xfafafa),
+        secondary: hex(0xf5f5f5),
+        secondary_foreground: hex(0x262626),
+        muted: hex(0xf5f5f5),
+        muted_foreground: hex(0x6b6b6b),
+        accent: hex(0xf5f5f5),
+        accent_foreground: hex(0x262626),
+        brand: hex(0x262626),
+        brand_foreground: hex(0xfafafa),
+        brand_background: hex(0xf5f5f5),
+        brand_line: hex(0xe5e5e5),
+        destructive: hex(0xdc2626),
+        destructive_foreground: Color::WHITE,
+        destructive_background: hex(0xfef2f2),
+        destructive_line: hex(0xfecaca),
+        destructive_dot: hex(0xdc2626),
+        border: hex(0xe5e5e5),
+        control_line: hex(0xe5e5e5),
+        input: hex(0xe5e5e5),
+        ring: hex(0x737373),
+        disabled: hex(0xf5f5f5),
+        disabled_foreground: hex(0xa3a3a3),
+        success: hex(0x16a34a),
+        success_foreground: hex(0x052e16),
+        success_background: hex(0xf0fdf4),
+        success_line: hex(0xbbf7d0),
+        success_dot: hex(0x22c55e),
+        warning: hex(0xd97706),
+        warning_foreground: hex(0x171717),
+        warning_background: hex(0xfffbeb),
+        warning_line: hex(0xfde68a),
+        warning_dot: hex(0xf59e0b),
+        avatar: hex(0xe5e5e5),
+        avatar_foreground: hex(0x404040),
+        toast_background: hex(0x171717),
+        toast_foreground: hex(0xfafafa),
+    },
+    radius: SHADCN_RADIUS,
+    spacing: SHADCN_SPACING,
+    controls: SHADCN_CONTROLS,
+    typography: SHADCN_TYPOGRAPHY,
+    glass: SHADCN_GLASS_LIGHT,
+    elevation: ELEVATION,
+};
+
+/// Dark counterpart to [`SHADCN_LIGHT`].
+pub const SHADCN_DARK: Theme = Theme {
+    name: "shadcn Neutral Dark",
+    palette: Palette {
+        background: hex(0x171717),
+        foreground: hex(0xfafafa),
+        card: hex(0x262626),
+        card_foreground: hex(0xfafafa),
+        popover: hex(0x262626),
+        popover_foreground: hex(0xfafafa),
+        primary: hex(0xe5e5e5),
+        primary_hover: hex(0xd1d1d1),
+        primary_foreground: hex(0x262626),
+        secondary: hex(0x404040),
+        secondary_foreground: hex(0xfafafa),
+        muted: hex(0x404040),
+        muted_foreground: hex(0xb3b3b3),
+        accent: hex(0x404040),
+        accent_foreground: hex(0xfafafa),
+        brand: hex(0xe5e5e5),
+        brand_foreground: hex(0x262626),
+        brand_background: hex(0x404040),
+        brand_line: hex(0x525252),
+        destructive: hex(0xff6467),
+        destructive_foreground: hex(0x171717),
+        destructive_background: hex(0x450a0a),
+        destructive_line: hex(0x7f1d1d),
+        destructive_dot: hex(0xff6467),
+        border: hex(0x2e2e2e),
+        control_line: hex(0x2e2e2e),
+        input: hex(0x393939),
+        ring: hex(0x737373),
+        disabled: hex(0x404040),
+        disabled_foreground: hex(0x737373),
+        success: hex(0x4ade80),
+        success_foreground: hex(0x171717),
+        success_background: hex(0x052e16),
+        success_line: hex(0x166534),
+        success_dot: hex(0x4ade80),
+        warning: hex(0xfbbf24),
+        warning_foreground: hex(0x171717),
+        warning_background: hex(0x451a03),
+        warning_line: hex(0x92400e),
+        warning_dot: hex(0xfbbf24),
+        avatar: hex(0x404040),
+        avatar_foreground: hex(0xe5e5e5),
+        toast_background: hex(0xfafafa),
+        toast_foreground: hex(0x171717),
+    },
+    radius: SHADCN_RADIUS,
+    spacing: SHADCN_SPACING,
+    controls: SHADCN_CONTROLS,
+    typography: SHADCN_TYPOGRAPHY,
+    glass: SHADCN_GLASS_DARK,
     elevation: ELEVATION,
 };
 
@@ -235,6 +377,49 @@ const SPACING: Spacing = Spacing {
     xxl: 22.0,
 };
 
+const CONTROLS: Controls = Controls {
+    primary_padding: [11.0, 16.0],
+    secondary_padding: [11.0, 16.0],
+    compact_padding: [8.0, 12.0],
+    small_padding: [6.0, 12.0],
+    large_padding: [10.0, 24.0],
+    input_padding: [8.0, 12.0],
+    default_height: None,
+    small_height: 32.0,
+    large_height: 40.0,
+    icon_size: 30.0,
+};
+
+const SHADCN_RADIUS: Radius = Radius {
+    chip: 6.0,
+    row: 8.0,
+    button: 8.0,
+    card: 14.0,
+    modal: 14.0,
+};
+
+const SHADCN_SPACING: Spacing = Spacing {
+    xs: 4.0,
+    sm: 8.0,
+    md: 12.0,
+    lg: 16.0,
+    xl: 24.0,
+    xxl: 32.0,
+};
+
+const SHADCN_CONTROLS: Controls = Controls {
+    primary_padding: [8.0, 16.0],
+    secondary_padding: [8.0, 16.0],
+    compact_padding: [6.0, 12.0],
+    small_padding: [6.0, 12.0],
+    large_padding: [10.0, 24.0],
+    input_padding: [8.0, 12.0],
+    default_height: Some(36.0),
+    small_height: 32.0,
+    large_height: 40.0,
+    icon_size: 36.0,
+};
+
 const TYPOGRAPHY: Typography = Typography {
     font: Font::DEFAULT,
     monospace_font: Font::MONOSPACE,
@@ -253,10 +438,40 @@ const TYPOGRAPHY: Typography = Typography {
     badge: 9.0,
 };
 
+const SHADCN_TYPOGRAPHY: Typography = Typography {
+    font: Font::DEFAULT,
+    monospace_font: Font::MONOSPACE,
+    display: 24.0,
+    screen_title: 20.0,
+    section_title: 18.0,
+    pane_header: 14.0,
+    body: 14.0,
+    list: 14.0,
+    caption: 14.0,
+    machine: 12.0,
+    meta: 12.0,
+    meta_compact: 11.0,
+    field_label: 14.0,
+    nav_label: 12.0,
+    badge: 12.0,
+};
+
 const GLASS: Glass = Glass {
     thin: rgba(0xfdfcfa, 0.50),
     regular: rgba(0xfdfcfa, 0.62),
     sheet: rgba(0xfdfcfa, 0.86),
+};
+
+const SHADCN_GLASS_LIGHT: Glass = Glass {
+    thin: rgba(0xffffff, 0.80),
+    regular: rgba(0xffffff, 0.90),
+    sheet: rgba(0xffffff, 0.96),
+};
+
+const SHADCN_GLASS_DARK: Glass = Glass {
+    thin: rgba(0x262626, 0.80),
+    regular: rgba(0x262626, 0.90),
+    sheet: rgba(0x262626, 0.96),
 };
 
 const ELEVATION: Elevation = Elevation {
@@ -389,6 +604,9 @@ mod tests {
         assert_eq!(LIGHT.palette.muted, hex(0xf6f5f2));
         assert_eq!(LIGHT.palette.foreground, hex(0x2c2b27));
         assert_eq!(LIGHT.palette.primary, hex(0x26251f));
+        assert_eq!(LIGHT.palette.primary_hover, hex(0x322f28));
+        assert_eq!(LIGHT.palette.disabled, hex(0xecebe6));
+        assert_eq!(LIGHT.palette.disabled_foreground, hex(0xb3b1a8));
         assert_eq!(LIGHT.palette.brand, hex(0xa05a3c));
         assert_eq!(LIGHT.palette.avatar_foreground, hex(0x4f4d47));
         assert_eq!(DARK.palette.background, hex(0x1b1a17));
@@ -405,6 +623,7 @@ mod tests {
             [5.0, 7.0, 9.0, 11.0, 14.0]
         );
         assert_eq!(LIGHT.spacing, SPACING);
+        assert_eq!(LIGHT.controls, CONTROLS);
         assert_eq!(LIGHT.typography, TYPOGRAPHY);
         assert_eq!(
             [
@@ -432,7 +651,7 @@ mod tests {
 
     #[test]
     fn runtime_brand_does_not_recolor_actions_or_focus() {
-        for base in [LIGHT, DARK] {
+        for base in [LIGHT, DARK, SHADCN_LIGHT, SHADCN_DARK] {
             for brand in BRANDS
                 .into_iter()
                 .chain([hex(0x777777), Color::TRANSPARENT])
@@ -447,6 +666,7 @@ mod tests {
                         >= 4.5
                 );
                 assert_eq!(alternate.palette.primary, base.palette.primary);
+                assert_eq!(alternate.palette.primary_hover, base.palette.primary_hover);
                 assert_eq!(alternate.palette.ring, base.palette.ring);
             }
         }
@@ -469,6 +689,7 @@ mod tests {
             ("muted", palette.muted_foreground),
             ("muted_bg", palette.muted),
             ("primary", palette.primary),
+            ("primary_hover", palette.primary_hover),
             ("primary_fg", palette.primary_foreground),
             ("secondary", palette.secondary),
             ("secondary_fg", palette.secondary_foreground),
@@ -501,9 +722,26 @@ mod tests {
             ("control_line", palette.control_line),
             ("input", palette.input),
             ("ring", palette.ring),
+            ("disabled", palette.disabled),
+            ("disabled_fg", palette.disabled_foreground),
         ] {
             assert_eq!(default_ice_color(name), color, "{name}");
         }
+    }
+
+    #[test]
+    fn shadcn_profiles_replace_color_and_metric_scales_together() {
+        assert_eq!(SHADCN_LIGHT.palette.background, Color::WHITE);
+        assert_eq!(SHADCN_LIGHT.palette.foreground, hex(0x171717));
+        assert_eq!(SHADCN_DARK.palette.background, hex(0x171717));
+        assert_eq!(SHADCN_DARK.palette.foreground, hex(0xfafafa));
+        assert_eq!(SHADCN_LIGHT.radius, SHADCN_RADIUS);
+        assert_eq!(SHADCN_LIGHT.spacing, SHADCN_SPACING);
+        assert_eq!(SHADCN_LIGHT.controls, SHADCN_CONTROLS);
+        assert_eq!(SHADCN_LIGHT.typography, SHADCN_TYPOGRAPHY);
+        assert_eq!(SHADCN_LIGHT.controls.default_height, Some(36.0));
+        assert_ne!(SHADCN_LIGHT.radius.card, LIGHT.radius.card);
+        assert_ne!(SHADCN_LIGHT.typography.caption, LIGHT.typography.caption);
     }
 
     #[test]
@@ -564,8 +802,8 @@ mod tests {
 
         assert!(recipes.contains("bg-primary text-primary_fg"));
         assert!(recipes.contains("px-16px py-11px"));
-        assert!(recipes.contains("px-16px py-10px"));
-        assert!(recipes.contains("px-12px py-7px"));
+        assert!(recipes.contains("disabled:bg-disabled disabled:text-disabled_fg"));
+        assert!(recipes.contains("px-12px py-8px"));
         assert!(recipes.contains("text-13.5px"));
         assert!(recipes.contains("font-mono font-medium"));
         assert!(recipes.contains("font-mono font-semibold"));
@@ -608,7 +846,7 @@ mod tests {
 
     #[test]
     fn semantic_colors_clear_accessibility_contrast() {
-        for theme in [LIGHT, DARK] {
+        for theme in [LIGHT, DARK, SHADCN_LIGHT, SHADCN_DARK] {
             assert!(
                 theme
                     .palette

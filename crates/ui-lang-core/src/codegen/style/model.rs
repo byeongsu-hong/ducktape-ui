@@ -18,6 +18,8 @@ pub(in crate::codegen) struct Style {
     pub(in crate::codegen) background: Option<String>,
     pub(in crate::codegen) hover_background: Option<String>,
     pub(in crate::codegen) pressed_background: Option<String>,
+    pub(in crate::codegen) disabled_background: Option<String>,
+    pub(in crate::codegen) disabled_text_color: Option<String>,
     pub(in crate::codegen) border_color: Option<String>,
     pub(in crate::codegen) focus_border_color: Option<String>,
     pub(in crate::codegen) border_width: u16,
@@ -64,6 +66,14 @@ impl Style {
             if variant == Some("disabled") && utility.starts_with("opacity-") {
                 style.disabled_opacity =
                     utility[8..].parse::<f32>().ok().map(|value| value / 100.0);
+                continue;
+            }
+            if variant == Some("disabled") && utility.starts_with("bg-") {
+                style.disabled_background = Some(utility[3..].into());
+                continue;
+            }
+            if variant == Some("disabled") && utility.starts_with("text-") {
+                style.disabled_text_color = Some(utility[5..].into());
                 continue;
             }
             if variant.is_some() {
@@ -202,6 +212,8 @@ pub(in crate::codegen) fn button_style_code(
     let has_utilities = style.background.is_some()
         || style.hover_background.is_some()
         || style.pressed_background.is_some()
+        || style.disabled_background.is_some()
+        || style.disabled_text_color.is_some()
         || style.text_color.is_some()
         || style.border_width != 0
         || style.border_color.is_some()
@@ -300,9 +312,32 @@ pub(in crate::codegen) fn button_style_code(
         if style.background.is_some()
             || style.text_color.is_some()
             || style.disabled_opacity.is_some()
+            || style.disabled_background.is_some()
+            || style.disabled_text_color.is_some()
         {
             let disabled = style.disabled_opacity.unwrap_or(0.5);
-            write!(code, " if matches!(__status, ::iced::widget::button::Status::Disabled) {{ __style.text_color.a *= {disabled}; if let Some(::iced::Background::Color(mut __color)) = __style.background {{ __color.a *= {disabled}; __style.background = Some(::iced::Background::Color(__color)); }} }}").unwrap();
+            code.push_str(" if matches!(__status, ::iced::widget::button::Status::Disabled) {");
+            if let Some(background) = &style.disabled_background {
+                write!(
+                    code,
+                    " __style.background = Some({}.into());",
+                    theme_color(document, background)
+                )
+                .unwrap();
+            } else if style.background.is_some() || style.disabled_opacity.is_some() {
+                write!(code, " if let Some(::iced::Background::Color(mut __color)) = __style.background {{ __color.a *= {disabled}; __style.background = Some(::iced::Background::Color(__color)); }}").unwrap();
+            }
+            if let Some(text) = &style.disabled_text_color {
+                write!(
+                    code,
+                    " __style.text_color = {};",
+                    theme_color(document, text)
+                )
+                .unwrap();
+            } else if style.text_color.is_some() || style.disabled_opacity.is_some() {
+                write!(code, " __style.text_color.a *= {disabled};").unwrap();
+            }
+            code.push_str(" }");
         }
     }
     if has_typed {

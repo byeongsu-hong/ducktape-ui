@@ -74,7 +74,7 @@ passthrough, while wasm consumers leave all three native features disabled.
 ```rust
 use ducktape_ui::ui::{
     button::{Button, ButtonVariant},
-    theme::LIGHT,
+    theme::{LIGHT, SHADCN_LIGHT},
 };
 use iced::widget::{row, text};
 
@@ -93,15 +93,20 @@ fn view() -> iced::Element<'static, Message> {
 
 `Button::new` accepts any iced element; `button("Save", &theme)` is the text-label convenience. Its builder also exposes `height`, `padding`, and a native iced `style` callback. The same pattern is used across the library: application state and messages stay with the caller, composable components accept caller-owned content slots, and every visual component receives a `Theme`.
 
-All theme fields are public, so an application can derive its own tokens without copying library source:
+All theme fields are public, so an application can swap a complete visual
+profile or derive its own tokens without copying library source. `LIGHT` and
+`DARK` retain the approved Ducktape contract; `SHADCN_LIGHT` and
+`SHADCN_DARK` apply a neutral shadcn-style palette, radius, spacing,
+typography, and control geometry to the same component APIs.
 
 ```rust
-let mut theme = LIGHT;
+let mut theme = SHADCN_LIGHT;
 theme.radius.button = 4.0;
 theme.spacing.lg = 20.0;
 ```
 
-Radius roles are named `chip`, `row`, `button`, `card`, and `modal`; typography
+Radius roles are named `chip`, `row`, `button`, `card`, and `modal`; control
+metrics cover button sizes and padding plus input padding; typography
 uses the design roles from `display` through `badge` instead of generic size
 aliases. `Theme::glass` exposes the exact thin, regular, and sheet alpha colors
 without claiming a blur implementation, while `Theme::elevation` provides the

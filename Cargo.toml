@@ -6,9 +6,11 @@ members = [
     "crates/cargo-ice",
     "crates/ui",
     "examples/apple-music",
+    "examples/cef-browser",
     "examples/iced-app",
-    "examples/notion",
+    "examples/markdown-editor",
     "examples/showcase",
+    "conformance/ice",
 ]
 exclude = ["vendor/iced_wgpu"]
 resolver = "3"
