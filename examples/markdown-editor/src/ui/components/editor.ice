@@ -1,4 +1,4 @@
-component EditorSurface(bind document:editor, line:i64, column:i64, disabled:bool)
+component EditorSurface(bind document:editor, line:i64, column:i64, dark:bool, disabled:bool)
   box #root
     with
       w=fill
@@ -15,12 +15,12 @@ component EditorSurface(bind document:editor, line:i64, column:i64, disabled:boo
       editor #document <-> document
         with
           action=track_action()
-          highlighter=markdown_highlight(line, column)
+          highlighter=markdown_highlight(line, column, dark)
           hint="Start writing…"
           disabled=disabled
           h=fill
           min-h=320.0
-          font=geist
+          font=body
           size=16.0
           line-h=1.6
           wrap=word

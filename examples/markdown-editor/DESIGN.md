@@ -29,11 +29,14 @@ through `editor-action`, while cursor built-ins feed the incremental
 `editor-highlighter`. Iced continues to own selection, clipboard, wrapping,
 input methods, mixed-metric caret geometry, and visible-line highlighting.
 
-Geist is the body face and the bundled Geist Mono is used for inline and fenced
-code. Headings use native per-span metrics and fenced code uses native
-visual-line backgrounds in the same editor layout. Both fonts come from the
-[Geist project](https://github.com/vercel/geist-font) under the included SIL
-Open Font License.
+IBM Plex Sans KR is the body face and Monoplex KR is used for inline and fenced
+code. Monoplex combines IBM Plex Mono Latin glyphs with IBM Plex Sans KR Hangul,
+so prose and code have coordinated Latin forms, both cover Hangul, and code
+keeps a 2:1 fixed width. Headings use native per-span metrics and fenced code
+uses native visual-line backgrounds in the same editor layout. The bundled
+files come from the pinned [IBM Plex](https://github.com/IBM/plex/tree/2f9ba1b25957d958db71a849e85d72e3ecfb845a/packages/plex-sans-kr)
+and [Monoplex KR](https://github.com/y-kim/monoplex/tree/ccd78918fdaf00f1ae52282b0446d66ec0c06fea)
+sources under their included SIL Open Font Licenses.
 
 ## Behavioral references
 
@@ -44,7 +47,8 @@ Concrete editor behavior is translated from these pinned JavaScript sources:
 | 16 px body, 1.6 line height, 800 px page, 50 px gutter | [MarkText/Muya block CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/blockSyntax.css#L1-L24) | Ice editor layout |
 | H1–H6 scales `1.875, 1.5, 1.375, 1.25, 1.125, 1` and 1.4 line height | [MarkText/Muya heading CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/blockSyntax.css#L37-L82) | Iced span metrics and caret geometry |
 | 90% monospace fenced code, 1.6 line height, surface, 1 px border, 3 px radius | [MarkText/Muya code-block CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/blockSyntax.css#L196-L235) | One coalesced native visual-line decoration; hidden fence rows provide vertical inset |
-| Body-size monospace inline code with `0.2em 0.4em` padding | [MarkText/Muya inline padding](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/inlineSyntax.css#L59-L69) and [CodeMirror decoration styles](https://github.com/codemirror/language/blob/8e9700018446d46f23267f6e31da56628d5117c0/src/highlight.ts#L200-L238) | Native span background keeps the body font size and line height so an inline-code-only line does not collapse |
+| Body-size monospace inline code with `0.2em 0.4em` padding and a distinct shared code surface | [MarkText/Muya inline padding and shared code-block background](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/inlineSyntax.css#L59-L69), [MarkText One Dark code surfaces](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/renderer/src/assets/themes/one-dark.theme.css#L15-L35), and [Typora GitHub inline code](https://github.com/typora/typora-default-themes/blob/cf4f2cb7e81a73050456367cfdfdb80b5a14a7b2/themes/github.css#L265-L275) | An 8% foreground tint makes inline code visibly darker while native body metrics keep an inline-code-only line from collapsing |
+| Dark appearance follows the OS at startup and while running, with a direct toolbar override | [MarkText system-theme startup and update handling](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/main/app/index.ts#L274-L355) and [One Dark palette](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/renderer/src/assets/themes/one-dark.theme.css#L15-L43) | Ice system-theme task/subscription selects a typed light or dark palette; the native syntax highlighter changes theme with it |
 | Enter on ```` ```lang ```` creates an empty fenced block and puts the caret in its code body | [MarkText/Muya paragraph conversion](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/block/content/paragraphContent/index.ts#L42-L64) and [Enter handler](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/block/content/paragraphContent/index.ts#L256-L315) | One native delta inserts the blank body and matching closing fence; one undo removes all of it |
 | Fenced code uses language-aware token colors and emphasis | [MarkText/Muya Prism light theme](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/prismjs/light.theme.css#L28-L99) | Existing native `iced_highlighter` parses the info-string language incrementally |
 | Syntax markers are zero-size unless the cursor intersects their token | [MarkText/Muya renderer](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/inlineRenderer/renderer/index.ts#L111-L136) and [marker CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/inlineSyntax.css#L1-L30) | Incremental highlighter with caret-local zero-size marker spans |

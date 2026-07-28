@@ -1,4 +1,4 @@
-component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_available:bool)
+component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_available:bool, dark:bool)
   emits
     new_document
     open_document
@@ -11,6 +11,7 @@ component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_ava
     inline_code
     link
     find
+    toggle_theme
   box #root
     with
       w=fill
@@ -70,12 +71,16 @@ component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_ava
           label="Find · Command or Ctrl+F"
           disabled=busy
           @toolbar_action
+      if dark
+        button "Light" label="Use light appearance" @toolbar_action -> emit(toggle_theme)
+      if !dark
+        button "Dark" label="Use dark appearance" @toolbar_action -> emit(toggle_theme)
       space w=fill h=1.0
       if dirty
         text "●" size=8.0 @text-primary
       text name
         with
           size=13.0
-          font=geist
+          font=body
           @font-semibold
           @text-fg

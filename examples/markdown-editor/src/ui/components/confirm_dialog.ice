@@ -23,18 +23,18 @@ component ConfirmDialog(action:PendingAction, name:str)
         text "Save changes?"
           with
             size=20.0
-            font=geist
+            font=body
             @font-bold
             @text-fg
         text name
           with
             size=13.0
-            font=geist
+            font=body
             @text-muted
         text "Your unsaved changes will be lost."
           with
             size=13.0
-            font=geist
+            font=body
             @text-muted
       match action
         PendingAction.new_document

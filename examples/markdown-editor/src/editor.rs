@@ -20,18 +20,21 @@ const HEADING_LINE_HEIGHT: f32 = 1.4;
 const CODE_BLOCK_SCALE: f32 = 0.9;
 const INLINE_CODE_SCALE: f32 = 1.0;
 const CODE_BLOCK_PADDING: f32 = BODY_SIZE;
+const CODE_BACKGROUND_ALPHA: f32 = 0.08;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Caret {
     line: usize,
     column: usize,
+    dark: bool,
 }
 
 impl Caret {
-    fn new(line: i64, column: i64) -> Self {
+    fn new(line: i64, column: i64, dark: bool) -> Self {
         Self {
             line: usize::try_from(line).unwrap_or_default(),
             column: usize::try_from(column).unwrap_or_default(),
+            dark,
         }
     }
 }
@@ -96,6 +99,7 @@ pub fn markdown_highlight<'a, Message: 'a>(
     editor: TextEditor<'a, PlainText, Message>,
     line: i64,
     column: i64,
+    dark: bool,
 ) -> Element<'a, Message> {
     editor
         .padding(Padding {
@@ -104,7 +108,7 @@ pub fn markdown_highlight<'a, Message: 'a>(
             bottom: 0.0,
             left: CODE_BLOCK_PADDING,
         })
-        .highlight_with::<MarkdownHighlighter>(Caret::new(line, column), markdown_format)
+        .highlight_with::<MarkdownHighlighter>(Caret::new(line, column, dark), markdown_format)
         .mouse_interaction(|line, position| {
             if crate::document::link_at(line, position.column).is_empty() {
                 mouse::Interaction::Text
@@ -115,18 +119,22 @@ pub fn markdown_highlight<'a, Message: 'a>(
         .into()
 }
 
-fn geist(weight: Weight, style: FontStyle) -> Font {
+fn body_font(weight: Weight, style: FontStyle) -> Font {
     Font {
-        family: Family::Name("Geist"),
+        family: Family::Name(if style == FontStyle::Italic {
+            "IBM Plex Sans"
+        } else {
+            "IBM Plex Sans KR"
+        }),
         weight,
         style,
         ..Font::DEFAULT
     }
 }
 
-fn geist_mono() -> Font {
+fn code_font() -> Font {
     Font {
-        family: Family::Name("Geist Mono"),
+        family: Family::Name("Monoplex KR"),
         ..Font::DEFAULT
     }
 }
@@ -140,7 +148,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
 
     let code_background = TextHighlight {
         background: Color {
-            a: 0.03,
+            a: CODE_BACKGROUND_ALPHA,
             ..palette.text
         }
         .into(),
@@ -167,7 +175,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         }
         MarkdownHighlight::HiddenFence => Format {
             color: Some(Color::TRANSPARENT),
-            font: Some(geist_mono()),
+            font: Some(code_font()),
             size: Some(Pixels(0.01)),
             line_height: Some(LineHeight::Absolute(Pixels(BODY_SIZE))),
             line_highlight: Some(code_background),
@@ -176,7 +184,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         },
         MarkdownHighlight::Fence => Format {
             color: Some(subdued),
-            font: Some(geist_mono()),
+            font: Some(code_font()),
             size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
             line_height: Some(LineHeight::Absolute(Pixels(
                 BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
@@ -188,7 +196,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         MarkdownHighlight::Span(style) => span_format(style, theme),
         MarkdownHighlight::CodeBlock => Format {
             color: Some(palette.text),
-            font: Some(geist_mono()),
+            font: Some(code_font()),
             size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
             line_height: Some(LineHeight::Absolute(Pixels(
                 BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
@@ -199,8 +207,8 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         },
         MarkdownHighlight::CodeToken { color, font } => Format {
             color: Some(color.unwrap_or(palette.text)),
-            font: Some(font.map_or_else(geist_mono, |font| Font {
-                family: Family::Name("Geist Mono"),
+            font: Some(font.map_or_else(code_font, |font| Font {
+                family: Family::Name("Monoplex KR"),
                 ..font
             })),
             size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
@@ -211,7 +219,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
         },
         MarkdownHighlight::ListMarker => Format {
             color: Some(palette.text),
-            font: Some(geist(Weight::Normal, FontStyle::Normal)),
+            font: Some(body_font(Weight::Normal, FontStyle::Normal)),
             ..Format::default()
         },
     }
@@ -244,9 +252,9 @@ fn span_format(style: SpanStyle, theme: &Theme) -> Format<Font> {
             palette.text
         }),
         font: Some(if style.code {
-            geist_mono()
+            code_font()
         } else {
-            geist(weight, font_style)
+            body_font(weight, font_style)
         }),
         strikethrough: style.strikethrough.then_some(palette.text),
         ..Format::default()
@@ -262,7 +270,7 @@ fn span_format(style: SpanStyle, theme: &Theme) -> Format<Font> {
         format.line_height = Some(LineHeight::Absolute(Pixels(size * BODY_LINE_HEIGHT)));
         format.highlight = Some(TextHighlight {
             background: Color {
-                a: 0.03,
+                a: CODE_BACKGROUND_ALPHA,
                 ..palette.text
             }
             .into(),
@@ -294,6 +302,13 @@ impl Highlighter for MarkdownHighlighter {
     }
 
     fn update(&mut self, caret: &Self::Settings) {
+        if self.caret.dark != caret.dark {
+            self.caret = *caret;
+            self.fences.truncate(1);
+            self.code.clear();
+            self.current_line = 0;
+            return;
+        }
         let changed_line = self.caret.line.min(caret.line);
         self.caret = *caret;
         self.change_line(changed_line);
@@ -331,6 +346,7 @@ impl Highlighter for MarkdownHighlighter {
             line_index,
             fence,
             (line_index == self.caret.line).then_some(self.caret.column),
+            self.caret.dark,
             &mut self.code,
         );
 
@@ -354,6 +370,7 @@ fn highlight_line(
     line_index: usize,
     active_fence: Option<Fence>,
     caret: Option<usize>,
+    dark: bool,
     code: &mut HashMap<usize, iced_highlighter::Highlighter>,
 ) -> (Vec<(Range<usize>, MarkdownHighlight)>, Option<Fence>) {
     let leading = line.len() - line.trim_start_matches([' ', '\t']).len();
@@ -407,7 +424,11 @@ fn highlight_line(
         code.insert(
             line_index,
             iced_highlighter::Highlighter::new(&iced_highlighter::Settings {
-                theme: iced_highlighter::Theme::InspiredGitHub,
+                theme: if dark {
+                    iced_highlighter::Theme::Base16Ocean
+                } else {
+                    iced_highlighter::Theme::InspiredGitHub
+                },
                 token,
             }),
         );
@@ -1932,11 +1953,11 @@ mod tests {
     #[test]
     fn hides_markers_until_the_caret_enters_the_span() {
         let line = "as**df**";
-        let mut outside = MarkdownHighlighter::new(&super::Caret { line: 0, column: 1 });
+        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 1, false));
         let outside = outside.highlight_line(line).collect::<Vec<_>>();
-        let mut inside = MarkdownHighlighter::new(&super::Caret { line: 0, column: 5 });
+        let mut inside = MarkdownHighlighter::new(&super::Caret::new(0, 5, false));
         let inside = inside.highlight_line(line).collect::<Vec<_>>();
-        let mut marker = MarkdownHighlighter::new(&super::Caret { line: 0, column: 2 });
+        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false));
         let marker = marker.highlight_line(line).collect::<Vec<_>>();
 
         assert!(outside.iter().any(|(range, style)| {
@@ -1962,7 +1983,7 @@ mod tests {
 
     #[test]
     fn resumes_fenced_code_at_the_changed_line() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         for line in ["before", "```rust", "fn main() {}", "```", "after"] {
             let _ = highlighter.highlight_line(line).count();
         }
@@ -1985,7 +2006,7 @@ mod tests {
 
     #[test]
     fn gives_headings_distinct_metrics_and_code_blocks_a_surface() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         let headings = (1..=6)
             .map(|level| {
                 let line = format!("{} heading", "#".repeat(level));
@@ -2038,11 +2059,18 @@ mod tests {
         assert!((inline.size.unwrap().0 - 16.0).abs() < 0.01);
         assert!((inline.padding.top - 3.2).abs() < 0.01);
         assert!((inline.padding.left - 6.4).abs() < 0.01);
+        assert_eq!(
+            inline.highlight.unwrap().background,
+            iced::Background::Color(iced::Color {
+                a: super::CODE_BACKGROUND_ALPHA,
+                ..iced::Theme::Light.palette().text
+            })
+        );
     }
 
     #[test]
     fn highlights_fenced_code_with_the_declared_language() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         let _ = highlighter.highlight_line("```rust").count();
         let code = highlighter
             .highlight_line("fn main() { let answer = 42; }")
@@ -2051,6 +2079,20 @@ mod tests {
         assert!(code.iter().any(|(_, style)| {
             matches!(style, MarkdownHighlight::CodeToken { color: Some(_), .. })
         }));
+    }
+
+    #[test]
+    fn theme_change_restarts_fenced_code_highlighting() {
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let _ = highlighter.highlight_line("```rust").count();
+        let _ = highlighter.highlight_line("fn main() {}").count();
+        assert!(!highlighter.code.is_empty());
+
+        highlighter.update(&super::Caret::new(0, 0, true));
+
+        assert_eq!(highlighter.current_line(), 0);
+        assert!(highlighter.code.is_empty());
+        assert!(highlighter.caret.dark);
     }
 
     #[test]
@@ -2093,7 +2135,7 @@ mod tests {
         let mut editor = iced::advanced::graphics::text::Editor::with_text(
             "# Heading\n~~old~~\n\n```\ncode\n```",
         );
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         editor.update(
             Size::new(300.0, 200.0),
             Font::default(),
@@ -2131,7 +2173,7 @@ mod tests {
         use iced::{Font, Pixels, Size};
 
         let mut editor = iced::advanced::graphics::text::Editor::with_text("```\n\n```");
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 1, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(1, 0, false));
         editor.update(
             Size::new(300.0, 200.0),
             Font::default(),
@@ -2159,7 +2201,7 @@ mod tests {
 
     #[test]
     fn resumes_near_the_end_of_a_large_document() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         for _ in 0..10_000 {
             let _ = highlighter.highlight_line("plain text").count();
         }
@@ -2172,7 +2214,7 @@ mod tests {
 
     #[test]
     fn resumes_from_a_syntax_checkpoint_in_a_large_code_block() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 0 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         let _ = highlighter.highlight_line("```rust").count();
         for _ in 0..10_000 {
             let _ = highlighter.highlight_line("let value = 42;").count();
@@ -2192,7 +2234,7 @@ mod tests {
     #[test]
     fn produces_valid_ranges_for_unicode_and_incomplete_markup() {
         let line = "한글 **강조** and [unfinished";
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret { line: 0, column: 7 });
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 7, false));
 
         for (range, _) in highlighter.highlight_line(line) {
             assert!(line.is_char_boundary(range.start));
@@ -2313,37 +2355,44 @@ mod tests {
         use iced::{Pixels, Point, Size};
         use std::borrow::Cow;
 
-        let italic = {
+        let (regular, italic) = {
             let mut fonts = iced::advanced::graphics::text::font_system()
                 .write()
                 .expect("font system");
             fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/Geist-Regular.ttf"
+                "../assets/fonts/IBMPlexSansKR-Regular.ttf"
             )));
             fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/Geist-Bold.ttf"
+                "../assets/fonts/IBMPlexSansKR-Bold.ttf"
             )));
             fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/Geist-Italic.ttf"
+                "../assets/fonts/IBMPlexSans-Italic.ttf"
             )));
-            fonts
-                .raw()
-                .db()
-                .query(&Query {
-                    families: &[Family::Name("Geist")],
-                    weight: Weight::NORMAL,
-                    stretch: Stretch::Normal,
-                    style: Style::Italic,
-                })
-                .expect("Geist Italic")
+            let database = fonts.raw().db();
+            (
+                database
+                    .query(&Query {
+                        families: &[Family::Name("IBM Plex Sans KR")],
+                        weight: Weight::NORMAL,
+                        stretch: Stretch::Normal,
+                        style: Style::Normal,
+                    })
+                    .expect("IBM Plex Sans KR Regular"),
+                database
+                    .query(&Query {
+                        families: &[Family::Name("IBM Plex Sans")],
+                        weight: Weight::NORMAL,
+                        stretch: Stretch::Normal,
+                        style: Style::Italic,
+                    })
+                    .expect("IBM Plex Sans Italic"),
+            )
         };
-        let mut editor =
-            iced::advanced::graphics::text::Editor::with_text("**inline formatting**\n*emphasis*");
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret {
-            line: 99,
-            column: 0,
-        });
-        let body = super::geist(iced::font::Weight::Normal, iced::font::Style::Normal);
+        let mut editor = iced::advanced::graphics::text::Editor::with_text(
+            "**inline formatting**\n*emphasis*\n한글 입력",
+        );
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(99, 0, false));
+        let body = super::body_font(iced::font::Weight::Normal, iced::font::Style::Normal);
         editor.update(
             Size::new(400.0, 100.0),
             body,
@@ -2366,9 +2415,11 @@ mod tests {
             .iter()
             .find(|glyph| glyph.start <= 1 && 1 < glyph.end)
             .expect("first emphasis glyph");
+        let hangul = runs[2].glyphs.first().expect("first Hangul glyph");
 
         assert_eq!(strong.font_weight, Weight::BOLD);
         assert_eq!(emphasis.font_id, italic);
+        assert_eq!(hangul.font_id, regular);
         assert!(
             editor
                 .hit_test(Point::new(

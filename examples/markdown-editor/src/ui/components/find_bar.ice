@@ -25,7 +25,7 @@ component FindBar(bind query:str)
           submit=emit(next)
           w=280.0
           p=8.0
-          font=geist
+          font=body
           text-size=13.0
         active bg=toolbar border=border border-w=1.0 r=7.0 value=fg placeholder=muted selection=selection
         hovered bg=toolbar border=muted border-w=1.0 r=7.0 value=fg placeholder=muted selection=selection
