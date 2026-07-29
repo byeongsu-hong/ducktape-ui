@@ -126,6 +126,15 @@ pub fn terminal_surface(session: &Session) -> Element<'static, ()> {
     })
 }
 
+pub fn focus_terminal(session: Session) -> iced::Task<()> {
+    let Some(terminal) = session.terminal else {
+        return iced::Task::none();
+    };
+    let widget_id = lock(&terminal).widget_id().clone();
+
+    TerminalView::focus(widget_id)
+}
+
 fn process_event(terminal: &Arc<Mutex<Terminal>>, id: u64, event: Event) -> Action {
     let Event::BackendCall(event_id, command) = event;
     if event_id != id {
