@@ -665,6 +665,7 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
         column![
             text("Queue, pause, focus, action, dismiss, and swipe behavior remain native."),
             ducktape_ui::ui::button::button("Show notification", &theme)
+                .height(39)
                 .on_press(SonnerEvent::Show),
         ]
         .spacing(12),
