@@ -3,7 +3,6 @@ mod check;
 mod codegen;
 mod editor;
 mod format;
-mod live;
 mod parser;
 mod source;
 #[cfg(test)]
@@ -15,16 +14,10 @@ pub use editor::{
     editor_block_end, editor_component_name, editor_first_word, editor_indentation,
 };
 pub use format::{format_fragment, format_source};
-pub use live::{
-    LIVE_PROTOCOL_VERSION, LiveBinaryOp, LiveEvent, LiveExpression, LiveExternFunctionAbi,
-    LiveExternStructAbi, LiveLoweringError, LiveNamedTypeAbi, LivePlan, LiveProgramAbi,
-    LiveProgramContract, LiveProgramMode, LiveReloadDecision, LiveRestartReason, LiveRoute,
-    LiveStateChange, LiveStateId, LiveStateSchema, LiveStateSlot, LiveStateStorage, LiveUnaryOp,
-    LiveValue, LiveView, evaluate_live_reload, live_plan, live_program_contract,
-};
 pub use source::{
     FileAnalysis, FileCompilation, analyze_file, analyze_file_graph, analyze_file_with_overlays,
-    analyze_file_with_source, compile_file, source_is_app,
+    analyze_file_with_source, compile_file, discover_file_asset_dependencies,
+    discover_file_dependencies, source_is_app,
 };
 
 use std::collections::{BTreeMap, HashSet};

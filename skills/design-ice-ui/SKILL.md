@@ -80,7 +80,7 @@ In this repository, start with:
 crates/ui/src/ice/default.ice            workspace design-system entry source
 crates/ui/src/ice/components.ice         shared structural components and variants
 crates/ui/src/ice/recipes.ice            shared semantic visual roles
-examples/showcase/src/ui/showcase.ice    catalog and first-class behavior test
+examples/showcase/src/ui/app.ice         catalog and first-class behavior test
 examples/iced-app/src/ui/tasks.ice       readable app root
 examples/iced-app/src/ui/extern/         production and test extern declarations
 examples/iced-app/src/ui/components/     component and slot patterns
