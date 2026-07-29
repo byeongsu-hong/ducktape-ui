@@ -420,6 +420,10 @@ view
 "#;
     let generated = compile(source, "dialog.ice").unwrap();
     assert!(generated.contains("if self.shown"));
+    assert!(generated.contains(
+        "let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if self.shown"
+    ));
+    assert!(generated.contains("else { __overlay_stack.into() }"));
     assert!(generated.contains("::iced::widget::Stack::new()"));
     assert!(generated.contains("::iced::widget::float(__overlay_surface)"));
     assert!(generated.contains("::core::f32::EPSILON"));

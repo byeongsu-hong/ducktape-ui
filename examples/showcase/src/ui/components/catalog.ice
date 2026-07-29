@@ -44,32 +44,32 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           button "Primary" #primary -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               @primary_action
           button "Secondary" #secondary -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               @secondary_action
           button "Outline" #outline -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               @outline_action
           button "Ghost" #ghost -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               @ghost_action
           button "Destructive" #destructive -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               @danger_action
           button "Disabled" #disabled -> emit(clicked)
             with
               w=128.0
-              h=38.0
+              h=36.0
               disabled=true
               @secondary_action
         row gap=8.0 align=center
@@ -95,6 +95,15 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           space w=fill h=1.0
           Kbd label="⌘"
           Kbd label="K"
+        row gap=6.0 align=center
+          text "Quick search" size=13.0 @text-fg
+          space w=fill h=1.0
+          Kbd label="/"
+        row gap=6.0 align=center
+          text "Move focus" size=13.0 @text-fg
+          space w=fill h=1.0
+          Kbd label="⇧"
+          Kbd label="Tab"
 
     Panel #fields title="Fields" description="Labels, help copy, validation, and native editing."
       col w=fill gap=14.0
@@ -103,13 +112,18 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             with
               description="We only use this address for product updates."
               hint="you@example.com"
+              p=9.0
               @control
           text "We only use this address for product updates." size=12.0 @text-muted
-        Field label="Framework" description="Pick the runtime you want to build on."
-          pick native_select_frameworks native_select_framework -> emit(framework_changed, _)
+        Field #framework-field
+          with
+            label="Framework"
+            description="Pick the runtime you want to build on."
+          pick native_select_frameworks native_select_framework #framework-picker -> emit(framework_changed, _)
             with
               hint="Choose a framework"
               w=fill
+              p=9.0
             active bg=surface border=border border-w=1.0 r=9.0 text=fg placeholder=muted handle=muted
             hovered bg=surface border=control_line border-w=1.0 r=9.0 text=fg placeholder=muted handle=fg
             opened bg=surface border=primary border-w=2.0 r=9.0 text=fg placeholder=muted handle=fg
@@ -238,13 +252,16 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               space w=fill h=1.0
               ButtonGroup
                 row
-                  button "Cancel" h=38.0 @ghost_action -> emit(clicked)
-                  button "Apply" h=38.0 @primary_action -> emit(clicked)
+                  button "Cancel" h=36.0 @ghost_action -> emit(clicked)
+                  button "Apply" h=36.0 @primary_action -> emit(clicked)
         Separator
         Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
         Bubble copy="Caller state still owns the conversation." outgoing=true
 
-    Panel title="Disclosure" description="Reusable components may own instance-scoped UI state."
+    Panel #disclosure-panel
+      with
+        title="Disclosure"
+        description="Reusable components may own instance-scoped UI state."
       col w=fill gap=12.0
         AccordionItem #state
           with
@@ -263,10 +280,10 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             title="Keep ownership narrow"
             description="Components own disclosure state; the application keeps domain state and side effects."
 
-    Panel
+    Panel #stateful-panel
       with
         title="Stateful primitives"
-        description="Disclosure, toggles, segments, and carousel state stay inside reusable Ice components."
+        description="Local disclosure, toggle, segment, and carousel state."
       col w=fill gap=14.0
         CollapsibleDemo #collapsible
         Separator
@@ -349,11 +366,11 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
       box w=fill
         extern command(command) -> emit(command_changed, _)
 
-    Panel
+    Panel #advanced-selection-panel
       with
         title="Advanced selection"
-        description="Grouped options, typeahead, overlay collision, and focus remain controlled through Ice."
-      col w=fill gap=14.0
+        description="Grouped options, typeahead, overlays, and focus stay controlled."
+      col #advanced-selection-content w=fill gap=14.0
         extern menubar(menubar) -> emit(menubar_changed, _)
         row gap=12.0 align=center
           extern select(select) -> emit(select_changed, _)
@@ -381,11 +398,11 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                 meta="esc"
               Avatar initials="D"
 
-    Panel
+    Panel #layout-primitives-panel
       with
         title="Layout primitives"
         description="Aspect ratio and constrained scrolling compile from Ice."
-      col w=fill gap=14.0
+      col #layout-primitives-content w=fill gap=14.0
         box w=fill align-x=center
           AspectRatioDemo
         ScrollAreaDemo
@@ -408,19 +425,90 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                 description="Overlay composition"
                 meta="UI"
               Avatar initials="D"
+            Item
+              with
+                title="Table"
+                description="Rows and paging"
+                meta="Data"
+              Avatar initials="T"
 
-    Panel
+    Panel #identity-calendar-panel
+      with
+        title="Identity & calendar"
+        description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
+      col #identity-calendar-content w=fill gap=14.0
+        Field
+          with
+            label="Verification code"
+            description="Paste and keyboard editing stay inside one native focus target."
+          extern input_otp("showcase-otp", otp, false, false) -> emit(otp_changed, _)
+        row
+          with
+            w=fill
+            gap=10.0
+            align=center
+          extern spinner(clicks, false)
+          text "Spinner frame follows the Ice click counter." size=12.0 @text-muted
+        extern date_picker(date_picker) -> emit(date_picker_changed, _)
+        extern calendar(calendar) -> emit(calendar_changed, _)
+
+    Panel #chart-panel
+      with
+        title="Chart"
+        description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
+      box #chart-content w=fill
+        extern chart(chart_hover) -> emit(chart_hovered, _)
+
+    Panel #modal-contracts-panel
+      with
+        title="Modal contracts"
+        description="Safe focus, focus trapping, dismissal, and restoration stay typed."
+      col #modal-contracts-content w=fill gap=14.0
+        DemoStage height=190.0 padding=8.0
+          extern alert_dialog(alert_dialog) -> emit(alert_dialog_changed, _)
+        Surface
+          col w=fill
+            Item
+              with
+                title="Initial focus"
+                description="The safe cancel action receives focus first."
+                meta="1"
+              Avatar initials="F"
+            Item
+              with
+                title="Focus trap"
+                description="Tab stays within the destructive decision."
+                meta="2"
+              Avatar initials="T"
+            Item
+              with
+                title="Restoration"
+                description="Dismissal returns focus to the trigger."
+                meta="3"
+              Avatar initials="R"
+            Item
+              with
+                title="Typed events"
+                description="Open, dismiss, and focus changes share one route."
+                meta="4"
+              Avatar initials="E"
+
+    Panel #data-table-panel
       with
         title="Data table"
         description="Filtering, sorting, rows, and paging remain application-owned."
-      col w=fill gap=14.0
+      col #data-table-content w=fill gap=14.0
         row
           with
             w=fill
             gap=8.0
             align=center
-          input "Filter components" <-> catalog_query hint="Filter components" @control
-          button "Sort" h=38.0 @outline_action -> emit(catalog_sort_changed)
+          input "Filter components" <-> catalog_query
+            with
+              hint="Filter components"
+              p=9.0
+              @control
+          button "Sort" h=36.0 @outline_action -> emit(catalog_sort_changed)
           text catalog_sort size=11.0 @text-muted
         table item in data_table_rows(catalog_query, catalog_sort, catalog_page)
           with
@@ -461,61 +549,26 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               h=32.0
               disabled=(!data_table_can_next(catalog_query, catalog_page))
               @secondary_action
-
-    Panel
-      with
-        title="Identity & calendar"
-        description="Simple native state and opaque Rust state both stay controlled by Ice handlers."
-      col w=fill gap=14.0
-        Field
-          with
-            label="Verification code"
-            description="Paste and keyboard editing stay inside one native focus target."
-          extern input_otp("showcase-otp", otp, false, false) -> emit(otp_changed, _)
-        row
-          with
-            w=fill
-            gap=10.0
-            align=center
-          extern spinner(clicks, false)
-          text "Spinner frame follows the Ice click counter." size=12.0 @text-muted
-        extern date_picker(date_picker) -> emit(date_picker_changed, _)
-        extern calendar(calendar) -> emit(calendar_changed, _)
-
-    Panel
-      with
-        title="Chart"
-        description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
-      box w=fill
-        extern chart(chart_hover) -> emit(chart_hovered, _)
-
-    Panel
-      with
-        title="Modal contracts"
-        description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
-      col w=fill gap=14.0
-        DemoStage height=190.0 padding=8.0
-          extern alert_dialog(alert_dialog) -> emit(alert_dialog_changed, _)
         Surface
           col w=fill
             Item
               with
-                title="Initial focus"
-                description="The safe cancel action receives focus first."
-                meta="1"
+                title="Filtering"
+                description="The query stays in application state."
+                meta="live"
               Avatar initials="F"
             Item
               with
-                title="Focus trap"
-                description="Tab stays within the destructive decision."
-                meta="2"
-              Avatar initials="T"
+                title="Sorting"
+                description="One action cycles through three explicit modes."
+                meta="3"
+              Avatar initials="S"
             Item
               with
-                title="Restoration"
-                description="Dismissal returns focus to the trigger."
-                meta="3"
-              Avatar initials="R"
+                title="Paging"
+                description="Boundary actions disable instead of wrapping."
+                meta="safe"
+              Avatar initials="P"
 
     Panel
       with
@@ -531,18 +584,18 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
       DemoStage height=208.0 padding=8.0
         extern message_scroller(message_scroller) -> emit(message_scroller_changed, _)
 
-    Panel
+    Panel #edge-panels
       with
         title="Edge panels"
-        description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
-      DemoStage height=190.0
+        description="Sheet geometry, drag dismissal, modal focus, and state stay composed."
+      DemoStage height=190.0 #edge-stage
         extern drawer(drawer) -> emit(drawer_changed, _)
 
-    Panel
+    Panel #native-escape-hatches
       with
         title="Native escape hatches"
         description="Ice owns composition and state; advanced widgets cross one typed boundary."
-      DemoStage height=164.0 padding=10.0
+      DemoStage height=190.0 padding=10.0 #native-stage
         col w=fill gap=10.0
           extern resizable_demo(native_sizes) -> emit(native_resized, _)
           extern popover_demo(native_popover) -> emit(native_popover_changed, _)
