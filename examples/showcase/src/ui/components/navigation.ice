@@ -33,12 +33,12 @@ component CarouselDemo()
         w=fill
         gap=8.0
         align=center
-      button "Previous" p=7.0 @secondary_action -> previous
+      button "Previous" h=32.0 @secondary_action -> previous
       space w=fill h=1.0
       text slide size=12.0 @text-muted
       text "/ 3" size=12.0 @text-muted
       space w=fill h=1.0
-      button "Next" p=7.0 @secondary_action -> next
+      button "Next" h=32.0 @secondary_action -> next
 
 component TabsDemo()
   lifetime mounted
@@ -57,8 +57,8 @@ component TabsDemo()
             p=4.0
             @bg-accent
             @rounded-lg
-          button "Preview" p=8.0 @secondary_action -> preview
-          button "Code" #show-code p=8.0 @ghost_action -> code
+          button "Preview" h=32.0 @secondary_action -> preview
+          button "Code" #show-code h=32.0 @ghost_action -> code
         box
           with
             w=fill
@@ -76,8 +76,8 @@ component TabsDemo()
             p=4.0
             @bg-accent
             @rounded-lg
-          button "Preview" #show-preview p=8.0 @ghost_action -> preview
-          button "Code" p=8.0 @secondary_action -> code
+          button "Preview" #show-preview h=32.0 @ghost_action -> preview
+          button "Code" h=32.0 @secondary_action -> code
         box
           with
             w=fill
@@ -94,13 +94,13 @@ component PaginationDemo(page:i64, max_page:i64=5)
   row gap=6.0 align=center
     button "Previous" #previous -> emit(previous)
       with
-        p=8.0
+        h=32.0
         disabled=(page <= 1)
         @secondary_action
     box
       with
-        w=36.0
-        h=36.0
+        w=32.0
+        h=32.0
         align-x=center
         align-y=center
         bg=primary
@@ -114,6 +114,6 @@ component PaginationDemo(page:i64, max_page:i64=5)
     text max_page size=12.0 @text-muted
     button "Next" #next -> emit(next)
       with
-        p=8.0
+        h=32.0
         disabled=(page >= max_page)
         @secondary_action

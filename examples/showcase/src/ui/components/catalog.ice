@@ -41,12 +41,37 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="Clear defaults with native focus and disabled behavior."
       col w=fill gap=14.0
         row gap=8.0 wrap wrap-gap=8.0
-          button "Primary" #primary @primary_action -> emit(clicked)
-          button "Secondary" @secondary_action -> emit(clicked)
-          button "Outline" @outline_action -> emit(clicked)
-          button "Ghost" @ghost_action -> emit(clicked)
-          button "Destructive" @danger_action -> emit(clicked)
-          button "Disabled" disabled=true @secondary_action -> emit(clicked)
+          button "Primary" #primary -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              @primary_action
+          button "Secondary" #secondary -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              @secondary_action
+          button "Outline" #outline -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              @outline_action
+          button "Ghost" #ghost -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              @ghost_action
+          button "Destructive" #destructive -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              @danger_action
+          button "Disabled" #disabled -> emit(clicked)
+            with
+              w=128.0
+              h=38.0
+              disabled=true
+              @secondary_action
         row gap=8.0 align=center
           text "Activated" size=12.0 @text-muted
           text clicks
@@ -213,8 +238,8 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               space w=fill h=1.0
               ButtonGroup
                 row
-                  button "Cancel" @ghost_action -> emit(clicked)
-                  button "Apply" @primary_action -> emit(clicked)
+                  button "Cancel" h=38.0 @ghost_action -> emit(clicked)
+                  button "Apply" h=38.0 @primary_action -> emit(clicked)
         Separator
         Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
         Bubble copy="Caller state still owns the conversation." outgoing=true
@@ -307,7 +332,12 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         row gap=8.0 align=center
           text "Keyboard help" size=13.0 @text-fg
           Tooltip label="Open the command palette"
-            button label="Command palette shortcut" @ghost_action -> emit(clicked)
+            button -> emit(clicked)
+              with
+                label="Command palette shortcut"
+                h=32.0
+                p=4.0
+                @ghost_action
               row gap=4.0
                 Kbd label="⌘"
                 Kbd label="K"
@@ -390,7 +420,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             gap=8.0
             align=center
           input "Filter components" <-> catalog_query hint="Filter components" @control
-          button "Sort" @outline_action -> emit(catalog_sort_changed)
+          button "Sort" h=38.0 @outline_action -> emit(catalog_sort_changed)
           text catalog_sort size=11.0 @text-muted
         table item in data_table_rows(catalog_query, catalog_sort, catalog_page)
           with
@@ -420,10 +450,15 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             w=fill
             gap=8.0
             align=center
-          button "Previous" disabled=catalog_at_start @secondary_action -> emit(catalog_previous)
+          button "Previous" -> emit(catalog_previous)
+            with
+              h=32.0
+              disabled=catalog_at_start
+              @secondary_action
           text catalog_page_number size=12.0 @text-muted
           button "Next" -> emit(catalog_next)
             with
+              h=32.0
               disabled=(!data_table_can_next(catalog_query, catalog_page))
               @secondary_action
 
@@ -459,18 +494,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         title="Modal contracts"
         description="Alert dismissal, safe initial focus, focus trapping, and restoration cross the typed task boundary."
       col w=fill gap=14.0
-        box
-          with
-            w=fill
-            h=190.0
-            p=12.0
-            clip=true
-            bg=muted_bg
-            border=border
-            border-w=1.0
-            r=10.0
-            align-x=start
-            align-y=start
+        DemoStage height=190.0 padding=8.0
           extern alert_dialog(alert_dialog) -> emit(alert_dialog_changed, _)
         Surface
           col w=fill
@@ -499,68 +523,45 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="Sidebar collapse and active route remain controlled by Ice."
       col w=fill gap=16.0
         extern navigation_menu(navigation_menu) -> emit(navigation_menu_changed, _)
-        box
-          with
-            w=fill
-            h=240.0
-            clip=true
+        DemoStage height=308.0 padding=10.0
           extern sidebar(sidebar) -> emit(sidebar_changed, _)
 
     Panel
       with
         title="Notifications"
         description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
-      box
-        with
-          w=fill
-          h=220.0
-          clip=true
-          bg=muted_bg
-          border=border
-          border-w=1.0
-          r=10.0
+      DemoStage
         extern sonner(sonner) -> emit(sonner_changed, _)
 
     Panel
       with
         title="Messages"
         description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
-      box
-        with
-          w=fill
-          h=220.0
-          clip=true
+      DemoStage padding=8.0
         extern message_scroller(message_scroller) -> emit(message_scroller_changed, _)
 
     Panel
       with
         title="Edge panels"
         description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
-      box
-        with
-          w=fill
-          h=220.0
-          clip=true
-          bg=muted_bg
-          border=border
-          border-w=1.0
-          r=10.0
+      DemoStage height=190.0
         extern drawer(drawer) -> emit(drawer_changed, _)
 
     Panel title="Loading" description="Static placeholders remain reduced-motion safe."
-      box w=fill
+      DemoStage height=154.0 padding=16.0
         SkeletonDemo
 
     Panel
       with
         title="Native escape hatches"
         description="Ice owns composition and state; advanced widgets cross one typed boundary."
-      col w=fill gap=14.0
-        extern resizable_demo(native_sizes) -> emit(native_resized, _)
-        extern popover_demo(native_popover) -> emit(native_popover_changed, _)
+      DemoStage height=164.0 padding=10.0
+        col w=fill gap=10.0
+          extern resizable_demo(native_sizes) -> emit(native_resized, _)
+          extern popover_demo(native_popover) -> emit(native_popover_changed, _)
 
     Panel title="Empty state" description="A useful default before application-specific actions."
-      box w=fill h=260.0
+      box w=fill h=180.0
         EmptyState
           with
             title="No components found"

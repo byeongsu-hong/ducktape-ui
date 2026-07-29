@@ -15,6 +15,7 @@ use ducktape_ui::ui::{
     context_menu::{ContextMenuIds, context_menu as ui_context_menu},
     data_table::{DataTableState, Sort, SortDirection},
     date_picker::{DateFormat, DatePickerIds, DatePickerValue, date_picker as ui_date_picker},
+    direction::Direction,
     drawer::{
         DrawerEvent as UiDrawerEvent, DrawerState as UiDrawerState, drawer as ui_drawer,
         drawer_panel,
@@ -38,9 +39,11 @@ use ducktape_ui::ui::{
     resizable::resizable,
     select::{SelectGroup, SelectIds, SelectOption, select as ui_select},
     sidebar::{
-        SidebarAction, SidebarCollapsible, SidebarId, SidebarMenuButtonId,
-        SidebarState as UiSidebarState, SidebarViewport, sidebar as ui_sidebar, sidebar_footer,
-        sidebar_group, sidebar_header, sidebar_layout, sidebar_menu, sidebar_menu_button,
+        SIDEBAR_METRICS, SidebarAction, SidebarCollapsible, SidebarId, SidebarMenuButtonId,
+        SidebarMetrics, SidebarState as UiSidebarState, SidebarVariant, SidebarViewport,
+        sidebar as ui_sidebar, sidebar_footer, sidebar_group, sidebar_group_label, sidebar_header,
+        sidebar_layout, sidebar_menu, sidebar_menu_badge, sidebar_menu_button,
+        sidebar_menu_button_content,
     },
     slider::slider as ui_slider,
     sonner::{
@@ -52,8 +55,13 @@ use ducktape_ui::ui::{
     switch::switch as ui_switch,
     theme::LIGHT,
 };
-use iced::widget::{column, container, text};
-use iced::{Element, Font, Length};
+use iced::alignment::{Horizontal, Vertical};
+use iced::widget::{column, container, row, text};
+use iced::{Background, Border, Element, Font, Length};
+
+const ACTION_HEIGHT: f32 = 38.0;
+const DEMO_STAGE_HEIGHT: f32 = 180.0;
+const SIDEBAR_STAGE_HEIGHT: f32 = 288.0;
 
 pub use ducktape_ui::ui::{
     calendar::{CalendarEvent, CalendarState},
@@ -402,6 +410,22 @@ pub fn select_apply(mut state: SelectState, event: SelectEvent) -> iced::Task<Se
 }
 
 pub fn select<'a>(state: &'a SelectState) -> Element<'a, SelectEvent> {
+    let theme = theme();
+    let selected = state.selected.as_deref().unwrap_or("Choose a component");
+    let trigger = surface(
+        row![
+            container(text(selected).size(13)).width(Length::Fill),
+            text("⌄").size(13),
+        ]
+        .align_y(iced::Alignment::Center),
+        SurfaceVariant::Default,
+        &theme,
+    )
+    .width(Length::Fill)
+    .height(ACTION_HEIGHT)
+    .padding([0, 12])
+    .align_y(Vertical::Center);
+
     ui_select(
         state.ids.clone(),
         select_groups(),
@@ -410,10 +434,11 @@ pub fn select<'a>(state: &'a SelectState) -> Element<'a, SelectEvent> {
         &state.menu,
         state.open,
         |event| event,
-        &theme(),
+        &theme,
     )
     .width(272.0)
     .content_width(272.0)
+    .trigger(trigger)
     .into()
 }
 
@@ -443,7 +468,10 @@ pub fn dropdown_menu(state: &DropdownMenuState) -> Element<'_, DropdownMenuEvent
     let theme = theme();
     ui_dropdown_menu(
         state.ids.clone(),
-        surface(text("Open menu"), SurfaceVariant::Default, &theme).padding([8, 12]),
+        surface(text("Open menu"), SurfaceVariant::Default, &theme)
+            .height(ACTION_HEIGHT)
+            .padding([0, 12])
+            .align_y(Vertical::Center),
         &state.entries,
         &state.menu,
         state.open,
@@ -529,9 +557,37 @@ pub fn alert_dialog_apply(
 
 pub fn alert_dialog(state: &AlertDialogState) -> Element<'static, AlertDialogEvent> {
     let theme = theme();
+    let trigger_content = surface(
+        row![
+            column![
+                text("DESTRUCTIVE FLOW")
+                    .size(9)
+                    .color(theme.palette.destructive),
+                text("Safe focus and explicit confirmation").size(12),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+            surface(
+                text("Delete component").size(12),
+                SurfaceVariant::Muted,
+                &theme,
+            )
+            .height(ACTION_HEIGHT)
+            .padding([0, 12])
+            .align_y(Vertical::Center),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center),
+        SurfaceVariant::Card,
+        &theme,
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(12)
+    .align_y(Vertical::Center);
     let trigger = FocusControl::new(
         state.focus.restore().clone(),
-        surface(text("Delete component"), SurfaceVariant::Muted, &theme).padding([8, 12]),
+        trigger_content,
         AlertDialogEvent::Open,
         &theme,
     );
@@ -570,52 +626,218 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         .navigation
         .is_collapsed(SidebarViewport::Desktop, SidebarCollapsible::Icon);
     let items = [
-        ("overview", "⌂", "Overview"),
-        ("components", "◇", "Components"),
-        ("settings", "⚙", "Settings"),
+        ("overview", "01", "Overview", Some("LIVE")),
+        ("components", "02", "Components", Some("24")),
+        ("settings", "03", "Settings", None),
     ]
-    .map(|(id, icon, label)| {
-        let content: Element<'static, SidebarEvent> = if collapsed {
-            text(icon).into()
-        } else {
-            text(format!("{icon}  {label}")).into()
-        };
+    .map(|(id, icon, label, badge)| {
+        let active = state.selected == id;
+        let leading: Element<'static, SidebarEvent> = surface(
+            container(text(icon).size(10))
+                .width(24)
+                .height(24)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+            SurfaceVariant::Muted,
+            &theme,
+        )
+        .width(24)
+        .height(24)
+        .into();
+        let trailing =
+            badge.map(|badge| sidebar_menu_badge(text(badge).size(9), active, &theme).into());
+        let content = sidebar_menu_button_content(
+            Some(leading),
+            label,
+            trailing,
+            collapsed,
+            Direction::LeftToRight,
+            &theme,
+        );
         sidebar_menu_button(
             SidebarMenuButtonId::new(id),
             content,
             SidebarEvent::Select(id.to_owned()),
             &theme,
         )
-        .active(state.selected == id)
+        .active(active)
         .collapsed(collapsed)
         .tooltip(text(label))
         .into()
     });
-    let panel = ui_sidebar(
-        SidebarId::new("ice-default"),
-        state.navigation,
-        sidebar_group(sidebar_menu(items)),
+    let brand_theme = theme;
+    let brand: Element<'static, SidebarEvent> =
+        container(text("D").size(13).color(theme.palette.primary_foreground))
+            .width(32)
+            .height(32)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center)
+            .style(move |_iced_theme| iced::widget::container::Style {
+                background: Some(Background::Color(brand_theme.palette.primary)),
+                border: Border {
+                    radius: 9.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into();
+    let toggle: Element<'static, SidebarEvent> = FocusControl::new(
+        iced::widget::Id::from("ice-sidebar-demo-toggle"),
+        surface(
+            container(text(if collapsed { "›" } else { "‹" }).size(15))
+                .width(28)
+                .height(28)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+            SurfaceVariant::Muted,
+            &theme,
+        )
+        .width(28)
+        .height(28),
         SidebarEvent::Action(SidebarAction::Toggle(SidebarViewport::Desktop)),
         &theme,
     )
-    .header(sidebar_header(text(if collapsed {
-        "UI"
+    .into();
+    let header: Element<'static, SidebarEvent> = if collapsed {
+        column![brand, toggle]
+            .spacing(8)
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .into()
     } else {
-        "ducktape-ui"
-    })))
-    .footer(sidebar_footer(text(if collapsed {
-        "?"
+        row![
+            brand,
+            column![
+                text("Ducktape").size(13),
+                text("Component lab")
+                    .size(10)
+                    .color(theme.palette.muted_foreground),
+            ]
+            .spacing(1)
+            .width(Length::Fill),
+            toggle,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let footer_avatar: Element<'static, SidebarEvent> = surface(
+        container(text("UI").size(10))
+            .width(28)
+            .height(28)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center),
+        SurfaceVariant::Muted,
+        &theme,
+    )
+    .width(28)
+    .height(28)
+    .into();
+    let footer: Element<'static, SidebarEvent> = if collapsed {
+        container(footer_avatar)
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .into()
     } else {
-        "Default navigation"
-    })))
-    .collapsible(SidebarCollapsible::Icon);
-    let main = container(
+        row![
+            footer_avatar,
+            column![
+                text("Preview workspace").size(11),
+                text("Local").size(9).color(theme.palette.muted_foreground),
+            ]
+            .spacing(1),
+        ]
+        .spacing(9)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let navigation = column![
+        sidebar_group_label(
+            text("WORKSPACE").size(9),
+            collapsed,
+            Direction::LeftToRight,
+            &theme,
+        ),
+        sidebar_menu(items),
+    ];
+    let metrics = SidebarMetrics {
+        desktop_width: 220.0,
+        icon_width: 72.0,
+        ..SIDEBAR_METRICS
+    };
+    let panel = ui_sidebar(
+        SidebarId::new("ice-default"),
+        state.navigation,
+        sidebar_group(navigation),
+        SidebarEvent::Action(SidebarAction::Toggle(SidebarViewport::Desktop)),
+        &theme,
+    )
+    .header(sidebar_header(header))
+    .footer(sidebar_footer(footer))
+    .variant(SidebarVariant::Floating)
+    .collapsible(SidebarCollapsible::Icon)
+    .rail(false)
+    .metrics(metrics);
+    let (title, description, count, status) = match state.selected.as_str() {
+        "components" => (
+            "Components",
+            "Browse the primitives that make up this workspace.",
+            "24 ready",
+            "Synced",
+        ),
+        "settings" => (
+            "Settings",
+            "Keep workspace preferences explicit and local.",
+            "3 groups",
+            "Saved",
+        ),
+        _ => (
+            "Overview",
+            "A compact snapshot of the current component workspace.",
+            "24 ready",
+            "Healthy",
+        ),
+    };
+    let main = surface(
         column![
-            text("Workspace").size(18),
-            text(format!("Selected: {}", state.selected)),
-            text("Use the rail to collapse the navigation.")
+            text("ACTIVE ROUTE")
+                .size(9)
+                .color(theme.palette.muted_foreground),
+            text(title).size(20),
+            text(description)
+                .size(11)
+                .color(theme.palette.muted_foreground),
+            row![
+                surface(
+                    column![
+                        text("COMPONENTS")
+                            .size(8)
+                            .color(theme.palette.muted_foreground),
+                        text(count).size(13),
+                    ]
+                    .spacing(4),
+                    SurfaceVariant::Card,
+                    &theme,
+                )
+                .width(Length::Fill)
+                .padding(10),
+                surface(
+                    column![
+                        text("BUILD").size(8).color(theme.palette.muted_foreground),
+                        text(status).size(13),
+                    ]
+                    .spacing(4),
+                    SurfaceVariant::Card,
+                    &theme,
+                )
+                .width(Length::Fill)
+                .padding(10),
+            ]
+            .spacing(8),
         ]
         .spacing(8),
+        SurfaceVariant::Muted,
+        &theme,
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -630,7 +852,7 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         SidebarEvent::Action(SidebarAction::CloseMobile),
         &theme,
     ))
-    .height(240)
+    .height(SIDEBAR_STAGE_HEIGHT)
     .into()
 }
 
@@ -663,22 +885,23 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
     let theme = theme();
     let underlay = container(
         column![
-            text("Queue, pause, focus, action, dismiss, and swipe behavior remain native."),
+            text(format!("{} notification queued", state.shown)).size(12),
             ducktape_ui::ui::button::button("Show notification", &theme)
-                .height(39)
+                .height(ACTION_HEIGHT)
                 .on_press(SonnerEvent::Show),
         ]
         .spacing(12),
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .padding(16);
+    .padding(16)
+    .align_y(Vertical::Bottom);
 
     iced::widget::Stack::new()
         .push(underlay)
         .push(ui_sonner(&state.queue, SonnerEvent::Toast, &theme))
         .width(Length::Fill)
-        .height(220)
+        .height(DEMO_STAGE_HEIGHT)
         .into()
 }
 
@@ -706,15 +929,42 @@ pub fn drawer_apply(mut state: DrawerState, event: DrawerEvent) -> iced::Task<Dr
 
 pub fn drawer(state: &DrawerState) -> Element<'static, DrawerEvent> {
     let theme = theme();
+    let trigger_content = surface(
+        row![
+            column![
+                text("BOTTOM SHEET")
+                    .size(9)
+                    .color(theme.palette.muted_foreground),
+                text("Drag, Escape, and focus restoration enabled").size(12),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+            surface(text("Open drawer").size(12), SurfaceVariant::Muted, &theme)
+                .height(ACTION_HEIGHT)
+                .padding([0, 12])
+                .align_y(Vertical::Center),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center),
+        SurfaceVariant::Card,
+        &theme,
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(14)
+    .align_y(Vertical::Center);
     let trigger = FocusControl::new(
         state.focus.restore().clone(),
-        surface(text("Open drawer"), SurfaceVariant::Default, &theme).padding([8, 12]),
+        trigger_content,
         DrawerEvent::Open,
         &theme,
     );
     let close = FocusControl::new(
         state.focus.first().clone(),
-        surface(text("Close"), SurfaceVariant::Muted, &theme).padding([8, 12]),
+        surface(text("Close"), SurfaceVariant::Muted, &theme)
+            .height(ACTION_HEIGHT)
+            .padding([0, 12])
+            .align_y(Vertical::Center),
         DrawerEvent::Close,
         &theme,
     );
@@ -736,7 +986,7 @@ pub fn drawer(state: &DrawerState) -> Element<'static, DrawerEvent> {
         DrawerEvent::Drawer,
         &theme,
     )
-    .size(220.0)
+    .size(190.0)
     .into()
 }
 
@@ -818,11 +1068,15 @@ pub fn hover_card() -> Element<'static, ()> {
             SurfaceVariant::Muted,
             &theme,
         )
-        .padding([8, 12]),
+        .height(ACTION_HEIGHT)
+        .padding([0, 12])
+        .align_y(Vertical::Center),
         column![
             text("ducktape-ui").size(16),
             text("Default components authored from Ice."),
-            ducktape_ui::ui::button::button("Open profile", &theme).on_press(())
+            ducktape_ui::ui::button::button("Open profile", &theme)
+                .height(ACTION_HEIGHT)
+                .on_press(())
         ]
         .spacing(8),
         &theme,
@@ -953,7 +1207,7 @@ pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScro
         |event| event,
         &theme,
     )
-    .height(220)
+    .height(DEMO_STAGE_HEIGHT - 16.0)
     .into()
 }
 
@@ -1014,7 +1268,7 @@ pub fn resizable_demo(sizes: &[f64]) -> Element<'static, Vec<f64>> {
         &theme,
     )
     .with_handles(true)
-    .height(120)
+    .height(96)
     .into()
 }
 
@@ -1027,7 +1281,10 @@ pub fn popover_demo(open: bool) -> Element<'static, PopoverEvent> {
     let theme = theme();
     popover(
         PopoverIds::new("ice-native-popover"),
-        surface(text("Toggle popover"), SurfaceVariant::Default, &theme).padding([8, 12]),
+        surface(text("Toggle popover"), SurfaceVariant::Default, &theme)
+            .height(ACTION_HEIGHT)
+            .padding([0, 12])
+            .align_y(Vertical::Center),
         column![
             text("Native overlay"),
             text("Advanced collision and focus behavior stays in Rust.")
