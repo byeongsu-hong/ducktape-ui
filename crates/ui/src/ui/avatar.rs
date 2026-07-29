@@ -73,7 +73,7 @@ fn metrics(size: AvatarSize, theme: &Theme) -> Metrics {
     match size {
         AvatarSize::Small => Metrics {
             diameter: 24.0,
-            text: theme.typography.field_label,
+            text: theme.typography.meta_compact,
         },
         AvatarSize::Default => Metrics {
             diameter: 30.0,
@@ -99,6 +99,7 @@ mod tests {
 
         assert!(small.diameter < default.diameter && default.diameter < large.diameter);
         assert!(small.text < default.text && default.text < large.text);
+        assert_eq!(small.text, LIGHT.typography.meta_compact);
         assert_eq!(default.diameter, 30.0);
         assert_eq!(default.text, LIGHT.typography.meta);
     }

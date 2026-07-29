@@ -139,6 +139,7 @@ where
 
     pub fn into_widget(self) -> Element<'a, Message> {
         let geometry = geometry(&self.theme, self.variant, self.size);
+        let height = self.height.or(geometry.height.map(Length::Fixed));
         let width = if self.size == ButtonSize::Icon {
             Length::Fixed(self.theme.controls.icon_size)
         } else {
@@ -149,9 +150,14 @@ where
         } else {
             Length::Fill
         };
+        let content_height = if height.is_some() {
+            Length::Fill
+        } else {
+            Length::Shrink
+        };
         let content = container(self.content)
             .width(content_width)
-            .height(Length::Fill)
+            .height(content_height)
             .align_x(self.alignment)
             .align_y(Vertical::Center);
         let theme = self.theme;
@@ -161,7 +167,6 @@ where
             .padding(self.padding.unwrap_or(geometry.padding))
             .width(width)
             .on_press_maybe(on_press.clone());
-        let height = self.height.or(geometry.height.map(Length::Fixed));
         let widget = if let Some(height) = height {
             widget.height(height)
         } else {
@@ -313,7 +318,8 @@ mod tests {
     use super::super::focus_control::State as FocusState;
     use super::super::theme::{DARK, LIGHT, SHADCN_DARK, SHADCN_LIGHT};
     use super::*;
-    use iced::advanced::widget;
+    use iced::advanced::{layout, widget};
+    use iced::{Pixels, Size};
 
     #[test]
     fn disabled_button_uses_the_semantic_disabled_pair() {
@@ -338,6 +344,29 @@ mod tests {
 
         let leading: Button<'_, ()> = button("Leading", &LIGHT).align_x(Horizontal::Left);
         assert_eq!(leading.alignment, Horizontal::Left);
+    }
+
+    #[test]
+    fn unconstrained_buttons_keep_natural_content_height() {
+        use iced::advanced::renderer::Headless as _;
+
+        let mut element: Element<'_, ()> = button("Show notification", &LIGHT)
+            .on_press(())
+            .into_widget();
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(320.0, 220.0)),
+        );
+
+        assert!(node.size().height < 80.0, "{:?}", node.size());
     }
 
     #[test]

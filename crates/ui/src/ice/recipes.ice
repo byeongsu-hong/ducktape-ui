@@ -56,7 +56,7 @@ recipe meta_compact for text
   @text-10.5px leading-normal font-mono font-medium text-muted
 
 recipe field_label for text
-  @text-10px leading-snug font-mono font-semibold text-muted
+  @text-12.5px leading-normal font-semibold text-fg
 
 recipe nav_label for text
   @text-9.5px leading-snug font-semibold text-accent_fg
