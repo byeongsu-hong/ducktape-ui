@@ -433,7 +433,7 @@ const TYPOGRAPHY: Typography = Typography {
     machine: 12.0,
     meta: 11.0,
     meta_compact: 10.5,
-    field_label: 10.0,
+    field_label: 12.5,
     nav_label: 9.5,
     badge: 9.0,
 };
@@ -642,7 +642,7 @@ mod tests {
                 LIGHT.typography.badge,
             ],
             [
-                22.0, 20.0, 16.0, 14.0, 13.5, 13.0, 12.5, 12.0, 11.0, 10.5, 10.0, 9.5, 9.0,
+                22.0, 20.0, 16.0, 14.0, 13.5, 13.0, 12.5, 12.0, 11.0, 10.5, 12.5, 9.5, 9.0,
             ]
         );
         assert_eq!(LIGHT.glass, GLASS);

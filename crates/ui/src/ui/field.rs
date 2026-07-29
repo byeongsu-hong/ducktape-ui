@@ -25,9 +25,9 @@ where
             .size(theme.typography.field_label)
             .font(Font {
                 weight: Weight::Semibold,
-                ..Font::MONOSPACE
+                ..theme.typography.font
             })
-            .color(theme.palette.muted_foreground),
+            .color(theme.palette.foreground),
         control.into(),
     ]
     .spacing(theme.spacing.xs);

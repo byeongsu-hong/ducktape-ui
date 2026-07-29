@@ -8,7 +8,7 @@ use iced::advanced::text::Alignment as TextAlignment;
 use iced::alignment::{Horizontal, Vertical};
 use iced::mouse;
 use iced::widget::canvas::{self, Path, Stroke};
-use iced::widget::{Canvas, Column, Container, Row, Space, Stack, container, row, text};
+use iced::widget::{Canvas, Column, Container, Row, Space, container, row, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Pixels, Point, Radians, Rectangle,
     Shadow, Vector,
@@ -892,10 +892,8 @@ where
         self
     }
 
-    fn into_widget(self) -> Stack<'a, Message> {
-        let width = self.width;
-        let height = self.height;
-        let canvas = Canvas::new(CartesianProgram {
+    fn into_widget(self) -> Canvas<CartesianProgram<'a, Message>, Message> {
+        Canvas::new(CartesianProgram {
             config: self.config,
             data: self.data,
             options: self.options,
@@ -903,15 +901,8 @@ where
             on_hover: self.on_hover,
             theme: self.theme,
         })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        Stack::new()
-            .width(width)
-            .height(height)
-            .clip(true)
-            .push(Space::new().width(width).height(height))
-            .push(canvas)
+        .width(self.width)
+        .height(self.height)
     }
 }
 
@@ -1466,10 +1457,8 @@ where
         self
     }
 
-    fn into_widget(self) -> Stack<'a, Message> {
-        let width = self.width;
-        let height = self.height;
-        let canvas = Canvas::new(PieProgram {
+    fn into_widget(self) -> Canvas<PieProgram<'a, Message>, Message> {
+        Canvas::new(PieProgram {
             config: self.config,
             data: self.data,
             inner_ratio: self.inner_ratio,
@@ -1477,15 +1466,8 @@ where
             on_hover: self.on_hover,
             theme: self.theme,
         })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        Stack::new()
-            .width(width)
-            .height(height)
-            .clip(true)
-            .push(Space::new().width(width).height(height))
-            .push(canvas)
+        .width(self.width)
+        .height(self.height)
     }
 }
 

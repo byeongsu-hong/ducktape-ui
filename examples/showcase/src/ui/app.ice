@@ -1,0 +1,163 @@
+app Showcase
+  title "ducktape-ui · Ice"
+  id "dev.ducktape.ui.showcase"
+  font "../../assets/fonts/Geist-Regular.ttf"
+  font "../../assets/fonts/Geist-Bold.ttf"
+  text-size 14
+  // WGPU's multisampled Canvas path retains translated chart meshes while scrolling.
+  antialiasing false
+  window
+    size 1120 820
+    min-size 720 560
+    position centered
+
+font geist family="Geist" default=true
+
+use "extern/adapters.ice"
+use "state.ice"
+use "components/controls.ice"
+use "components/navigation.ice"
+use "components/content.ice"
+use "components/catalog.ice"
+use "handlers/app.ice"
+use "tests/app.ice"
+use "../../../../crates/ui/src/ice/default.ice"
+
+view
+  overlay
+    with
+      when=dialog_open
+      dismiss=close_dialog
+      backdrop=black/45
+      p=24.0
+      align-x=center
+      align-y=center
+    content
+      box #app
+        with
+          w=fill
+          h=fill
+          bg=bg
+        scroll #catalog-scroll
+          with
+            dir=vertical
+            w=fill
+            h=fill
+          col #page @page
+            row w=fill align=center
+              PageHeader
+                with
+                  title="ducktape-ui"
+                  description="Default iced components, composed and checked by Ice."
+              space w=fill h=1.0
+              Badge label="ui-lang"
+
+            Alert
+              with
+                title="Ice is the source of truth"
+                description="Layout, state, routes, styles, and accessibility are generated from .ice files."
+
+            Catalog #catalog-grid email<->email project_slug<->project_slug textarea_notes<->textarea_notes catalog_query<->catalog_query
+              with
+                clicks=clicks
+                accepted=accepted
+                notifications=notifications
+                volume=volume
+                density=density
+                native_select_frameworks=native_select_frameworks
+                native_select_framework=native_select_framework
+                combobox_frameworks=combobox_frameworks
+                searched_framework=searched_framework
+                catalog_sort=catalog_sort
+                catalog_page=catalog_page
+                catalog_at_start=catalog_at_start
+                catalog_page_number=catalog_page_number
+                demo_page=demo_page
+                otp=otp
+                calendar=calendar
+                date_picker=date_picker
+                chart_hover=chart_hover
+                command=command
+                select=select
+                dropdown=dropdown
+                context_menu=context_menu
+                alert_dialog=alert_dialog
+                sidebar=sidebar
+                sonner=sonner
+                drawer=drawer
+                navigation_menu=navigation_menu
+                menubar=menubar
+                native_sizes=native_sizes
+                native_range=native_range
+                message_scroller=message_scroller
+                native_popover=native_popover
+              events
+                clicked -> clicked
+                accepted_changed -> accepted_changed _
+                notifications_changed -> notifications_changed _
+                volume_changed -> volume_changed _
+                density_changed -> density_changed _
+                framework_changed -> framework_changed _
+                searched_framework_changed -> searched_framework_changed _
+                otp_changed -> otp_changed _
+                calendar_changed -> calendar_changed _
+                date_picker_changed -> date_picker_changed _
+                chart_hovered -> chart_hovered _
+                command_changed -> command_changed _
+                select_changed -> select_changed _
+                dropdown_changed -> dropdown_changed _
+                context_menu_changed -> context_menu_changed _
+                alert_dialog_changed -> alert_dialog_changed _
+                sidebar_changed -> sidebar_changed _
+                sonner_changed -> sonner_changed _
+                drawer_changed -> drawer_changed _
+                navigation_menu_changed -> navigation_menu_changed _
+                menubar_changed -> menubar_changed _
+                native_resized -> native_resized _
+                native_range_changed -> native_range_changed _
+                catalog_sort_changed -> catalog_sort_changed
+                catalog_previous -> catalog_previous
+                catalog_next -> catalog_next
+                demo_page_previous -> demo_page_previous
+                demo_page_next -> demo_page_next
+                message_scroller_changed -> message_scroller_changed _
+                native_popover_changed -> native_popover_changed _
+            row
+              with
+                w=fill
+                gap=12.0
+                align=center
+              button "Open dialog" @primary_action -> open_dialog
+              if !toast_visible
+                button "Show toast" @secondary_action -> show_toast
+              space w=fill h=1.0
+              if toast_visible
+                Toast title="Migration active" description="This screen is generated by ui-lang."
+                  button "×" label="Dismiss toast" @ghost_action -> dismiss_toast
+    layer
+      Dialog
+        Dialog.Header
+          col gap=4.0
+            text "Default dialog"
+              with
+                size=20.0
+                @font-bold
+                @text-fg
+            text "The overlay, dismissal route, and focusable controls are declared in Ice."
+              with
+                size=13.0
+                @text-muted
+        Dialog.Body
+          Alert
+            with
+              title="No Rust view code"
+              description="The build script emits ordinary iced code at compile time."
+        Dialog.Actions
+          row
+            with
+              w=fill
+              gap=8.0
+              align=end
+            space w=fill h=1.0
+            button "Cancel" @secondary_action -> close_dialog
+            button "Continue" @primary_action -> close_dialog

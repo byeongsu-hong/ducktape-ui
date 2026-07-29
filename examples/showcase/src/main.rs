@@ -1,6 +1,6 @@
 mod adapters;
 
-ui_lang::include_app!("src/ui/showcase.ice");
+ui_lang::include_app!("src/ui/app.ice");
 
 fn main() -> iced::Result {
     Showcase::run()
