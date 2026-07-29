@@ -52,6 +52,9 @@ on started(result)
   title = result.title
   running = true
   busy = false
+  task focus_terminal(session) -> terminal_focused
+
+on terminal_focused
 
 on stop
   session = idle_session()
@@ -225,7 +228,7 @@ view
                   @text-fg
             space w=fill
             if running
-              text "Click to focus · use your platform copy/paste shortcuts" size=11.0 @text-subtle
+              text "Ready for input · use your platform copy/paste shortcuts" size=11.0 @text-subtle
           box
             with
               w=fill
