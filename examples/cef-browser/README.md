@@ -11,7 +11,7 @@ CEF is opt-in because its binary distribution is large. Build and stage the app
 with the included bundler:
 
 ```sh
-cargo run -p cef-browser-example --features cef --bin bundle-cef-browser
+cargo run -p browser-example --features cef --bin bundle-cef-browser
 ```
 
 The command prints the staged executable or macOS app path. Add `-- --release`

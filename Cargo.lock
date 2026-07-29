@@ -270,16 +270,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "apple-music-example"
-version = "0.1.0"
-dependencies = [
- "iced",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,6 +694,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser-example"
+version = "0.1.0"
+dependencies = [
+ "cef",
+ "iced",
+ "iced_winit",
+ "plist",
+ "semver",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -885,20 +889,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "cef-browser-example"
-version = "0.1.0"
-dependencies = [
- "cef",
- "iced",
- "iced_winit",
- "plist",
- "semver",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
 ]
 
 [[package]]
@@ -2819,16 +2809,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
-name = "live-reload-example"
-version = "0.1.0"
-dependencies = [
- "iced",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2920,7 +2900,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "markdown-editor-example"
+name = "markdown-example"
 version = "0.1.0"
 dependencies = [
  "iced",
@@ -3044,6 +3024,16 @@ dependencies = [
  "web-sys",
  "windows 0.62.2",
  "zbus",
+]
+
+[[package]]
+name = "music-example"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
 ]
 
 [[package]]
@@ -4297,6 +4287,16 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "reload-example"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
 
 [[package]]
 name = "renderdoc-sys"

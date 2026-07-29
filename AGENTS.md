@@ -23,7 +23,7 @@ as a pinned local patch and do not edit `target/`.
 - `cargo ice check`: analyze Ice sources, then check the workspace.
 - `cargo run -p iced-app`: run the main reference application.
 
-Use `cargo run -p apple-music-example` for the larger visual example.
+Use `cargo run -p music-example` for the larger visual example.
 Use `cargo run -p showcase` for the complete default component catalog.
 Platform-specific accessibility checks are in `scripts/`.
 

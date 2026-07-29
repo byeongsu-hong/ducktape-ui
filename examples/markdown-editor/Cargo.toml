@@ -1,5 +1,5 @@
 [package]
-name = "markdown-editor-example"
+name = "markdown-example"
 version = "0.1.0"
 edition.workspace = true
 publish = false

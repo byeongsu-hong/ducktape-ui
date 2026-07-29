@@ -1,5 +1,5 @@
 [package]
-name = "apple-music-example"
+name = "music-example"
 version = "0.1.0"
 edition.workspace = true
 publish = false

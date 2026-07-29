@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::process::Command;
 
-const APP: &str = "cef-browser-example";
+const APP: &str = "browser-example";
 #[cfg(target_os = "macos")]
 const HELPER: &str = "cef-browser-helper";
 
