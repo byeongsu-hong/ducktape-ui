@@ -41,17 +41,16 @@ checker, while `W010` remains `cargo ice`-only. Consumer build scripts generate
 every Ice root below Cargo's package/profile/target-scoped `OUT_DIR`; the proc
 macro only includes those outputs.
 
-Native live development is separately covered by the versioned
-`ui-lang-live-protocol`, compiler lowering, generated state/event bridge,
-runtime last-known-good loader, and `cargo ice dev` runner. Compatible default
-`col`, `row`, `text`, label `button`, and `if` plans can read primitive app/derived
-values and invoke existing primitive top-level handlers without replacing the
-process. Plan polling emits no update for unchanged payloads, and a dev-only
-watchdog reports update storms without changing application behavior.
-Unsupported live view semantics and changes to generated behavior or Rust ABI
-deliberately use a successful-build-only warm restart. This does not change the
-48/48 AOT render-node claim below: nodes outside the narrower live surface
-retain their normal native implementation through that fallback.
+`cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
+the selected Ice import graph, embedded fonts and icons, participating project
+Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,
+and build-script `rerun-if-changed` inputs. A changed snapshot is settled and
+built while the accepted process remains alive. The shadow executable is
+adopted only after its generated root completes a draw, atomically publishes
+the runner's exact readiness token, and is confirmed alive; failure and timeout
+tests keep the previous process and clean the candidate. This is process
+replacement, so no application, window, or widget state-preservation coverage
+is claimed.
 
 Source graphs support both bare fragment imports and aliased module imports.
 Aliases preserve checked `::` identity for components, recipes, extern

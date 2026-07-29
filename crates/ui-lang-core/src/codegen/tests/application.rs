@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn installs_the_live_runtime_without_replacing_the_aot_fallback() {
+fn keeps_the_aot_view_and_wraps_only_its_rendered_root_for_dev_readiness() {
     let source = r#"app Demo
 theme contract AppTheme
   bg
@@ -14,28 +14,33 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 view
-  text "AOT fallback"
+  text "ready"
 "#;
-    let generated = compile(source, "live.ice").unwrap();
+    let generated = compile(source, "ready.ice").unwrap();
 
-    for expected in [
-        "const __ICE_LIVE_CONTRACT: &str",
-        "__ice_live: ::ui_lang_runtime::live::LiveRuntime",
-        "__ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog",
-        "self.__ice_update_watchdog.observe()",
-        "__IceLiveTick",
-        "self.__ice_live.subscription().map(|_| __DemoMessage::__IceLiveTick)",
-        "self.__ice_live.poll_and_report()",
-        "self.__ice_live.render::<__DemoMessage, ::iced::Theme, __IceRenderer, _>",
-        "\"AOT fallback\"",
+    assert!(generated.contains("fn __view(&self) -> __IceElement"));
+    assert!(generated.contains("let __text_value = (\"ready\".to_owned()).to_string()"));
+    assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
+    assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
+
+    for forbidden in [
+        "::ui_lang_runtime::live",
+        "::ui_lang_core",
+        "LiveRuntime",
+        "LivePlan",
+        "__ice_live",
+        "ICE_LIVE_",
     ] {
-        assert!(generated.contains(expected), "missing {expected}");
+        assert!(
+            !generated.contains(forbidden),
+            "generated AOT view contains runtime interpreter hook {forbidden}"
+        );
     }
 }
 
 #[test]
-fn bridges_primitive_state_and_live_events_to_aot_handlers() {
-    let source = r#"app Counter
+fn wraps_each_daemon_window_view_for_dev_readiness() {
+    let source = r#"daemon Agent
 theme contract AppTheme
   bg
   fg
@@ -46,33 +51,16 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-state
-  count = 0
-  label = "Count"
-on increment
-  count = count + 1
-on add(amount)
-  count = count + amount
 view
-  col
-    text label
-    text count
-    button "+1" -> increment
-    button "+10" -> add 10
+  text "ready"
 "#;
-    let generated = compile(source, "counter.ice").unwrap();
+    let generated = compile(source, "ready_daemon.ice").unwrap();
 
-    for expected in [
-        "fn __ice_live_values(&self)",
-        "LiveValue::I64(self.count)",
-        "LiveValue::String((self.label).clone())",
-        "__IceLiveEvent(::ui_lang_runtime::live::LiveEvent)",
-        "\"increment\" => if __args.is_empty()",
-        "LiveValue::I64(amount)",
-        "self.__update(__CounterMessage::Add(amount))",
-    ] {
-        assert!(generated.contains(expected), "missing {expected}");
-    }
+    assert!(generated.contains("fn __view(&self, window: ::iced::window::Id) -> __IceElement"));
+    assert!(generated.contains("let __text_value = (\"ready\".to_owned()).to_string()"));
+    assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
+    assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
+    assert!(!generated.contains("::ui_lang_runtime::live"));
 }
 
 #[test]

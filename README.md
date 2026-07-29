@@ -5,15 +5,14 @@ Ice is a small, statically checked frontend language that compiles to
 compact `.ice` files; Rust keeps domain rules, I/O, and custom platform code.
 
 ```text
-.ice source -> parser -> semantic checker -> checked AST -> iced Rust backend
+.ice source -> parser -> semantic checker -> checked AST -> generated Rust -> iced
 ```
 
 Normal builds have no source parser or general runtime interpreter.
 `ui-lang-build` compiles app roots from `build.rs` into Cargo's `OUT_DIR`, and
-`ui_lang::include_app!` includes that ordinary generated Rust. The opt-in
-`cargo ice dev` path can additionally load a small,
-compiler-checked live view plan; without its environment variable the same
-binary immediately follows its generated Rust view.
+`ui_lang::include_app!` includes that ordinary generated Rust. Development
+restarts use the same ahead-of-time build path; applications never parse or
+interpret Ice source at runtime.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
 construct it, and the Iced backend has no unchecked `Document` entry point.
@@ -524,9 +523,9 @@ cargo ice test
 cargo ice clippy
 cargo ice compat
 cargo ice expand examples/iced-app/src/ui/tasks.ice
-cargo ice dev examples/live-reload/src/ui/app.ice -- -p reload-example
-cargo ice inspect examples/showcase/src/ui/showcase.ice --viewport 1440x900 --theme light --name showcase_light
-cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_showcase/showcase_light.json
+cargo ice dev examples/showcase/src/ui/app.ice -- -p showcase
+cargo ice inspect examples/showcase/src/ui/app.ice --viewport 1440x900 --theme light --name showcase_light
+cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_app/showcase_light.json
 cargo ice schema
 cargo ice lsp
 scripts/a11y-smoke.sh
@@ -550,22 +549,17 @@ changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
-one native app, watches its complete imported Ice graph, and keeps the last
-valid screen running while edits are checked. Compatible view edits are
-published atomically into the existing process, so its window and generated
-app state survive. The app receives a live-poll message only after the plan
-payload changes; an idle dev session does not continuously update or redraw.
-If more than 256 application updates arrive within one second, the dev runtime
-reports an update-storm warning pointing to handler cycles, repeated
-subscriptions, and overly short timers. The current no-restart surface covers
-default `col`, `row`, `text`, label `button`, and `if` nodes; primitive `bool`,
-`i64`, `f64`, and `str`
-state/derived expressions; and button routes into existing top-level handlers
-with primitive arguments. Changing generated behavior or a Rust boundary—or
-using a view feature outside that live surface—builds in the background and
-then performs a warm restart. A failed parse, check, or Rust build leaves the
-last-known-good app open. See `examples/live-reload` for a state-preserving
-counter.
+one native app or daemon, watches its complete Ice and Cargo input graph, and
+rebuilds in the background after a settled change. Every accepted edit starts a
+shadow candidate through the ordinary generated Rust path. The current process
+remains open until the candidate reports that its first root widget draw
+completed. Parse, check, build, startup, or readiness failure leaves that
+last-known-good process running. A successful candidate replaces the old
+process, so application, window, and widget state intentionally restart instead
+of relying on a second runtime interpreter. A daemon reports readiness through
+its first drawn window; a windowless daemon candidate cannot satisfy this draw
+boundary and is rejected after the 30-second readiness timeout without
+replacing the current process.
 
 `cargo ice schema` prints a generative JSON description of each Core
 construct's context, syntax, child shape, typed properties, binding, and route,

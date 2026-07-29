@@ -65,11 +65,6 @@ pub(in crate::codegen) fn generate_subscription(
     )
     .unwrap();
     writeln!(out, "::iced::Subscription::batch([").unwrap();
-    writeln!(
-        out,
-        "self.__ice_live.subscription().map(|_| {message}::__IceLiveTick),"
-    )
-    .unwrap();
     if !document.daemon {
         writeln!(
             out,

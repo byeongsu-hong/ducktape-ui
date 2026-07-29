@@ -15,127 +15,6 @@ fn handler_param_binding(param: &HandlerParam) -> Binding {
     }
 }
 
-fn live_value_code(ty: &Type, value: &str, owned: bool) -> Option<String> {
-    let value = match (ty, owned) {
-        (Type::Str, false) => format!("({value}).clone()"),
-        _ => value.to_owned(),
-    };
-    let variant = match ty {
-        Type::Bool => "Bool",
-        Type::I64 => "I64",
-        Type::F64 => "F64",
-        Type::Str => "String",
-        _ => return None,
-    };
-    Some(format!(
-        "::ui_lang_runtime::live::LiveValue::{variant}({value})"
-    ))
-}
-
-fn live_value_pattern(ty: &Type, binding: &str) -> Option<String> {
-    let variant = match ty {
-        Type::Bool => "Bool",
-        Type::I64 => "I64",
-        Type::F64 => "F64",
-        Type::Str => "String",
-        _ => return None,
-    };
-    Some(format!(
-        "::ui_lang_runtime::live::LiveValue::{variant}({binding})"
-    ))
-}
-
-pub(in crate::codegen) fn generate_live_bridge(
-    out: &mut String,
-    document: &Document,
-    message: &str,
-) {
-    writeln!(
-        out,
-        "fn __ice_live_values(&self) -> ::std::collections::BTreeMap<::std::string::String, ::ui_lang_runtime::live::LiveValue> {{\nlet mut __values = ::std::collections::BTreeMap::new();"
-    )
-    .unwrap();
-    for state in &document.states {
-        if let Some(value) = live_value_code(&state.ty, &format!("self.{}", state.name), false) {
-            writeln!(
-                out,
-                "__values.insert({}.to_owned(), {value});",
-                rust_string(&state.name)
-            )
-            .unwrap();
-        }
-    }
-    for derived in &document.derived {
-        if let Some(value) = live_value_code(
-            &derived.ty,
-            &format!("Self::{}(self)", derived_method(&derived.name)),
-            true,
-        ) {
-            writeln!(
-                out,
-                "__values.insert({}.to_owned(), {value});",
-                rust_string(&derived.name)
-            )
-            .unwrap();
-        }
-    }
-    writeln!(out, "__values\n}}").unwrap();
-
-    writeln!(
-        out,
-        "fn __ice_live_event(&mut self, __event: ::ui_lang_runtime::live::LiveEvent) -> ::iced::Task<{message}> {{\nlet ::ui_lang_runtime::live::LiveEvent {{ handler: __handler, args: __args }} = __event;\nmatch __handler.as_str() {{"
-    )
-    .unwrap();
-    for handler in document.handlers.iter().filter(|handler| {
-        handler.name != "mount"
-            && handler
-                .params
-                .iter()
-                .all(|param| live_value_pattern(&param.ty, &param.name).is_some())
-    }) {
-        let handler_name = rust_string(&handler.name);
-        let variant = handler_variant(&handler.name);
-        if handler.params.is_empty() {
-            writeln!(
-                out,
-                "{handler_name} => if __args.is_empty() {{ self.__update({message}::{variant}) }} else {{ eprintln!(\"ice live: rejected malformed event `{{}}`\", __handler); ::iced::Task::none() }},"
-            )
-            .unwrap();
-            continue;
-        }
-        writeln!(
-            out,
-            "{handler_name} => {{ let mut __args = __args.into_iter();"
-        )
-        .unwrap();
-        for param in &handler.params {
-            let pattern = live_value_pattern(&param.ty, &param.name)
-                .expect("filtered live handler parameter");
-            writeln!(
-                out,
-                "let ::std::option::Option::Some({pattern}) = __args.next() else {{ eprintln!(\"ice live: rejected malformed event `{{}}`\", __handler); return ::iced::Task::none(); }};"
-            )
-            .unwrap();
-        }
-        writeln!(
-            out,
-            "if __args.next().is_some() {{ eprintln!(\"ice live: rejected malformed event `{{}}`\", __handler); return ::iced::Task::none(); }}\nself.__update({message}::{variant}({}))\n}},",
-            handler
-                .params
-                .iter()
-                .map(|param| param.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-        .unwrap();
-    }
-    writeln!(
-        out,
-        "_ => {{ eprintln!(\"ice live: rejected unknown handler `{{}}`\", __handler); ::iced::Task::none() }},\n}}\n}}"
-    )
-    .unwrap();
-}
-
 pub(in crate::codegen) fn generate_theme(
     out: &mut String,
     document: &Document,
@@ -354,16 +233,6 @@ pub(in crate::codegen) fn generate_boot(
         }
     }
     writeln!(out, "Self {{").unwrap();
-    writeln!(
-        out,
-        "__ice_live: ::ui_lang_runtime::live::LiveRuntime::new(__ICE_LIVE_CONTRACT),"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "__ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog::new(),"
-    )
-    .unwrap();
     let accessibility_bridge = if document.daemon {
         "::ui_lang_runtime::Bridge::without_native_adapter()"
     } else {
@@ -564,7 +433,6 @@ pub(in crate::codegen) fn generate_update(
         "#[allow(clippy::assign_op_pattern)]\nfn __update(&mut self, message: {message}) -> ::iced::Task<{message}> {{"
     )
     .unwrap();
-    writeln!(out, "self.__ice_update_watchdog.observe();").unwrap();
     if !document.daemon {
         writeln!(
             out,
@@ -575,24 +443,6 @@ pub(in crate::codegen) fn generate_update(
     writeln!(
         out,
         "{task_binding}match message {{\n{message}::__AccessibilitySnapshot(__snapshot) => {{ self.__ice_accessibility.update(*__snapshot); return ::iced::Task::none(); }},\n{message}::__AccessibilityAction(__request) => {{ let __refresh = matches!(__request.action, ::ui_lang_runtime::Action::Focus); let __task = self.__ice_accessibility.dispatch(__request); return if __refresh {{ __task.chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))) }} else {{ __task }}; }},\n{message}::__AccessibilityWindow(__id, __event) => {{ self.__ice_accessibility.window_event(__id, __event); return ::iced::Task::none(); }},"
-    )
-    .unwrap();
-    if document.daemon {
-        writeln!(
-            out,
-            "{message}::__IceLiveTick => {{ self.__ice_live.poll_and_report(); return ::iced::Task::none(); }},"
-        )
-        .unwrap();
-    } else {
-        writeln!(
-            out,
-            "{message}::__IceLiveTick => {{ if self.__ice_live.poll_and_report() {{ return ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot))); }} return ::iced::Task::none(); }},"
-        )
-        .unwrap();
-    }
-    writeln!(
-        out,
-        "{message}::__IceLiveEvent(__event) => {{ return self.__ice_live_event(__event); }},"
     )
     .unwrap();
     if document.daemon {

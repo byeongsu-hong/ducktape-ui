@@ -1,10 +1,10 @@
-//! Runtime support for the accessibility contract emitted by `ui-lang`.
+//! Runtime support for generated Ice applications.
 
 mod dashed_border;
+#[doc(hidden)]
+pub mod dev;
 mod dynamic_themer;
 mod flex;
-#[doc(hidden)]
-pub mod live;
 mod qr;
 mod resize_handle;
 mod selectable_text;

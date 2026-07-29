@@ -268,8 +268,6 @@ fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> 
 pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String, Error> {
     let message = format!("__{}Message", document.app);
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
-    let live_contract = serde_json::to_string(&crate::live_program_contract(document))
-        .expect("the live contract only contains serializable protocol values");
     let mut out = String::new();
     // Attributes on `include!` do not reach the included items, while a module
     // wrapper would change their visibility and name-resolution scope. Expand
@@ -283,12 +281,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         out,
         "const _: &str = include_str!({});",
         rust_string(source_path)
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "const __ICE_LIVE_CONTRACT: &str = {};",
-        rust_string(&live_contract)
     )
     .unwrap();
     writeln!(
@@ -405,16 +397,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     writeln!(out, "#[allow(dead_code)]\npub struct {} {{", document.app).unwrap();
     writeln!(
         out,
-        "pub(crate) __ice_live: ::ui_lang_runtime::live::LiveRuntime,"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "pub(crate) __ice_update_watchdog: ::ui_lang_runtime::live::UpdateWatchdog,"
-    )
-    .unwrap();
-    writeln!(
-        out,
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
@@ -504,7 +486,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     writeln!(out, "#[derive(Clone)]\npub(crate) enum {message} {{").unwrap();
     writeln!(
         out,
-        "__IceLiveTick,\n__IceLiveEvent(::ui_lang_runtime::live::LiveEvent),\n__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
+        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
     )
     .unwrap();
     for handler in &document.handlers {
@@ -619,7 +601,6 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
     generate_derived(&mut out, document)?;
-    generate_live_bridge(&mut out, document, &message);
     generate_named_windows(&mut out, document, source_path);
     let subscription = ".subscription(Self::__subscription)";
     let default_font = document

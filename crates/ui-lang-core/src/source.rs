@@ -1,18 +1,20 @@
 use crate::{CheckedDocument, Document, Error, Span, check, codegen, parser};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
 pub struct FileCompilation {
     pub rust: String,
     pub dependencies: Vec<PathBuf>,
+    pub asset_dependencies: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
 pub struct FileAnalysis {
     pub document: CheckedDocument,
     pub dependencies: Vec<PathBuf>,
+    pub asset_dependencies: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,14 +42,52 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
     Ok(analyze_file_graph(path)?.document)
 }
 
-/// Analyzes one root and returns the complete canonical source dependency graph.
+/// Analyzes one root and returns every source and asset input used by it.
 pub fn analyze_file_graph(path: impl AsRef<Path>) -> Result<FileAnalysis, Error> {
     let loaded = load(path.as_ref())?;
     let document = analyze_loaded(&loaded)?;
+    let mut dependencies = discover_file_dependencies(path.as_ref())?;
+    dependencies.extend(loaded.dependencies.iter().cloned());
+    dependencies.sort();
+    dependencies.dedup();
+    let asset_dependencies = asset_dependencies(&document, &loaded);
     Ok(FileAnalysis {
         document,
-        dependencies: loaded.dependencies,
+        dependencies,
+        asset_dependencies,
     })
+}
+
+/// Returns readable and missing Ice paths referenced by a root.
+///
+/// This best-effort traversal does not parse or check the merged document, so
+/// a development watcher can observe a missing import and retry when it is
+/// created.
+pub fn discover_file_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, Error> {
+    let path = absolute_lexical_path(path.as_ref()).map_err(|error| {
+        file_error(
+            "E181",
+            path.as_ref(),
+            1,
+            format!("cannot resolve source path: {error}"),
+        )
+    })?;
+    let mut dependencies = Vec::new();
+    let mut visited = HashSet::new();
+    discover_dependencies_into(&path, true, &mut dependencies, &mut visited)?;
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+/// Returns host assets referenced by an otherwise valid Ice source graph.
+///
+/// Asset existence is deliberately not checked, allowing a watcher to recover
+/// when a missing font or window icon is created.
+pub fn discover_file_asset_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, Error> {
+    let loaded = load(path.as_ref())?;
+    let document = analyze_loaded_without_assets(&loaded)?;
+    Ok(asset_dependencies(&document, &loaded))
 }
 
 /// Analyze an unsaved root buffer while resolving its `use` graph from disk.
@@ -73,6 +113,7 @@ pub fn analyze_file_with_overlays(
 pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     let loaded = load(path.as_ref())?;
     let document = analyze_loaded(&loaded)?;
+    let asset_dependencies = asset_dependencies(&document, &loaded);
     let root = loaded
         .dependencies
         .first()
@@ -88,10 +129,17 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     Ok(FileCompilation {
         rust,
         dependencies: loaded.dependencies,
+        asset_dependencies,
     })
 }
 
 fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
+    let document = analyze_loaded_without_assets(loaded)?;
+    check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
+    Ok(document)
+}
+
+fn analyze_loaded_without_assets(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
     let namespaces = loaded
         .origins
         .iter()
@@ -101,7 +149,6 @@ fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
         parser::parse_with_symbols_and_namespaces(&loaded.source, &namespaces)
             .map_err(|error| remap_error(error, loaded))?;
     let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
-    check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
     Ok(document
         .with_parsed_symbols(remap_symbols(symbols, loaded))
         .with_source_origins(
@@ -111,6 +158,38 @@ fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
                 .map(|origin| (origin.path.clone(), origin.line))
                 .collect(),
         ))
+}
+
+fn asset_dependencies(document: &Document, loaded: &LoadedSource) -> Vec<PathBuf> {
+    let root = loaded
+        .dependencies
+        .first()
+        .expect("a loaded source always has a root");
+    let parent = root.parent().unwrap_or_else(|| Path::new("."));
+    let mut dependencies = document
+        .settings
+        .fonts
+        .iter()
+        .map(|font| parent.join(&font.path))
+        .chain(
+            document
+                .settings
+                .window
+                .iter()
+                .chain(
+                    document
+                        .settings
+                        .windows
+                        .iter()
+                        .map(|window| &window.settings),
+                )
+                .filter_map(|window| window.icon.as_ref())
+                .map(|icon| parent.join(&icon.path)),
+        )
+        .collect::<Vec<_>>();
+    dependencies.sort();
+    dependencies.dedup();
+    dependencies
 }
 
 fn remap_symbols(
@@ -414,6 +493,72 @@ fn parse_use<'a>(source: &'a str, path: &Path, line: usize) -> Result<Import<'a>
     })
 }
 
+fn discover_dependencies_into(
+    path: &Path,
+    required: bool,
+    dependencies: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), Error> {
+    dependencies.push(path.to_owned());
+    let target = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    dependencies.push(target.clone());
+    if !visited.insert(target.clone()) {
+        return Ok(());
+    }
+    let source = match fs::read_to_string(&target) {
+        Ok(source) => source,
+        Err(_) if !required => return Ok(()),
+        Err(error) => {
+            return Err(file_error(
+                "E181",
+                &target,
+                1,
+                format!("cannot read .ice file: {error}"),
+            ));
+        }
+    };
+    for (index, raw) in source.lines().enumerate() {
+        if raw.len() != raw.trim_start().len() || !raw.starts_with("use ") {
+            continue;
+        }
+        let Ok(import) = parse_use(raw, &target, index + 1) else {
+            continue;
+        };
+        let candidate = normalize_path_lexically(
+            &target
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(import.path),
+        );
+        discover_dependencies_into(&candidate, false, dependencies, visited)?;
+    }
+    Ok(())
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
+fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(normalize_path_lexically(path))
+    } else {
+        std::env::current_dir().map(|current| normalize_path_lexically(&current.join(path)))
+    }
+}
+
 fn resolve(
     path: &Path,
     source: &Path,
@@ -469,8 +614,9 @@ fn file_error(code: &'static str, path: &Path, line: usize, message: impl Into<S
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_file, analyze_file_with_overlays, analyze_file_with_source, compile_file,
-        parse_use, source_is_app,
+        analyze_file, analyze_file_graph, analyze_file_with_overlays, analyze_file_with_source,
+        compile_file, discover_file_asset_dependencies, discover_file_dependencies, parse_use,
+        source_is_app,
     };
     use crate::SymbolKind;
     use std::collections::HashMap;
@@ -532,6 +678,83 @@ mod tests {
         assert_eq!(compiled.dependencies.len(), 3);
         assert!(compiled.rust.contains("struct Demo"));
         assert_eq!(compiled.rust.matches("include_str!").count(), 3);
+    }
+
+    #[test]
+    fn analysis_reports_source_and_asset_inputs() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            concat!(
+                "app Demo\n",
+                "  font \"font.ttf\"\n",
+                "use \"part.ice\"\n",
+                "theme contract AppTheme\n",
+                "  bg\n",
+                "  fg\n",
+                "  primary\n",
+                "  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n",
+                "  fg #ffffff\n",
+                "  primary #333333\n",
+                "  danger #ff0000\n",
+                "view\n",
+                "  Card\n",
+            ),
+        );
+        fixture.write("part.ice", "component Card()\n  text \"Card\"\n");
+        fixture.write("font.ttf", "font bytes");
+
+        let analysis = analyze_file_graph(fixture.path("app.ice")).unwrap();
+        let compilation = compile_file(fixture.path("app.ice")).unwrap();
+
+        assert!(analysis.dependencies.contains(&fixture.path("app.ice")));
+        assert!(analysis.dependencies.contains(&fixture.path("part.ice")));
+        assert_eq!(analysis.asset_dependencies, [fixture.path("font.ttf")]);
+        assert_eq!(compilation.asset_dependencies, [fixture.path("font.ttf")]);
+    }
+
+    #[test]
+    fn dependency_discovery_keeps_missing_imports_watchable() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"missing.ice\"\nview\n  Missing\n",
+        );
+
+        let dependencies = discover_file_dependencies(fixture.path("app.ice")).unwrap();
+
+        assert!(dependencies.contains(&fixture.path("missing.ice")));
+    }
+
+    #[test]
+    fn asset_discovery_keeps_missing_assets_watchable() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            concat!(
+                "app Demo\n",
+                "  font \"missing.ttf\"\n",
+                "theme contract AppTheme\n",
+                "  bg\n",
+                "  fg\n",
+                "  primary\n",
+                "  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n",
+                "  fg #ffffff\n",
+                "  primary #333333\n",
+                "  danger #ff0000\n",
+                "view\n",
+                "  text \"Ready\"\n",
+            ),
+        );
+
+        assert_eq!(
+            discover_file_asset_dependencies(fixture.path("app.ice")).unwrap(),
+            [fixture.path("missing.ttf")]
+        );
     }
 
     #[test]
