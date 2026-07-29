@@ -10,9 +10,9 @@ retained state cross typed `extern` boundaries instead.
 
 The workspace follows that split:
 
-- [`../../examples/showcase/src/ui/showcase.ice`](../../examples/showcase/src/ui/showcase.ice) is the complete showcase application.
+- [`../../examples/showcase/src/ui/app.ice`](../../examples/showcase/src/ui/app.ice) is the complete showcase application.
 - [`src/ice/components.ice`](src/ice/components.ice) contains the reusable Ice-native composition.
-- [`../../examples/showcase/src/adapters.rs`](../../examples/showcase/src/adapters.rs) and [`../../examples/showcase/src/ui/adapters.ice`](../../examples/showcase/src/ui/adapters.ice) contain the catalog-only retained-widget adapters.
+- [`../../examples/showcase/src/adapters.rs`](../../examples/showcase/src/adapters.rs) and [`../../examples/showcase/src/ui/extern/adapters.ice`](../../examples/showcase/src/ui/extern/adapters.ice) contain the catalog-only retained-widget adapters.
 - [`../../examples/showcase/src/main.rs`](../../examples/showcase/src/main.rs) only compiles and runs the Ice app.
 
 ## Ice interface in this workspace
@@ -152,7 +152,7 @@ crosses typed Rust boundaries only for retained native behavior such as menus,
 charts, modal focus, transcript measurement, and resizable panels. Its local
 Ice file contains demos, not a second component library. The full Rust feature
 set is compiled and exercised by the test suite. The same
-[`showcase.ice`](../../examples/showcase/src/ui/showcase.ice) graph declares a
+[`app.ice`](../../examples/showcase/src/ui/app.ice) graph declares a
 first-class `test app_behavior`: it boots the `test` preset, selects rendered
 controls by scoped ID, drives click, typing, keys, and checked handler dispatch,
 then asserts generated state and visible content. `cargo test -p showcase`

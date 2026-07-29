@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
 const COMPILER_STACK_SIZE: usize = 8 * 1024 * 1024;
+const DEV_BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
 
 #[derive(Debug)]
 pub struct Error(String);
@@ -166,8 +167,8 @@ fn compile_one(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<PathB
     let source = manifest.join(Path::new(&relative));
     let compilation = ui_lang_core::compile_file(&source)
         .map_err(|error| Error(error.render(&source.display().to_string())))?;
-    for dependency in &compilation.dependencies {
-        println!("cargo::rerun-if-changed={}", dependency.display());
+    for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
+        println!("{directive}");
     }
     let destination = generated_path(out_dir, &relative)?;
     let directory = destination
@@ -188,6 +189,19 @@ fn compile_one(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<PathB
         })?;
     }
     Ok(destination)
+}
+
+fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
+    std::iter::once(format!(
+        "cargo::rerun-if-env-changed={DEV_BUILD_FINGERPRINT_ENV}"
+    ))
+    .chain(
+        sources
+            .iter()
+            .chain(assets)
+            .map(|path| format!("cargo::rerun-if-changed={}", path.display())),
+    )
+    .collect()
 }
 
 fn prune_generated(
@@ -285,12 +299,29 @@ fn validate_relative(relative: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_dir_at, generated_path};
+    use super::{compile_dir_at, generated_path, rerun_directives};
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn cargo_tracks_dev_fingerprint_sources_and_assets() {
+        assert_eq!(
+            rerun_directives(
+                &["src/ui/app.ice".into(), "src/ui/content.ice".into()],
+                &["assets/font.ttf".into(), "assets/icon.rgba".into()],
+            ),
+            [
+                "cargo::rerun-if-env-changed=ICE_DEV_BUILD_FINGERPRINT",
+                "cargo::rerun-if-changed=src/ui/app.ice",
+                "cargo::rerun-if-changed=src/ui/content.ice",
+                "cargo::rerun-if-changed=assets/font.ttf",
+                "cargo::rerun-if-changed=assets/icon.rgba",
+            ]
+        );
+    }
 
     #[test]
     fn generates_roots_below_cargo_out_dir() {

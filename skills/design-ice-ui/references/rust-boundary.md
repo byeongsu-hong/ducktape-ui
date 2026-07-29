@@ -465,7 +465,7 @@ case grammar is needed. Follow:
 
 ```text
 examples/iced-app/src/ui/component_state.ice
-examples/showcase/src/ui/showcase.ice
+examples/showcase/src/ui/app.ice
 ```
 
 Use named presets or Rust `cfg(test)` implementations when extern behavior must

@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/ui-lang-core",
-    "crates/ui-lang-live-protocol",
     "crates/ui-lang-runtime",
     "crates/ui-lang-build",
     "crates/ui-lang",
@@ -10,7 +9,6 @@ members = [
     "examples/apple-music",
     "examples/cef-browser",
     "examples/iced-app",
-    "examples/live-reload",
     "examples/markdown-editor",
     "examples/showcase",
     "examples/terminal",
