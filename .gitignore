@@ -1,3 +1,4 @@
 **/target/
 /.worktree/
+/handoff.md
 *.rs.bk
