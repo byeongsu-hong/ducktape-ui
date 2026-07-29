@@ -40,6 +40,8 @@ test language_feature_contracts
       AspectRatioDemo #aspect
   target show_code = #tabs/show-code
   target pagination_next = #pagination/next
+  expect show_code.height ~= 32.0
+  expect pagination_next.height ~= 32.0
   click show_code
   expect text "button \"Save\" @primary_action -> save"
   expect demo_page == 1
@@ -56,6 +58,12 @@ test catalog_layout
   target buttons = grid/buttons/root
   target badges = grid/badges/root
   target fields = grid/fields/root
+  target primary = buttons/primary
+  target secondary = buttons/secondary
+  target outline = buttons/outline
+  target ghost = buttons/ghost
+  target destructive = buttons/destructive
+  target disabled = buttons/disabled
   expect app.width ~= 1120.0
   expect app.height ~= 820.0
   expect page.x ~= app.x
@@ -64,6 +72,18 @@ test catalog_layout
   expect grid.width ~= page.width - 48.0
   expect buttons.y ~= badges.y
   expect badges.x ~= buttons.right + 20.0
+  expect primary.height ~= 38.0
+  expect primary.width ~= 128.0
+  expect secondary.height ~= primary.height
+  expect secondary.width ~= primary.width
+  expect outline.height ~= primary.height
+  expect outline.width ~= primary.width
+  expect ghost.height ~= primary.height
+  expect ghost.width ~= primary.width
+  expect destructive.height ~= primary.height
+  expect destructive.width ~= primary.width
+  expect disabled.height ~= primary.height
+  expect disabled.width ~= primary.width
   expect fields.x ~= buttons.x
   expect fields.y > buttons.bottom
   resize 720 560

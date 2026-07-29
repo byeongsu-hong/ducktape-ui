@@ -34,7 +34,7 @@ component CollapsibleDemo()
       with
         label="Toggle deployment details"
         w=fill
-        p=10.0
+        h=38.0
         @secondary_action
       row w=fill align=center
         text "Deployment details"
@@ -62,9 +62,9 @@ component ToggleDemo()
     pressed = !pressed
   row gap=8.0 align=center
     if pressed
-      button "Bold" p=8.0 @primary_action -> toggle
+      button "Bold" h=32.0 @primary_action -> toggle
     if !pressed
-      button "Bold" p=8.0 @outline_action -> toggle
+      button "Bold" h=32.0 @outline_action -> toggle
     if pressed
       text "On" size=12.0 @text-muted
     if !pressed
@@ -82,17 +82,17 @@ component SegmentedControlDemo()
       @bg-accent
       @rounded-lg
     if selected == "day"
-      button "Day" p=8.0 @secondary_action -> select "day"
+      button "Day" h=32.0 @secondary_action -> select "day"
     if selected != "day"
-      button "Day" p=8.0 @ghost_action -> select "day"
+      button "Day" h=32.0 @ghost_action -> select "day"
     if selected == "week"
-      button "Week" p=8.0 @secondary_action -> select "week"
+      button "Week" h=32.0 @secondary_action -> select "week"
     if selected != "week"
-      button "Week" p=8.0 @ghost_action -> select "week"
+      button "Week" h=32.0 @ghost_action -> select "week"
     if selected == "month"
-      button "Month" p=8.0 @secondary_action -> select "month"
+      button "Month" h=32.0 @secondary_action -> select "month"
     if selected != "month"
-      button "Month" p=8.0 @ghost_action -> select "month"
+      button "Month" h=32.0 @ghost_action -> select "month"
 
 component ToggleGroupDemo()
   SegmentedControlDemo #toggle-group
