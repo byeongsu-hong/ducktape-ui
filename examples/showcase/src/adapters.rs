@@ -59,7 +59,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
 
-const ACTION_HEIGHT: f32 = 38.0;
+const ACTION_HEIGHT: f32 = 36.0;
 const DEMO_STAGE_HEIGHT: f32 = 208.0;
 const SIDEBAR_STAGE_HEIGHT: f32 = 288.0;
 

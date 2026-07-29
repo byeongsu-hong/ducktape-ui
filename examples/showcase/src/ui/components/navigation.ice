@@ -86,6 +86,14 @@ component TabsDemo()
             bg=fg
             r=9.0
           text "button \"Save\" @primary_action -> save" size=13.0 @text-white
+    row #selection-status w=fill align=center
+      text "Local state" size=12.0 @text-muted
+      space w=fill h=1.0
+      match selected
+        DemoTab.preview
+          text "Preview selected" size=12.0 @text-primary
+        DemoTab.code
+          text "Code selected" size=12.0 @text-primary
 
 component PaginationDemo(page:i64, max_page:i64=5)
   emits

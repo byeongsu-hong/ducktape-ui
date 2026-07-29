@@ -16,7 +16,7 @@ component ProjectSlugInput(bind value:str)
       focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
 
 component FrameworkCombo(options:combo[str], selected:str?) -> str
-  combo options selected "Search frameworks" w=fill p=9.0 -> emit(_)
+  combo options selected "Search frameworks" #root w=fill p=9.0 -> emit(_)
     active bg=surface border=border border-w=1.0 r=9.0 placeholder=muted value=fg selection=primary icon=muted
     hovered bg=surface border=control_line border-w=1.0 r=9.0 placeholder=muted value=fg selection=primary icon=fg
     focused bg=surface border=primary border-w=2.0 r=9.0 placeholder=muted value=fg selection=primary icon=fg
@@ -34,7 +34,7 @@ component CollapsibleDemo()
       with
         label="Toggle deployment details"
         w=fill
-        h=38.0
+        h=36.0
         @secondary_action
       row w=fill align=center
         text "Deployment details"
