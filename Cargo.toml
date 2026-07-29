@@ -44,5 +44,5 @@ rust-version = "1.88"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
-[profile.dev.package.apple-music-example]
+[profile.dev.package.music-example]
 debug = 0

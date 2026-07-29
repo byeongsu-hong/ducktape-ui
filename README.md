@@ -332,20 +332,20 @@ contract.
 
 ```bash
 cargo run -p iced-app
-cargo run -p apple-music-example
-cargo run -p cef-browser-example
-cargo run -p markdown-editor-example
+cargo run -p music-example
+cargo run -p browser-example
+cargo run -p markdown-example
 cargo run -p terminal-example
 cargo run -p showcase
 ```
 
-`cef-browser-example` demonstrates a native Chromium Embedded Framework child
+`browser-example` demonstrates a native Chromium Embedded Framework child
 inside an iced app whose toolbar and state are written in Ice. Its default build
 shows the Ice shell without downloading Chromium; follow
 [`examples/cef-browser/README.md`](examples/cef-browser/README.md) to build the
 CEF-enabled bundle.
 
-`markdown-editor-example` is a full-window native Markdown editor with inline
+`markdown-example` is a full-window native Markdown editor with inline
 styling, scaled headings, surfaced code blocks, caret-local syntax markers,
 platform-standard group and line deletion, bundled Geist fonts, file open/save,
 bounded undo/redo, find, formatting shortcuts, dirty-close protection, and links
@@ -361,7 +361,7 @@ Codex with ANSI rendering, interactive keyboard and mouse input, selection,
 clipboard bindings, scrolling, and live resize propagation. See the
 [`terminal example`](examples/terminal/README.md) for usage and architecture.
 
-`apple-music-example` recreates the core macOS Music flows with original cover
+`music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,
 library browsing, search, sign-in, queueing, and playback controls.
 `showcase` exercises the default `ducktape-ui` component catalog through Ice.
@@ -524,7 +524,7 @@ cargo ice test
 cargo ice clippy
 cargo ice compat
 cargo ice expand examples/iced-app/src/ui/tasks.ice
-cargo ice dev examples/live-reload/src/ui/app.ice -- -p live-reload-example
+cargo ice dev examples/live-reload/src/ui/app.ice -- -p reload-example
 cargo ice inspect examples/showcase/src/ui/showcase.ice --viewport 1440x900 --theme light --name showcase_light
 cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_showcase/showcase_light.json
 cargo ice schema
