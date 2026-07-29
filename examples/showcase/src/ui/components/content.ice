@@ -37,7 +37,7 @@ component SkeletonDemo()
         with
           w=40.0
           h=40.0
-          bg=border
+          bg=avatar_bg
           r=20.0
         text ""
       col w=fill gap=7.0
@@ -45,21 +45,21 @@ component SkeletonDemo()
           with
             w=180.0
             h=10.0
-            bg=border
+            bg=avatar_bg/75
             r=5.0
           text ""
         box
           with
             w=120.0
             h=9.0
-            bg=border/70
+            bg=control_line
             r=5.0
           text ""
     box
       with
         w=fill
         h=64.0
-        bg=border/60
+        bg=control_line/75
         r=8.0
       text ""
 

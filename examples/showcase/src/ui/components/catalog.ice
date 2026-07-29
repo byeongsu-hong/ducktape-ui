@@ -519,25 +519,16 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
 
     Panel
       with
-        title="Navigation"
-        description="Sidebar collapse and active route remain controlled by Ice."
-      col w=fill gap=16.0
-        extern navigation_menu(navigation_menu) -> emit(navigation_menu_changed, _)
-        DemoStage height=308.0 padding=10.0
-          extern sidebar(sidebar) -> emit(sidebar_changed, _)
-
-    Panel
-      with
         title="Notifications"
         description="Ice owns the Sonner queue; native interaction reports reducer events back through one boundary."
-      DemoStage
+      DemoStage height=208.0
         extern sonner(sonner) -> emit(sonner_changed, _)
 
     Panel
       with
         title="Messages"
         description="Ice owns transcript anchors and unread state while native measurement tasks loop back through handlers."
-      DemoStage padding=8.0
+      DemoStage height=208.0 padding=8.0
         extern message_scroller(message_scroller) -> emit(message_scroller_changed, _)
 
     Panel
@@ -546,10 +537,6 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="Drawer composes Sheet geometry, drag dismissal, modal focus, and Ice-owned state."
       DemoStage height=190.0
         extern drawer(drawer) -> emit(drawer_changed, _)
-
-    Panel title="Loading" description="Static placeholders remain reduced-motion safe."
-      DemoStage height=154.0 padding=16.0
-        SkeletonDemo
 
     Panel
       with
@@ -560,9 +547,22 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           extern resizable_demo(native_sizes) -> emit(native_resized, _)
           extern popover_demo(native_popover) -> emit(native_popover_changed, _)
 
+    Panel title="Loading" description="Static placeholders remain reduced-motion safe."
+      DemoStage height=154.0 padding=16.0
+        SkeletonDemo
+
     Panel title="Empty state" description="A useful default before application-specific actions."
-      box w=fill h=180.0
+      box w=fill h=160.0
         EmptyState
           with
             title="No components found"
             description="Try a different filter or create the first component."
+
+    Panel
+      with
+        title="Navigation shell"
+        description="The full-width shell keeps collapse, active route, and workspace context controlled by Ice."
+      col w=fill gap=16.0
+        extern navigation_menu(navigation_menu) -> emit(navigation_menu_changed, _)
+        DemoStage height=308.0 padding=10.0
+          extern sidebar(sidebar) -> emit(sidebar_changed, _)

@@ -60,7 +60,7 @@ use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
 
 const ACTION_HEIGHT: f32 = 38.0;
-const DEMO_STAGE_HEIGHT: f32 = 180.0;
+const DEMO_STAGE_HEIGHT: f32 = 208.0;
 const SIDEBAR_STAGE_HEIGHT: f32 = 288.0;
 
 pub use ducktape_ui::ui::{
@@ -515,7 +515,9 @@ pub fn context_menu(state: &ContextMenuState) -> Element<'_, ContextMenuEvent> {
             SurfaceVariant::Muted,
             &theme,
         )
-        .padding([12, 16]),
+        .height(ACTION_HEIGHT)
+        .padding([0, 16])
+        .align_y(Vertical::Center),
         &state.entries,
         &state.menu,
         state.open,
@@ -685,15 +687,15 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         iced::widget::Id::from("ice-sidebar-demo-toggle"),
         surface(
             container(text(if collapsed { "›" } else { "‹" }).size(15))
-                .width(28)
-                .height(28)
+                .width(32)
+                .height(32)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
             SurfaceVariant::Muted,
             &theme,
         )
-        .width(28)
-        .height(28),
+        .width(32)
+        .height(32),
         SidebarEvent::Action(SidebarAction::Toggle(SidebarViewport::Desktop)),
         &theme,
     )
@@ -834,6 +836,44 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
                 .padding(10),
             ]
             .spacing(8),
+            surface(
+                column![
+                    row![
+                        container(
+                            text("RECENT ACTIVITY")
+                                .size(8)
+                                .color(theme.palette.muted_foreground),
+                        )
+                        .width(Length::Fill),
+                        text("LOCAL").size(8).color(theme.palette.muted_foreground),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        container(text("Component catalog").size(11)).width(Length::Fill),
+                        text("Ready").size(10).color(theme.palette.muted_foreground),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        container(text("Accessibility tree").size(11)).width(Length::Fill),
+                        text("Passed")
+                            .size(10)
+                            .color(theme.palette.muted_foreground),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        container(text("Navigation state").size(11)).width(Length::Fill),
+                        text("Controlled")
+                            .size(10)
+                            .color(theme.palette.muted_foreground),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                ]
+                .spacing(8),
+                SurfaceVariant::Card,
+                &theme,
+            )
+            .height(Length::Fill)
+            .padding(10),
         ]
         .spacing(8),
         SurfaceVariant::Muted,
@@ -857,7 +897,7 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
 }
 
 pub fn sonner_state() -> SonnerState {
-    let mut queue = UiSonnerState::new(3, ToastPlacement::TopRight);
+    let mut queue = UiSonnerState::new(2, ToastPlacement::TopRight);
     queue.info(
         "Ice owns this notification queue.",
         std::time::Duration::ZERO,
@@ -883,9 +923,15 @@ pub fn sonner_apply(mut state: SonnerState, event: SonnerEvent) -> SonnerState {
 
 pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
     let theme = theme();
+    let count_label = if state.shown == 1 {
+        "1 notification sent".to_owned()
+    } else {
+        format!("{} notifications sent", state.shown)
+    };
     let underlay = container(
         column![
-            text(format!("{} notification queued", state.shown)).size(12),
+            iced::widget::Space::new().height(Length::Fill),
+            text(count_label).size(12),
             ducktape_ui::ui::button::button("Show notification", &theme)
                 .height(ACTION_HEIGHT)
                 .on_press(SonnerEvent::Show),
@@ -894,8 +940,7 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .padding(16)
-    .align_y(Vertical::Bottom);
+    .padding(16);
 
     iced::widget::Stack::new()
         .push(underlay)
@@ -1499,9 +1544,12 @@ mod tests {
         assert!(!sidebar.navigation.expanded);
 
         let sonner = sonner_state();
+        assert_eq!(sonner.queue.max_visible(), 2);
         let initial = sonner.queue.len();
         let sonner = sonner_apply(sonner, SonnerEvent::Show);
         assert_eq!(sonner.queue.len(), initial + 1);
+        let sonner = sonner_apply(sonner, SonnerEvent::Show);
+        assert_eq!(sonner.queue.visible().count(), 2);
         let mut saturated = sonner_state();
         saturated.shown = i64::MAX;
         let saturated = sonner_apply(saturated, SonnerEvent::Show);
