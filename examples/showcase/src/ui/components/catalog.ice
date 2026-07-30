@@ -455,7 +455,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         Field
           with
             label="Verification code"
-            description="The whole code group is one native focus target; the next empty slot is only content position."
+            description="One native input preserves paste and backspace while the active slot follows the caret."
           extern input_otp("showcase-otp", otp, false, false) -> emit(otp_changed, _)
         row
           with

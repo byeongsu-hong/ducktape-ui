@@ -1,7 +1,23 @@
 use super::theme::Theme;
-use iced::widget::scrollable::{self as iced_scrollable, Rail, Scroller, Status};
+use iced::widget::scrollable::{
+    self as iced_scrollable, Direction, Rail, Scrollbar, Scroller, Status,
+};
 use iced::widget::{Scrollable, scrollable};
 use iced::{Background, Border, Element, Length};
+
+pub const SCROLLBAR_WIDTH: f32 = 8.0;
+pub const SCROLLER_WIDTH: f32 = 6.0;
+
+/// Returns the shared embedded vertical scrollbar contract.
+///
+/// Embedded rails reserve layout space. A floating rail paints over content,
+/// which makes right-aligned labels and long rows unreadable.
+pub fn vertical_scrollbar(theme: &Theme) -> Scrollbar {
+    Scrollbar::new()
+        .width(SCROLLBAR_WIDTH)
+        .scroller_width(SCROLLER_WIDTH)
+        .spacing(theme.spacing.sm)
+}
 
 /// Creates a styled native vertical scrollable.
 ///
@@ -18,6 +34,7 @@ where
     let theme = *theme;
     scrollable(content)
         .width(Length::Fill)
+        .direction(Direction::Vertical(vertical_scrollbar(&theme)))
         .style(move |_iced_theme, status| style(&theme, status))
 }
 
@@ -129,5 +146,17 @@ mod tests {
                 assert!(thumb.relative_contrast(theme.palette.background) >= 3.0);
             }
         }
+    }
+
+    #[test]
+    fn shared_scroll_area_uses_an_embedded_vertical_rail() {
+        let scrollbar = vertical_scrollbar(&LIGHT);
+        assert_eq!(
+            scrollbar,
+            Scrollbar::new()
+                .width(SCROLLBAR_WIDTH)
+                .scroller_width(SCROLLER_WIDTH)
+                .spacing(LIGHT.spacing.sm)
+        );
     }
 }

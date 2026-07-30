@@ -484,6 +484,17 @@ const ELEVATION: Elevation = Elevation {
 pub const BRANDS: [Color; 3] = [hex(0xa05a3c), hex(0x3d63b8), hex(0x3f7d54)];
 
 impl Theme {
+    /// Binds every themed text primitive to application-loaded font families.
+    ///
+    /// Iced's renderer default only applies when a widget does not set a font.
+    /// Components in this crate set semantic weights explicitly, so applications
+    /// must provide the same family through the component theme as well.
+    pub fn with_fonts(mut self, font: Font, monospace_font: Font) -> Self {
+        self.typography.font = font;
+        self.typography.monospace_font = monospace_font;
+        self
+    }
+
     /// Changes the sparse product brand without changing neutral actions or focus.
     pub fn with_brand(mut self, brand: Color) -> Self {
         let brand = Color { a: 1.0, ..brand };
@@ -647,6 +658,17 @@ mod tests {
         );
         assert_eq!(LIGHT.glass, GLASS);
         assert_eq!(LIGHT.elevation, ELEVATION);
+    }
+
+    #[test]
+    fn application_fonts_bind_both_component_typography_channels() {
+        let ui = Font::with_name("Geist");
+        let code = Font::with_name("Geist Mono");
+        let theme = LIGHT.with_fonts(ui, code);
+
+        assert_eq!(theme.typography.font, ui);
+        assert_eq!(theme.typography.monospace_font, code);
+        assert_eq!(theme.palette, LIGHT.palette);
     }
 
     #[test]

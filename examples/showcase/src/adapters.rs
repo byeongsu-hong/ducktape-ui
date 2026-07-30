@@ -65,6 +65,7 @@ const ACTION_HEIGHT: f32 = 36.0;
 const DEMO_STAGE_HEIGHT: f32 = 208.0;
 const SIDEBAR_STAGE_HEIGHT: f32 = 404.0;
 const DATA_TABLE_PAGE_SIZE: usize = 3;
+const SHOWCASE_FONT: Font = Font::with_name("Geist");
 
 pub use ducktape_ui::ui::{
     calendar::{CalendarEvent, CalendarState},
@@ -1700,23 +1701,20 @@ fn catalog_items(query: &str) -> Vec<String> {
 }
 
 fn theme() -> ducktape_ui::ui::theme::Theme {
-    let mut theme = LIGHT;
-    theme.typography.font = Font::with_name("Geist");
-    theme.typography.monospace_font = Font::with_name("Geist");
-    theme
+    LIGHT.with_fonts(SHOWCASE_FONT, SHOWCASE_FONT)
 }
 
 fn ui_font(weight: Weight) -> Font {
     Font {
         weight,
-        ..Font::with_name("Geist")
+        ..SHOWCASE_FONT
     }
 }
 
 fn italic_font() -> Font {
     Font {
         style: FontStyle::Italic,
-        ..Font::with_name("Geist")
+        ..SHOWCASE_FONT
     }
 }
 
@@ -1726,8 +1724,8 @@ mod tests {
 
     #[test]
     fn adapters_build_the_checked_default_contracts() {
-        assert_eq!(theme().typography.font, Font::with_name("Geist"));
-        assert_eq!(theme().typography.monospace_font, Font::with_name("Geist"));
+        assert_eq!(theme().typography.font, SHOWCASE_FONT);
+        assert_eq!(theme().typography.monospace_font, SHOWCASE_FONT);
 
         let _: Element<'_, String> = input_otp("otp", "", false, false);
         let _: Element<'_, ()> = spinner(-1, false);

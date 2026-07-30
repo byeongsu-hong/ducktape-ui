@@ -120,6 +120,8 @@ test catalog_layout
   expect ghost.text_size ~= primary.text_size
   expect destructive.text_size ~= primary.text_size
   expect disabled.text_size ~= primary.text_size
+  expect primary.font.family == family.named("Geist")
+  expect email_input.font.family == family.named("Geist")
   expect primary.font.weight == weight.semibold()
   expect secondary.font == primary.font
   expect outline.font == primary.font
@@ -209,8 +211,17 @@ test focused_component_feedback
   target otp_group = #otp-group
   target message_stage = #message-stage/root
   click-at 40.0 28.0
-  type "12"
-  capture otp_group_focus
+  type "1"
+  capture otp_after_first_digit
+  type "2"
+  capture otp_after_second_digit
+  expect otp == "12"
+  click-at 66.0 28.0
+  capture otp_second_slot_caret
+  type "9"
+  expect otp == "19"
+  click-at 66.0 28.0
+  type "2"
   expect otp == "12"
   click-at 220.0 150.0
   capture message_pointer_focus
@@ -277,3 +288,11 @@ test smooth_chart_surface
     box p=24.0
       extern chart(none) -> chart_hovered _
   capture smooth_chart
+
+test embedded_component_scrollbars
+  preset test
+  viewport 420 260
+  mount
+    box p=24.0
+      extern command(command) -> command_changed _
+  capture command_embedded_scrollbar
