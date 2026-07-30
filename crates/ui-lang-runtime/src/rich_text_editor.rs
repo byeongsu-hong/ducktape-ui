@@ -299,14 +299,23 @@ where
         };
 
         let text_bounds = layout.bounds().shrink(self.padding);
-        let caret = caret_rectangle(state.paragraph.buffer(), self.content.cursor().position);
+        let position = state
+            .composition
+            .as_ref()
+            .map_or(self.content.cursor().position, |composition| {
+                composition.cursor
+            });
+        let caret = caret_rectangle(state.paragraph.buffer(), position);
         let translation = text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll);
         let cursor = caret + translation;
 
         InputMethod::Enabled {
             cursor,
             purpose: input_method::Purpose::Normal,
-            preedit: state.preedit.as_ref().map(input_method::Preedit::as_ref),
+            // The preedit is already shaped into the editor paragraph. Passing it
+            // to iced_winit as well would draw a second overlay with the default
+            // font and a different baseline.
+            preedit: None,
         }
     }
 }
@@ -317,6 +326,9 @@ where
 {
     focus: Option<Focus>,
     preedit: Option<input_method::Preedit>,
+    shaped_preedit: Option<input_method::Preedit>,
+    composition: Option<CompositionLayout>,
+    pending_ime_commit: Option<String>,
     last_click: Option<mouse::Click>,
     drag_anchor: Option<Position>,
     paragraph: GraphicsParagraph,
@@ -379,6 +391,8 @@ where
 
     fn unfocus(&mut self) {
         self.focus = None;
+        self.preedit = None;
+        self.pending_ime_commit = None;
         self.drag_anchor = None;
     }
 }
@@ -398,6 +412,9 @@ where
         tree::State::new(State {
             focus: None,
             preedit: None,
+            shaped_preedit: None,
+            composition: None,
+            pending_ime_commit: None,
             last_click: None,
             drag_anchor: None,
             paragraph: GraphicsParagraph::default(),
@@ -452,7 +469,9 @@ where
         }
 
         let source_changed = state.source != source;
+        let preedit_changed = state.shaped_preedit != state.preedit;
         let needs_shape = source_changed
+            || preedit_changed
             || settings_changed
             || state.width != inner_width
             || state.font != font
@@ -463,7 +482,14 @@ where
 
         if needs_shape {
             state.highlighter.change_line(0);
-            let shaped = shape_spans(self.content, &mut state.highlighter, self.format.as_ref());
+            let composition = state
+                .preedit
+                .as_ref()
+                .and_then(|preedit| CompositionDocument::new(self.content, preedit));
+            let shaped_content = composition
+                .as_ref()
+                .map_or(self.content, |composition| &composition.content);
+            let shaped = shape_spans(shaped_content, &mut state.highlighter, self.format.as_ref());
 
             state.paragraph = GraphicsParagraph::with_spans(Text {
                 content: shaped.spans.as_slice(),
@@ -480,7 +506,9 @@ where
             state.spans = shaped.spans;
             state.strikethroughs = shaped.strikethroughs;
             state.line_highlights = shaped.line_highlights;
+            state.composition = composition.map(|composition| composition.layout);
             state.source = source;
+            state.shaped_preedit = state.preedit.clone();
             state.width = inner_width;
             state.font = font;
             state.text_size = text_size;
@@ -492,8 +520,12 @@ where
         state.viewport_height = viewport_height;
         state.scroll = state.scroll.clamp(0.0, state.max_scroll());
 
-        if source_changed || cursor != state.last_cursor {
-            state.reveal(cursor.position);
+        if source_changed || preedit_changed || cursor != state.last_cursor {
+            let position = state
+                .composition
+                .as_ref()
+                .map_or(cursor.position, |composition| composition.cursor);
+            state.reveal(position);
             state.last_cursor = cursor;
         }
 
@@ -569,7 +601,8 @@ where
                 if let Some(point) = cursor.position_in(text_bounds) {
                     let local = point + Vector::new(0.0, state.scroll);
                     let click = mouse::Click::new(local, mouse::Button::Left, state.last_click);
-                    let position = hit_position(state.paragraph.buffer(), local);
+                    let position =
+                        state.source_position(hit_position(state.paragraph.buffer(), local));
                     let next = match click.kind() {
                         mouse::click::Kind::Single => {
                             state.drag_anchor = Some(position);
@@ -596,6 +629,8 @@ where
                     shell.request_redraw();
                 } else if state.focus.is_some() {
                     state.focus = None;
+                    state.preedit = None;
+                    state.pending_ime_commit = None;
                     state.drag_anchor = None;
                     shell.request_redraw();
                 }
@@ -604,10 +639,10 @@ where
                 if let Some(anchor) = state.drag_anchor
                     && let Some(point) = cursor.position_in(text_bounds)
                 {
-                    let position = hit_position(
+                    let position = state.source_position(hit_position(
                         state.paragraph.buffer(),
                         point + Vector::new(0.0, state.scroll),
-                    );
+                    ));
                     shell.publish(on_action(Action::MoveTo(Cursor {
                         position,
                         selection: (position != anchor).then_some(anchor),
@@ -620,10 +655,12 @@ where
             }
             Event::InputMethod(input_method::Event::Opened) => {
                 state.preedit = Some(input_method::Preedit::new());
+                state.pending_ime_commit = None;
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Closed) => {
                 state.preedit = None;
+                state.pending_ime_commit = None;
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Preedit(content, selection))
@@ -632,12 +669,9 @@ where
                 state.preedit = Some(input_method::Preedit {
                     content: content.clone(),
                     selection: selection.clone(),
-                    text_size: Some(caret_size(
-                        state.paragraph.buffer(),
-                        self.content.cursor().position,
-                        state.text_size,
-                    )),
+                    text_size: None,
                 });
+                state.pending_ime_commit = None;
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Commit(content)) if state.focus.is_some() => {
@@ -645,8 +679,27 @@ where
                     Edit::Paste(Arc::new(content.clone())),
                 ))));
                 state.preedit = None;
+                state.pending_ime_commit = cfg!(target_os = "macos").then(|| content.clone());
                 state.preferred_x = None;
                 shell.capture_event();
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { modified_key, .. })
+                if state.focus.is_some() && state.pending_ime_commit.is_some() =>
+            {
+                // After a macOS IME commit, winit suppresses the key press that
+                // produced it but still reports the release. Recover only the
+                // boundary punctuation that was absent from the commit.
+                if let Some(character) = take_missing_ime_boundary_punctuation(
+                    &mut state.pending_ime_commit,
+                    modified_key,
+                ) {
+                    shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
+                        Edit::Insert(character),
+                    ))));
+                    state.preferred_x = None;
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key,
@@ -656,6 +709,39 @@ where
                 text,
                 ..
             }) if state.focus.is_some() => {
+                if state
+                    .preedit
+                    .as_ref()
+                    .is_some_and(|preedit| !preedit.content.is_empty())
+                {
+                    state.pending_ime_commit = None;
+                    if modifiers.command() {
+                        state.preedit = None;
+                        shell.request_redraw();
+                    } else {
+                        shell.capture_event();
+                        return;
+                    }
+                }
+
+                if let Some(committed) = state.pending_ime_commit.take()
+                    && let Some(punctuation) = key_punctuation(modified_key)
+                {
+                    if committed.ends_with(punctuation) {
+                        shell.capture_event();
+                        return;
+                    }
+                    if text.is_none() {
+                        shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
+                            Edit::Insert(punctuation),
+                        ))));
+                        state.preferred_x = None;
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
+                }
+
                 let status = self.status(state, cursor.is_over(bounds));
                 let key_press = text_editor::KeyPress {
                     key: key.clone(),
@@ -665,8 +751,7 @@ where
                     text: text.clone(),
                     status,
                 };
-                let binding =
-                    rich_binding(&key_press).or_else(|| Binding::<Edit>::from_key_press(key_press));
+                let binding = editor_binding(&key_press);
 
                 if let Some(binding) = binding {
                     let capture = !matches!(binding, Binding::Unfocus);
@@ -720,7 +805,7 @@ where
         draw_line_highlights(renderer, state, text_bounds, origin);
         draw_span_highlights(renderer, state, text_bounds, origin);
 
-        if state.focus.is_some() {
+        if state.focus.is_some() && state.composition.is_none() {
             draw_selection(
                 renderer,
                 state,
@@ -731,7 +816,7 @@ where
             );
         }
 
-        if state.source.is_empty() {
+        if state.source.is_empty() && state.composition.is_none() {
             if let Some(placeholder) = self.placeholder.as_ref() {
                 renderer.fill_text(
                     Text {
@@ -757,16 +842,24 @@ where
         draw_strikethroughs(renderer, state, text_bounds, origin);
 
         if let Some(focus) = state.focus.as_ref() {
+            if let Some(composition) = state.composition.as_ref() {
+                draw_composition(
+                    renderer,
+                    state,
+                    composition,
+                    text_bounds,
+                    origin,
+                    style.value,
+                    focus.is_cursor_visible(),
+                );
+                return;
+            }
+
             let cursor_position = self.content.cursor().position;
             let caret = caret_rectangle(state.paragraph.buffer(), cursor_position)
                 + (origin - Point::ORIGIN);
-            let composing = state
-                .preedit
-                .as_ref()
-                .is_some_and(|preedit| !preedit.content.is_empty());
 
             if focus.is_cursor_visible()
-                && !composing
                 && let Some(caret) = text_bounds.intersection(&caret)
             {
                 renderer.fill_quad(
@@ -775,28 +868,6 @@ where
                         ..renderer::Quad::default()
                     },
                     style.value,
-                );
-            }
-
-            if let Some(preedit) = state.preedit.as_ref()
-                && !preedit.content.is_empty()
-            {
-                let size = preedit.text_size.unwrap_or(state.text_size);
-                renderer.fill_text(
-                    Text {
-                        content: preedit.content.clone(),
-                        bounds: Size::new(text_bounds.width, caret.height),
-                        size,
-                        line_height: text::LineHeight::Absolute(Pixels(caret.height)),
-                        font: state.font,
-                        align_x: text::Alignment::Default,
-                        align_y: alignment::Vertical::Top,
-                        shaping: text::Shaping::Advanced,
-                        wrapping: text::Wrapping::None,
-                    },
-                    caret.position(),
-                    style.value,
-                    text_bounds,
                 );
             }
         }
@@ -818,10 +889,10 @@ where
         let text_bounds = bounds.shrink(self.padding);
         if let Some(point) = cursor.position_in(text_bounds) {
             let state = tree.state.downcast_ref::<State<Highlighter>>();
-            let position = hit_position(
+            let position = state.source_position(hit_position(
                 state.paragraph.buffer(),
                 point + Vector::new(0.0, state.scroll),
-            );
+            ));
             if let Some(line) = self.content.line(position.line)
                 && let Some(interaction) = self.mouse_interaction.as_ref()
             {
@@ -876,6 +947,159 @@ where
         }
         self.scroll = self.scroll.clamp(0.0, self.max_scroll());
     }
+
+    fn source_position(&self, position: Position) -> Position {
+        self.composition.as_ref().map_or(position, |composition| {
+            composition.display_to_source(position)
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextLines {
+    starts: Vec<usize>,
+    lengths: Vec<usize>,
+}
+
+impl TextLines {
+    fn new(content: &Content) -> Self {
+        let line_count = content.line_count();
+        let mut starts = Vec::with_capacity(line_count);
+        let mut lengths = Vec::with_capacity(line_count);
+        let mut offset = 0;
+
+        for (index, line) in content.lines().enumerate() {
+            starts.push(offset);
+            lengths.push(line.text.len());
+            offset += line.text.len();
+
+            let ending = if index + 1 < line_count && line.ending.as_str().is_empty() {
+                text_editor::LineEnding::default().as_str()
+            } else {
+                line.ending.as_str()
+            };
+            offset += ending.len();
+        }
+
+        Self { starts, lengths }
+    }
+
+    fn offset(&self, position: Position) -> usize {
+        let line = position.line.min(self.starts.len().saturating_sub(1));
+        self.starts.get(line).copied().unwrap_or_default()
+            + position
+                .column
+                .min(self.lengths.get(line).copied().unwrap_or_default())
+    }
+
+    fn position(&self, offset: usize) -> Position {
+        let line = self
+            .starts
+            .partition_point(|start| *start <= offset)
+            .saturating_sub(1);
+        Position {
+            line,
+            column: offset
+                .saturating_sub(self.starts.get(line).copied().unwrap_or_default())
+                .min(self.lengths.get(line).copied().unwrap_or_default()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CompositionLayout {
+    source_lines: TextLines,
+    display_lines: TextLines,
+    source_range: Range<usize>,
+    display_range: Range<usize>,
+    range: (Position, Position),
+    selection: Option<(Position, Position)>,
+    cursor: Position,
+    cursor_visible: bool,
+}
+
+impl CompositionLayout {
+    fn display_to_source(&self, position: Position) -> Position {
+        let offset = self.display_lines.offset(position);
+        let source_offset = if offset <= self.display_range.start {
+            offset
+        } else if offset < self.display_range.end {
+            self.source_range.start
+        } else {
+            offset
+                .saturating_sub(self.display_range.len())
+                .saturating_add(self.source_range.len())
+        };
+        self.source_lines.position(source_offset)
+    }
+}
+
+struct CompositionDocument {
+    content: Content,
+    layout: CompositionLayout,
+}
+
+impl CompositionDocument {
+    fn new(content: &Content, preedit: &input_method::Preedit) -> Option<Self> {
+        if preedit.content.is_empty() {
+            return None;
+        }
+
+        let source = content.text();
+        let source_lines = TextLines::new(content);
+        let cursor = content.cursor();
+        let (start, end) = cursor
+            .selection
+            .map_or((cursor.position, cursor.position), |anchor| {
+                ordered_positions(cursor.position, anchor)
+            });
+        let source_range = source_lines.offset(start)..source_lines.offset(end);
+        let mut display =
+            String::with_capacity(source.len() - source_range.len() + preedit.content.len());
+        display.push_str(&source[..source_range.start]);
+        display.push_str(&preedit.content);
+        display.push_str(&source[source_range.end..]);
+
+        let display_content = Content::with_text(&display);
+        let display_lines = TextLines::new(&display_content);
+        let display_range =
+            source_range.start..source_range.start.saturating_add(preedit.content.len());
+        let selection = preedit.selection.as_ref().map(|selection| {
+            let start = char_boundary_at_or_before(&preedit.content, selection.start);
+            let end = char_boundary_at_or_before(&preedit.content, selection.end.max(start));
+            display_lines.position(display_range.start + start)
+                ..display_lines.position(display_range.start + end)
+        });
+        let cursor_offset = selection.as_ref().map_or(display_range.end, |selection| {
+            display_lines.offset(selection.end)
+        });
+        let layout = CompositionLayout {
+            source_lines,
+            display_lines: display_lines.clone(),
+            source_range,
+            display_range: display_range.clone(),
+            range: (
+                display_lines.position(display_range.start),
+                display_lines.position(display_range.end),
+            ),
+            selection: selection.map(|selection| (selection.start, selection.end)),
+            cursor: display_lines.position(cursor_offset),
+            cursor_visible: preedit.selection.is_some(),
+        };
+
+        Some(Self {
+            content: display_content,
+            layout,
+        })
+    }
+}
+
+fn char_boundary_at_or_before(source: &str, index: usize) -> usize {
+    let mut index = index.min(source.len());
+    while !source.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 struct ShapedSpans {
@@ -1106,15 +1330,6 @@ fn caret_x(glyphs: &[cosmic_text::LayoutGlyph], index: usize) -> f32 {
         )
 }
 
-fn caret_size(buffer: &cosmic_text::Buffer, position: Position, fallback: Pixels) -> Pixels {
-    buffer
-        .layout_runs()
-        .filter(|run| run.line_i == position.line)
-        .flat_map(|run| run.glyphs)
-        .find(|glyph| glyph.start <= position.column && position.column <= glyph.end)
-        .map_or(fallback, |glyph| Pixels(glyph.font_size))
-}
-
 fn draw_line_highlights<H>(
     renderer: &mut iced::Renderer,
     state: &State<H>,
@@ -1246,6 +1461,85 @@ fn draw_strikethroughs<H>(
     }
 }
 
+fn draw_composition<H>(
+    renderer: &mut iced::Renderer,
+    state: &State<H>,
+    composition: &CompositionLayout,
+    clip: Rectangle,
+    origin: Point,
+    color: Color,
+    cursor_visible: bool,
+) where
+    H: text::Highlighter,
+{
+    let start = cosmic_text::Cursor::new(composition.range.0.line, composition.range.0.column);
+    let end = cosmic_text::Cursor::new(composition.range.1.line, composition.range.1.column);
+
+    for run in state.paragraph.buffer().layout_runs() {
+        let Some((x, width)) = run.highlight(start, end) else {
+            continue;
+        };
+        let underline = Rectangle::new(
+            Point::new(
+                origin.x + x,
+                origin.y + run.line_top + run.line_height - 1.0,
+            ),
+            Size::new(width.max(1.0), 1.0),
+        );
+        if let Some(underline) = clip.intersection(&underline) {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: underline,
+                    ..renderer::Quad::default()
+                },
+                color,
+            );
+        }
+    }
+
+    if let Some((start, end)) = composition.selection
+        && start != end
+    {
+        let start = cosmic_text::Cursor::new(start.line, start.column);
+        let end = cosmic_text::Cursor::new(end.line, end.column);
+        for run in state.paragraph.buffer().layout_runs() {
+            let Some((x, width)) = run.highlight(start, end) else {
+                continue;
+            };
+            let underline = Rectangle::new(
+                Point::new(
+                    origin.x + x,
+                    origin.y + run.line_top + run.line_height - 2.0,
+                ),
+                Size::new(width.max(1.0), 2.0),
+            );
+            if let Some(underline) = clip.intersection(&underline) {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: underline,
+                        ..renderer::Quad::default()
+                    },
+                    color,
+                );
+            }
+        }
+    }
+
+    if cursor_visible && composition.cursor_visible {
+        let caret = caret_rectangle(state.paragraph.buffer(), composition.cursor)
+            + (origin - Point::ORIGIN);
+        if let Some(caret) = clip.intersection(&caret) {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: caret,
+                    ..renderer::Quad::default()
+                },
+                color,
+            );
+        }
+    }
+}
+
 fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
     match press.modified_key.as_ref() {
         keyboard::Key::Named(key::Named::Tab) if press.modifiers.shift() => {
@@ -1258,6 +1552,12 @@ fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
                 Binding::Backspace,
             ]))
         }
+        keyboard::Key::Named(key::Named::Backspace) if press.modifiers.macos_command() => {
+            Some(Binding::Sequence(vec![
+                Binding::Select(Motion::Home),
+                Binding::Backspace,
+            ]))
+        }
         keyboard::Key::Named(key::Named::Delete)
             if press.modifiers.jump()
                 && (press.text.is_none() || press.text.as_deref() == Some("\u{7f}")) =>
@@ -1267,8 +1567,62 @@ fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
                 Binding::Delete,
             ]))
         }
+        keyboard::Key::Named(key::Named::Delete)
+            if press.modifiers.macos_command()
+                && (press.text.is_none() || press.text.as_deref() == Some("\u{7f}")) =>
+        {
+            Some(Binding::Sequence(vec![
+                Binding::Select(Motion::End),
+                Binding::Delete,
+            ]))
+        }
         _ => None,
     }
+}
+
+fn editor_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
+    if command_shortcut_bubbles(press) {
+        return None;
+    }
+
+    rich_binding(press).or_else(|| Binding::<Edit>::from_key_press(press.clone()))
+}
+
+fn command_shortcut_bubbles(press: &text_editor::KeyPress) -> bool {
+    if !press.modifiers.command() {
+        return false;
+    }
+
+    match press.key.to_latin(press.physical_key) {
+        Some('a' | 'c' | 'x') => false,
+        Some('v') => press.modifiers.alt(),
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn key_punctuation(key: &keyboard::Key) -> Option<char> {
+    let keyboard::Key::Character(text) = key.as_ref() else {
+        return None;
+    };
+    match text {
+        "," => Some(','),
+        "." => Some('.'),
+        _ => None,
+    }
+}
+
+fn missing_ime_boundary_punctuation(committed: &str, released_key: &keyboard::Key) -> Option<char> {
+    let punctuation = key_punctuation(released_key)?;
+    (!committed.ends_with(punctuation)).then_some(punctuation)
+}
+
+fn take_missing_ime_boundary_punctuation(
+    pending_commit: &mut Option<String>,
+    released_key: &keyboard::Key,
+) -> Option<char> {
+    let committed = pending_commit.take()?;
+    missing_ime_boundary_punctuation(&committed, released_key)
 }
 
 fn apply_binding<H, Message>(
@@ -1680,6 +2034,166 @@ mod tests {
     }
 
     #[test]
+    fn preedit_uses_the_same_wrapped_paragraph_as_committed_text() {
+        fn geometry(content: &Content) -> Vec<(usize, usize, f32, f32, f32)> {
+            let shaped = shape_spans(content, &mut WholeLine, &|_| Format::default());
+            let paragraph = GraphicsParagraph::with_spans(Text {
+                content: shaped.spans.as_slice(),
+                bounds: Size::new(70.0, 500.0),
+                size: Pixels(16.0),
+                line_height: text::LineHeight::Relative(1.6),
+                font: Font::DEFAULT,
+                align_x: text::Alignment::Default,
+                align_y: alignment::Vertical::Top,
+                shaping: text::Shaping::Advanced,
+                wrapping: text::Wrapping::Word,
+            });
+            paragraph
+                .buffer()
+                .layout_runs()
+                .map(|run| {
+                    (
+                        run.line_i,
+                        run.glyphs.len(),
+                        run.line_top,
+                        run.line_height,
+                        run.line_w,
+                    )
+                })
+                .collect()
+        }
+
+        let mut source = Content::with_text("앞 뒤");
+        source.move_to(Cursor {
+            position: Position { line: 0, column: 4 },
+            selection: None,
+        });
+        let composition = CompositionDocument::new(
+            &source,
+            &input_method::Preedit {
+                content: "한글입력".into(),
+                selection: Some(12..12),
+                text_size: None,
+            },
+        )
+        .expect("visible composition");
+        let committed = Content::with_text("앞 한글입력뒤");
+
+        assert_eq!(source.text(), "앞 뒤");
+        assert_eq!(composition.content.text(), committed.text());
+        assert_eq!(geometry(&composition.content), geometry(&committed));
+        assert_eq!(
+            composition.layout.cursor,
+            Position {
+                line: 0,
+                column: 16
+            }
+        );
+        assert_eq!(
+            composition.layout.display_to_source(Position {
+                line: 0,
+                column: 10
+            }),
+            Position { line: 0, column: 4 }
+        );
+    }
+
+    #[test]
+    fn preedit_replaces_the_selected_source_without_committing_it() {
+        let mut source = Content::with_text("앞 OLD 뒤");
+        source.move_to(Cursor {
+            position: Position { line: 0, column: 7 },
+            selection: Some(Position { line: 0, column: 4 }),
+        });
+        let composition = CompositionDocument::new(
+            &source,
+            &input_method::Preedit {
+                content: "한글".into(),
+                selection: Some(6..6),
+                text_size: None,
+            },
+        )
+        .expect("visible composition");
+
+        assert_eq!(source.text(), "앞 OLD 뒤");
+        assert_eq!(composition.content.text(), "앞 한글 뒤");
+        assert_eq!(
+            composition.layout.display_to_source(Position {
+                line: 0,
+                column: 10
+            }),
+            Position { line: 0, column: 7 }
+        );
+    }
+
+    #[test]
+    fn ime_boundary_punctuation_is_recovered_once() {
+        let comma = keyboard::Key::Character(",".into());
+        let period = keyboard::Key::Character(".".into());
+        let space = keyboard::Key::Named(key::Named::Space);
+        let mut pending = Some("단어".to_owned());
+
+        assert_eq!(
+            take_missing_ime_boundary_punctuation(&mut pending, &comma),
+            Some(',')
+        );
+        assert_eq!(
+            take_missing_ime_boundary_punctuation(&mut pending, &comma),
+            None
+        );
+        assert_eq!(missing_ime_boundary_punctuation("단어", &period), Some('.'));
+        assert_eq!(missing_ime_boundary_punctuation("단어,", &comma), None);
+        assert_eq!(missing_ime_boundary_punctuation("단어.", &period), None);
+        assert_eq!(missing_ime_boundary_punctuation("단어", &space), None);
+    }
+
+    #[test]
+    fn application_command_shortcuts_are_not_inserted_as_text() {
+        use iced::keyboard::key::{Code, Physical};
+        use iced::keyboard::{Key, Modifiers};
+        use iced::widget::text_editor::Status;
+
+        let command = if cfg!(target_os = "macos") {
+            Modifiers::LOGO
+        } else {
+            Modifiers::CTRL
+        };
+        let press = |key: Key, code: Code, text: &str| text_editor::KeyPress {
+            key,
+            modified_key: Key::Character(text.into()),
+            physical_key: Physical::Code(code),
+            modifiers: command,
+            text: Some(text.into()),
+            status: Status::Focused { is_hovered: true },
+        };
+
+        assert_eq!(
+            editor_binding(&press(Key::Character("z".into()), Code::KeyZ, "z")),
+            None
+        );
+        assert_eq!(
+            editor_binding(&press(Key::Character("ㅋ".into()), Code::KeyZ, "z")),
+            None
+        );
+        assert_eq!(
+            editor_binding(&press(Key::Character("c".into()), Code::KeyC, "c")),
+            Some(Binding::Copy)
+        );
+        assert_eq!(
+            editor_binding(&press(Key::Character("x".into()), Code::KeyX, "x")),
+            Some(Binding::Cut)
+        );
+        assert_eq!(
+            editor_binding(&press(Key::Character("v".into()), Code::KeyV, "v")),
+            Some(Binding::Paste)
+        );
+        assert_eq!(
+            editor_binding(&press(Key::Character("a".into()), Code::KeyA, "a")),
+            Some(Binding::SelectAll)
+        );
+    }
+
+    #[test]
     fn editor_specific_shortcuts_use_stock_edit_actions() {
         use iced::keyboard::key::{Code, Named, Physical};
         use iced::keyboard::{Key, Modifiers};
@@ -1716,6 +2230,41 @@ mod tests {
             Some(Binding::Sequence(vec![
                 Binding::Select(Motion::WordLeft),
                 Binding::Backspace,
+            ]))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_command_deletes_to_visual_line_boundaries() {
+        use iced::keyboard::key::{Code, Named, Physical};
+        use iced::keyboard::{Key, Modifiers};
+        use iced::widget::text_editor::Status;
+
+        let press = |named, code| {
+            let key = Key::Named(named);
+            text_editor::KeyPress {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Code(code),
+                modifiers: Modifiers::LOGO,
+                text: None,
+                status: Status::Focused { is_hovered: true },
+            }
+        };
+
+        assert_eq!(
+            rich_binding(&press(Named::Backspace, Code::Backspace)),
+            Some(Binding::Sequence(vec![
+                Binding::Select(Motion::Home),
+                Binding::Backspace,
+            ]))
+        );
+        assert_eq!(
+            rich_binding(&press(Named::Delete, Code::Delete)),
+            Some(Binding::Sequence(vec![
+                Binding::Select(Motion::End),
+                Binding::Delete,
             ]))
         );
     }

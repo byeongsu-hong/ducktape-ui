@@ -148,7 +148,7 @@ pub fn link_at(line: &str, column: usize) -> String {
         .unwrap_or_default()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Shortcut {
     New,
     Open,
@@ -249,7 +249,7 @@ fn safe_web_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{link_at_cursor, safe_web_url};
+    use super::{Shortcut, link_at_cursor, safe_web_url, shortcut};
 
     #[test]
     fn resolves_only_the_link_under_the_cursor() {
@@ -258,5 +258,28 @@ mod tests {
         assert_eq!(link_at_cursor(line.clone(), 10), "https://example.com");
         assert_eq!(link_at_cursor(line, 1), "");
         assert!(!safe_web_url("file:///tmp/private"));
+    }
+
+    #[test]
+    fn undo_and_redo_shortcuts_survive_a_non_latin_input_source() {
+        use iced::keyboard::key::{Code, Physical};
+        use iced::keyboard::{Key, Modifiers};
+
+        let command = if cfg!(target_os = "macos") {
+            Modifiers::LOGO
+        } else {
+            Modifiers::CTRL
+        };
+        let key = Key::Character("ㅋ".into());
+        let physical = Physical::Code(Code::KeyZ);
+
+        assert_eq!(
+            shortcut(key.clone(), physical, command),
+            Some(Shortcut::Undo)
+        );
+        assert_eq!(
+            shortcut(key, physical, command | Modifiers::SHIFT),
+            Some(Shortcut::Redo)
+        );
     }
 }

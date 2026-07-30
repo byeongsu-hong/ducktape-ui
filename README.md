@@ -346,9 +346,10 @@ CEF-enabled bundle.
 
 `markdown-example` is a full-window native Markdown editor with inline
 styling, scaled headings, surfaced code blocks, caret-local syntax markers,
-platform-standard group and line deletion, bundled Geist fonts, file open/save,
-bounded undo/redo, find, formatting shortcuts, dirty-close protection, and links
-that open in the default browser. See its
+platform-standard group and line deletion, Korean-capable IBM Plex Sans KR and
+Monoplex KR fonts, stable inline IME composition, file open/save, bounded
+undo/redo, find, formatting shortcuts, dirty-close protection, and links that
+open in the default browser. See its
 [design notes](examples/markdown-editor/DESIGN.md) for the project layout and
 native editing path.
 

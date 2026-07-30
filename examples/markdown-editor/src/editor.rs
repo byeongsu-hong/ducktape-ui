@@ -2344,6 +2344,20 @@ mod tests {
     }
 
     #[test]
+    fn a_new_edit_after_undo_discards_redo() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("hello".into());
+        track_action(&mut document, Action::Edit(Edit::Insert('!')));
+        document = undo_document(document);
+        assert!(can_redo());
+
+        track_action(&mut document, Action::Edit(Edit::Insert('?')));
+
+        assert_eq!(document.text(), "?hello");
+        assert!(!can_redo());
+    }
+
+    #[test]
     fn formatting_preserves_a_selected_edit_target() {
         let _lock = super::test_history_lock();
         let mut document = reset_document("text".into());

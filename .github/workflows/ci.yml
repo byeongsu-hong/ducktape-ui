@@ -54,6 +54,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo check --workspace --locked
+      - name: Test native editor interactions on macOS
+        if: matrix.runner == 'macos-latest'
+        run: |
+          cargo test --locked -p ui-lang-runtime rich_text_editor --lib
+          cargo test --locked -p markdown-example
 
   accessibility:
     name: Accessibility (Linux and Windows)
