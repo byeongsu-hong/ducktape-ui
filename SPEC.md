@@ -4126,6 +4126,10 @@ work on text, rich text and spans, input, editor, checkbox, toggler, radio, pick
 combo, and their custom icons. App-level `font "path"`
 settings embed and preload the corresponding bytes before iced starts; a
 descriptor's named family selects the family exposed by those bytes.
+The generated Rust app exposes the effective descriptor through
+`App::default_font()`. It returns the declaration marked `default=true`, or
+`iced::Font::DEFAULT` when none is declared, so native adapters can share the
+same application font without duplicating its family.
 
 Runtime bytes use iced's native font Task directly:
 

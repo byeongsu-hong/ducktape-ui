@@ -600,6 +600,12 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     generate_extern_probes(&mut out, document);
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
+    writeln!(
+        out,
+        "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}",
+        app_default_font_code(document)
+    )
+    .unwrap();
     generate_derived(&mut out, document)?;
     generate_named_windows(&mut out, document, source_path);
     let subscription = ".subscription(Self::__subscription)";
@@ -607,9 +613,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         .fonts
         .iter()
         .find(|font| font.default)
-        .map_or_else(String::new, |font| {
-            format!(".default_font({})", font_decl_code(font))
-        });
+        .map_or("", |_| ".default_font(Self::default_font())");
     let title = document
         .settings
         .title

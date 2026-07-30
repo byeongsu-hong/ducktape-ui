@@ -826,9 +826,7 @@ fn test_program_code(document: &Document, source_path: &str, index: usize) -> St
         .fonts
         .iter()
         .find(|font| font.default)
-        .map_or_else(String::new, |font| {
-            format!(".default_font({})", font_decl_code(font))
-        });
+        .map_or("", |_| ".default_font(Self::default_font())");
     let title = document
         .settings
         .title
