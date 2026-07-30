@@ -41,7 +41,13 @@ test language_feature_contracts
   target show_code = #tabs/show-code
   target pagination_next = #pagination/next
   expect show_code.height ~= 32.0
+  expect show_code.text_size ~= 12.5
+  expect show_code.text_y ~= show_code.y + (show_code.height - show_code.text_height) / 2.0
+  expect a11y show_code name "Code"
   expect pagination_next.height ~= 32.0
+  expect pagination_next.text_size ~= 12.5
+  expect pagination_next.text_y ~= pagination_next.y + (pagination_next.height - pagination_next.text_height) / 2.0
+  expect a11y pagination_next name "Next"
   click show_code
   expect text "button \"Save\" @primary_action -> save"
   expect demo_page == 1
@@ -106,6 +112,24 @@ test catalog_layout
   expect destructive.width ~= primary.width
   expect disabled.height ~= primary.height
   expect disabled.width ~= primary.width
+  expect primary.text_size ~= 12.5
+  expect secondary.text_size ~= primary.text_size
+  expect outline.text_size ~= primary.text_size
+  expect ghost.text_size ~= primary.text_size
+  expect destructive.text_size ~= primary.text_size
+  expect disabled.text_size ~= primary.text_size
+  expect primary.text_y ~= primary.y + (primary.height - primary.text_height) / 2.0
+  expect secondary.text_y ~= secondary.y + (secondary.height - secondary.text_height) / 2.0
+  expect outline.text_y ~= outline.y + (outline.height - outline.text_height) / 2.0
+  expect ghost.text_y ~= ghost.y + (ghost.height - ghost.text_height) / 2.0
+  expect destructive.text_y ~= destructive.y + (destructive.height - destructive.text_height) / 2.0
+  expect disabled.text_y ~= disabled.y + (disabled.height - disabled.text_height) / 2.0
+  expect a11y primary name "Primary"
+  expect a11y secondary name "Secondary"
+  expect a11y outline name "Outline"
+  expect a11y ghost name "Ghost"
+  expect a11y destructive name "Destructive"
+  expect a11y disabled name "Disabled"
   expect email_input.height ~= 36.2
   expect framework_picker.height ~= email_input.height
   expect project_group.height ~= email_input.height
