@@ -270,6 +270,23 @@ test catalog_full_scroll_visuals
   snap-end scroller
   capture narrow_navigation_shell
 
+test shared_component_font_contracts
+  preset test
+  viewport 520 240
+  mount
+    col p=24.0 gap=16.0
+      Attachment name="component-contract.ice" meta="4.2 KB · Ice source" #attachment
+      Breadcrumb current="Components" #breadcrumb
+        text "Home"
+      Tooltip label="Open the command palette" #tooltip
+        button "Hover me" #tooltip-trigger -> clicked
+  target attachment_menu = #attachment/root/menu
+  target breadcrumb_separator = #breadcrumb/root/separator
+  target breadcrumb_current = #breadcrumb/root/current
+  expect attachment_menu.font.family == family.named("Geist")
+  expect breadcrumb_separator.font.family == family.named("Geist")
+  expect breadcrumb_current.font.family == family.named("Geist")
+
 test dropdown_categories_open_from_pointer
   preset test
   viewport 420 360
