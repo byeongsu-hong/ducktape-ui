@@ -127,9 +127,21 @@ view
                 w=fill
                 gap=12.0
                 align=center
-              button "Open dialog" #open-dialog h=36.0 @primary_action -> open_dialog
+              button #open-dialog -> open_dialog
+                with
+                  label="Open dialog"
+                  h=36.0
+                  @primary_action
+                  @py-8px
+                ActionLabel content="Open dialog"
               if !toast_visible
-                button "Show toast" h=36.0 @secondary_action -> show_toast
+                button -> show_toast
+                  with
+                    label="Show toast"
+                    h=36.0
+                    @secondary_action
+                    @py-8px
+                  ActionLabel content="Show toast"
               space w=fill h=1.0
               if toast_visible
                 Toast #migration-toast
@@ -170,5 +182,17 @@ view
               gap=8.0
               align=end
             space w=fill h=1.0
-            button "Cancel" h=36.0 @secondary_action -> close_dialog
-            button "Continue" h=36.0 @primary_action -> close_dialog
+            button -> close_dialog
+              with
+                label="Cancel"
+                h=36.0
+                @secondary_action
+                @py-8px
+              ActionLabel content="Cancel"
+            button -> close_dialog
+              with
+                label="Continue"
+                h=36.0
+                @primary_action
+                @py-8px
+              ActionLabel content="Continue"

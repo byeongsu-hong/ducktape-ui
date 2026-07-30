@@ -1,3 +1,6 @@
+component ActionLabel(content:str)
+  text content size=12.5 @font-semibold
+
 component ProjectSlugInput(bind value:str)
   row
     with
@@ -36,6 +39,7 @@ component CollapsibleDemo()
         w=fill
         h=36.0
         @secondary_action
+        @py-8px
       row w=fill align=center
         text "Deployment details"
           with
@@ -62,9 +66,21 @@ component ToggleDemo()
     pressed = !pressed
   row gap=8.0 align=center
     if pressed
-      button "Bold" h=32.0 @primary_action -> toggle
+      button #toggle-on -> toggle
+        with
+          label="Bold"
+          h=32.0
+          @primary_action
+          @py-6px
+        ActionLabel content="Bold"
     if !pressed
-      button "Bold" h=32.0 @outline_action -> toggle
+      button #toggle-off -> toggle
+        with
+          label="Bold"
+          h=32.0
+          @outline_action
+          @py-6px
+        ActionLabel content="Bold"
     if pressed
       text "On" size=12.0 @text-muted
     if !pressed
@@ -82,17 +98,53 @@ component SegmentedControlDemo()
       @bg-accent
       @rounded-lg
     if selected == "day"
-      button "Day" h=32.0 @secondary_action -> select "day"
+      button -> select "day"
+        with
+          label="Day"
+          h=32.0
+          @secondary_action
+          @py-6px
+        ActionLabel content="Day"
     if selected != "day"
-      button "Day" h=32.0 @ghost_action -> select "day"
+      button -> select "day"
+        with
+          label="Day"
+          h=32.0
+          @ghost_action
+          @py-6px
+        ActionLabel content="Day"
     if selected == "week"
-      button "Week" h=32.0 @secondary_action -> select "week"
+      button -> select "week"
+        with
+          label="Week"
+          h=32.0
+          @secondary_action
+          @py-6px
+        ActionLabel content="Week"
     if selected != "week"
-      button "Week" h=32.0 @ghost_action -> select "week"
+      button -> select "week"
+        with
+          label="Week"
+          h=32.0
+          @ghost_action
+          @py-6px
+        ActionLabel content="Week"
     if selected == "month"
-      button "Month" h=32.0 @secondary_action -> select "month"
+      button -> select "month"
+        with
+          label="Month"
+          h=32.0
+          @secondary_action
+          @py-6px
+        ActionLabel content="Month"
     if selected != "month"
-      button "Month" h=32.0 @ghost_action -> select "month"
+      button -> select "month"
+        with
+          label="Month"
+          h=32.0
+          @ghost_action
+          @py-6px
+        ActionLabel content="Month"
 
 component ToggleGroupDemo()
   SegmentedControlDemo #toggle-group

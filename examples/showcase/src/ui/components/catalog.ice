@@ -41,37 +41,55 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="Clear defaults with native focus and disabled behavior."
       col w=fill gap=14.0
         row gap=8.0 wrap wrap-gap=8.0
-          button "Primary" #primary -> emit(clicked)
+          button #primary -> emit(clicked)
             with
+              label="Primary"
               w=128.0
               h=36.0
               @primary_action
-          button "Secondary" #secondary -> emit(clicked)
+              @py-8px
+            ActionLabel content="Primary"
+          button #secondary -> emit(clicked)
             with
+              label="Secondary"
               w=128.0
               h=36.0
               @secondary_action
-          button "Outline" #outline -> emit(clicked)
+              @py-8px
+            ActionLabel content="Secondary"
+          button #outline -> emit(clicked)
             with
+              label="Outline"
               w=128.0
               h=36.0
               @outline_action
-          button "Ghost" #ghost -> emit(clicked)
+              @py-8px
+            ActionLabel content="Outline"
+          button #ghost -> emit(clicked)
             with
+              label="Ghost"
               w=128.0
               h=36.0
               @ghost_action
-          button "Destructive" #destructive -> emit(clicked)
+              @py-8px
+            ActionLabel content="Ghost"
+          button #destructive -> emit(clicked)
             with
+              label="Destructive"
               w=128.0
               h=36.0
               @danger_action
-          button "Disabled" #disabled -> emit(clicked)
+              @py-8px
+            ActionLabel content="Destructive"
+          button #disabled -> emit(clicked)
             with
+              label="Disabled"
               w=128.0
               h=36.0
               disabled=true
               @secondary_action
+              @py-8px
+            ActionLabel content="Disabled"
         row gap=8.0 align=center
           text "Activated" size=12.0 @text-muted
           text clicks
@@ -252,8 +270,20 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               space w=fill h=1.0
               ButtonGroup
                 row
-                  button "Cancel" h=36.0 @ghost_action -> emit(clicked)
-                  button "Apply" h=36.0 @primary_action -> emit(clicked)
+                  button -> emit(clicked)
+                    with
+                      label="Cancel"
+                      h=36.0
+                      @ghost_action
+                      @py-8px
+                    ActionLabel content="Cancel"
+                  button -> emit(clicked)
+                    with
+                      label="Apply"
+                      h=36.0
+                      @primary_action
+                      @py-8px
+                    ActionLabel content="Apply"
         Separator
         Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
         Bubble copy="Caller state still owns the conversation." outgoing=true
@@ -508,7 +538,13 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               hint="Filter components"
               p=9.0
               @control
-          button "Sort" h=36.0 @outline_action -> emit(catalog_sort_changed)
+          button -> emit(catalog_sort_changed)
+            with
+              label="Sort"
+              h=36.0
+              @outline_action
+              @py-8px
+            ActionLabel content="Sort"
           text catalog_sort size=11.0 @text-muted
         table item in data_table_rows(catalog_query, catalog_sort, catalog_page)
           with
@@ -538,17 +574,23 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             w=fill
             gap=8.0
             align=center
-          button "Previous" -> emit(catalog_previous)
+          button -> emit(catalog_previous)
             with
+              label="Previous"
               h=32.0
               disabled=catalog_at_start
               @secondary_action
+              @py-6px
+            ActionLabel content="Previous"
           text catalog_page_number size=12.0 @text-muted
-          button "Next" -> emit(catalog_next)
+          button -> emit(catalog_next)
             with
+              label="Next"
               h=32.0
               disabled=(!data_table_can_next(catalog_query, catalog_page))
               @secondary_action
+              @py-6px
+            ActionLabel content="Next"
         Surface
           col w=fill
             Item
