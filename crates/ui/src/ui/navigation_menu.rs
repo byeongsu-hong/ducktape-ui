@@ -707,6 +707,7 @@ where
     let label = container(
         text(label)
             .size(theme.typography.caption)
+            .font(theme.typography.font)
             .line_height(LineHeight::Absolute(Pixels(16.0)))
             .color(foreground),
     )
@@ -726,6 +727,7 @@ where
         container(
             text(glyph)
                 .size(theme.typography.list)
+                .font(theme.typography.font)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(alpha(foreground, 0.72)),
         )
@@ -932,12 +934,17 @@ where
             .push(
                 text(title.into())
                     .size(theme.typography.caption)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Semibold,
+                        ..theme.typography.font
+                    })
                     .line_height(LineHeight::Absolute(Pixels(16.0)))
                     .color(theme.palette.foreground),
             )
             .push(
                 text(description.into())
                     .size(theme.typography.caption)
+                    .font(theme.typography.font)
                     .line_height(LineHeight::Absolute(Pixels(18.0)))
                     .color(theme.palette.muted_foreground),
             )

@@ -7,9 +7,9 @@ use ducktape_ui::ui::{
     },
     calendar::{CalendarSelection, Date, Month, controlled_calendar},
     chart::{
-        CartesianKind, ChartColor, ChartConfig, ChartData, ChartDatum, SeriesConfig,
-        cartesian_chart, companion_content, companion_model, legend_content, tooltip_content,
-        tooltip_model,
+        CartesianCurve, CartesianKind, ChartColor, ChartConfig, ChartData, ChartDatum,
+        SeriesConfig, cartesian_chart, companion_content, companion_model, legend_content,
+        tooltip_content, tooltip_model,
     },
     command::{command as ui_command, command_group, command_item},
     context_menu::{ContextMenuIds, context_menu as ui_context_menu},
@@ -24,7 +24,7 @@ use ducktape_ui::ui::{
     focus_control::FocusControl,
     hover_card::{HoverCardId, hover_card as ui_hover_card},
     input_otp::{OtpPattern, input_otp as ui_input_otp},
-    menu::{MenuEntry, MenuEvent, MenuItem, MenuState},
+    menu::{MenuEntry, MenuEvent, MenuGroup, MenuItem, MenuState},
     menubar::{MenubarMenu, MenubarState as UiMenubarState, menubar as ui_menubar},
     message_scroller::{
         MessageScrollerItemMeta, controlled_message_scroller, message_scroller_item,
@@ -32,6 +32,7 @@ use ducktape_ui::ui::{
     modal::FocusScope,
     navigation_menu::{
         NavigationMenuItem, NavigationMenuItemInfo, navigation_menu as ui_navigation_menu,
+        navigation_menu_list, navigation_menu_list_link,
     },
     popover::{Alignment, Placement, PopoverIds, next_open, popover},
     progress::ProgressVariant,
@@ -56,12 +57,14 @@ use ducktape_ui::ui::{
     theme::LIGHT,
 };
 use iced::alignment::{Horizontal, Vertical};
+use iced::font::{Style as FontStyle, Weight};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
 
 const ACTION_HEIGHT: f32 = 36.0;
 const DEMO_STAGE_HEIGHT: f32 = 208.0;
-const SIDEBAR_STAGE_HEIGHT: f32 = 288.0;
+const SIDEBAR_STAGE_HEIGHT: f32 = 404.0;
+const DATA_TABLE_PAGE_SIZE: usize = 3;
 
 pub use ducktape_ui::ui::{
     calendar::{CalendarEvent, CalendarState},
@@ -320,6 +323,12 @@ pub fn chart(hovered: Option<ChartHit>) -> Element<'static, Option<ChartHit>> {
         ChartDatum::new(3.0, "Apr")
             .with_value("desktop", 173.0)
             .with_value("mobile", 190.0),
+        ChartDatum::new(4.0, "May")
+            .with_value("desktop", 289.0)
+            .with_value("mobile", 210.0),
+        ChartDatum::new(5.0, "Jun")
+            .with_value("desktop", 342.0)
+            .with_value("mobile", 238.0),
     ]);
     let theme = theme();
     let tooltip: Element<'static, Option<ChartHit>> = hovered
@@ -333,11 +342,38 @@ pub fn chart(hovered: Option<ChartHit>) -> Element<'static, Option<ChartHit>> {
         companion_model("Traffic by month", &config, &data).expect("fixed chart data is valid");
 
     column![
+        row![
+            column![
+                text("Traffic overview")
+                    .size(16)
+                    .font(ui_font(Weight::Bold)),
+                text("Monthly unique visitors")
+                    .size(11)
+                    .font(ui_font(Weight::Normal))
+                    .color(theme.palette.muted_foreground),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            column![
+                text("+20.1%")
+                    .size(16)
+                    .font(ui_font(Weight::Bold))
+                    .color(theme.palette.success),
+                text("from last month")
+                    .size(10)
+                    .font(italic_font())
+                    .color(theme.palette.muted_foreground),
+            ]
+            .spacing(2)
+            .align_x(iced::Alignment::End),
+        ]
+        .align_y(iced::Alignment::Center),
         cartesian_chart(&config, &data, &theme)
-            .kind(CartesianKind::Line { points: true })
+            .kind(CartesianKind::Area { points: false })
+            .curve(CartesianCurve::Monotone)
             .hovered(hovered)
             .on_hover(|hit| hit)
-            .height(240),
+            .height(228),
         legend_content(&config, &theme),
         tooltip,
         companion_content(&companion, &theme),
@@ -452,6 +488,10 @@ pub fn dropdown_menu_state() -> DropdownMenuState {
     }
 }
 
+pub fn dropdown_menu_is_open(state: DropdownMenuState) -> bool {
+    state.open
+}
+
 pub fn dropdown_menu_apply(
     mut state: DropdownMenuState,
     event: DropdownMenuEvent,
@@ -557,26 +597,42 @@ pub fn alert_dialog_apply(
     iced::Task::done(state).chain(focus).chain(transition)
 }
 
+pub fn alert_dialog_is_open(state: AlertDialogState) -> bool {
+    state.open
+}
+
 pub fn alert_dialog(state: &AlertDialogState) -> Element<'static, AlertDialogEvent> {
     let theme = theme();
+    let trigger_action: Element<'static, AlertDialogEvent> = FocusControl::new(
+        state.focus.restore().clone(),
+        surface(
+            text("Delete component")
+                .size(12)
+                .font(ui_font(Weight::Semibold)),
+            SurfaceVariant::Muted,
+            &theme,
+        )
+        .height(ACTION_HEIGHT)
+        .padding([0, 12])
+        .align_y(Vertical::Center),
+        AlertDialogEvent::Open,
+        &theme,
+    )
+    .into();
     let trigger_content = surface(
         row![
             column![
                 text("DESTRUCTIVE FLOW")
                     .size(9)
+                    .font(ui_font(Weight::Semibold))
                     .color(theme.palette.destructive),
-                text("Safe focus and explicit confirmation").size(12),
+                text("Safe focus and explicit confirmation")
+                    .size(12)
+                    .font(ui_font(Weight::Normal)),
             ]
             .spacing(4)
             .width(Length::Fill),
-            surface(
-                text("Delete component").size(12),
-                SurfaceVariant::Muted,
-                &theme,
-            )
-            .height(ACTION_HEIGHT)
-            .padding([0, 12])
-            .align_y(Vertical::Center),
+            trigger_action,
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center),
@@ -587,14 +643,8 @@ pub fn alert_dialog(state: &AlertDialogState) -> Element<'static, AlertDialogEve
     .height(Length::Fill)
     .padding(12)
     .align_y(Vertical::Center);
-    let trigger = FocusControl::new(
-        state.focus.restore().clone(),
-        trigger_content,
-        AlertDialogEvent::Open,
-        &theme,
-    );
     ui_alert_dialog(
-        trigger,
+        trigger_content,
         state.open,
         &state.focus,
         "Delete this component?",
@@ -629,8 +679,9 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         .is_collapsed(SidebarViewport::Desktop, SidebarCollapsible::Icon);
     let items = [
         ("overview", "01", "Overview", Some("LIVE")),
-        ("components", "02", "Components", Some("24")),
-        ("settings", "03", "Settings", None),
+        ("components", "02", "Components", Some("18")),
+        ("reports", "03", "Reports", Some("4")),
+        ("settings", "04", "Settings", None),
     ]
     .map(|(id, icon, label, badge)| {
         let active = state.selected == id;
@@ -668,21 +719,25 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         .into()
     });
     let brand_theme = theme;
-    let brand: Element<'static, SidebarEvent> =
-        container(text("D").size(13).color(theme.palette.primary_foreground))
-            .width(32)
-            .height(32)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .style(move |_iced_theme| iced::widget::container::Style {
-                background: Some(Background::Color(brand_theme.palette.primary)),
-                border: Border {
-                    radius: 9.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .into();
+    let brand: Element<'static, SidebarEvent> = container(
+        text("D")
+            .size(13)
+            .font(ui_font(Weight::Bold))
+            .color(theme.palette.primary_foreground),
+    )
+    .width(32)
+    .height(32)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_iced_theme| iced::widget::container::Style {
+        background: Some(Background::Color(brand_theme.palette.primary)),
+        border: Border {
+            radius: 9.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into();
     let toggle: Element<'static, SidebarEvent> = FocusControl::new(
         iced::widget::Id::from("ice-sidebar-demo-toggle"),
         surface(
@@ -710,9 +765,10 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         row![
             brand,
             column![
-                text("Ducktape").size(13),
+                text("Ducktape").size(13).font(ui_font(Weight::Bold)),
                 text("Component lab")
                     .size(10)
+                    .font(italic_font())
                     .color(theme.palette.muted_foreground),
             ]
             .spacing(1)
@@ -784,8 +840,14 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         "components" => (
             "Components",
             "Browse the primitives that make up this workspace.",
-            "24 ready",
+            "18 ready",
             "Synced",
+        ),
+        "reports" => (
+            "Reports",
+            "Review visual checks, interaction coverage, and build health.",
+            "42 checks",
+            "Passing",
         ),
         "settings" => (
             "Settings",
@@ -796,7 +858,7 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         _ => (
             "Overview",
             "A compact snapshot of the current component workspace.",
-            "24 ready",
+            "18 ready",
             "Healthy",
         ),
     };
@@ -804,18 +866,21 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         column![
             text("ACTIVE ROUTE")
                 .size(9)
+                .font(ui_font(Weight::Semibold))
                 .color(theme.palette.muted_foreground),
-            text(title).size(20),
+            text(title).size(20).font(ui_font(Weight::Bold)),
             text(description)
                 .size(11)
+                .font(italic_font())
                 .color(theme.palette.muted_foreground),
             row![
                 surface(
                     column![
                         text("COMPONENTS")
                             .size(8)
+                            .font(ui_font(Weight::Semibold))
                             .color(theme.palette.muted_foreground),
-                        text(count).size(13),
+                        text(count).size(13).font(ui_font(Weight::Bold)),
                     ]
                     .spacing(4),
                     SurfaceVariant::Card,
@@ -825,8 +890,11 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
                 .padding(10),
                 surface(
                     column![
-                        text("BUILD").size(8).color(theme.palette.muted_foreground),
-                        text(status).size(13),
+                        text("BUILD")
+                            .size(8)
+                            .font(ui_font(Weight::Semibold))
+                            .color(theme.palette.muted_foreground),
+                        text(status).size(13).font(ui_font(Weight::Bold)),
                     ]
                     .spacing(4),
                     SurfaceVariant::Card,
@@ -840,8 +908,62 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
                 column![
                     row![
                         container(
+                            text("RELEASE READINESS")
+                                .size(8)
+                                .font(ui_font(Weight::Semibold))
+                                .color(theme.palette.muted_foreground),
+                        )
+                        .width(Length::Fill),
+                        text("92%")
+                            .size(10)
+                            .font(ui_font(Weight::Bold))
+                            .color(theme.palette.success),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    container(
+                        row![
+                            container(iced::widget::Space::new())
+                                .width(Length::FillPortion(92))
+                                .height(6)
+                                .style(move |_iced_theme| iced::widget::container::Style {
+                                    background: Some(Background::Color(theme.palette.primary)),
+                                    border: Border {
+                                        radius: 999.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }),
+                            iced::widget::Space::new().width(Length::FillPortion(8)),
+                        ]
+                        .spacing(0),
+                    )
+                    .width(Length::Fill)
+                    .height(6)
+                    .style(move |_iced_theme| iced::widget::container::Style {
+                        background: Some(Background::Color(theme.palette.muted)),
+                        border: Border {
+                            radius: 999.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                    text("Interactions, visual states, and accessibility evidence are current.")
+                        .size(10)
+                        .font(italic_font())
+                        .color(theme.palette.muted_foreground),
+                ]
+                .spacing(7),
+                SurfaceVariant::Card,
+                &theme,
+            )
+            .padding(10),
+            surface(
+                column![
+                    row![
+                        container(
                             text("RECENT ACTIVITY")
                                 .size(8)
+                                .font(ui_font(Weight::Semibold))
                                 .color(theme.palette.muted_foreground),
                         )
                         .width(Length::Fill),
@@ -851,6 +973,13 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
                     row![
                         container(text("Component catalog").size(11)).width(Length::Fill),
                         text("Ready").size(10).color(theme.palette.muted_foreground),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        container(text("Typography audit").size(11)).width(Length::Fill),
+                        text("Updated")
+                            .size(10)
+                            .color(theme.palette.muted_foreground),
                     ]
                     .align_y(iced::Alignment::Center),
                     row![
@@ -1039,6 +1168,10 @@ pub fn navigation_menu_state() -> NavigationMenuState {
     NavigationMenuState::initial(&navigation_menu_infos()).active("home")
 }
 
+pub fn navigation_menu_is_open(state: NavigationMenuState) -> bool {
+    state.open.is_some()
+}
+
 pub fn navigation_menu_apply(event: NavigationMenuEvent) -> iced::Task<NavigationMenuState> {
     let state = event.state().clone();
     iced::Task::done(state).chain(event.focus_task("ice-default-navigation"))
@@ -1046,27 +1179,82 @@ pub fn navigation_menu_apply(event: NavigationMenuEvent) -> iced::Task<Navigatio
 
 pub fn navigation_menu(state: &NavigationMenuState) -> Element<'static, NavigationMenuEvent> {
     let theme = theme();
+    let activate = |id: &'static str| NavigationMenuEvent::LinkActivated {
+        id: id.to_owned(),
+        state: NavigationMenuState {
+            active: Some(id.to_owned()),
+            open: None,
+            ..state.clone()
+        },
+    };
+    let component_links = navigation_menu_list([
+        navigation_menu_list_link(
+            iced::widget::Id::from("ice-nav-inputs"),
+            "Inputs & forms",
+            "Fields, selection, validation, and OTP patterns.",
+            activate("inputs"),
+            Direction::LeftToRight,
+            &theme,
+        ),
+        navigation_menu_list_link(
+            iced::widget::Id::from("ice-nav-navigation"),
+            "Navigation",
+            "Menus, pagination, breadcrumbs, and sidebars.",
+            activate("navigation"),
+            Direction::LeftToRight,
+            &theme,
+        ),
+        navigation_menu_list_link(
+            iced::widget::Id::from("ice-nav-overlays"),
+            "Overlays & feedback",
+            "Dialogs, drawers, popovers, and notifications.",
+            activate("overlays"),
+            Direction::LeftToRight,
+            &theme,
+        ),
+    ]);
+    let components_content =
+        row![
+            surface(
+                column![
+                text("COMPONENT LIBRARY")
+                    .size(9)
+                    .font(ui_font(Weight::Semibold))
+                    .color(theme.palette.primary),
+                text("Build consistent product surfaces")
+                    .size(17)
+                    .font(ui_font(Weight::Bold)),
+                text("Composable defaults with explicit state, focus, and accessibility contracts.")
+                    .size(11)
+                    .font(ui_font(Weight::Normal))
+                    .color(theme.palette.muted_foreground),
+                text("18 catalog examples · Rust + Ice")
+                    .size(10)
+                    .font(italic_font())
+                    .color(theme.palette.muted_foreground),
+            ]
+                .spacing(7),
+                SurfaceVariant::Muted,
+                &theme,
+            )
+            .width(200)
+            .padding(14),
+            component_links,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Start);
     ui_navigation_menu(
         "ice-default-navigation",
         [
             NavigationMenuItem::link("home", "Home"),
-            NavigationMenuItem::disclosure(
-                "components",
-                "Components",
-                column![
-                    text("Inputs").size(14),
-                    text("Navigation").size(14),
-                    text("Overlays").size(14)
-                ]
-                .spacing(8),
-            ),
+            NavigationMenuItem::disclosure("components", "Components", components_content),
             NavigationMenuItem::link("docs", "Documentation"),
         ],
         state,
         |event| event,
         &theme,
     )
-    .content_width(320.0)
+    .content_width(520.0)
     .into()
 }
 
@@ -1257,7 +1445,7 @@ pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScro
 }
 
 pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<String> {
-    let mut state = DataTableState::new(3);
+    let mut state = DataTableState::new(DATA_TABLE_PAGE_SIZE);
     state.set_query(query.clone());
     state.sort = match sort.as_str() {
         "ascending" => Some(Sort {
@@ -1290,8 +1478,38 @@ pub fn data_table_next_sort(sort: String) -> String {
 }
 
 pub fn data_table_can_next(query: String, page: i64) -> bool {
-    let state = DataTableState::<()>::new(3);
+    let state = DataTableState::<()>::new(DATA_TABLE_PAGE_SIZE);
     page_index(page).saturating_add(1) < state.page_count(catalog_items(&query).len())
+}
+
+pub fn data_table_page_count(query: String) -> i64 {
+    let state = DataTableState::<()>::new(DATA_TABLE_PAGE_SIZE);
+    i64::try_from(state.page_count(catalog_items(&query).len()).max(1)).unwrap_or(i64::MAX)
+}
+
+pub fn data_table_result_count(query: String) -> i64 {
+    i64::try_from(catalog_items(&query).len()).unwrap_or(i64::MAX)
+}
+
+pub fn data_table_page_range(query: String, page: i64) -> Vec<i64> {
+    const WINDOW: usize = 5;
+    let total = usize::try_from(data_table_page_count(query)).unwrap_or(usize::MAX);
+    let current = page_index(page).min(total.saturating_sub(1));
+    let start = current
+        .saturating_sub(WINDOW / 2)
+        .min(total.saturating_sub(WINDOW));
+    let end = start.saturating_add(WINDOW).min(total);
+    (start..end)
+        .map(|index| i64::try_from(index.saturating_add(1)).unwrap_or(i64::MAX))
+        .collect()
+}
+
+pub fn data_table_page_label(page: i64, current: bool) -> String {
+    if current {
+        format!("Page {page}, current page")
+    } else {
+        format!("Go to page {page}")
+    }
 }
 
 fn page_index(page: i64) -> usize {
@@ -1370,18 +1588,40 @@ fn select_groups() -> [SelectGroup<String>; 2] {
 
 fn dropdown_entries() -> Vec<MenuEntry> {
     vec![
-        MenuItem::new("new", "New file").shortcut("⌘N").into(),
-        MenuItem::new("open", "Open…").shortcut("⌘O").into(),
-        MenuItem::new("share", "Share")
-            .submenu(vec![
-                MenuItem::new("copy-link", "Copy link").into(),
-                MenuItem::new("invite", "Invite people").into(),
-            ])
-            .into(),
-        MenuEntry::separator("file-separator"),
-        MenuItem::new("delete", "Move to trash")
-            .shortcut("⌫")
-            .into(),
+        MenuGroup::new(
+            "file-actions",
+            vec![
+                MenuItem::new("new", "New file").shortcut("⌘N").into(),
+                MenuItem::new("open", "Open…").shortcut("⌘O").into(),
+            ],
+        )
+        .label("File")
+        .into(),
+        MenuEntry::separator("collaboration-separator"),
+        MenuGroup::new(
+            "collaboration",
+            vec![
+                MenuItem::new("share", "Share")
+                    .submenu(vec![
+                        MenuItem::new("copy-link", "Copy link").into(),
+                        MenuItem::new("invite", "Invite people").into(),
+                    ])
+                    .into(),
+            ],
+        )
+        .label("Collaboration")
+        .into(),
+        MenuEntry::separator("danger-separator"),
+        MenuGroup::new(
+            "danger-zone",
+            vec![
+                MenuItem::new("delete", "Move to trash")
+                    .shortcut("⌫")
+                    .into(),
+            ],
+        )
+        .label("Danger zone")
+        .into(),
     ]
 }
 
@@ -1433,7 +1673,25 @@ fn transcript_metadata() -> Vec<MessageScrollerItemMeta> {
 fn catalog_items(query: &str) -> Vec<String> {
     let query = query.to_lowercase();
     [
-        "Button", "Input", "Dialog", "Calendar", "Chart", "Sidebar", "Sonner",
+        "Accordion",
+        "Alert dialog",
+        "Button",
+        "Calendar",
+        "Chart",
+        "Command",
+        "Context menu",
+        "Data table",
+        "Date picker",
+        "Dialog",
+        "Dropdown menu",
+        "Input",
+        "Input OTP",
+        "Message scroller",
+        "Navigation menu",
+        "Resizable",
+        "Select",
+        "Sidebar",
+        "Sonner",
     ]
     .into_iter()
     .filter(|row| row.to_lowercase().contains(&query))
@@ -1446,6 +1704,20 @@ fn theme() -> ducktape_ui::ui::theme::Theme {
     theme.typography.font = Font::with_name("Geist");
     theme.typography.monospace_font = Font::with_name("Geist");
     theme
+}
+
+fn ui_font(weight: Weight) -> Font {
+    Font {
+        weight,
+        ..Font::with_name("Geist")
+    }
+}
+
+fn italic_font() -> Font {
+    Font {
+        style: FontStyle::Italic,
+        ..Font::with_name("Geist")
+    }
 }
 
 #[cfg(test)]
@@ -1507,7 +1779,20 @@ mod tests {
     }
 
     #[test]
-    fn bundled_geist_has_real_regular_and_bold_faces() {
+    fn dropdown_groups_have_explicit_category_labels() {
+        let labels = dropdown_entries()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Group(group) => group.label,
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, ["File", "Collaboration", "Danger zone"]);
+    }
+
+    #[test]
+    fn bundled_geist_has_real_regular_bold_and_italic_faces() {
         use iced::advanced::graphics::text::cosmic_text::fontdb::{
             Database, Family, Query, Stretch, Style, Weight,
         };
@@ -1515,6 +1800,7 @@ mod tests {
         let mut fonts = Database::new();
         fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Regular.ttf").to_vec());
         fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Bold.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Italic.ttf").to_vec());
 
         for weight in [Weight::NORMAL, Weight::BOLD] {
             let id = fonts
@@ -1527,6 +1813,19 @@ mod tests {
                 .expect("bundled Geist face must resolve");
             assert_eq!(fonts.face(id).expect("resolved face").weight, weight);
         }
+
+        let italic = fonts
+            .query(&Query {
+                families: &[Family::Name("Geist")],
+                weight: Weight::NORMAL,
+                stretch: Stretch::Normal,
+                style: Style::Italic,
+            })
+            .expect("bundled Geist italic face must resolve");
+        assert_eq!(
+            fonts.face(italic).expect("resolved face").style,
+            Style::Italic
+        );
     }
 
     #[test]
@@ -1557,7 +1856,7 @@ mod tests {
 
         assert_eq!(
             data_table_rows("a".to_owned(), "ascending".to_owned(), 0),
-            ["Calendar", "Chart", "Dialog"]
+            ["Accordion", "Alert dialog", "Calendar"]
         );
         assert!(data_table_can_next(String::new(), 0));
         assert!(!data_table_can_next("button".to_owned(), 0));
@@ -1567,5 +1866,9 @@ mod tests {
             ["Sonner"]
         );
         assert_eq!(data_table_next_sort("ascending".to_owned()), "descending");
+        assert_eq!(data_table_page_count(String::new()), 7);
+        assert_eq!(data_table_page_range(String::new(), 0), [1, 2, 3, 4, 5]);
+        assert_eq!(data_table_page_range(String::new(), 6), [3, 4, 5, 6, 7]);
+        assert_eq!(data_table_page_range("input".to_owned(), 0), [1]);
     }
 }

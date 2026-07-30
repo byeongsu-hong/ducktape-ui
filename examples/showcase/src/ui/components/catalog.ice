@@ -26,6 +26,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     catalog_sort_changed
     catalog_previous
     catalog_next
+    catalog_page_changed(i64)
     demo_page_previous
     demo_page_next
     message_scroller_changed(MessageScrollerEvent)
@@ -454,7 +455,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         Field
           with
             label="Verification code"
-            description="Paste and keyboard editing stay inside one native focus target."
+            description="The whole code group is one native focus target; the next empty slot is only content position."
           extern input_otp("showcase-otp", otp, false, false) -> emit(otp_changed, _)
         row
           with
@@ -469,7 +470,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     Panel #chart-panel
       with
         title="Chart"
-        description="Ice owns hover state; Rust retains Canvas geometry and visible companion data."
+        description="Smooth area series and companion data share one chart contract."
       box #chart-content w=fill
         extern chart(chart_hover) -> emit(chart_hovered, _)
 
@@ -522,8 +523,9 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               hint="Filter components"
               p=9.0
               @control
-          button "Sort" -> emit(catalog_sort_changed)
+          button "Sort by name" -> emit(catalog_sort_changed)
             with
+              w=112.0
               h=36.0
               @outline_action
               @py-8px
@@ -551,24 +553,78 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                   @text-fg
             cell
               text "Ice" size=12.0 @text-primary
-        row
+        row wrap
           with
             w=fill
             gap=8.0
             align=center
+            wrap-gap=8.0
+          row gap=3.0 align=center
+            text data_table_result_count(catalog_query)
+              with
+                size=11.0
+                @font-semibold
+                @text-fg
+            text "results" size=11.0 @text-muted
+          space w=fill h=1.0
           button "Previous" -> emit(catalog_previous)
             with
+              w=84.0
               h=32.0
               disabled=catalog_at_start
               @secondary_action
               @py-6px
-          text catalog_page_number size=12.0 @text-muted
+          for page in data_table_page_range(catalog_query, catalog_page)
+            if page == catalog_page_number
+              button -> emit(catalog_page_changed, page)
+                with
+                  label=data_table_page_label(page, true)
+                  w=32.0
+                  h=32.0
+                  p=0.0
+                  @primary_action
+                text page
+                  with
+                    size=12.0
+                    @font-bold
+                    @text-primary_fg
+            if page != catalog_page_number
+              button -> emit(catalog_page_changed, page)
+                with
+                  label=data_table_page_label(page, false)
+                  w=32.0
+                  h=32.0
+                  p=0.0
+                  @outline_action
+                text page
+                  with
+                    size=12.0
+                    @font-semibold
+                    @text-fg
           button "Next" -> emit(catalog_next)
             with
+              w=84.0
               h=32.0
               disabled=(!data_table_can_next(catalog_query, catalog_page))
               @secondary_action
               @py-6px
+        row
+          with
+            w=fill
+            gap=3.0
+            align=center
+          text "Page" size=11.0 @text-muted
+          text catalog_page_number
+            with
+              size=11.0
+              @font-semibold
+              @text-fg
+          text "of" size=11.0 @text-muted
+          text data_table_page_count(catalog_query)
+            with
+              size=11.0
+              @font-semibold
+              @text-fg
         Surface
           col w=fill
             Item
@@ -637,5 +693,5 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="The full-width shell keeps collapse, active route, and workspace context controlled by Ice."
       col w=fill gap=16.0
         extern navigation_menu(navigation_menu) -> emit(navigation_menu_changed, _)
-        DemoStage height=308.0 padding=10.0
+        DemoStage height=424.0 padding=10.0
           extern sidebar(sidebar) -> emit(sidebar_changed, _)

@@ -124,16 +124,15 @@ where
         let mut slots = Row::new().spacing(SLOT_GAP).height(SLOT_SIZE);
         for index in 0..self.length {
             let character = characters.get(index).copied();
-            slots = slots.push(slot(
-                character,
-                index == characters.len() && characters.len() < self.length,
-                self.invalid,
-                self.disabled,
-                &self.theme,
-            ));
+            slots = slots.push(slot(character, self.invalid, self.disabled, &self.theme));
             if separators.contains(&(index + 1)) {
                 let separator = self.separator.as_ref().map_or_else(
-                    || text("–").color(self.theme.palette.muted_foreground).into(),
+                    || {
+                        text("–")
+                            .font(self.theme.typography.font)
+                            .color(self.theme.palette.muted_foreground)
+                            .into()
+                    },
                     |separator| separator(),
                 );
                 slots = slots.push(
@@ -194,7 +193,6 @@ fn separator_indices(length: usize, groups: &[usize]) -> Vec<usize> {
 
 fn slot<'a, Message>(
     character: Option<char>,
-    active: bool,
     invalid: bool,
     disabled: bool,
     theme: &Theme,
@@ -213,27 +211,20 @@ where
     container(
         text(copy)
             .size(theme.typography.section_title)
+            .font(theme.typography.font)
             .color(foreground),
     )
     .width(SLOT_SIZE)
     .height(SLOT_SIZE)
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
-    .style(move |_iced_theme| slot_style(&style_theme, active, invalid, disabled))
+    .style(move |_iced_theme| slot_style(&style_theme, invalid, disabled))
     .into()
 }
 
-pub fn slot_style(
-    theme: &Theme,
-    active: bool,
-    invalid: bool,
-    disabled: bool,
-) -> iced::widget::container::Style {
-    let active = active && !disabled;
+pub fn slot_style(theme: &Theme, invalid: bool, disabled: bool) -> iced::widget::container::Style {
     let border = if invalid {
         theme.palette.destructive
-    } else if active {
-        theme.palette.ring
     } else {
         theme.palette.input
     };
@@ -246,7 +237,7 @@ pub fn slot_style(
         })),
         border: Border {
             color: border,
-            width: if active || invalid { 2.0 } else { 1.0 },
+            width: if invalid { 2.0 } else { 1.0 },
             radius: theme.radius.button.into(),
         },
         ..Default::default()
@@ -254,13 +245,22 @@ pub fn slot_style(
 }
 
 pub fn overlay_style(
-    _theme: &Theme,
-    _invalid: bool,
-    _status: iced::widget::text_input::Status,
+    theme: &Theme,
+    invalid: bool,
+    status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
+    let focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
     iced::widget::text_input::Style {
         background: Background::Color(Color::TRANSPARENT),
-        border: Border::default(),
+        border: Border {
+            color: if invalid {
+                theme.palette.destructive
+            } else {
+                theme.palette.ring
+            },
+            width: if focused { 2.0 } else { 0.0 },
+            radius: (theme.radius.button + 2.0).into(),
+        },
         icon: Color::TRANSPARENT,
         placeholder: Color::TRANSPARENT,
         value: Color::TRANSPARENT,
@@ -297,20 +297,24 @@ mod tests {
     }
 
     #[test]
-    fn invalid_slots_keep_feedback_without_a_second_group_outline() {
-        let invalid = slot_style(&LIGHT, false, true, false);
-        let disabled = slot_style(&LIGHT, true, false, true);
+    fn group_focus_is_visible_without_pretending_the_first_empty_slot_is_focused() {
+        let empty = slot_style(&LIGHT, false, false);
+        let invalid = slot_style(&LIGHT, true, false);
+        let disabled = slot_style(&LIGHT, false, true);
         let focused = overlay_style(
             &LIGHT,
             false,
             iced::widget::text_input::Status::Focused { is_hovered: false },
         );
 
+        assert_eq!(empty.border.color, LIGHT.palette.input);
+        assert_eq!(empty.border.width, 1.0);
         assert_eq!(invalid.border.color, LIGHT.palette.destructive);
         assert_eq!(invalid.border.width, 2.0);
         assert_eq!(disabled.border.color, LIGHT.palette.input);
         assert_eq!(disabled.border.width, 1.0);
-        assert_eq!(focused.border.width, 0.0);
+        assert_eq!(focused.border.color, LIGHT.palette.ring);
+        assert_eq!(focused.border.width, 2.0);
         assert_eq!(focused.value, Color::TRANSPARENT);
     }
 

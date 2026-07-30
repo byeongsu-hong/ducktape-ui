@@ -112,6 +112,9 @@ on catalog_next
   return if !data_table_can_next(catalog_query, catalog_page)
   catalog_page = catalog_page + 1
 
+on catalog_page_changed(page)
+  catalog_page = page - 1
+
 on demo_page_previous
   return if demo_page <= 1
   demo_page = demo_page - 1

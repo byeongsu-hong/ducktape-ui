@@ -50,10 +50,10 @@ recipe machine for text
   @text-12px leading-normal font-mono text-secondary_fg
 
 recipe meta for text
-  @text-11px leading-normal font-mono font-medium text-muted
+  @text-11px leading-normal font-medium text-muted
 
 recipe meta_compact for text
-  @text-10.5px leading-normal font-mono font-medium text-muted
+  @text-10.5px leading-normal font-medium text-muted
 
 recipe field_label for text
   @text-12.5px leading-normal font-semibold text-fg
@@ -62,7 +62,7 @@ recipe nav_label for text
   @text-9.5px leading-snug font-semibold text-accent_fg
 
 recipe badge_label for text
-  @text-9px leading-snug font-mono font-semibold text-fg
+  @text-9px leading-snug font-semibold text-fg
 
 recipe control for input
   @w-full px-13px py-11px bg-surface border border-border rounded-10px focus:border-ring

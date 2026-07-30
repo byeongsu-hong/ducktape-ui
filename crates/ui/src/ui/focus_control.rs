@@ -2,8 +2,9 @@
 //!
 //! This wrapper owns pointer, touch, Enter, and Space activation. Interactive
 //! children may keep their native pointer behavior; captured events focus the
-//! wrapper without activating it a second time. Passive regions keep the same
-//! focus ring and key routing without adding activation behavior.
+//! wrapper without activating it a second time. Focus rings follow keyboard
+//! focus visibility, so pointer-focused passive regions do not gain a large
+//! outline while keyboard traversal remains visible.
 
 use super::theme::Theme as UiTheme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -57,6 +58,7 @@ type KeyPressFn<'a, Message> = dyn Fn(keyboard::Key, keyboard::Modifiers) -> Opt
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct State {
     focused: bool,
+    focus_visible: bool,
     press: Option<Press>,
 }
 
@@ -69,12 +71,33 @@ impl State {
         self.press.is_some()
     }
 
+    pub fn is_focus_visible(&self) -> bool {
+        self.focused && self.focus_visible
+    }
+
     pub fn focus(&mut self) {
         self.focused = true;
+        self.focus_visible = true;
+    }
+
+    fn focus_from_pointer(&mut self) {
+        self.focused = true;
+        self.focus_visible = false;
+    }
+
+    fn show_focus(&mut self) {
+        if self.focused {
+            self.focus_visible = true;
+        }
+    }
+
+    fn blur(&mut self) {
+        self.focused = false;
+        self.focus_visible = false;
     }
 
     pub fn unfocus(&mut self) {
-        self.focused = false;
+        self.blur();
         self.press = None;
     }
 }
@@ -269,8 +292,11 @@ where
     fn diff(&self, tree: &mut widget::Tree) {
         tree.diff_children(std::slice::from_ref(&self.content));
 
-        if self.disabled || !self.tab_stop {
-            tree.state.downcast_mut::<State>().unfocus();
+        let state = tree.state.downcast_mut::<State>();
+        if self.disabled {
+            state.unfocus();
+        } else if !self.tab_stop && !state.is_pressed() {
+            state.blur();
         }
     }
 
@@ -377,13 +403,13 @@ where
             if is_pointer_press(event) {
                 if self.on_activate.is_none() {
                     if is_over && !self.disabled && !child_captured_interactive_press {
-                        state.focus();
+                        state.focus_from_pointer();
                     } else {
                         state.unfocus();
                     }
                     shell.request_redraw();
                 } else if is_over && !self.disabled {
-                    state.focus();
+                    state.focus_from_pointer();
                     shell.request_redraw();
                 } else {
                     state.unfocus();
@@ -478,7 +504,7 @@ where
             viewport,
         );
 
-        if state.is_focused()
+        if state.is_focus_visible()
             && !self.disabled
             && style.focus_ring.width > 0.0
             && style.focus_ring.color.a > 0.0
@@ -595,7 +621,7 @@ fn handle_event<Message: Clone>(
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
             if is_over {
-                state.focus();
+                state.focus_from_pointer();
                 state.press = Some(Press::Mouse);
                 shell.capture_event();
                 shell.request_redraw();
@@ -605,7 +631,7 @@ fn handle_event<Message: Clone>(
         }
         Event::Touch(touch::Event::FingerPressed { id, .. }) => {
             if is_over {
-                state.focus();
+                state.focus_from_pointer();
                 state.press = Some(Press::Touch(*id));
                 shell.capture_event();
                 shell.request_redraw();
@@ -650,6 +676,7 @@ fn handle_event<Message: Clone>(
             }
         }
         Event::Keyboard(keyboard::Event::KeyPressed { key, repeat, .. }) if state.is_focused() => {
+            state.show_focus();
             if let Some(press) = activation_key(key) {
                 if !repeat && state.press.is_none() {
                     state.press = Some(press);
@@ -687,7 +714,7 @@ fn handle_passive_event<Message>(
 
     if is_pointer_press(event) {
         if is_over {
-            state.focus();
+            state.focus_from_pointer();
             shell.request_redraw();
         } else {
             state.unfocus();
@@ -699,7 +726,7 @@ fn handle_passive_event<Message>(
 }
 
 fn handle_key_press<Message>(
-    state: &State,
+    state: &mut State,
     event: &Event,
     enabled: bool,
     allow_repeat: bool,
@@ -724,6 +751,7 @@ fn handle_key_press<Message>(
         return false;
     };
 
+    state.show_focus();
     shell.publish(message);
     shell.capture_event();
     true
@@ -928,6 +956,7 @@ mod tests {
             handle_event(&mut state, &press, true, true, &9, &mut shell);
         }
         assert!(state.is_focused());
+        assert!(!state.is_focus_visible());
         assert!(state.is_pressed());
 
         {
@@ -941,6 +970,28 @@ mod tests {
             handle_event(&mut state, &press, false, true, &9, &mut shell);
         }
         assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn non_tab_stop_rerender_preserves_pending_pointer_activation() {
+        let control: FocusControl<'_, u8> = FocusControl::new(
+            widget::Id::new("roving-pointer"),
+            Space::new(),
+            9_u8,
+            &LIGHT,
+        )
+        .tab_stop(false);
+        let mut tree = widget::Tree::new(&control as &dyn Widget<_, _, _>);
+        let state = tree.state.downcast_mut::<State>();
+        state.focus_from_pointer();
+        state.press = Some(Press::Mouse);
+
+        Widget::diff(&control, &mut tree);
+
+        let state = tree.state.downcast_ref::<State>();
+        assert!(state.is_focused());
+        assert!(!state.is_focus_visible());
+        assert_eq!(state.press, Some(Press::Mouse));
     }
 
     #[test]
@@ -1024,6 +1075,7 @@ mod tests {
             assert_eq!(shell.event_status(), event::Status::Ignored);
         }
         assert!(state.is_focused());
+        assert!(!state.is_focus_visible());
         assert!(messages.is_empty());
 
         let mut shell = Shell::new(&mut messages);
@@ -1186,7 +1238,7 @@ mod tests {
         {
             let mut shell = Shell::new(&mut messages);
             assert!(!handle_key_press(
-                &state,
+                &mut state,
                 &key_event(key::Named::ArrowRight, true),
                 true,
                 false,
@@ -1199,7 +1251,7 @@ mod tests {
         {
             let mut shell = Shell::new(&mut messages);
             assert!(handle_key_press(
-                &state,
+                &mut state,
                 &key_event(key::Named::ArrowRight, true),
                 true,
                 false,
@@ -1214,7 +1266,7 @@ mod tests {
     #[test]
     fn additional_key_binding_can_opt_into_repeats() {
         let handler = |_key: keyboard::Key, _modifiers| Some(7);
-        let state = State {
+        let mut state = State {
             focused: true,
             ..State::default()
         };
@@ -1226,7 +1278,7 @@ mod tests {
 
         let mut shell = Shell::new(&mut messages);
         assert!(handle_key_press(
-            &state,
+            &mut state,
             &event,
             true,
             true,

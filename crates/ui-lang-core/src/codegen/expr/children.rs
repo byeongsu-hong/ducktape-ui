@@ -41,7 +41,7 @@ pub(in crate::codegen) fn render_children(
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
-                    " for (__ice_index, {item}) in {items}.iter().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
+                    " for (__ice_index, {item}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
                     span.line
                 )
                 .unwrap();

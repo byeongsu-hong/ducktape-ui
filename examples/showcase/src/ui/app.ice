@@ -3,8 +3,9 @@ app Showcase
   id "dev.ducktape.ui.showcase"
   font "../../assets/fonts/Geist-Regular.ttf"
   font "../../assets/fonts/Geist-Bold.ttf"
+  font "../../assets/fonts/Geist-Italic.ttf"
   text-size 14
-  // WGPU's multisampled Canvas path retains translated chart meshes while scrolling.
+  // Keep deterministic headless paint and interaction captures.
   antialiasing false
   window
     size 1120 820
@@ -43,6 +44,9 @@ view
             dir=vertical
             w=fill
             h=fill
+            bar-w=8.0
+            scroller-w=6.0
+            bar-gap=8.0
           col #page @page
             row w=fill align=center
               PageHeader
@@ -118,6 +122,7 @@ view
                 catalog_sort_changed -> catalog_sort_changed
                 catalog_previous -> catalog_previous
                 catalog_next -> catalog_next
+                catalog_page_changed -> catalog_page_changed _
                 demo_page_previous -> demo_page_previous
                 demo_page_next -> demo_page_next
                 message_scroller_changed -> message_scroller_changed _

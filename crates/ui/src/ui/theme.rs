@@ -806,8 +806,9 @@ mod tests {
         assert!(recipes.contains("disabled:bg-disabled disabled:text-disabled_fg"));
         assert!(recipes.contains("px-12px py-8px"));
         assert!(recipes.contains("text-13.5px"));
-        assert!(recipes.contains("font-mono font-medium"));
-        assert!(recipes.contains("font-mono font-semibold"));
+        assert!(recipes.contains("@text-12px leading-normal font-mono text-secondary_fg"));
+        assert!(!recipes.contains("font-mono font-medium"));
+        assert!(!recipes.contains("font-mono font-semibold"));
         assert!(recipes.contains("font-semibold text-primary"));
         assert!(components.contains("      px=6.0\n      py=3.0\n      bg=brand\n      r=4.0"));
         assert!(components.contains(

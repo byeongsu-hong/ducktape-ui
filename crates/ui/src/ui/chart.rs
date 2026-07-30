@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::f32::consts::{PI, TAU};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::rc::Rc;
 
 use super::theme::{Theme as UiTheme, alpha, mix};
@@ -299,6 +299,15 @@ pub enum CartesianKind {
     Bar(BarLayout),
 }
 
+/// Interpolation used by line and area series.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CartesianCurve {
+    #[default]
+    Linear,
+    /// A shape-preserving cubic curve that does not overshoot local extrema.
+    Monotone,
+}
+
 impl Default for CartesianKind {
     fn default() -> Self {
         Self::Line { points: true }
@@ -308,6 +317,7 @@ impl Default for CartesianKind {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CartesianOptions {
     pub kind: CartesianKind,
+    pub curve: CartesianCurve,
     pub padding: ChartPadding,
     pub domain: DomainSpec,
     pub tick_count: usize,
@@ -318,6 +328,7 @@ impl Default for CartesianOptions {
     fn default() -> Self {
         Self {
             kind: CartesianKind::default(),
+            curve: CartesianCurve::default(),
             padding: ChartPadding::default(),
             domain: DomainSpec::default(),
             tick_count: 5,
@@ -845,6 +856,12 @@ where
     }
 
     #[must_use]
+    pub fn curve(mut self, curve: CartesianCurve) -> Self {
+        self.options.curve = curve;
+        self
+    }
+
+    #[must_use]
     pub fn domain(mut self, domain: DomainSpec) -> Self {
         self.options.domain = domain;
         self
@@ -1021,101 +1038,33 @@ fn draw_cartesian(
     hovered: Option<&ChartHit>,
     theme: &UiTheme,
 ) {
-    draw_axes(frame, geometry, options, theme);
-    // Keep Cartesian meshes in the parent frame. A nested `Frame::with_clip`
-    // drops its child mesh under translated/scrolled WGPU canvases; normal
-    // domain geometry already stays inside `plot` and the Canvas clips its edge.
-    for mark in &geometry.marks {
-        let key = match mark {
-            CartesianMark::Line { series_key, .. }
-            | CartesianMark::Area { series_key, .. }
-            | CartesianMark::Bar { series_key, .. } => series_key,
-        };
-        let Some(series) = config.series(key) else {
-            continue;
-        };
-        let color = series.color.resolve(theme);
-        match mark {
-            CartesianMark::Line { points, .. } => {
-                stroke_points(frame, points, color);
-                if points.len() == 1 || matches!(options.kind, CartesianKind::Line { points: true })
-                {
-                    draw_points(frame, points, color);
-                }
-            }
-            CartesianMark::Area {
-                points, baseline_y, ..
-            } => {
-                if let (Some(first), Some(last)) = (points.first(), points.last()) {
-                    let path = Path::new(|path| {
-                        path.move_to(Point::new(first.position.x, *baseline_y));
-                        for point in points {
-                            path.line_to(point.position);
-                        }
-                        path.line_to(Point::new(last.position.x, *baseline_y));
-                        path.close();
-                    });
-                    frame.fill(&path, alpha(color, 0.16));
-                }
-                stroke_points(frame, points, color);
-                if points.len() == 1 || matches!(options.kind, CartesianKind::Area { points: true })
-                {
-                    draw_points(frame, points, color);
-                }
-            }
-            CartesianMark::Bar { bounds, .. } => {
-                frame.fill_rectangle(bounds.position(), bounds.size(), color);
-            }
-        }
-    }
-    if let Some(hit) = hovered {
-        draw_active_mark(frame, geometry, config, hit, theme);
-    }
+    draw_vector_layer(frame, geometry, config, options, hovered, theme);
+    draw_axis_labels(frame, geometry, options, theme);
 }
 
-fn draw_axes(
+fn draw_axis_labels(
     frame: &mut canvas::Frame,
     geometry: &CartesianGeometry,
     options: CartesianOptions,
     theme: &UiTheme,
 ) {
     let ticks = options.tick_count.clamp(2, 10);
-    let grid = mix(theme.palette.background, theme.palette.foreground, 0.12);
-    let axis = mix(theme.palette.background, theme.palette.foreground, 0.28);
     let label = theme.palette.muted_foreground;
     for index in 0..ticks {
         let ratio = index as f32 / (ticks - 1) as f32;
         let y = geometry.plot.y + geometry.plot.height * ratio;
-        if options.show_grid {
-            frame.stroke(
-                &Path::line(
-                    Point::new(geometry.plot.x, y),
-                    Point::new(geometry.plot.x + geometry.plot.width, y),
-                ),
-                Stroke::default().with_color(grid).with_width(GRID_WIDTH),
-            );
-        }
         let value = geometry.domain.y.max - (geometry.domain.y.max - geometry.domain.y.min) * ratio;
         frame.fill_text(canvas::Text {
             content: format_number(value),
             position: Point::new(geometry.plot.x - 8.0, y),
             color: label,
             size: Pixels(theme.typography.meta_compact),
+            font: theme.typography.font,
             align_x: TextAlignment::Right,
             align_y: Vertical::Center,
             ..canvas::Text::default()
         });
     }
-    frame.stroke(
-        &Path::line(
-            Point::new(geometry.plot.x, geometry.plot.y + geometry.plot.height),
-            Point::new(
-                geometry.plot.x + geometry.plot.width,
-                geometry.plot.y + geometry.plot.height,
-            ),
-        ),
-        Stroke::default().with_color(axis).with_width(GRID_WIDTH),
-    );
 
     let stride = geometry.datums.len().div_ceil(6).max(1);
     for (index, datum) in geometry.datums.iter().enumerate() {
@@ -1127,6 +1076,7 @@ fn draw_axes(
             position: Point::new(datum.x, geometry.plot.y + geometry.plot.height + 10.0),
             color: label,
             size: Pixels(theme.typography.meta_compact),
+            font: theme.typography.font,
             align_x: TextAlignment::Center,
             align_y: Vertical::Top,
             ..canvas::Text::default()
@@ -1134,97 +1084,341 @@ fn draw_axes(
     }
 }
 
-fn stroke_points(frame: &mut canvas::Frame, points: &[PlotPoint], color: Color) {
-    if points.len() < 2 {
-        return;
-    }
-    let path = Path::new(|path| {
-        path.move_to(points[0].position);
-        for point in &points[1..] {
-            path.line_to(point.position);
+fn svg_trace(points: &[PlotPoint], curve: CartesianCurve) -> String {
+    let mut path = String::new();
+    match curve {
+        CartesianCurve::Linear => {
+            for point in &points[1..] {
+                let _ = write!(path, " L{} {}", point.position.x, point.position.y);
+            }
         }
-    });
-    frame.stroke(
-        &path,
-        Stroke::default()
-            .with_color(color)
-            .with_width(LINE_WIDTH)
-            .with_line_cap(canvas::LineCap::Round)
-            .with_line_join(canvas::LineJoin::Round),
-    );
-}
-
-fn draw_points(frame: &mut canvas::Frame, points: &[PlotPoint], color: Color) {
-    for point in points {
-        frame.fill(&Path::circle(point.position, MARKER_RADIUS), color);
+        CartesianCurve::Monotone => {
+            for segment in monotone_segments(points) {
+                let _ = write!(
+                    path,
+                    " C{} {},{} {},{} {}",
+                    segment.control_a.x,
+                    segment.control_a.y,
+                    segment.control_b.x,
+                    segment.control_b.y,
+                    segment.to.x,
+                    segment.to.y
+                );
+            }
+        }
     }
+    path
 }
 
-fn draw_active_mark(
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CubicSegment {
+    control_a: Point,
+    control_b: Point,
+    to: Point,
+}
+
+/// Returns PCHIP-style cubic segments. Chart x coordinates are strictly
+/// increasing, and harmonic-mean tangents preserve plateaus and local extrema.
+fn monotone_segments(points: &[PlotPoint]) -> Vec<CubicSegment> {
+    if points.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut widths = Vec::with_capacity(points.len() - 1);
+    let mut slopes = Vec::with_capacity(points.len() - 1);
+    for pair in points.windows(2) {
+        let width = pair[1].position.x - pair[0].position.x;
+        if !width.is_finite() || width <= 0.0 {
+            return Vec::new();
+        }
+        widths.push(width);
+        slopes.push((pair[1].position.y - pair[0].position.y) / width);
+    }
+
+    let mut tangents = vec![0.0; points.len()];
+    tangents[0] = slopes[0];
+    tangents[points.len() - 1] = slopes[slopes.len() - 1];
+    for index in 1..points.len() - 1 {
+        let before = slopes[index - 1];
+        let after = slopes[index];
+        tangents[index] = if before == 0.0 || after == 0.0 || before.signum() != after.signum() {
+            0.0
+        } else {
+            let before_width = widths[index - 1];
+            let after_width = widths[index];
+            let first_weight = 2.0 * after_width + before_width;
+            let second_weight = after_width + 2.0 * before_width;
+            (first_weight + second_weight) / (first_weight / before + second_weight / after)
+        };
+    }
+
+    points
+        .windows(2)
+        .enumerate()
+        .map(|(index, pair)| {
+            let width = widths[index];
+            CubicSegment {
+                control_a: Point::new(
+                    pair[0].position.x + width / 3.0,
+                    pair[0].position.y + tangents[index] * width / 3.0,
+                ),
+                control_b: Point::new(
+                    pair[1].position.x - width / 3.0,
+                    pair[1].position.y - tangents[index + 1] * width / 3.0,
+                ),
+                to: pair[1].position,
+            }
+        })
+        .collect()
+}
+
+fn draw_vector_layer(
     frame: &mut canvas::Frame,
     geometry: &CartesianGeometry,
     config: &ChartConfig,
-    hit: &ChartHit,
+    options: CartesianOptions,
+    hovered: Option<&ChartHit>,
     theme: &UiTheme,
 ) {
-    let Some(series) = config.series(&hit.series_key) else {
-        return;
-    };
-    let color = series.color.resolve(theme);
-    if let Some(datum) = geometry
-        .datums
-        .iter()
-        .find(|datum| datum.datum_index == hit.datum_index)
-    {
-        const DASHES: [f32; 2] = [3.0, 3.0];
-        frame.stroke(
-            &Path::line(
-                Point::new(datum.x, geometry.plot.y),
-                Point::new(datum.x, geometry.plot.y + geometry.plot.height),
-            ),
-            Stroke {
-                style: canvas::Style::Solid(alpha(theme.palette.muted_foreground, 0.55)),
-                width: 1.0,
-                line_dash: canvas::LineDash {
-                    segments: &DASHES,
-                    offset: 0,
-                },
-                ..Stroke::default()
-            },
-        );
-    }
-    for mark in &geometry.marks {
-        match mark {
-            CartesianMark::Line { series_key, points }
-            | CartesianMark::Area {
-                series_key, points, ..
-            } if series_key == &hit.series_key => {
-                if let Some(point) = points
-                    .iter()
-                    .find(|point| point.datum_index == hit.datum_index)
-                {
-                    let circle = Path::circle(point.position, ACTIVE_MARKER_RADIUS);
-                    frame.fill(&circle, theme.palette.card);
-                    frame.stroke(&circle, Stroke::default().with_color(color).with_width(2.0));
-                }
-            }
-            CartesianMark::Bar {
-                series_key,
-                datum_index,
-                bounds,
-                ..
-            } if series_key == &hit.series_key && *datum_index == hit.datum_index => {
-                frame.stroke_rectangle(
-                    bounds.position(),
-                    bounds.size(),
-                    Stroke::default()
-                        .with_color(theme.palette.foreground)
-                        .with_width(2.0),
-                );
-            }
-            _ => {}
+    let size = frame.size();
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}" preserveAspectRatio="none">"#,
+        size.width, size.height
+    );
+    let grid = mix(theme.palette.background, theme.palette.foreground, 0.12);
+    let axis = mix(theme.palette.background, theme.palette.foreground, 0.28);
+    let ticks = options.tick_count.clamp(2, 10);
+    if options.show_grid {
+        for index in 0..ticks {
+            let ratio = index as f32 / (ticks - 1) as f32;
+            let y = geometry.plot.y + geometry.plot.height * ratio;
+            svg_line(
+                &mut svg,
+                Point::new(geometry.plot.x, y),
+                Point::new(geometry.plot.x + geometry.plot.width, y),
+                grid,
+                GRID_WIDTH,
+                None,
+            );
         }
     }
+    svg_line(
+        &mut svg,
+        Point::new(geometry.plot.x, geometry.plot.y + geometry.plot.height),
+        Point::new(
+            geometry.plot.x + geometry.plot.width,
+            geometry.plot.y + geometry.plot.height,
+        ),
+        axis,
+        GRID_WIDTH,
+        None,
+    );
+
+    for mark in &geometry.marks {
+        let key = match mark {
+            CartesianMark::Line { series_key, .. }
+            | CartesianMark::Area { series_key, .. }
+            | CartesianMark::Bar { series_key, .. } => series_key,
+        };
+        let Some(series) = config.series(key) else {
+            continue;
+        };
+        let color = series.color.resolve(theme);
+        match mark {
+            CartesianMark::Line { points, .. } | CartesianMark::Area { points, .. } => {
+                if let (CartesianMark::Area { baseline_y, .. }, Some(first), Some(last)) =
+                    (mark, points.first(), points.last())
+                {
+                    let path = format!(
+                        "M{} {} L{} {}{} L{} {} Z",
+                        first.position.x,
+                        baseline_y,
+                        first.position.x,
+                        first.position.y,
+                        svg_trace(points, options.curve),
+                        last.position.x,
+                        baseline_y
+                    );
+                    svg_path(&mut svg, &path, color, color.a * 0.16, None);
+                }
+                if points.len() >= 2 {
+                    let path = format!(
+                        "M{} {}{}",
+                        points[0].position.x,
+                        points[0].position.y,
+                        svg_trace(points, options.curve)
+                    );
+                    svg_path(&mut svg, &path, color, color.a, Some(LINE_WIDTH));
+                }
+                let show_points = points.len() == 1
+                    || matches!(
+                        options.kind,
+                        CartesianKind::Line { points: true } | CartesianKind::Area { points: true }
+                    );
+                if show_points {
+                    for point in points {
+                        svg_circle(&mut svg, point.position, MARKER_RADIUS, color, None);
+                    }
+                }
+            }
+            CartesianMark::Bar { bounds, .. } => {
+                svg_rect(&mut svg, *bounds, color, None);
+            }
+        }
+    }
+
+    if let Some(hit) = hovered
+        && let Some(series) = config.series(&hit.series_key)
+    {
+        let color = series.color.resolve(theme);
+        if let Some(datum) = geometry
+            .datums
+            .iter()
+            .find(|datum| datum.datum_index == hit.datum_index)
+        {
+            svg_line(
+                &mut svg,
+                Point::new(datum.x, geometry.plot.y),
+                Point::new(datum.x, geometry.plot.y + geometry.plot.height),
+                alpha(theme.palette.muted_foreground, 0.55),
+                1.0,
+                Some("3 3"),
+            );
+        }
+        for mark in &geometry.marks {
+            match mark {
+                CartesianMark::Line { series_key, points }
+                | CartesianMark::Area {
+                    series_key, points, ..
+                } if series_key == &hit.series_key => {
+                    if let Some(point) = points
+                        .iter()
+                        .find(|point| point.datum_index == hit.datum_index)
+                    {
+                        svg_circle(
+                            &mut svg,
+                            point.position,
+                            ACTIVE_MARKER_RADIUS,
+                            theme.palette.card,
+                            Some((color, 2.0)),
+                        );
+                    }
+                }
+                CartesianMark::Bar {
+                    series_key,
+                    datum_index,
+                    bounds,
+                    ..
+                } if series_key == &hit.series_key && *datum_index == hit.datum_index => {
+                    svg_rect(
+                        &mut svg,
+                        *bounds,
+                        Color::TRANSPARENT,
+                        Some((theme.palette.foreground, 2.0)),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    svg.push_str("</svg>");
+    frame.draw_svg(
+        Rectangle::with_size(size),
+        iced::advanced::svg::Svg::new(iced::advanced::svg::Handle::from_memory(svg.into_bytes())),
+    );
+}
+
+fn svg_color(color: Color) -> String {
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (color.r * 255.0).round() as u8,
+        (color.g * 255.0).round() as u8,
+        (color.b * 255.0).round() as u8
+    )
+}
+
+fn svg_line(
+    svg: &mut String,
+    from: Point,
+    to: Point,
+    color: Color,
+    width: f32,
+    dash: Option<&str>,
+) {
+    let dash = dash.map_or(String::new(), |dash| {
+        format!(r#" stroke-dasharray="{dash}""#)
+    });
+    let _ = write!(
+        svg,
+        r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-opacity="{}" stroke-width="{width}"{dash}/>"#,
+        from.x,
+        from.y,
+        to.x,
+        to.y,
+        svg_color(color),
+        color.a
+    );
+}
+
+fn svg_path(svg: &mut String, path: &str, color: Color, opacity: f32, stroke: Option<f32>) {
+    let _ = match stroke {
+        Some(width) => write!(
+            svg,
+            r#"<path d="{path}" fill="none" stroke="{}" stroke-opacity="{}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round"/>"#,
+            svg_color(color),
+            opacity
+        ),
+        None => write!(
+            svg,
+            r#"<path d="{path}" fill="{}" fill-opacity="{opacity}"/>"#,
+            svg_color(color)
+        ),
+    };
+}
+
+fn svg_circle(
+    svg: &mut String,
+    point: Point,
+    radius: f32,
+    fill: Color,
+    stroke: Option<(Color, f32)>,
+) {
+    let stroke = stroke.map_or(String::new(), |(color, width)| {
+        format!(
+            r#" stroke="{}" stroke-opacity="{}" stroke-width="{width}""#,
+            svg_color(color),
+            color.a
+        )
+    });
+    let _ = write!(
+        svg,
+        r#"<circle cx="{}" cy="{}" r="{radius}" fill="{}" fill-opacity="{}"{stroke}/>"#,
+        point.x,
+        point.y,
+        svg_color(fill),
+        fill.a
+    );
+}
+
+fn svg_rect(svg: &mut String, bounds: Rectangle, fill: Color, stroke: Option<(Color, f32)>) {
+    let stroke = stroke.map_or(String::new(), |(color, width)| {
+        format!(
+            r#" stroke="{}" stroke-opacity="{}" stroke-width="{width}""#,
+            svg_color(color),
+            color.a
+        )
+    });
+    let _ = write!(
+        svg,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" fill-opacity="{}"{stroke}/>"#,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        svg_color(fill),
+        fill.a
+    );
 }
 
 fn draw_empty(frame: &mut canvas::Frame, state: DataState, theme: &UiTheme) {
@@ -1251,6 +1445,7 @@ fn draw_centered_text(frame: &mut canvas::Frame, content: &str, color: Color, th
         position: frame.center(),
         color,
         size: Pixels(theme.typography.caption),
+        font: theme.typography.font,
         align_x: TextAlignment::Center,
         align_y: Vertical::Center,
         ..canvas::Text::default()
@@ -2105,6 +2300,29 @@ mod tests {
         .unwrap();
         assert_eq!(bars.domain.x, AxisDomain::new(-0.5, 1.5));
         assert_eq!(bars.domain.y, AxisDomain::new(-10.0, 40.0));
+    }
+
+    #[test]
+    fn monotone_curve_preserves_local_extrema_and_plateaus() {
+        let points = [(0.0, 20.0), (40.0, 4.0), (100.0, 4.0), (160.0, 28.0)]
+            .into_iter()
+            .enumerate()
+            .map(|(datum_index, (x, y))| PlotPoint {
+                datum_index,
+                position: Point::new(x, y),
+                value: y,
+            })
+            .collect::<Vec<_>>();
+
+        let segments = monotone_segments(&points);
+        assert_eq!(segments.len(), points.len() - 1);
+        for (segment, pair) in segments.iter().zip(points.windows(2)) {
+            let low = pair[0].position.y.min(pair[1].position.y);
+            let high = pair[0].position.y.max(pair[1].position.y);
+            assert!((low..=high).contains(&segment.control_a.y));
+            assert!((low..=high).contains(&segment.control_b.y));
+            assert_eq!(segment.to, pair[1].position);
+        }
     }
 
     #[test]

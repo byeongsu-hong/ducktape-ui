@@ -1104,6 +1104,12 @@ where
         .id(state.viewport_id())
         .width(Length::Fill)
         .height(Length::Fill)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(8)
+                .scroller_width(6)
+                .spacing(theme.spacing.sm),
+        ))
         .anchor_bottom()
         .on_scroll(move |viewport| {
             scroll_handler(MessageScrollerEvent::ViewportChanged {
@@ -1427,6 +1433,12 @@ where
     .id(id)
     .width(Length::Fill)
     .height(Length::Fill)
+    .direction(scrollable::Direction::Vertical(
+        scrollable::Scrollbar::new()
+            .width(8)
+            .scroller_width(6)
+            .spacing(theme.spacing.sm),
+    ))
     .anchor_bottom()
     .style(move |_iced_theme, status| style(&theme, status))
 }
