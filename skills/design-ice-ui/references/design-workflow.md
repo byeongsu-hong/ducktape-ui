@@ -175,16 +175,25 @@ or long settings surface complete.
    extent at both wide and narrow sizes. A clean top screen is not evidence for
    content farther down.
 3. For each scroll container, reserve layout space for the scrollbar and
-   verify the last text, action, and focus ring do not sit underneath it.
+   verify the last text, action, and focus ring do not sit underneath it. Put
+   spacing on the actual `Scrollbar` so it becomes embedded layout, not merely
+   on its paint style. Audit raw Ice scrolls and every shared Rust path such as
+   command results, sidebars, and message transcripts through one metric
+   contract.
 4. Query capture JSON for generic or unexpected font families. Check Rust
    adapters, Canvas or SVG labels, badges, shortcuts, and button factories in
    addition to Ice text. A weight override must inherit the theme family, and
    italic text must load a real italic face instead of relying on system
-   fallback.
+   fallback. Bind the application renderer default and the component theme's
+   regular and monospace channels to the same intended families; setting only
+   one still leaves an escape path for system fonts.
 5. Exercise pointer and keyboard focus separately. Show the strong focus ring
    for keyboard or programmatic focus, avoid a large passive ring for ordinary
    pointer clicks, and keep one accessible focus target for composite inputs
-   such as verification codes.
+   such as verification codes. A one-target OTP must still paint the native
+   caret position on the corresponding visual slot, advance it after each
+   digit, and select an occupied slot when clicked. Do not replace this with a
+   border around the entire slot group.
 6. Verify action boundaries with cursor and state assertions. Only actionable
    descendants should advertise pointer activation; descriptive cards and
    message regions must not become accidental full-surface buttons.

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::button::{ButtonSize, ButtonVariant, button};
 use super::focus_control::FocusControl;
+use super::scroll_area::vertical_scrollbar;
 use super::theme::Theme;
 use iced::advanced::widget;
 use iced::alignment::{Horizontal, Vertical};
@@ -1104,12 +1105,7 @@ where
         .id(state.viewport_id())
         .width(Length::Fill)
         .height(Length::Fill)
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::new()
-                .width(8)
-                .scroller_width(6)
-                .spacing(theme.spacing.sm),
-        ))
+        .direction(scrollable::Direction::Vertical(vertical_scrollbar(theme)))
         .anchor_bottom()
         .on_scroll(move |viewport| {
             scroll_handler(MessageScrollerEvent::ViewportChanged {
@@ -1433,12 +1429,7 @@ where
     .id(id)
     .width(Length::Fill)
     .height(Length::Fill)
-    .direction(scrollable::Direction::Vertical(
-        scrollable::Scrollbar::new()
-            .width(8)
-            .scroller_width(6)
-            .spacing(theme.spacing.sm),
-    ))
+    .direction(scrollable::Direction::Vertical(vertical_scrollbar(&theme)))
     .anchor_bottom()
     .style(move |_iced_theme, status| style(&theme, status))
 }

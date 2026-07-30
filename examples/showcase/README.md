@@ -13,6 +13,10 @@ section into one column at the 720-pixel minimum width.
 
 ![Paired modal and data-table sections](screenshots/catalog-layout.png)
 
+![OTP caret follows the active digit slot](screenshots/catalog-otp-focus.png)
+
+![Embedded component scrollbar reserves shortcut space](screenshots/catalog-command-scroll.png)
+
 ![Navigation shell and toast](screenshots/catalog-navigation.png)
 
 ![Single-column navigation shell](screenshots/catalog-narrow.png)

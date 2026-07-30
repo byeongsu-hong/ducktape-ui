@@ -1,11 +1,15 @@
 use super::theme::{Theme, alpha};
+use iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
+};
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{Row, Stack, container, text, text_input};
-use iced::{Background, Border, Color, Element};
+use iced::widget::{Row, container, text, text_input};
+use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Size, Vector, touch};
 
 const SLOT_SIZE: f32 = 40.0;
 const SLOT_GAP: f32 = 2.0;
 const SEPARATOR_WIDTH: f32 = 18.0;
+type RendererParagraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
 
 #[derive(Clone, Copy)]
 pub enum OtpPattern {
@@ -118,7 +122,7 @@ where
         let separators = separator_indices(self.length, &self.groups);
         let separator_count = separators.len();
         let width = self.length as f32 * SLOT_SIZE
-            + self.length.saturating_sub(1) as f32 * SLOT_GAP
+            + (self.length + separator_count).saturating_sub(1) as f32 * SLOT_GAP
             + separator_count as f32 * SEPARATOR_WIDTH;
 
         let mut slots = Row::new().spacing(SLOT_GAP).height(SLOT_SIZE);
@@ -145,10 +149,8 @@ where
             }
         }
 
-        let stack = Stack::new().width(width).height(SLOT_SIZE).push(slots);
-
         if self.disabled {
-            return stack.into();
+            return slots.into();
         }
 
         let pattern = self.pattern;
@@ -158,16 +160,22 @@ where
             .on_input(move |raw: String| on_change(normalize(&raw, length, pattern)))
             .width(width)
             .padding([10, 0])
-            .style({
-                let theme = self.theme;
-                let invalid = self.invalid;
-                move |_iced_theme, status| overlay_style(&theme, invalid, status)
-            });
+            .style(move |_iced_theme, status| overlay_style(status));
         if let Some(id) = self.id {
             input = input.id(id);
         }
 
-        stack.push(input).into()
+        OtpWidget {
+            slots: slots.into(),
+            input: input.into(),
+            value,
+            length: self.length,
+            separators,
+            width,
+            invalid: self.invalid,
+            theme: self.theme,
+        }
+        .into()
     }
 }
 
@@ -244,28 +252,285 @@ pub fn slot_style(theme: &Theme, invalid: bool, disabled: bool) -> iced::widget:
     }
 }
 
-pub fn overlay_style(
-    theme: &Theme,
-    invalid: bool,
-    status: iced::widget::text_input::Status,
-) -> iced::widget::text_input::Style {
-    let focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
+pub fn overlay_style(_status: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
     iced::widget::text_input::Style {
         background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: if invalid {
-                theme.palette.destructive
-            } else {
-                theme.palette.ring
-            },
-            width: if focused { 2.0 } else { 0.0 },
-            radius: (theme.radius.button + 2.0).into(),
-        },
+        border: Border::default(),
         icon: Color::TRANSPARENT,
         placeholder: Color::TRANSPARENT,
         value: Color::TRANSPARENT,
         selection: Color::TRANSPARENT,
     }
+}
+
+struct OtpWidget<'a, Message> {
+    slots: Element<'a, Message>,
+    input: Element<'a, Message>,
+    value: String,
+    length: usize,
+    separators: Vec<usize>,
+    width: f32,
+    invalid: bool,
+    theme: Theme,
+}
+
+impl<Message> Widget<Message, iced::Theme, iced::Renderer> for OtpWidget<'_, Message> {
+    fn children(&self) -> Vec<widget::Tree> {
+        vec![
+            widget::Tree::new(&self.slots),
+            widget::Tree::new(&self.input),
+        ]
+    }
+
+    fn diff(&self, tree: &mut widget::Tree) {
+        tree.diff_children(&[self.slots.as_widget(), self.input.as_widget()]);
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(self.width), Length::Fixed(SLOT_SIZE))
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let size = limits.resolve(
+            Length::Fixed(self.width),
+            Length::Fixed(SLOT_SIZE),
+            Size::new(self.width, SLOT_SIZE),
+        );
+        let child_limits = layout::Limits::new(size, size);
+        let slots =
+            self.slots
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, &child_limits);
+        let input =
+            self.input
+                .as_widget_mut()
+                .layout(&mut tree.children[1], renderer, &child_limits);
+
+        layout::Node::with_children(size, vec![slots, input])
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        operation.container(None, layout.bounds());
+        operation.traverse(&mut |operation| {
+            self.slots.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout.children().next().expect("OTP slots layout"),
+                renderer,
+                operation,
+            );
+        });
+        operation.traverse(&mut |operation| {
+            self.input.as_widget_mut().operate(
+                &mut tree.children[1],
+                layout.children().nth(1).expect("OTP input layout"),
+                renderer,
+                operation,
+            );
+        });
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut widget::Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let input_layout = layout.children().nth(1).expect("OTP input layout");
+        self.input.as_widget_mut().update(
+            &mut tree.children[1],
+            event,
+            input_layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        let press_position = match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => cursor.position(),
+            Event::Touch(touch::Event::FingerPressed { position, .. }) => Some(*position),
+            _ => None,
+        };
+        if let Some(position) =
+            press_position.filter(|position| layout.bounds().contains(*position))
+        {
+            let index = slot_index_at_x(
+                position.x - layout.bounds().x,
+                self.length,
+                &self.separators,
+            );
+            let value_length = self.value.chars().count();
+            let input_state = tree.children[1]
+                .state
+                .downcast_mut::<text_input::State<RendererParagraph>>();
+            if index < value_length {
+                input_state.select_range(index, index + 1);
+            } else {
+                input_state.move_cursor_to(value_length);
+            }
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &widget::Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.input.as_widget().mouse_interaction(
+            &tree.children[1],
+            layout.children().nth(1).expect("OTP input layout"),
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        renderer_style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let mut children = layout.children();
+        let slots_layout = children.next().expect("OTP slots layout");
+        let input_layout = children.next().expect("OTP input layout");
+        self.slots.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            renderer_style,
+            slots_layout,
+            cursor,
+            viewport,
+        );
+        self.input.as_widget().draw(
+            &tree.children[1],
+            renderer,
+            theme,
+            renderer_style,
+            input_layout,
+            cursor,
+            viewport,
+        );
+
+        let input_state = tree.children[1]
+            .state
+            .downcast_ref::<text_input::State<RendererParagraph>>();
+        if let Some(index) = active_slot(input_state, &self.value, self.length) {
+            let bounds = slot_bounds(layout.bounds(), index, &self.separators);
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: Border {
+                        color: if self.invalid {
+                            self.theme.palette.destructive
+                        } else {
+                            self.theme.palette.ring
+                        },
+                        width: 2.0,
+                        radius: self.theme.radius.button.into(),
+                    },
+                    ..renderer::Quad::default()
+                },
+                Background::Color(Color::TRANSPARENT),
+            );
+        }
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut widget::Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.input.as_widget_mut().overlay(
+            &mut tree.children[1],
+            layout.children().nth(1).expect("OTP input layout"),
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+impl<'a, Message> From<OtpWidget<'a, Message>> for Element<'a, Message>
+where
+    Message: 'a,
+{
+    fn from(widget: OtpWidget<'a, Message>) -> Self {
+        Element::new(widget)
+    }
+}
+
+fn slot_x(index: usize, separators: &[usize]) -> f32 {
+    let preceding_separators = separators
+        .iter()
+        .filter(|boundary| **boundary <= index)
+        .count();
+    index as f32 * (SLOT_SIZE + SLOT_GAP)
+        + preceding_separators as f32 * (SEPARATOR_WIDTH + SLOT_GAP)
+}
+
+fn slot_bounds(group: Rectangle, index: usize, separators: &[usize]) -> Rectangle {
+    Rectangle {
+        x: group.x + slot_x(index, separators),
+        y: group.y,
+        width: SLOT_SIZE,
+        height: SLOT_SIZE,
+    }
+}
+
+fn slot_index_at_x(x: f32, length: usize, separators: &[usize]) -> usize {
+    (0..length)
+        .min_by(|left, right| {
+            let left_distance = (slot_x(*left, separators) + SLOT_SIZE / 2.0 - x).abs();
+            let right_distance = (slot_x(*right, separators) + SLOT_SIZE / 2.0 - x).abs();
+            left_distance.total_cmp(&right_distance)
+        })
+        .unwrap_or(0)
+}
+
+fn active_slot<P: iced::advanced::text::Paragraph>(
+    state: &text_input::State<P>,
+    value: &str,
+    length: usize,
+) -> Option<usize> {
+    if !state.is_focused() || length == 0 {
+        return None;
+    }
+
+    let value = text_input::Value::new(value);
+    let index = match state.cursor().state(&value) {
+        text_input::cursor::State::Index(index) => index,
+        text_input::cursor::State::Selection { start, end } => start.min(end),
+    };
+    Some(index.min(length - 1))
 }
 
 #[cfg(test)]
@@ -297,15 +562,12 @@ mod tests {
     }
 
     #[test]
-    fn group_focus_is_visible_without_pretending_the_first_empty_slot_is_focused() {
+    fn native_input_stays_invisible_while_slots_own_focus_paint() {
         let empty = slot_style(&LIGHT, false, false);
         let invalid = slot_style(&LIGHT, true, false);
         let disabled = slot_style(&LIGHT, false, true);
-        let focused = overlay_style(
-            &LIGHT,
-            false,
-            iced::widget::text_input::Status::Focused { is_hovered: false },
-        );
+        let focused =
+            overlay_style(iced::widget::text_input::Status::Focused { is_hovered: false });
 
         assert_eq!(empty.border.color, LIGHT.palette.input);
         assert_eq!(empty.border.width, 1.0);
@@ -313,9 +575,39 @@ mod tests {
         assert_eq!(invalid.border.width, 2.0);
         assert_eq!(disabled.border.color, LIGHT.palette.input);
         assert_eq!(disabled.border.width, 1.0);
-        assert_eq!(focused.border.color, LIGHT.palette.ring);
-        assert_eq!(focused.border.width, 2.0);
+        assert_eq!(focused.border.width, 0.0);
         assert_eq!(focused.value, Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn active_slot_follows_the_native_caret() {
+        let mut state = text_input::State::<RendererParagraph>::new();
+        assert_eq!(active_slot(&state, "12", 6), None);
+
+        state.focus();
+        assert_eq!(active_slot(&state, "12", 6), Some(2));
+        state.move_cursor_to(1);
+        assert_eq!(active_slot(&state, "12", 6), Some(1));
+        state.select_range(1, 2);
+        assert_eq!(active_slot(&state, "12", 6), Some(1));
+        state.move_cursor_to_end();
+        assert_eq!(active_slot(&state, "123456", 6), Some(5));
+    }
+
+    #[test]
+    fn separator_geometry_matches_the_row_and_pointer_targets() {
+        let separators = [3];
+        assert_eq!(slot_x(0, &separators), 0.0);
+        assert_eq!(slot_x(2, &separators), 84.0);
+        assert_eq!(slot_x(3, &separators), 146.0);
+        assert_eq!(slot_index_at_x(20.0, 6, &separators), 0);
+        assert_eq!(slot_index_at_x(166.0, 6, &separators), 3);
+
+        let total_width = 6.0 * SLOT_SIZE
+            + (6.0 + separators.len() as f32 - 1.0) * SLOT_GAP
+            + separators.len() as f32 * SEPARATOR_WIDTH;
+        assert_eq!(total_width, 270.0);
+        assert_eq!(slot_x(5, &separators) + SLOT_SIZE, total_width);
     }
 
     #[test]
