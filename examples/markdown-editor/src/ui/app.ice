@@ -75,10 +75,9 @@ view
                 next -> find_next
                 close -> toggle_find
           mouse release=follow_link
-            EditorSurface #editor-surface document<->document
+            EditorSurface #editor-surface -> edit_document _
               with
-                line=caret_line
-                column=caret_column
+                document=document
                 dark=dark
                 disabled=!editor_enabled
           StatusBar #status-bar

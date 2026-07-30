@@ -2,8 +2,8 @@
 
 This example embeds Chromium Embedded Framework as a native child of the iced
 window. Ice owns the 68-pixel application chrome, address state, and navigation
-handlers; Rust owns CEF initialization, main-thread message-loop integration,
-and the native-window boundary.
+handlers; Rust owns CEF initialization, message-loop integration, and the
+native-window boundary.
 
 ![CEF rendering below the Ice-owned toolbar](screenshot.svg)
 
@@ -27,6 +27,10 @@ KWallet. On macOS, the main app and every CEF helper use Chromium's mock
 keychain instead of accessing the user's Keychain; the generated app bundles
 also omit the public-key credential usage description and add no Keychain
 entitlements.
+
+macOS uses CEF's external message-pump callback to enqueue the requested work on
+the system main dispatch queue. Iced therefore keeps its stock event loop; no
+private `iced_winit` runner or patched Iced crate is required.
 
 The initial `ice://welcome` address is resolved by the Rust boundary to an
 in-memory HTML page, so the first render does not depend on network access.

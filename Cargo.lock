@@ -652,6 +652,8 @@ dependencies = [
 [[package]]
 name = "block"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
 
 [[package]]
 name = "block-buffer"
@@ -698,8 +700,8 @@ name = "browser-example"
 version = "0.1.0"
 dependencies = [
  "cef",
+ "dispatch2",
  "iced",
- "iced_winit",
  "plist",
  "semver",
  "ui-lang",
@@ -2143,6 +2145,8 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91ab1937d699403e7e69252ae743a902bcee9f4ab2052cc4c9a46fcf34729d85"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -2186,6 +2190,8 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234ca1c2cec4155055f68fa5fad1b5242c496ac8238d80a259bca382fb44a102"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -2206,6 +2212,8 @@ dependencies = [
 [[package]]
 name = "iced_highlighter"
 version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb24e1610502779b4e307c6f95da616ec7e883b67a18108cb0a036b169e50359"
 dependencies = [
  "iced_core",
  "two-face",
@@ -2311,6 +2319,8 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff144a999b0ca0f8a10257934500060240825c42e950ec0ebee9c8ae30561c13"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -2331,6 +2341,8 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1596afa0d3109c2618e8bc12bae6c11d3064df8f95c42dfce570397dbe957ab"
 dependencies = [
  "iced_highlighter",
  "iced_renderer",
@@ -2347,6 +2359,8 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b7dbedc47562d1de3b9707d939f678b88c382004b7ab5a18f7a7dd723162d75"
 dependencies = [
  "iced_debug",
  "iced_program",

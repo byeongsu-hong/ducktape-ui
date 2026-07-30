@@ -1,7 +1,6 @@
-use iced::advanced::text::highlighter::{Format, Highlighter, PlainText};
-use iced::advanced::text::{Highlight as TextHighlight, LineHeight};
+use iced::advanced::text::{Highlight as TextHighlight, Highlighter, LineHeight};
 use iced::font::{Family, Style as FontStyle, Weight};
-use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position, TextEditor};
+use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
 use iced::{Border, Color, Element, Font, Padding, Pixels, Theme, mouse};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cmp::Ordering;
@@ -9,6 +8,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+use ui_lang_runtime::rich_text_editor::{Format, RichTextEditor};
+
+pub use ui_lang_runtime::rich_text_editor::Action as RichEditorAction;
 
 const HISTORY_LIMIT: usize = 1_000;
 const HISTORY_BYTES: usize = 16 * 1024 * 1024;
@@ -95,20 +97,34 @@ impl SpanStyle {
     }
 }
 
-pub fn markdown_highlight<'a, Message: 'a>(
-    editor: TextEditor<'a, PlainText, Message>,
-    line: i64,
-    column: i64,
+pub fn markdown_editor<'a>(
+    document: &'a Content,
     dark: bool,
-) -> Element<'a, Message> {
-    editor
+    disabled: bool,
+) -> Element<'a, RichEditorAction> {
+    let cursor = document.cursor().position;
+    let format_theme = if dark { Theme::Dark } else { Theme::Light };
+    let editor = RichTextEditor::new(document)
+        .id("markdown-editor")
+        .placeholder("Start writing…")
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
+        .min_height(320.0)
+        .font(body_font(Weight::Normal, FontStyle::Normal))
+        .size(BODY_SIZE)
+        .line_height(BODY_LINE_HEIGHT)
+        .wrapping(iced::advanced::text::Wrapping::Word)
         .padding(Padding {
             top: BODY_SIZE,
             right: CODE_BLOCK_PADDING,
             bottom: 0.0,
             left: CODE_BLOCK_PADDING,
         })
-        .highlight_with::<MarkdownHighlighter>(Caret::new(line, column, dark), markdown_format)
+        .highlight_with::<MarkdownHighlighter>(
+            Caret::new(cursor.line as i64, cursor.column as i64, dark),
+            u64::from(dark),
+            move |highlight| markdown_format(highlight, &format_theme),
+        )
         .mouse_interaction(|line, position| {
             if crate::document::link_at(line, position.column).is_empty() {
                 mouse::Interaction::Text
@@ -116,7 +132,38 @@ pub fn markdown_highlight<'a, Message: 'a>(
                 mouse::Interaction::Pointer
             }
         })
-        .into()
+        .style(move |_theme, status| {
+            let (value, muted, selection) = if dark {
+                (
+                    Color::from_rgb8(0xd7, 0xda, 0xe0),
+                    Color::from_rgb8(0x9d, 0xa5, 0xb4),
+                    Color::from_rgb8(0x46, 0x54, 0x74),
+                )
+            } else {
+                (
+                    Color::from_rgb8(0x29, 0x28, 0x24),
+                    Color::from_rgb8(0x81, 0x7f, 0x77),
+                    Color::from_rgb8(0xb9, 0xcd, 0xf4),
+                )
+            };
+            iced::widget::text_editor::Style {
+                background: Color::TRANSPARENT.into(),
+                border: Border::default(),
+                placeholder: muted,
+                value: if matches!(status, iced::widget::text_editor::Status::Disabled) {
+                    muted
+                } else {
+                    value
+                },
+                selection,
+            }
+        });
+
+    if disabled {
+        editor.into()
+    } else {
+        editor.on_action(|action| action).into()
+    }
 }
 
 fn body_font(weight: Weight, style: FontStyle) -> Font {
@@ -139,7 +186,7 @@ fn code_font() -> Font {
     }
 }
 
-fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font> {
+fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
     let palette = theme.palette();
     let subdued = Color {
         a: 0.38,
@@ -225,7 +272,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format<Font>
     }
 }
 
-fn span_format(style: SpanStyle, theme: &Theme) -> Format<Font> {
+fn span_format(style: SpanStyle, theme: &Theme) -> Format {
     let palette = theme.palette();
     let subdued = Color {
         a: 0.38,
@@ -960,13 +1007,16 @@ pub fn track_action(content: &mut Content, action: Action) {
 
     let before = content.cursor();
     if matches!(edit, Edit::Indent | Edit::Unindent) {
-        // ponytail: Iced exposes no indent delta; snapshot only this rare block action.
         let before_text = content.text();
-        content.perform(action);
+        edit_plain_indent(content, edit);
+        let after_text = content.text();
+        if before_text == after_text {
+            return;
+        }
         let change = Change {
             data: ChangeData::Snapshot {
                 before: before_text,
-                after: content.text(),
+                after: after_text,
             },
             before,
             after: content.cursor(),
@@ -998,6 +1048,14 @@ pub fn track_action(content: &mut Content, action: Action) {
         changed_at: Instant::now(),
     };
     history().record(change);
+}
+
+pub fn apply_rich_action(mut content: Content, action: RichEditorAction) -> Content {
+    match action {
+        RichEditorAction::Edit(action) => track_action(&mut content, action),
+        RichEditorAction::MoveTo(cursor) => content.move_to(cursor),
+    }
+    content
 }
 
 fn continue_list(content: &mut Content) -> bool {
@@ -1294,6 +1352,127 @@ fn edit_list_indent(content: &mut Content, edit: &Edit) -> bool {
         changed_at: Instant::now(),
     });
     true
+}
+
+fn edit_plain_indent(content: &mut Content, edit: &Edit) {
+    const TAB_WIDTH: usize = 4;
+
+    let before = content.cursor();
+    let (start, end) = before
+        .selection
+        .map_or((before.position, before.position), |anchor| {
+            (
+                min_position(before.position, anchor),
+                max_position(before.position, anchor),
+            )
+        });
+    let has_selection = before.selection.is_some();
+    let mut replacements = Vec::new();
+
+    for line_index in start.line..=end.line {
+        let Some(line) = content.line(line_index) else {
+            break;
+        };
+        let text = line.text;
+
+        match edit {
+            Edit::Indent if !has_selection => {
+                let column = before.position.column.min(text.len());
+                let trailing_whitespace = text[..column]
+                    .chars()
+                    .rev()
+                    .take_while(|character| character.is_whitespace())
+                    .count();
+                let width = TAB_WIDTH - trailing_whitespace % TAB_WIDTH;
+                replacements.push(Replacement {
+                    start: Position {
+                        line: line_index,
+                        column,
+                    },
+                    removed: String::new(),
+                    inserted: " ".repeat(width),
+                });
+            }
+            Edit::Indent => {
+                let leading = text
+                    .char_indices()
+                    .find(|(_, character)| !character.is_whitespace())
+                    .map_or(text.len(), |(index, _)| index);
+                let leading_characters = text[..leading].chars().count();
+                let width = TAB_WIDTH - leading_characters % TAB_WIDTH;
+                replacements.push(Replacement {
+                    start: Position {
+                        line: line_index,
+                        column: leading,
+                    },
+                    removed: String::new(),
+                    inserted: " ".repeat(width),
+                });
+            }
+            Edit::Unindent => {
+                let leading = text
+                    .char_indices()
+                    .find(|(_, character)| !character.is_whitespace())
+                    .map_or(text.len(), |(index, _)| index);
+                if leading == 0 {
+                    continue;
+                }
+                let leading_characters = text[..leading].chars().count();
+                let remove_characters = if leading_characters % TAB_WIDTH == 0 {
+                    TAB_WIDTH.min(leading_characters)
+                } else {
+                    leading_characters % TAB_WIDTH
+                };
+                let remove_start = text[..leading]
+                    .char_indices()
+                    .rev()
+                    .nth(remove_characters.saturating_sub(1))
+                    .map_or(0, |(index, _)| index);
+                replacements.push(Replacement {
+                    start: Position {
+                        line: line_index,
+                        column: remove_start,
+                    },
+                    removed: text[remove_start..leading].to_owned(),
+                    inserted: String::new(),
+                });
+            }
+            _ => return,
+        }
+    }
+
+    let map_position = |mut position: Position| {
+        for replacement in &replacements {
+            if position.line != replacement.start.line {
+                continue;
+            }
+            let removed_end = replacement.start.column + replacement.removed.len();
+            position.column = if position.column < replacement.start.column {
+                position.column
+            } else if position.column <= removed_end {
+                replacement.start.column + replacement.inserted.len()
+            } else {
+                position.column.saturating_add_signed(
+                    replacement.inserted.len() as isize - replacement.removed.len() as isize,
+                )
+            };
+        }
+        position
+    };
+    let after = Cursor {
+        position: map_position(before.position),
+        selection: before.selection.map(map_position),
+    };
+
+    for replacement in replacements.iter().rev() {
+        replace_range(
+            content,
+            replacement.start,
+            position_after(replacement.start, &replacement.removed),
+            &replacement.inserted,
+        );
+    }
+    content.move_to(after);
 }
 
 fn has_previous_list_item(content: &Content, line: usize, indent: usize) -> bool {
@@ -2096,113 +2275,6 @@ mod tests {
     }
 
     #[test]
-    fn platform_word_backspace_matches_the_standard_editor_keymap() {
-        use iced::keyboard::key::{Code, Named, Physical};
-        use iced::keyboard::{Key, Modifiers};
-        use iced::widget::text_editor::{Binding, KeyPress, Motion, Status};
-
-        let key = Key::Named(Named::Backspace);
-        let word_modifier = if cfg!(target_os = "macos") {
-            Modifiers::ALT
-        } else {
-            Modifiers::CTRL
-        };
-        let binding = Binding::<()>::from_key_press(KeyPress {
-            key: key.clone(),
-            modified_key: key,
-            physical_key: Physical::Code(Code::Backspace),
-            modifiers: word_modifier,
-            text: None,
-            status: Status::Focused { is_hovered: true },
-        });
-
-        assert_eq!(
-            binding,
-            Some(Binding::Sequence(vec![
-                Binding::Select(Motion::WordLeft),
-                Binding::Backspace,
-            ]))
-        );
-    }
-
-    #[test]
-    fn mixed_markdown_metrics_drive_native_caret_geometry() {
-        use iced::advanced::text::editor::Editor as _;
-        use iced::advanced::text::{LineHeight, Wrapping};
-        use iced::widget::text_editor::{Cursor, Position};
-        use iced::{Font, Pixels, Size};
-
-        let mut editor = iced::advanced::graphics::text::Editor::with_text(
-            "# Heading\n~~old~~\n\n```\ncode\n```",
-        );
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
-        editor.update(
-            Size::new(300.0, 200.0),
-            Font::default(),
-            Pixels(16.0),
-            LineHeight::Absolute(Pixels(24.0)),
-            Wrapping::None,
-            &mut highlighter,
-        );
-        editor.highlight(Font::default(), &mut highlighter, |highlight| {
-            super::markdown_format(highlight, &iced::Theme::Light)
-        });
-
-        assert_eq!(editor.caret_height(), Pixels(42.0));
-        assert_eq!(editor.caret_metrics().unwrap().size, Pixels(30.0));
-        editor.move_to(Cursor {
-            position: Position { line: 4, column: 0 },
-            selection: None,
-        });
-        assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
-        assert!((editor.caret_metrics().unwrap().size.0 - 14.4).abs() < 0.01);
-        let decorations = editor.decorations();
-        assert!(decorations.iter().any(|decoration| {
-            decoration.bounds.height == 1.0 && decoration.bounds.width > 0.0
-        }));
-        assert!(
-            decorations
-                .iter()
-                .any(|decoration| (decoration.bounds.height - 55.04).abs() < 0.01)
-        );
-    }
-
-    #[test]
-    fn empty_fenced_code_line_keeps_code_metrics_and_one_surface() {
-        use iced::advanced::text::editor::Editor as _;
-        use iced::advanced::text::{LineHeight, Wrapping};
-        use iced::widget::text_editor::{Cursor, Position};
-        use iced::{Font, Pixels, Size};
-
-        let mut editor = iced::advanced::graphics::text::Editor::with_text("```\n\n```");
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(1, 0, false));
-        editor.update(
-            Size::new(300.0, 200.0),
-            Font::default(),
-            Pixels(16.0),
-            LineHeight::Absolute(Pixels(25.6)),
-            Wrapping::None,
-            &mut highlighter,
-        );
-        editor.highlight(Font::default(), &mut highlighter, |highlight| {
-            super::markdown_format(highlight, &iced::Theme::Light)
-        });
-        editor.move_to(Cursor {
-            position: Position { line: 1, column: 0 },
-            selection: None,
-        });
-
-        assert!((editor.caret_height().0 - 23.04).abs() < 0.01);
-        assert!((editor.caret_metrics().unwrap().size.0 - 14.4).abs() < 0.01);
-        assert!(
-            editor
-                .decorations()
-                .iter()
-                .any(|decoration| { (decoration.bounds.height - 55.04).abs() < 0.01 })
-        );
-    }
-
-    #[test]
     fn resumes_near_the_end_of_a_large_document() {
         let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
         for _ in 0..10_000 {
@@ -2349,121 +2421,6 @@ mod tests {
     }
 
     #[test]
-    fn first_words_receive_strong_and_emphasis_fonts() {
-        use iced::advanced::graphics::text::cosmic_text::fontdb::{
-            Family, Query, Stretch, Style, Weight,
-        };
-        use iced::advanced::text::editor::Editor as _;
-        use iced::advanced::text::{LineHeight, Wrapping};
-        use iced::{Pixels, Point, Size};
-        use std::borrow::Cow;
-
-        let (regular, italic) = {
-            let mut fonts = iced::advanced::graphics::text::font_system()
-                .write()
-                .expect("font system");
-            fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/IBMPlexSansKR-Regular.ttf"
-            )));
-            fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/IBMPlexSansKR-Bold.ttf"
-            )));
-            fonts.load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/IBMPlexSans-Italic.ttf"
-            )));
-            let database = fonts.raw().db();
-            (
-                database
-                    .query(&Query {
-                        families: &[Family::Name("IBM Plex Sans KR")],
-                        weight: Weight::NORMAL,
-                        stretch: Stretch::Normal,
-                        style: Style::Normal,
-                    })
-                    .expect("IBM Plex Sans KR Regular"),
-                database
-                    .query(&Query {
-                        families: &[Family::Name("IBM Plex Sans")],
-                        weight: Weight::NORMAL,
-                        stretch: Stretch::Normal,
-                        style: Style::Italic,
-                    })
-                    .expect("IBM Plex Sans Italic"),
-            )
-        };
-        let mut editor = iced::advanced::graphics::text::Editor::with_text(
-            "**inline formatting**\n*emphasis*\n한글 입력",
-        );
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(99, 0, false));
-        let body = super::body_font(iced::font::Weight::Normal, iced::font::Style::Normal);
-        editor.update(
-            Size::new(400.0, 100.0),
-            body,
-            Pixels(16.0),
-            LineHeight::Relative(1.6),
-            Wrapping::None,
-            &mut highlighter,
-        );
-        editor.highlight(body, &mut highlighter, |highlight| {
-            super::markdown_format(highlight, &iced::Theme::Light)
-        });
-        let runs = editor.buffer().layout_runs().collect::<Vec<_>>();
-        let strong = runs[0]
-            .glyphs
-            .iter()
-            .find(|glyph| glyph.start <= 2 && 2 < glyph.end)
-            .expect("first strong glyph");
-        let emphasis = runs[1]
-            .glyphs
-            .iter()
-            .find(|glyph| glyph.start <= 1 && 1 < glyph.end)
-            .expect("first emphasis glyph");
-        let hangul = runs[2].glyphs.first().expect("first Hangul glyph");
-
-        assert_eq!(strong.font_weight, Weight::BOLD);
-        assert_eq!(emphasis.font_id, italic);
-        assert_eq!(hangul.font_id, regular);
-        assert!(
-            editor
-                .hit_test(Point::new(
-                    strong.x + strong.w / 2.0,
-                    runs[0].line_top + runs[0].line_height / 2.0,
-                ))
-                .is_some_and(|position| (2..=8).contains(&position.column))
-        );
-        assert!(
-            editor
-                .hit_test(Point::new(
-                    runs[0].line_w + 10.0,
-                    runs[0].line_top + runs[0].line_height / 2.0,
-                ))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn tab_binds_to_native_indent_actions() {
-        use iced::keyboard::key::{Code, Named, Physical};
-        use iced::keyboard::{Key, Modifiers};
-        use iced::widget::text_editor::{Binding, KeyPress, Status};
-
-        let binding = |modifiers| {
-            let key = Key::Named(Named::Tab);
-            Binding::<()>::from_key_press(KeyPress {
-                key: key.clone(),
-                modified_key: key,
-                physical_key: Physical::Code(Code::Tab),
-                modifiers,
-                text: None,
-                status: Status::Focused { is_hovered: true },
-            })
-        };
-
-        assert_eq!(binding(Modifiers::empty()), Some(Binding::Indent));
-        assert_eq!(binding(Modifiers::SHIFT), Some(Binding::Unindent));
-    }
-
-    #[test]
     fn list_editing_continues_exits_renumbers_and_nests() {
         use iced::widget::text_editor::{Cursor, Position};
 
@@ -2520,5 +2477,27 @@ mod tests {
         track_action(&mut document, Action::Edit(Edit::Indent));
 
         assert_eq!(document.text(), "```\ncode    \n```");
+    }
+
+    #[test]
+    fn tab_indents_every_selected_plain_line_and_preserves_the_selection() {
+        use iced::widget::text_editor::{Cursor, Position};
+
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("one\ntwo\nthree".into());
+        document.move_to(Cursor {
+            position: Position { line: 2, column: 5 },
+            selection: Some(Position { line: 0, column: 1 }),
+        });
+        track_action(&mut document, Action::Edit(Edit::Indent));
+
+        assert_eq!(document.text(), "    one\n    two\n    three");
+        assert_eq!(
+            document.cursor(),
+            Cursor {
+                position: Position { line: 2, column: 9 },
+                selection: Some(Position { line: 0, column: 5 }),
+            }
+        );
     }
 }

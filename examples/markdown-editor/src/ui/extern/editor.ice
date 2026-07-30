@@ -1,6 +1,7 @@
 extern crate::editor
-  editor-action track_action()
-  editor-highlighter markdown_highlight(line:i64, column:i64, dark:bool)
+  RichEditorAction()
+  component markdown_editor(document:&editor, dark:bool, disabled:bool) -> RichEditorAction
+  sync apply_rich_action(document:editor, action:RichEditorAction) -> editor
   sync reset_document(source:str) -> editor
   sync undo_document(document:editor) -> editor
   sync redo_document(document:editor) -> editor

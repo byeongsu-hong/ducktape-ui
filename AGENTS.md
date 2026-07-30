@@ -9,8 +9,7 @@ contains runtime widgets and accessibility support, `crates/ui/` provides the
 default component library, and `crates/cargo-ice/` implements the `cargo ice`
 tooling. Runnable applications live in `examples/`; their `.ice` sources are
 under `src/ui/` and supporting Rust code under `src/`. End-to-end language
-fixtures are in `crates/ui-lang-core/tests/cases/`. Treat `vendor/iced_wgpu/`
-as a pinned local patch and do not edit `target/`.
+fixtures are in `crates/ui-lang-core/tests/cases/`. Do not edit `target/`.
 
 ## Build, Test, and Development Commands
 

@@ -93,7 +93,6 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
     sign_in
     sign_out
   stack #root w=232.0 h=fill
-    shader liquid_glass(1, 24.0, 4.5, 0.58, 20.0) w=232.0 h=fill
     box #surface
       with
         w=232.0

@@ -42,7 +42,6 @@ component QueuePanel(albums:[Album], current_title:str, current_artist:str, curr
     queue
     play(str, str, str)
   stack #root w=354.0 h=fill
-    shader liquid_glass(3, 26.0, 5.0, 0.62, 22.0) w=354.0 h=fill
     box #surface
       with
         w=354.0
@@ -166,7 +165,6 @@ component LyricsPanel(title:str, artist:str, lines:[LyricLine])
     lyrics
     seek(f64)
   stack #root w=330.0 h=fill
-    shader liquid_glass(4, 26.0, 5.0, 0.62, 22.0) w=330.0 h=fill
     box #surface
       with
         w=330.0
@@ -239,7 +237,6 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
     lyrics
     queue
   stack #root w=fill h=88.0
-    shader liquid_glass(2, 24.0, 6.0, 0.50, 22.0) w=fill h=88.0
     box #surface
       with
         w=fill

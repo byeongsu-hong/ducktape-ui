@@ -14,6 +14,7 @@ app Music
     position centered
     decorations false
     transparent true
+    blur true
     platform macos
       title-hidden true
       titlebar-transparent true
