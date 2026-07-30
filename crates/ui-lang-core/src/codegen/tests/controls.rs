@@ -99,6 +99,38 @@ view
 }
 
 #[test]
+fn moves_an_editor_buffer_through_a_sync_self_assignment() {
+    let source = r#"app Composer
+extern crate::backend
+  sync apply_command(content:editor, command:str) -> editor
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  notes:editor = "hello"
+on command
+  notes = apply_command(notes, "bold")
+view
+  col
+    editor <-> notes
+    button "Bold" -> command
+"#;
+    let generated = compile(source, "composer.ice").unwrap();
+
+    assert!(generated.contains(
+        "backend::apply_command(::std::mem::take(&mut self.notes), \"bold\".to_owned())"
+    ));
+    assert!(!generated.contains("backend::apply_command(self.notes.clone(),"));
+}
+
+#[test]
 fn lowers_resize_handle_to_a_grabbing_widget() {
     // A `resize-handle` wraps a divider child and reports `(dx, dy)` drag deltas
     // plus press/release, so a component can drive a bound width — something

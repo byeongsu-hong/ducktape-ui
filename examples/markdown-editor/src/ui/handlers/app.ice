@@ -113,22 +113,25 @@ on saved_then_close(file)
   task window close
 
 on undo
-  document = undo_document(editor_copy(document))
+  document = undo_document(document)
 
 on redo
-  document = redo_document(editor_copy(document))
+  document = redo_document(document)
+
+on edit_document(action)
+  document = apply_rich_action(document, action)
 
 on bold
-  document = format_document(editor_copy(document), "bold")
+  document = format_document(document, "bold")
 
 on italic
-  document = format_document(editor_copy(document), "italic")
+  document = format_document(document, "italic")
 
 on inline_code
-  document = format_document(editor_copy(document), "code")
+  document = format_document(document, "code")
 
 on link
-  document = format_document(editor_copy(document), "link")
+  document = format_document(document, "link")
 
 on toggle_find
   find_open = !find_open
@@ -137,11 +140,11 @@ on toggle_find
 
 on find_next
   return if empty(find_query)
-  document = find_document(editor_copy(document), find_query, false)
+  document = find_document(document, find_query, false)
 
 on find_previous
   return if empty(find_query)
-  document = find_document(editor_copy(document), find_query, true)
+  document = find_document(document, find_query, true)
 
 on escape
   pending = PendingAction.idle

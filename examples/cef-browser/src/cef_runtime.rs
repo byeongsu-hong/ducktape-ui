@@ -15,14 +15,14 @@ const DISABLED_CREDENTIAL_PREFERENCES: &[&str] = &[
     "credentials_enable_passkeys",
 ];
 
-#[cfg(any(feature = "cef", test))]
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CefProcessKind {
     Browser,
     Helper,
 }
 
-#[cfg(any(feature = "cef", test))]
+#[cfg(any(target_os = "macos", test))]
 impl CefProcessKind {
     fn uses_helper_bundle_layout(self) -> bool {
         matches!(self, Self::Helper)
@@ -102,16 +102,20 @@ pub fn can_go_forward() -> bool {
 mod enabled {
     use cef::rc::Rc;
     use cef::wrap_app;
+    use cef::wrap_browser_process_handler;
     use cef::{
-        App, Browser, BrowserSettings, CefString, Client, CommandLine, ImplApp, ImplBrowser,
-        ImplBrowserHost, ImplClient, ImplCommandLine, ImplFrame, ImplLifeSpanHandler,
-        ImplPreferenceManager, ImplValue, LifeSpanHandler, Rect, Settings, WindowInfo, WrapApp,
+        App, Browser, BrowserProcessHandler, BrowserSettings, CefString, Client, CommandLine,
+        ImplApp, ImplBrowser, ImplBrowserHost, ImplBrowserProcessHandler, ImplClient,
+        ImplCommandLine, ImplFrame, ImplLifeSpanHandler, ImplPreferenceManager, ImplValue,
+        LifeSpanHandler, Rect, Settings, WindowInfo, WrapApp, WrapBrowserProcessHandler,
         WrapClient, WrapLifeSpanHandler,
     };
     use iced::window::raw_window_handle::RawWindowHandle;
     use std::cell::RefCell;
     use std::io;
     use std::path::{Path, PathBuf};
+    #[cfg(target_os = "macos")]
+    use std::sync::atomic::AtomicU64;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -178,8 +182,25 @@ mod enabled {
         static BROWSER: RefCell<Option<BrowserState>> = const { RefCell::new(None) };
     }
 
+    #[cfg(target_os = "macos")]
+    static MESSAGE_PUMP_RUNNING: AtomicBool = AtomicBool::new(false);
+    #[cfg(target_os = "macos")]
+    static MESSAGE_PUMP_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+    wrap_browser_process_handler! {
+        struct BrowserProcessCallbacks;
+
+        impl BrowserProcessHandler {
+            fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+                schedule_message_pump_work(delay_ms);
+            }
+        }
+    }
+
     wrap_app! {
-        struct BrowserApp;
+        struct BrowserApp {
+            browser_process_handler: BrowserProcessHandler,
+        }
 
         impl App {
             fn on_before_command_line_processing(
@@ -199,6 +220,10 @@ mod enabled {
                         command_line.append_switch(Some(&name));
                     }
                 }
+            }
+
+            fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
+                Some(self.browser_process_handler.clone())
             }
         }
     }
@@ -232,7 +257,7 @@ mod enabled {
         let _library = load_library(super::CefProcessKind::Browser);
         initialize_api();
         let args = cef::args::Args::new();
-        let mut app = BrowserApp::new();
+        let mut app = BrowserApp::new(BrowserProcessCallbacks::new());
         let exit_code = cef::execute_process(
             Some(args.as_main_args()),
             Some(&mut app),
@@ -265,14 +290,10 @@ mod enabled {
         }
 
         #[cfg(target_os = "macos")]
-        let result = iced_winit::run_with_event_loop(
-            crate::CefBrowser::__program(),
-            cef::do_message_loop_work,
-            Duration::from_millis(16),
-        )
-        .map_err(iced::Error::from);
-        #[cfg(not(target_os = "macos"))]
+        MESSAGE_PUMP_RUNNING.store(true, Ordering::Release);
         let result = crate::CefBrowser::run();
+        #[cfg(target_os = "macos")]
+        stop_message_pump();
         close_browser();
         cef::shutdown();
         drop(profile);
@@ -284,7 +305,7 @@ mod enabled {
         let _library = load_library(super::CefProcessKind::Helper);
         initialize_api();
         let args = cef::args::Args::new();
-        let mut app = BrowserApp::new();
+        let mut app = BrowserApp::new(BrowserProcessCallbacks::new());
         cef::execute_process(
             Some(args.as_main_args()),
             Some(&mut app),
@@ -445,20 +466,6 @@ mod enabled {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    fn parent_handle(
-        window: &dyn iced::window::Window,
-    ) -> Result<cef::sys::cef_window_handle_t, String> {
-        match window
-            .window_handle()
-            .map_err(|error| error.to_string())?
-            .as_raw()
-        {
-            RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as _),
-            other => Err(format!("expected a Win32 window handle, got {other:?}")),
-        }
-    }
-
     #[cfg(target_os = "macos")]
     fn parent_handle(
         window: &dyn iced::window::Window,
@@ -470,6 +477,20 @@ mod enabled {
         {
             RawWindowHandle::AppKit(handle) => Ok(handle.ns_view.as_ptr()),
             other => Err(format!("expected an AppKit window handle, got {other:?}")),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn parent_handle(
+        window: &dyn iced::window::Window,
+    ) -> Result<cef::sys::cef_window_handle_t, String> {
+        match window
+            .window_handle()
+            .map_err(|error| error.to_string())?
+            .as_raw()
+        {
+            RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as _),
+            other => Err(format!("expected a Win32 window handle, got {other:?}")),
         }
     }
 
@@ -513,6 +534,41 @@ mod enabled {
     #[cfg(not(target_os = "macos"))]
     fn pump_message_loop() {
         cef::do_message_loop_work();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn schedule_message_pump_work(_delay_ms: i64) {}
+
+    #[cfg(target_os = "macos")]
+    fn schedule_message_pump_work(delay_ms: i64) {
+        // CEF may invoke this callback from any thread. A newer request
+        // supersedes an older delayed request, and all actual CEF work runs on
+        // AppKit's main dispatch queue beside Iced's stock event loop.
+        let generation = MESSAGE_PUMP_GENERATION
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        let work = move || {
+            if MESSAGE_PUMP_RUNNING.load(Ordering::Acquire)
+                && MESSAGE_PUMP_GENERATION.load(Ordering::Acquire) == generation
+            {
+                cef::do_message_loop_work();
+            }
+        };
+        let queue = dispatch2::DispatchQueue::main();
+        if delay_ms <= 0 {
+            queue.exec_async(work);
+        } else {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let when =
+                dispatch2::DispatchTime::try_from(delay).unwrap_or(dispatch2::DispatchTime::NOW);
+            let _ = queue.after(when, work);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn stop_message_pump() {
+        MESSAGE_PUMP_RUNNING.store(false, Ordering::Release);
+        MESSAGE_PUMP_GENERATION.fetch_add(1, Ordering::AcqRel);
     }
 
     fn disable_credential_services() -> iced::Result {

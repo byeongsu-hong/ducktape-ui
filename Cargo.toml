@@ -14,25 +14,7 @@ members = [
     "examples/terminal",
     "conformance/ice",
 ]
-exclude = [
-    "vendor/block",
-    "vendor/iced_core",
-    "vendor/iced_graphics",
-    "vendor/iced_highlighter",
-    "vendor/iced_widget",
-    "vendor/iced_wgpu",
-    "vendor/iced_winit",
-]
 resolver = "3"
-
-[patch.crates-io]
-block = { path = "vendor/block" }
-iced_core = { path = "vendor/iced_core" }
-iced_graphics = { path = "vendor/iced_graphics" }
-iced_highlighter = { path = "vendor/iced_highlighter" }
-iced_widget = { path = "vendor/iced_widget" }
-iced_wgpu = { path = "vendor/iced_wgpu" }
-iced_winit = { path = "vendor/iced_winit" }
 
 [workspace.package]
 edition = "2024"

@@ -116,8 +116,8 @@ palette app for AppTheme
   track        #776d724d
   hero_start   #731d3c
   hero_end     #251319
-  frame_start  #fffafb
-  frame_end    #eee6e9
+  frame_start  #fffafbe6
+  frame_end    #eee6e9d6
   glass        #fffafa
   glass_edge   #ffffff
   player_track #d7cfd3

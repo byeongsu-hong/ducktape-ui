@@ -944,6 +944,8 @@ view
     assert!(generated.contains("text_editor(&self.body)"));
     assert!(generated.contains("crate::backend::editor_keys(__key_press, self.locked)"));
     assert!(generated.contains("__ice_map_editor_binding"));
+    assert!(!generated.contains("Binding::Indent"));
+    assert!(!generated.contains("Binding::Unindent"));
     assert!(generated.contains("__NotesMessage::Command(__event_0)"));
     assert!(generated.contains("crate::backend::editor_highlight("));
     assert!(generated.contains(", self.language.to_owned())"));

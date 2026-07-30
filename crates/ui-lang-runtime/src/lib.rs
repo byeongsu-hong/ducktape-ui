@@ -7,6 +7,7 @@ mod dynamic_themer;
 mod flex;
 mod qr;
 mod resize_handle;
+pub mod rich_text_editor;
 mod selectable_text;
 #[doc(hidden)]
 pub mod testing;
@@ -17,6 +18,7 @@ pub use dynamic_themer::*;
 pub use flex::*;
 pub use qr::*;
 pub use resize_handle::*;
+pub use rich_text_editor::RichTextEditor;
 pub use selectable_text::*;
 pub use zstack::*;
 

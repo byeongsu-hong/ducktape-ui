@@ -12,6 +12,75 @@ fn route_result_code(route: &Route, binding: &str, expression: String) -> String
     }
 }
 
+fn references_binding(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::List(values) => values.iter().any(|value| references_binding(value, name)),
+        Expr::Path(path) => path.first().is_some_and(|segment| segment == name),
+        Expr::Call { args, .. } => args.iter().any(|arg| references_binding(arg, name)),
+        Expr::Unary { value, .. } => references_binding(value, name),
+        Expr::Binary { left, right, .. } => {
+            references_binding(left, name) || references_binding(right, name)
+        }
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None => false,
+    }
+}
+
+fn editor_self_assignment_code(
+    target: &str,
+    value: &Expr,
+    env: &HashMap<String, Binding>,
+    document: &Document,
+    state: &str,
+) -> Result<Option<String>, Error> {
+    if !env.get(target).is_some_and(|binding| {
+        matches!(
+            &binding.state,
+            Some(StateBinding::App(name)) if name == target
+        )
+    }) {
+        return Ok(None);
+    }
+    let Expr::Call { name, args } = value else {
+        return Ok(None);
+    };
+    let Some(function) = find_extern_function(document, name, ExternKind::Sync) else {
+        return Ok(None);
+    };
+    let Some(moved) = args
+        .iter()
+        .position(|arg| matches!(arg, Expr::Path(path) if path.as_slice() == [target]))
+    else {
+        return Ok(None);
+    };
+    if args
+        .iter()
+        .enumerate()
+        .any(|(index, arg)| index != moved && references_binding(arg, target))
+    {
+        return Ok(None);
+    }
+
+    let args = args
+        .iter()
+        .enumerate()
+        .map(|(index, arg)| {
+            if index == moved {
+                Ok(format!("::std::mem::take(&mut {state}.{target})"))
+            } else {
+                expr_code(arg, env, document, ValueMode::Owned)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(Some(format!("{}({args})", function.rust_path)))
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[Statement],
@@ -50,7 +119,12 @@ pub(in crate::codegen) fn generate_statements(
                 target, value, at, ..
             } => {
                 let target_state = document.states.iter().find(|item| item.name == *target);
-                let code = expr_code(value, env, document, ValueMode::Owned)?;
+                let code = if target_state.is_some_and(|item| item.ty == Type::Editor) {
+                    editor_self_assignment_code(target, value, env, document, state)?
+                        .map_or_else(|| expr_code(value, env, document, ValueMode::Owned), Ok)?
+                } else {
+                    expr_code(value, env, document, ValueMode::Owned)?
+                };
                 if target_state.is_some_and(|item| matches!(item.ty, Type::Combo(_))) {
                     writeln!(
                         out,

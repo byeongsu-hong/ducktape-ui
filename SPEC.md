@@ -1969,9 +1969,10 @@ native `Binding<EditorCommand>`; built-in edit bindings stay native while
 `Binding::Custom` is mapped through the checked route. `editor-highlighter`
 receives the fully configured plain-text `TextEditor` and returns a value
 convertible to the same default `Element`, so Rust can call `highlight_with`
-with any `Highlighter`, settings, highlight type, and format function. Editor
-formats can vary font, size, line height, span background, and full visual-line
-background without replacing the native editing buffer.
+with any `Highlighter`, settings, highlight type, and format function. Stock
+Iced editor formats can vary color and font. Mixed metrics, span backgrounds,
+visual-line backgrounds, and shared rich hit-test geometry require a custom
+widget such as `ui_lang_runtime::RichTextEditor`.
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
 inside a component may bind only a prop declared with `bind`. Every call passes
@@ -1984,9 +1985,11 @@ editor without a custom binding has neither.
 Pure editor inspection uses `editor_cursor_line(editor)`,
 `editor_cursor_column(editor)`, `editor_line_count(editor)`,
 `editor_has_selection(editor)`, and `editor_line(editor, line) -> str?`.
-`editor_copy(editor)` preserves text and cursor in a fresh native Content and
-is reserved for explicit commands such as undo or formatting; ordinary editor
-actions continue to mutate the owned buffer in place.
+`editor_copy(editor)` preserves text and cursor in a fresh native Content when
+an actual duplicate is needed. A sync self-assignment such as
+`document = apply_command(document, command)` transfers the owned editor buffer
+through the function without cloning it, so editing, undo, formatting, and
+similar commands keep the same native buffer allocation.
 
 Spaces inside a compound expression should be wrapped in parentheses when the
 expression shares a line with widget properties:
@@ -2241,8 +2244,9 @@ returns `Option<Binding<Output>>`; `Output` is the custom route payload.
 returns unit.
 `editor-highlighter` receives a fully configured plain `TextEditor` before its
 declared arguments and returns any value convertible to the same default
-`Element`; its formats support mixed metrics and span or visual-line
-backgrounds. `editor-style` receives Theme and native editor Status implicitly.
+`Element`; stock formats support color and font. Rich metrics and decorations
+belong in a custom widget. `editor-style` receives Theme and native editor
+Status implicitly.
 
 `text-style` receives the current Theme implicitly and returns native
 `text::Style`. Both `text ... style=summary_text(args)` and
