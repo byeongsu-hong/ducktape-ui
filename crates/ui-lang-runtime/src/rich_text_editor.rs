@@ -683,15 +683,22 @@ where
                 state.preferred_x = None;
                 shell.capture_event();
             }
-            Event::Keyboard(keyboard::Event::KeyReleased { modified_key, .. })
-                if state.focus.is_some() && state.pending_ime_commit.is_some() =>
-            {
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key,
+                modified_key,
+                physical_key,
+                modifiers,
+                ..
+            }) if state.focus.is_some() && state.pending_ime_commit.is_some() => {
                 // After a macOS IME commit, winit suppresses the key press that
                 // produced it but still reports the release. Recover only the
                 // boundary punctuation that was absent from the commit.
                 if let Some(character) = take_missing_ime_boundary_punctuation(
                     &mut state.pending_ime_commit,
+                    key,
                     modified_key,
+                    *physical_key,
+                    *modifiers,
                 ) {
                     shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
                         Edit::Insert(character),
@@ -725,7 +732,8 @@ where
                 }
 
                 if let Some(committed) = state.pending_ime_commit.take()
-                    && let Some(punctuation) = key_punctuation(modified_key)
+                    && let Some(punctuation) =
+                        key_punctuation(key, modified_key, *physical_key, *modifiers)
                 {
                     if committed.ends_with(punctuation) {
                         shell.capture_event();
@@ -1330,6 +1338,50 @@ fn caret_x(glyphs: &[cosmic_text::LayoutGlyph], index: usize) -> f32 {
         )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LineHighlightGroup {
+    top: f32,
+    height: f32,
+    highlight: text::Highlight,
+}
+
+fn visit_line_highlight_groups(
+    runs: impl IntoIterator<Item = (usize, f32, f32)>,
+    line_highlights: &[Option<text::Highlight>],
+    mut visit: impl FnMut(LineHighlightGroup),
+) {
+    let mut current = None;
+
+    for (line, top, height) in runs {
+        let Some(highlight) = line_highlights.get(line).copied().flatten() else {
+            if let Some(group) = current.take() {
+                visit(group);
+            }
+            continue;
+        };
+
+        if let Some(group) = current.as_mut()
+            && group.highlight == highlight
+        {
+            let bottom = (group.top + group.height).max(top + height);
+            group.height = bottom - group.top;
+            continue;
+        }
+
+        if let Some(group) = current.replace(LineHighlightGroup {
+            top,
+            height,
+            highlight,
+        }) {
+            visit(group);
+        }
+    }
+
+    if let Some(group) = current {
+        visit(group);
+    }
+}
+
 fn draw_line_highlights<H>(
     renderer: &mut iced::Renderer,
     state: &State<H>,
@@ -1338,25 +1390,32 @@ fn draw_line_highlights<H>(
 ) where
     H: text::Highlighter,
 {
-    for run in state.paragraph.buffer().layout_runs() {
-        let Some(highlight) = state.line_highlights.get(run.line_i).copied().flatten() else {
-            continue;
-        };
-        let bounds = Rectangle::new(
-            Point::new(clip.x, origin.y + run.line_top),
-            Size::new(clip.width, run.line_height),
+    renderer.with_layer(clip, |renderer| {
+        visit_line_highlight_groups(
+            state
+                .paragraph
+                .buffer()
+                .layout_runs()
+                .map(|run| (run.line_i, origin.y + run.line_top, run.line_height)),
+            &state.line_highlights,
+            |group| {
+                let bounds = Rectangle::new(
+                    Point::new(clip.x, group.top),
+                    Size::new(clip.width, group.height),
+                );
+                if clip.intersection(&bounds).is_some() {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds,
+                            border: group.highlight.border,
+                            ..renderer::Quad::default()
+                        },
+                        group.highlight.background,
+                    );
+                }
+            },
         );
-        if let Some(bounds) = clip.intersection(&bounds) {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds,
-                    border: highlight.border,
-                    ..renderer::Quad::default()
-                },
-                highlight.background,
-            );
-        }
-    }
+    });
 }
 
 fn draw_span_highlights<H>(
@@ -1601,7 +1660,7 @@ fn command_shortcut_bubbles(press: &text_editor::KeyPress) -> bool {
     }
 }
 
-fn key_punctuation(key: &keyboard::Key) -> Option<char> {
+fn logical_key_punctuation(key: &keyboard::Key) -> Option<char> {
     let keyboard::Key::Character(text) = key.as_ref() else {
         return None;
     };
@@ -1612,17 +1671,45 @@ fn key_punctuation(key: &keyboard::Key) -> Option<char> {
     }
 }
 
-fn missing_ime_boundary_punctuation(committed: &str, released_key: &keyboard::Key) -> Option<char> {
-    let punctuation = key_punctuation(released_key)?;
+fn key_punctuation(
+    key: &keyboard::Key,
+    modified_key: &keyboard::Key,
+    physical_key: key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<char> {
+    if !modifiers.is_empty() {
+        return None;
+    }
+
+    logical_key_punctuation(modified_key)
+        .or_else(|| logical_key_punctuation(key))
+        .or(match physical_key {
+            key::Physical::Code(key::Code::Comma) => Some(','),
+            key::Physical::Code(key::Code::Period) => Some('.'),
+            _ => None,
+        })
+}
+
+fn missing_ime_boundary_punctuation(
+    committed: &str,
+    key: &keyboard::Key,
+    modified_key: &keyboard::Key,
+    physical_key: key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<char> {
+    let punctuation = key_punctuation(key, modified_key, physical_key, modifiers)?;
     (!committed.ends_with(punctuation)).then_some(punctuation)
 }
 
 fn take_missing_ime_boundary_punctuation(
     pending_commit: &mut Option<String>,
-    released_key: &keyboard::Key,
+    key: &keyboard::Key,
+    modified_key: &keyboard::Key,
+    physical_key: key::Physical,
+    modifiers: keyboard::Modifiers,
 ) -> Option<char> {
     let committed = pending_commit.take()?;
-    missing_ime_boundary_punctuation(&committed, released_key)
+    missing_ime_boundary_punctuation(&committed, key, modified_key, physical_key, modifiers)
 }
 
 fn apply_binding<H, Message>(
@@ -2127,24 +2214,101 @@ mod tests {
     }
 
     #[test]
-    fn ime_boundary_punctuation_is_recovered_once() {
-        let comma = keyboard::Key::Character(",".into());
-        let period = keyboard::Key::Character(".".into());
-        let space = keyboard::Key::Named(key::Named::Space);
-        let mut pending = Some("단어".to_owned());
+    fn ime_boundary_punctuation_uses_the_physical_key_and_is_recovered_once() {
+        use iced::keyboard::key::{Code, Physical};
 
+        let comma = keyboard::Key::Character(",".into());
+        let hangul = keyboard::Key::Character("ㄹ".into());
+        let no_modifiers = keyboard::Modifiers::empty();
+        let take_physical = |pending: &mut Option<String>, code| {
+            take_missing_ime_boundary_punctuation(
+                pending,
+                &hangul,
+                &hangul,
+                Physical::Code(code),
+                no_modifiers,
+            )
+        };
+        let physical = |committed, code, modifiers| {
+            missing_ime_boundary_punctuation(
+                committed,
+                &hangul,
+                &hangul,
+                Physical::Code(code),
+                modifiers,
+            )
+        };
+        let mut pending = Some("ㄹ".to_owned());
+
+        assert_eq!(take_physical(&mut pending, Code::Comma), Some(','));
+        assert_eq!(take_physical(&mut pending, Code::Comma), None);
+        assert_eq!(physical("ㄹ", Code::Period, no_modifiers), Some('.'));
+        assert_eq!(physical("단어,", Code::Comma, no_modifiers), None);
+        assert_eq!(physical("단어.", Code::Period, no_modifiers), None);
+        assert_eq!(physical("단어", Code::Space, no_modifiers), None);
         assert_eq!(
-            take_missing_ime_boundary_punctuation(&mut pending, &comma),
-            Some(',')
-        );
-        assert_eq!(
-            take_missing_ime_boundary_punctuation(&mut pending, &comma),
+            physical("단어", Code::Comma, keyboard::Modifiers::SHIFT),
             None
         );
-        assert_eq!(missing_ime_boundary_punctuation("단어", &period), Some('.'));
-        assert_eq!(missing_ime_boundary_punctuation("단어,", &comma), None);
-        assert_eq!(missing_ime_boundary_punctuation("단어.", &period), None);
-        assert_eq!(missing_ime_boundary_punctuation("단어", &space), None);
+        assert_eq!(
+            missing_ime_boundary_punctuation(
+                "단어",
+                &comma,
+                &comma,
+                Physical::Code(Code::KeyA),
+                no_modifiers,
+            ),
+            Some(',')
+        );
+    }
+
+    #[test]
+    fn consecutive_line_highlights_share_one_surface() {
+        let code = text::Highlight {
+            background: iced::Background::Color(Color::BLACK),
+            border: iced::Border {
+                radius: 3.0.into(),
+                width: 1.0,
+                color: Color::WHITE,
+            },
+        };
+        let quote = text::Highlight {
+            background: iced::Background::Color(Color::WHITE),
+            border: iced::Border::default(),
+        };
+        let highlights = [Some(code), Some(code), None, Some(code), Some(quote)];
+        let runs = [
+            (0, 0.0, 12.0),
+            (1, 12.0, 12.0),
+            (1, 24.0, 12.0),
+            (2, 36.0, 12.0),
+            (3, 48.0, 12.0),
+            (4, 60.0, 12.0),
+        ];
+        let mut groups = Vec::new();
+
+        visit_line_highlight_groups(runs, &highlights, |group| groups.push(group));
+
+        assert_eq!(
+            groups,
+            vec![
+                LineHighlightGroup {
+                    top: 0.0,
+                    height: 36.0,
+                    highlight: code,
+                },
+                LineHighlightGroup {
+                    top: 48.0,
+                    height: 12.0,
+                    highlight: code,
+                },
+                LineHighlightGroup {
+                    top: 60.0,
+                    height: 12.0,
+                    highlight: quote,
+                },
+            ]
+        );
     }
 
     #[test]
