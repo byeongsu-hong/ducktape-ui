@@ -1836,7 +1836,7 @@ fn style_contract() -> Value {
             "alignment": { "targets": ["row", "col", "flex"], "forms": ["items-center"] },
             "overflow": { "targets": ["row", "col", "flex", "grid", "stack", "box"], "forms": ["overflow-hidden"] },
             "text": {
-                "targets": ["text"],
+                "targets": ["text", "button (compact label only)"],
                 "forms": ["text-xs", "text-sm", "text-base", "text-lg", "text-xl", "text-2xl", "leading-tight", "leading-snug", "leading-normal", "leading-relaxed", "font-mono", "font-medium", "font-semibold", "font-bold"],
             },
             "semantic": ["bg-TOKEN", "text-TOKEN", "border-TOKEN", "border", "border-2", "rounded-*", "state variants"],
@@ -2950,6 +2950,10 @@ mod tests {
             ])
         );
         assert_eq!(styles["recipes"]["composition"]["bases"], 1);
+        assert_eq!(
+            styles["utilities"]["text"]["targets"],
+            serde_json::json!(["text", "button (compact label only)"])
+        );
         assert_eq!(schema["core"]["components"]["defaults"]["optional"], true);
         assert_eq!(
             schema["core"]["components"]["defaults"]["requiredAfterDefault"],

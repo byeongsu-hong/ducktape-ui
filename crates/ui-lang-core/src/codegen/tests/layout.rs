@@ -78,7 +78,7 @@ view
 fn lowers_exact_pixel_recipe_utilities() {
     let source = r#"app ExactRecipes
 recipe action for button
-  px-16px py-11px rounded-9px bg-primary text-primary_fg
+  px-16px py-11px rounded-9px bg-primary text-primary_fg text-12.5px leading-snug font-semibold
 recipe danger_action for button extends action
   bg-danger
 recipe caption for text
@@ -106,6 +106,9 @@ view
     assert!(generated.contains("top: 11.0, right: 16.0, bottom: 11.0, left: 16.0"));
     assert!(generated.contains("__style.border.radius = 9.0.into()"));
     assert!(generated.contains(".size(12.5)"));
+    assert!(generated.contains(
+        "::iced::widget::text(\"Delete\").size(12.5).line_height(::iced::widget::text::LineHeight::Relative(1.35)).font(::iced::Font { weight: ::iced::font::Weight::Semibold, ..::iced::Font::DEFAULT }).into()"
+    ));
     assert!(generated.contains("::iced::Color::from_rgba8(204, 0, 0, 1.000000)"));
 
     let error = compile(

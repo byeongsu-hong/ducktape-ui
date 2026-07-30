@@ -401,15 +401,24 @@ pub(in crate::check) fn check_styles(
                 "overflow-hidden" => is_box,
                 utility if is_text_size_utility(utility) => matches!(
                     target,
-                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                    StyleTarget::Text(_)
+                        | StyleTarget::RichText { .. }
+                        | StyleTarget::RichSpan(_)
+                        | StyleTarget::Button(_)
                 ),
                 utility if is_text_line_height_utility(utility) => matches!(
                     target,
-                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                    StyleTarget::Text(_)
+                        | StyleTarget::RichText { .. }
+                        | StyleTarget::RichSpan(_)
+                        | StyleTarget::Button(_)
                 ),
                 "font-mono" | "font-medium" | "font-semibold" | "font-bold" => matches!(
                     target,
-                    StyleTarget::Text(_) | StyleTarget::RichText { .. } | StyleTarget::RichSpan(_)
+                    StyleTarget::Text(_)
+                        | StyleTarget::RichText { .. }
+                        | StyleTarget::RichSpan(_)
+                        | StyleTarget::Button(_)
                 ),
                 "border" | "border-2" => {
                     is_visual_box

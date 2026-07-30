@@ -1,6 +1,3 @@
-component ActionLabel(content:str)
-  text content size=12.5 @font-semibold
-
 component ProjectSlugInput(bind value:str)
   row
     with
@@ -66,21 +63,17 @@ component ToggleDemo()
     pressed = !pressed
   row gap=8.0 align=center
     if pressed
-      button #toggle-on -> toggle
+      button "Bold" #toggle-on -> toggle
         with
-          label="Bold"
           h=32.0
           @primary_action
           @py-6px
-        ActionLabel content="Bold"
     if !pressed
-      button #toggle-off -> toggle
+      button "Bold" #toggle-off -> toggle
         with
-          label="Bold"
           h=32.0
           @outline_action
           @py-6px
-        ActionLabel content="Bold"
     if pressed
       text "On" size=12.0 @text-muted
     if !pressed
@@ -98,53 +91,41 @@ component SegmentedControlDemo()
       @bg-accent
       @rounded-lg
     if selected == "day"
-      button -> select "day"
+      button "Day" -> select "day"
         with
-          label="Day"
           h=32.0
           @secondary_action
           @py-6px
-        ActionLabel content="Day"
     if selected != "day"
-      button -> select "day"
+      button "Day" -> select "day"
         with
-          label="Day"
           h=32.0
           @ghost_action
           @py-6px
-        ActionLabel content="Day"
     if selected == "week"
-      button -> select "week"
+      button "Week" -> select "week"
         with
-          label="Week"
           h=32.0
           @secondary_action
           @py-6px
-        ActionLabel content="Week"
     if selected != "week"
-      button -> select "week"
+      button "Week" -> select "week"
         with
-          label="Week"
           h=32.0
           @ghost_action
           @py-6px
-        ActionLabel content="Week"
     if selected == "month"
-      button -> select "month"
+      button "Month" -> select "month"
         with
-          label="Month"
           h=32.0
           @secondary_action
           @py-6px
-        ActionLabel content="Month"
     if selected != "month"
-      button -> select "month"
+      button "Month" -> select "month"
         with
-          label="Month"
           h=32.0
           @ghost_action
           @py-6px
-        ActionLabel content="Month"
 
 component ToggleGroupDemo()
   SegmentedControlDemo #toggle-group

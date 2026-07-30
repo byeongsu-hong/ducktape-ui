@@ -1565,7 +1565,10 @@ and status lines are the final overrides.
 node. The compact string is its default accessible name; child content requires
 an explicit checked `label=`, and either form may add `description=`. It also
 supports typed width/height, non-negative padding, bool clipping, disabled
-routing, all eight iced presets, and checked style utilities. Optional `active`,
+routes, all eight iced presets, and checked style utilities. Text size,
+line-height, family, and weight utilities style the generated text of a compact
+string label. Arbitrary child content owns its own typography, so those button
+utilities do not cascade into child nodes. Optional `active`,
 `hovered`, `pressed`, and `disabled` child lines override every concrete button
 style field with solid/linear backgrounds, text, per-corner border, shadow, and
 pixel snapping. A structured content node may appear beside these status lines.
@@ -2710,7 +2713,7 @@ The implemented native nodes are:
 | `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events |
 | `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
 | `input` | required `str` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
-| `button` | string label or one child; checked accessible label/description with an explicit label required for child content, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
+| `button` | string label or one child; checked accessible label/description with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
 | `checkbox` | string label, optional accessible label/description, `CheckBox` role and keyboard activation, bool value/route, disabled, sizing/typography/wrapping/font, custom icon, four presets and complete checked-aware status styles |
 | `toggler` | string label, optional ID, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |
 | `slider` | optional ID, `f64` or typed extern numeric value/range/default/normal+shift steps, direction-aware sizing, change/release routes and nested status styles |
@@ -4708,7 +4711,10 @@ transparent/red `diff.png`, then exits unsuccessfully for a disallowed delta.
 Artifact names, PNG filenames, and capture-statement labels are reported as
 ignored identity fields; all rendered and environmental fields participate.
 Capture remains observation-only; golden policy belongs to tooling rather
-than runtime behavior.
+than runtime behavior. A capture delivers a redraw request to the same native
+widget tree immediately before drawing so status-aware widgets render their
+current active, hovered, pressed, or disabled style; messages produced by that
+observational redraw are not applied to application state.
 
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their
@@ -4936,7 +4942,7 @@ recipe panel for box
   @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
 
 recipe action for button
-  @px-4 py-2 rounded-md disabled:bg-disabled disabled:text-disabled_fg
+  @text-12.5px font-semibold px-4 py-2 rounded-md disabled:bg-disabled disabled:text-disabled_fg
 
 recipe primary_action for button extends action
   @bg-primary text-primary_fg
@@ -4980,10 +4986,10 @@ The accepted utility surface is:
 | overflow | `overflow-hidden` | row, col, flex, grid, stack, box |
 | gap | scaled `gap-*` or exact `gap-Npx` | row, col, flex, grid, stack |
 | padding | scaled `p-*`, `px-*`, `py-*` or exact `p-Npx`, `px-Npx`, `py-Npx` | row, col, flex, grid, stack, box, input, button |
-| text size | `text-xs` through `text-2xl` or exact positive `text-Npx` | text |
-| line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text |
-| text family | `font-mono` | text |
-| text weight | `font-medium`, `font-semibold`, `font-bold` | text |
+| text size | `text-xs` through `text-2xl` or exact positive `text-Npx` | text; compact button label |
+| line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text; compact button label |
+| text family | `font-mono` | text; compact button label |
+| text weight | `font-medium`, `font-semibold`, `font-bold` | text; compact button label |
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
 | border | `border`, `border-2` | visual layout wrappers, box, input, and button |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |

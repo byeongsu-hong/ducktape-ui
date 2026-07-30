@@ -24,7 +24,7 @@ palette dark for AppTheme
   border #334155
 
 recipe task_action for button
-  @px-4 py-2 rounded-md
+  @text-12.5px font-semibold px-4 py-2 rounded-md
 
 recipe task_primary_action for button extends task_action
   @bg-primary text-white

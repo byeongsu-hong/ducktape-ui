@@ -160,8 +160,10 @@ After a meaningful edit:
    ordinary Cargo discovers the same generated tests.
 5. For every visual UI change, run `cargo ice inspect` with an explicit root,
    viewport, theme, and relevant preset. Open the PNG and inspect the JSON
-   geometry, paint, text, accessibility, and `.ice` source fields. Do not infer
-   appearance from code or stop after compilation succeeds.
+   outer geometry, inner padding, text size/line box/baseline, paint,
+   accessibility, and `.ice` source fields. Scroll through the full view and
+   inspect its end; do not infer appearance from code or stop after compilation
+   succeeds.
 6. After a visual correction, inspect again with the same inputs. When a prior
    capture is available, run `cargo ice diff` and resolve every unexplained
    manifest or pixel delta. Keep an intentional delta only when it matches the
@@ -181,7 +183,9 @@ and assert app state, exact text, input values, computed bounds, or structured
 paint fields. A component call ID is only an identity scope, so target an
 identified rendered descendant such as `#card/root`; later targets may use that
 alias as a descendant-path prefix. `cargo ice test` checks
-the source graphs and runs the generated tests. Do not register Rust wrappers,
+the source graphs and runs the generated tests. For repeated controls, assert
+both outer dimensions and internal text metrics/alignment, plus the accessible
+name and each affected interaction state. Do not register Rust wrappers,
 add a second case format, or mock Rust externs in Ice; deterministic extern
 behavior belongs behind `cfg(test)` or a named preset.
 

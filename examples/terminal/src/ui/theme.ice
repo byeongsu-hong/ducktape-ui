@@ -33,7 +33,7 @@ palette terminal for AppTheme
   danger          #ff7b86
 
 recipe primary_action for button
-  @px-16px py-10px bg-primary text-black rounded-8px hover:bg-primary/90 pressed:bg-primary/75 disabled:opacity-50
+  @text-12.5px font-semibold px-16px py-10px bg-primary text-black rounded-8px hover:bg-primary/90 pressed:bg-primary/75 disabled:opacity-50
 
 recipe secondary_action for button
-  @px-16px py-10px bg-raised text-fg border border-border rounded-8px hover:bg-hover pressed:bg-pressed disabled:opacity-50
+  @text-12.5px font-semibold px-16px py-10px bg-raised text-fg border border-border rounded-8px hover:bg-hover pressed:bg-pressed disabled:opacity-50

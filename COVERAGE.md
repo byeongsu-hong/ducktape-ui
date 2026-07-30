@@ -103,10 +103,14 @@ package checked utility tokens for one declared target (`col`, `row`, `flex`,
 one same-target base, expand base-first across imported source graphs, preserve
 child and later-utility precedence, and let direct typed node properties
 override recipe defaults. Scaled utilities and exact-pixel spacing,
-radius, and decimal text sizes share that checked lowering path. Every recipe
+radius, and decimal text sizes share that checked lowering path. Button-target
+text size, line-height, family, and weight utilities lower onto the generated
+text for compact string labels; arbitrary child content retains explicit
+ownership of its own typography. Every recipe
 is checked at declaration time, including unused imported recipes. Parser,
 checker, and codegen tests
-cover expansion, typed overrides, typography, invalid bodies, duplicate
+cover expansion, typed overrides, compact button label typography, explicit
+child typography ownership, invalid bodies, duplicate
 declarations, target mismatch, and semantic disabled button background/text
 overrides. Recipe definitions and references also
 participate in cross-file LSP definition and safe rename. The workspace-local
@@ -153,7 +157,10 @@ layout bounds, primitive counts, text/image bounds and baseline, scale-aware
 pixel alignment, focus, and unambiguous structured tiny-skia paint output;
 named captures persist PNG plus a versioned JSON frame manifest with separate
 configured, resolved-render, and system theme fields, and retain RGBA output
-for runtime callers. Generated identified targets retain their originating
+for runtime callers. The capture draw updates the same native widget tree with
+a redraw request first, so status-aware controls do not fall back to disabled
+paint; redraw-emitted messages remain unapplied and capture stays
+observation-only. Generated identified targets retain their originating
 imported `.ice` path, line, and column. `cargo ice inspect` activates an
 otherwise inert generated entry for one real app `Program`, fixed environment,
 and preset; `cargo ice diff` externally compares structured values and RGBA
@@ -294,7 +301,7 @@ public behavior has direct documented Ice syntax and tests.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| `button` | native | native string or arbitrary child content, disabled route, typed size/padding/clip, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
+| `button` | native | native string or arbitrary child content, compact-label typography utilities, disabled route, typed size/padding/clip, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `canvas` | native | declarative rectangle/circle/line/text/path geometry; complete path builder segments, fill rules, solid/linear fill and stroke, caps/joins/dashes, transforms, clips, typed `if`/`for`, complete raster/SVG frame drawing fields, dependency-keyed geometry cache with shared named groups, typed local `Program::State`, all five event families and every variant, state updates, publish/capture/next-frame/timed-redraw actions, pointer routes, and static/state-dependent/out-of-bounds interaction cover the complete public Program behavior |
 | `checkbox` | native | native label/value/disabled event, size/width/spacing, text typography/wrapping, complete font descriptors and custom icon; all four presets, every concrete Style field across active/hovered/disabled checked and unchecked statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `column` | native | children, typed spacing/per-side padding, all `Length` bounds, max width, cross-axis alignment, clipping and wrapping column spacing/alignment |

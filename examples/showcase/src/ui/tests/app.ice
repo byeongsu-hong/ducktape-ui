@@ -118,6 +118,13 @@ test catalog_layout
   expect ghost.text_size ~= primary.text_size
   expect destructive.text_size ~= primary.text_size
   expect disabled.text_size ~= primary.text_size
+  expect primary.font.weight == weight.semibold()
+  expect secondary.font == primary.font
+  expect outline.font == primary.font
+  expect ghost.font == primary.font
+  expect destructive.font == primary.font
+  expect disabled.font == primary.font
+  expect primary.background == background.color(color.rgb8(38, 37, 31))
   expect primary.text_y ~= primary.y + (primary.height - primary.text_height) / 2.0
   expect secondary.text_y ~= secondary.y + (secondary.height - secondary.text_height) / 2.0
   expect outline.text_y ~= outline.y + (outline.height - outline.text_height) / 2.0
@@ -130,6 +137,12 @@ test catalog_layout
   expect a11y ghost name "Ghost"
   expect a11y destructive name "Destructive"
   expect a11y disabled name "Disabled"
+  expect a11y disabled disabled true
+  move primary
+  expect primary.background == background.color(color.rgb8(50, 47, 40))
+  press primary
+  expect primary.background == background.color(color.rgba8(38, 37, 31, 0.8))
+  release
   expect email_input.height ~= 36.2
   expect framework_picker.height ~= email_input.height
   expect project_group.height ~= email_input.height

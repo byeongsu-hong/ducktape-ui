@@ -267,6 +267,10 @@ spacing/radius values and non-positive or non-finite text sizes.
 Recipes may specialize one same-target base with
 `recipe danger_action for button extends action`. The base expands first, the
 child overrides it, and direct typed node properties remain the final override.
+On button recipes, `text-*`, `leading-*`, and `font-*` style the generated text
+of a compact string label; arbitrary child content keeps ownership of its own
+typography. This lets one semantic action recipe own both control geometry and
+label metrics without an extra label component.
 Button state utilities support semantic `disabled:bg-*` and
 `disabled:text-*` colors as well as `disabled:opacity-*`.
 

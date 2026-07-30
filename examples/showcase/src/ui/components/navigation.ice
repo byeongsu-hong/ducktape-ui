@@ -33,24 +33,20 @@ component CarouselDemo()
         w=fill
         gap=8.0
         align=center
-      button -> previous
+      button "Previous" -> previous
         with
-          label="Previous"
           h=32.0
           @secondary_action
           @py-6px
-        ActionLabel content="Previous"
       space w=fill h=1.0
       text slide size=12.0 @text-muted
       text "/ 3" size=12.0 @text-muted
       space w=fill h=1.0
-      button -> next
+      button "Next" -> next
         with
-          label="Next"
           h=32.0
           @secondary_action
           @py-6px
-        ActionLabel content="Next"
 
 component TabsDemo()
   lifetime mounted
@@ -69,20 +65,16 @@ component TabsDemo()
             p=4.0
             @bg-accent
             @rounded-lg
-          button -> preview
+          button "Preview" -> preview
             with
-              label="Preview"
               h=32.0
               @secondary_action
               @py-6px
-            ActionLabel content="Preview"
-          button #show-code -> code
+          button "Code" #show-code -> code
             with
-              label="Code"
               h=32.0
               @ghost_action
               @py-6px
-            ActionLabel content="Code"
         box
           with
             w=fill
@@ -100,20 +92,16 @@ component TabsDemo()
             p=4.0
             @bg-accent
             @rounded-lg
-          button #show-preview -> preview
+          button "Preview" #show-preview -> preview
             with
-              label="Preview"
               h=32.0
               @ghost_action
               @py-6px
-            ActionLabel content="Preview"
-          button -> code
+          button "Code" -> code
             with
-              label="Code"
               h=32.0
               @secondary_action
               @py-6px
-            ActionLabel content="Code"
         box
           with
             w=fill
@@ -136,14 +124,12 @@ component PaginationDemo(page:i64, max_page:i64=5)
     previous
     next
   row gap=6.0 align=center
-    button #previous -> emit(previous)
+    button "Previous" #previous -> emit(previous)
       with
-        label="Previous"
         h=32.0
         disabled=(page <= 1)
         @secondary_action
         @py-6px
-      ActionLabel content="Previous"
     box
       with
         w=32.0
@@ -159,11 +145,9 @@ component PaginationDemo(page:i64, max_page:i64=5)
           @text-white
     text "of" size=12.0 @text-muted
     text max_page size=12.0 @text-muted
-    button #next -> emit(next)
+    button "Next" #next -> emit(next)
       with
-        label="Next"
         h=32.0
         disabled=(page >= max_page)
         @secondary_action
         @py-6px
-      ActionLabel content="Next"
