@@ -225,6 +225,11 @@ button #help label="Open help" description="Keyboard shortcuts" -> open_help
 
 A route is required. A child-content button must declare `label=` because the
 compiler cannot derive a stable accessible name from arbitrary children.
+Button-target `text-*`, `leading-*`, and `font-*` utilities style the generated
+text in the compact form. Child-content buttons keep typography on their
+explicit child nodes; button typography utilities do not cascade into them.
+Use compact form for a text-only action instead of creating a child component
+solely to repair label size or weight.
 
 ### Checkbox
 
@@ -342,7 +347,7 @@ recipe panel for box
   @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
 
 recipe primary_action for button
-  @px-4 py-2 bg-primary text-primary_fg rounded-md
+  @text-12.5px font-semibold px-4 py-2 bg-primary text-primary_fg rounded-md
   @hover:bg-primary/90 pressed:bg-primary/80 disabled:opacity-50
 
 view
@@ -401,6 +406,7 @@ four logical pixels per unit. An integer `px` suffix selects exact spacing or
 radius; exact text sizes may be positive finite decimals. Opacity utility
 values are `0 25 50 75 100`.
 
+On a button target, text utilities apply only to its generated compact label.
 Text font utilities are exact: `font-mono` selects iced's generic monospace
 family, while `font-medium`, `font-semibold`, and `font-bold` select weights
 500, 600, and 700 respectively. A typed `font=` family composes with a weight
@@ -503,6 +509,10 @@ Before finishing a view:
 - Use `for`/`keyed` instead of duplicated nodes.
 - Use typed properties before utilities.
 - Use only declared theme tokens.
+- Make each repeated control recipe own label metrics as well as surface and
+  geometry; use explicit child typography only for genuinely structured content.
 - Label child-content buttons and meaningful images.
+- For fixed-height controls, verify the label line box fits within height minus
+  vertical padding and borders, and inspect its measured vertical center.
 - Give repeated stateful components stable IDs.
 - Run LSP formatting, then `cargo ice fmt` and `cargo ice check`.

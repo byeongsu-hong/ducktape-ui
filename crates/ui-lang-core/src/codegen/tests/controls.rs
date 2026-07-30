@@ -532,6 +532,50 @@ view
 }
 
 #[test]
+fn lowers_compact_button_label_typography_without_cascading_into_child_content() {
+    let source = r#"app Actions
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+recipe action for button
+  @text-12.5px leading-snug font-mono font-semibold
+on pressed
+view
+  col
+    button "Compact" @action -> pressed
+    button label="Structured" @action -> pressed
+      row
+        text "Structured"
+        text "⌘S"
+"#;
+    let generated = compile(source, "button-label-typography.ice").unwrap();
+
+    assert!(generated.contains(
+        "::iced::widget::text(\"Compact\").size(12.5).line_height(::iced::widget::text::LineHeight::Relative(1.35)).font(::iced::Font { weight: ::iced::font::Weight::Semibold, ..::iced::Font::MONOSPACE }).into()"
+    ));
+    assert_eq!(generated.matches(".size(12.5)").count(), 1);
+    assert_eq!(
+        generated
+            .matches("::iced::widget::text::LineHeight::Relative(1.35)")
+            .count(),
+        1
+    );
+    assert_eq!(
+        generated
+            .matches("weight: ::iced::font::Weight::Semibold")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn lowers_semantic_disabled_button_colors() {
     let source = r#"app Actions
 theme contract AppTheme

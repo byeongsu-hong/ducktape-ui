@@ -249,7 +249,7 @@ palette app for AppTheme
 on pressed
 view
   col gap=1.0
-    button "Save" @px-16px py-11px rounded-9px bg-primary text-fg -> pressed
+    button "Save" @px-16px py-11px rounded-9px bg-primary text-fg text-12.5px leading-snug font-semibold -> pressed
     text "Body" @text-13.5px
 "#;
     analyze(source).unwrap();

@@ -801,6 +801,7 @@ mod tests {
         let components = include_str!("../ice/components.ice");
 
         assert!(recipes.contains("bg-primary text-primary_fg"));
+        assert_eq!(recipes.matches("text-12.5px font-semibold px-").count(), 5);
         assert!(recipes.contains("px-16px py-11px"));
         assert!(recipes.contains("disabled:bg-disabled disabled:text-disabled_fg"));
         assert!(recipes.contains("px-12px py-8px"));

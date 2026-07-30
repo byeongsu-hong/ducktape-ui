@@ -16,7 +16,7 @@ palette dark for ProductTheme
   primary #88aaff
   danger #ff6677
 recipe action for button
-  @p-4
+  @text-12.5px font-semibold p-4
 recipe primary_action for button extends action
   @bg-primary
 enum Selection

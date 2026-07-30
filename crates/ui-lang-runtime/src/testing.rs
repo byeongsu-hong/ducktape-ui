@@ -4150,7 +4150,12 @@ where
         let (physical_size, expected_rgba_len) = self.checked_physical_size(scale_factor, source);
         let style = self.program.style(&self.state, theme);
         let cursor = self.cursor;
-        self.with_interface(|interface, renderer, _| {
+        let events = [iced::Event::Window(window::Event::RedrawRequested(
+            self.logical_time,
+        ))];
+        let rgba = self.with_interface(|interface, renderer, clipboard| {
+            let mut ignored_messages = Vec::new();
+            let _ = interface.update(&events, cursor, renderer, clipboard, &mut ignored_messages);
             interface.draw(
                 renderer,
                 theme,
@@ -4159,10 +4164,8 @@ where
                 },
                 cursor,
             );
+            renderer.screenshot(physical_size, scale_factor, style.background_color)
         });
-        let rgba = self
-            .renderer
-            .screenshot(physical_size, scale_factor, style.background_color);
         if rgba.len() != expected_rgba_len {
             let origin = failure_origin(self.test_name, source);
             panic!(
@@ -6189,6 +6192,20 @@ mod tests {
                 })
             }),
             "capture text fonts must use the structured conformance schema"
+        );
+        let increment = metadata["targets"]
+            .as_array()
+            .and_then(|targets| {
+                targets
+                    .iter()
+                    .find(|target| target["id"] == "App/root/increment")
+            })
+            .expect("capture includes the increment button");
+        let active_background = &increment["paint"]["surfaces"][0]["background"]["color"];
+        assert_eq!(active_background["a"], 1.0);
+        assert!(
+            (active_background["r"].as_f64().expect("red channel") - 0.2).abs() < 1.0e-6,
+            "capture must update native widget status before drawing: {active_background}"
         );
 
         std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");

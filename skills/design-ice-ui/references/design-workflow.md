@@ -11,6 +11,7 @@ produce a React-shaped mockup that must be translated later.
 - [Choose the view structure](#choose-the-view-structure)
 - [Choose component boundaries](#choose-component-boundaries)
 - [Build the visual system](#build-the-visual-system)
+- [Audit component internals](#audit-component-internals)
 - [Design every interaction state](#design-every-interaction-state)
 - [Design responsive native layout](#design-responsive-native-layout)
 - [Preserve accessibility](#preserve-accessibility)
@@ -125,6 +126,41 @@ declare one target-specific semantic `recipe` and import it with the theme.
 Use a component only when structure or behavior repeats. Use structured native
 status blocks only for meaningful state deltas.
 
+## Audit component internals
+
+Treat a control as a contract, not just an outer rectangle. For every repeated
+control role, record and verify:
+
+| Layer | Required checks |
+| --- | --- |
+| outer box | width, height, border, radius, and target size |
+| inner geometry | horizontal and vertical padding, icon gap, content alignment |
+| label | font family, size, weight, line height, clipping, and baseline/center |
+| states | normal, hover, pressed, focus, disabled, loading, and selected where relevant |
+| semantics | accessible name, role, disabled state, and focus order |
+
+Make the semantic recipe own every repeated value that its target can lower.
+For a text-only action, use compact `button "Label" @recipe`; the recipe owns
+the generated label metrics. Use child content only when the button truly has
+structure such as an icon-and-label row, and then style that child explicitly.
+An otherwise redundant label component is evidence that the recipe or compiler
+contract is incomplete; fix that source of truth before multiplying wrappers.
+
+For fixed-height controls, calculate the content budget before rendering:
+
+```text
+content height = control height - vertical padding - vertical border
+```
+
+The label line box must fit that budget. Then verify the rendered `text_y` is
+the control's vertical center; equal outer heights alone do not prove correct
+internal alignment.
+
+Inventory every instance of the role, including conditional branches and the
+bottom of scrollable views. Compare at least one wide and one narrow viewport,
+and exercise every materially distinct state. A polished first screen is not a
+completed full-screen audit.
+
 ## Design every interaction state
 
 For every effectful screen, cover:
@@ -189,7 +225,8 @@ Implement in this order:
 5. Build the view tree from recipes and typed local exceptions.
 6. Extract only proven structural component boundaries.
 7. Add status styling and polish.
-8. Check accessibility labels and source order.
+8. Audit control internals across roles, states, breakpoints, and scroll extent.
+9. Check accessibility labels and source order.
 
 Then:
 
