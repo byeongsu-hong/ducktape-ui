@@ -37,4 +37,28 @@ mod tests {
             "Ax native editor line."
         );
     }
+
+    #[test]
+    fn app_undo_and_redo_apply_grouped_typing() {
+        let _lock = crate::editor::test_history_lock();
+        let (mut app, _) = MarkdownEditor::__boot();
+        app.document = crate::editor::reset_document("hello".into());
+        app.document.move_to(Cursor {
+            position: Position { line: 0, column: 5 },
+            selection: None,
+        });
+
+        for character in ['!', '?'] {
+            let _ = app.__update(__MarkdownEditorMessage::EditDocument(
+                RichEditorAction::Edit(Action::Edit(Edit::Insert(character))),
+            ));
+        }
+        assert_eq!(app.document.text(), "hello!?");
+
+        let _ = app.__update(__MarkdownEditorMessage::Undo);
+        assert_eq!(app.document.text(), "hello");
+
+        let _ = app.__update(__MarkdownEditorMessage::Redo);
+        assert_eq!(app.document.text(), "hello!?");
+    }
 }
