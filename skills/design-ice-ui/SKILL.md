@@ -9,6 +9,12 @@ Design and build against Ice's checked indentation-based language and typed
 Rust boundary. Treat the compiler, generated schema, and live LSP as
 authorities. Do not invent syntax by analogy with React or Iced's Rust API.
 
+Use the references as decision aids, not rituals to execute wholesale. Choose
+the depth of inspection and evidence from the requested outcome, the affected
+surface, and the risk of shared-layer regressions. Preserve intentional
+variation. Add a narrow rule only for a recurring, non-obvious invariant; do
+not turn a one-off component fix into permanent implementation prescription.
+
 ## Keep the mental model straight
 
 Apply these rules before editing:
