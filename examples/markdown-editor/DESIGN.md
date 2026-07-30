@@ -39,8 +39,9 @@ widget API; it does not patch or vendor Iced.
 IBM Plex Sans KR is the body face and Monoplex KR is used for inline and fenced
 code. Monoplex combines IBM Plex Mono Latin glyphs with IBM Plex Sans KR Hangul,
 so prose and code have coordinated Latin forms, both cover Hangul, and code
-keeps a 2:1 fixed width. Headings use per-span metrics and fenced code uses
-visual-line backgrounds in the same editor layout. The bundled
+keeps a 2:1 fixed width. Headings use per-span metrics and each fenced code
+block uses one continuous, coalesced visual-line background in the same editor
+layout. The bundled
 files come from the pinned [IBM Plex](https://github.com/IBM/plex/tree/2f9ba1b25957d958db71a849e85d72e3ecfb845a/packages/plex-sans-kr)
 and [Monoplex KR](https://github.com/y-kim/monoplex/tree/ccd78918fdaf00f1ae52282b0446d66ec0c06fea)
 sources under their included SIL Open Font Licenses.
@@ -53,13 +54,14 @@ hold:
 | Area | Required behavior | Regression evidence |
 | --- | --- | --- |
 | Unicode and IME | Hangul preedit appears once, uses the document font and baseline, participates in live wrapping, replaces a selection, and commits without moving the visual line | `preedit_uses_the_same_wrapped_paragraph_as_committed_text` plus the shared `CompositionLayout` used by drawing, hit testing, scrolling, and the IME cursor |
-| IME boundaries | A comma or period that ends macOS Korean composition is inserted on the first key stroke, while an IME commit that already includes it is never duplicated | `ime_boundary_punctuation_is_recovered_once` exercises both the missing and already-committed event sequences |
+| IME boundaries | A comma or period that ends macOS Korean composition is inserted on the first key stroke even when the input source reports a Hangul logical key, while an IME commit that already includes it is never duplicated | `ime_boundary_punctuation_uses_the_physical_key_and_is_recovered_once` exercises physical punctuation, missing, and already-committed event sequences |
 | Text editing | Enter, Backspace, Delete, Tab, Shift+Tab, word deletion, and macOS line-boundary deletion edit the native buffer; Markdown lists and fences keep their atomic behaviors | runtime key-binding tests and the list, indentation, and fence tests in `editor.rs` |
 | Navigation and selection | Mouse hit testing, drag/double/triple selection, arrows, word/line/page movement, and Select All use the same wrapped rich geometry shown on screen | shared paragraph geometry tests in `rich_text_editor.rs` |
 | Clipboard | Command/Ctrl+C, X, and V copy, cut, and paste through Iced's native clipboard without stealing application shortcuts | `application_command_shortcuts_are_not_inserted_as_text` and the runtime binding adapter |
 | Undo and redo | Command/Ctrl+Z and Command/Ctrl+Shift+Z (plus Ctrl+Y) reach the application under non-Latin input sources; adjacent typing is one bounded event; a new edit clears redo | `undo_and_redo_shortcuts_survive_a_non_latin_input_source`, `app_undo_and_redo_apply_grouped_typing`, and `undo_redo_tracks_deltas_and_saved_state` |
 | Document lifecycle | New, Open, Save, Save As, dirty-close confirmation, UTF-8 errors, and cancelled dialogs preserve the current document until the user makes an explicit choice | typed handlers in `ui/handlers/app.ice` and delta-based saved-revision tracking |
 | Find, formatting, and links | Find next/previous, bold, italic, inline code, link insertion, and safe HTTP(S) link opening work from toolbar or platform shortcuts | formatting/history tests, `resolves_only_the_link_under_the_cursor`, and Ice handler contracts |
+| Rich presentation | Every fenced code block is one continuous surface, with its border and corner radius drawn only at the outside of the block instead of once per visual line | `consecutive_line_highlights_share_one_surface` exercises consecutive, wrapped, separated, and differently styled visual lines |
 | Viewport and scale | The editor fills the window, wraps within the 800 px page, scrolls and reveals the rich caret, and edits a 10,000-line native buffer through the app update path | `inline_editor_fills_the_window` and `large_document_edits_stay_in_the_native_buffer` |
 
 ## Behavioral references
