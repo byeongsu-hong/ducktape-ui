@@ -450,6 +450,7 @@ view
     let generated = compile(source, "repeated.ice").unwrap();
 
     assert_eq!(generated.matches("let __for_scope = format!").count(), 2);
+    assert_eq!(generated.matches(".iter().cloned().enumerate()").count(), 2);
     assert!(generated.contains("format!(\"{}/@for:"));
     assert!(generated.contains("/frame({})"));
     assert!(generated.contains("/slotted({})"));

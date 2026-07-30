@@ -27,6 +27,9 @@ component ScrollAreaDemo()
       w=fill
       h=168.0
       bar=visible
+      bar-w=8.0
+      scroller-w=6.0
+      bar-gap=8.0
     col w=fill gap=4.0
       slot
 

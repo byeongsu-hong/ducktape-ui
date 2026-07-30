@@ -12,6 +12,7 @@ produce a React-shaped mockup that must be translated later.
 - [Choose component boundaries](#choose-component-boundaries)
 - [Build the visual system](#build-the-visual-system)
 - [Audit component internals](#audit-component-internals)
+- [Run the component-polish playbook](#run-the-component-polish-playbook)
 - [Design every interaction state](#design-every-interaction-state)
 - [Design responsive native layout](#design-responsive-native-layout)
 - [Preserve accessibility](#preserve-accessibility)
@@ -160,6 +161,47 @@ Inventory every instance of the role, including conditional branches and the
 bottom of scrollable views. Compare at least one wide and one narrow viewport,
 and exercise every materially distinct state. A polished first screen is not a
 completed full-screen audit.
+
+## Run the component-polish playbook
+
+Use this pass after the feature works and before calling a catalog, showcase,
+or long settings surface complete.
+
+1. Inventory every repeated action and compare outer height, width policy,
+   padding, label family, size, weight, baseline, and accessible name. Inspect
+   the text inside the control; equal rectangles can still contain mismatched
+   labels.
+2. Inspect the first viewport, every full-scroll section, and the final scroll
+   extent at both wide and narrow sizes. A clean top screen is not evidence for
+   content farther down.
+3. For each scroll container, reserve layout space for the scrollbar and
+   verify the last text, action, and focus ring do not sit underneath it.
+4. Query capture JSON for generic or unexpected font families. Check Rust
+   adapters, Canvas or SVG labels, badges, shortcuts, and button factories in
+   addition to Ice text. A weight override must inherit the theme family, and
+   italic text must load a real italic face instead of relying on system
+   fallback.
+5. Exercise pointer and keyboard focus separately. Show the strong focus ring
+   for keyboard or programmatic focus, avoid a large passive ring for ordinary
+   pointer clicks, and keep one accessible focus target for composite inputs
+   such as verification codes.
+6. Verify action boundaries with cursor and state assertions. Only actionable
+   descendants should advertise pointer activation; descriptive cards and
+   message regions must not become accidental full-surface buttons.
+7. Open every dropdown, popover, menu, dialog, and navigation disclosure with
+   real pointer input. Preserve a pending press across controlled rerenders;
+   do not clear a non-tab-stop roving item's in-flight pointer activation while
+   normalizing keyboard focus.
+8. Capture custom-renderer content inside its real scroll and clipping context,
+   not only in an isolated mount. If Canvas mesh paint is lost under renderer
+   transforms, use a renderer primitive that survives the same transform while
+   retaining the typed hit-test and event boundary.
+9. Verify pagination with zero, one, partial, and many pages. Show total
+   results, current page of total pages, a bounded visible page range, precise
+   accessible labels, and disabled boundary actions.
+10. Re-run the exact interaction captures after every common-layer fix. Add a
+    regression at the layer that owned the defect, then keep the showcase test
+    as end-to-end evidence.
 
 ## Design every interaction state
 

@@ -118,21 +118,21 @@ fn role_style(role: TextRole, theme: &Theme) -> RoleStyle {
             typography.meta,
             1.4,
             palette.muted_foreground,
-            typography.monospace_font,
+            typography.font,
             Weight::Medium,
         ),
         TextRole::MetaCompact => (
             typography.meta_compact,
             1.4,
             palette.muted_foreground,
-            typography.monospace_font,
+            typography.font,
             Weight::Medium,
         ),
         TextRole::FieldLabel => (
             typography.field_label,
             1.3,
             palette.muted_foreground,
-            typography.monospace_font,
+            typography.font,
             Weight::Semibold,
         ),
         TextRole::NavLabel => (
@@ -146,7 +146,7 @@ fn role_style(role: TextRole, theme: &Theme) -> RoleStyle {
             typography.badge,
             1.3,
             palette.foreground,
-            typography.monospace_font,
+            typography.font,
             Weight::Semibold,
         ),
     };
@@ -199,6 +199,14 @@ mod tests {
         );
         assert_eq!(
             role_style(TextRole::Display, &theme).font.family,
+            Font::with_name("Geist").family
+        );
+        assert_eq!(
+            role_style(TextRole::Meta, &theme).font.family,
+            Font::with_name("Geist").family
+        );
+        assert_eq!(
+            role_style(TextRole::Badge, &theme).font.family,
             Font::with_name("Geist").family
         );
         assert_eq!(

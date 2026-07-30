@@ -10,10 +10,11 @@ use super::direction::Direction;
 use super::focus_control::{self, FocusControl, Status};
 use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
+use iced::font::Weight;
 use iced::keyboard::{self, key::Named};
 use iced::widget::text::LineHeight;
 use iced::widget::{Column, Row, Space, container, rule, text};
-use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Task};
+use iced::{Alignment, Background, Border, Element, Font, Length, Padding, Pixels, Task};
 
 pub const MENU_ROW_HEIGHT: f32 = 32.0;
 pub const MENU_PANEL_PADDING: f32 = 8.0;
@@ -719,6 +720,10 @@ where
         MenuItemKind::Radio { checked: true, .. } => "●",
         _ => "",
     };
+    let has_indicator = matches!(
+        item.kind,
+        MenuItemKind::Checkbox { .. } | MenuItemKind::Radio { .. }
+    );
     let arrow = matches!(item.kind, MenuItemKind::Submenu(_)).then_some(match direction {
         Direction::LeftToRight => "›",
         Direction::RightToLeft => "‹",
@@ -731,15 +736,17 @@ where
     let leading: Element<'a, Message> = container(
         text(indicator)
             .size(theme.typography.caption)
+            .font(theme.typography.font)
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
-    .width(16)
+    .width(if has_indicator { 16 } else { 0 })
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .into();
     let label: Element<'a, Message> = container(
         text(item.label.clone())
             .size(theme.typography.caption)
+            .font(theme.typography.font)
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
     .width(Length::Fill)
@@ -750,6 +757,7 @@ where
         container(
             text(shortcut.clone())
                 .size(theme.typography.meta_compact)
+                .font(theme.typography.monospace_font)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(muted),
         )
@@ -760,6 +768,7 @@ where
         container(
             text(arrow)
                 .size(theme.typography.list)
+                .font(theme.typography.font)
                 .line_height(LineHeight::Absolute(Pixels(16.0)))
                 .color(muted),
         )
@@ -770,9 +779,11 @@ where
     } else {
         Space::new().width(0).into()
     };
-    let parts = match direction {
-        Direction::LeftToRight => vec![leading, label, trailing],
-        Direction::RightToLeft => vec![trailing, label, leading],
+    let parts = match (direction, has_indicator) {
+        (Direction::LeftToRight, true) => vec![leading, label, trailing],
+        (Direction::RightToLeft, true) => vec![trailing, label, leading],
+        (Direction::LeftToRight, false) => vec![label, trailing],
+        (Direction::RightToLeft, false) => vec![trailing, label],
     };
     let row = Row::with_children(parts)
         .spacing(theme.spacing.sm)
@@ -864,6 +875,10 @@ where
     container(
         text(label.to_owned())
             .size(theme.typography.meta_compact)
+            .font(Font {
+                weight: Weight::Semibold,
+                ..theme.typography.font
+            })
             .line_height(LineHeight::Absolute(Pixels(16.0))),
     )
     .width(Length::Fill)

@@ -24,6 +24,8 @@ test app_behavior
   expect email_input.value == "tester@exampl"
   dispatch catalog_sort_changed
   expect catalog_sort == "ascending"
+  dispatch catalog_page_changed(5)
+  expect catalog_page == 4
   dispatch density_changed("compact")
   expect density == "compact"
 
@@ -95,7 +97,7 @@ test catalog_layout
   expect app.width ~= 1120.0
   expect app.height ~= 820.0
   expect page.x ~= app.x
-  expect page.width ~= app.width
+  expect page.width ~= app.width - 16.0
   expect grid.x ~= page.x + 24.0
   expect grid.width ~= page.width - 48.0
   expect buttons.y ~= badges.y
@@ -167,7 +169,7 @@ test catalog_layout
   expect app.width ~= 720.0
   expect app.height ~= 560.0
   expect page.x ~= app.x
-  expect page.width ~= app.width
+  expect page.width ~= app.width - 16.0
   expect grid.x ~= page.x + 24.0
   expect grid.width ~= page.width - 48.0
   expect badges.x ~= buttons.x
@@ -190,3 +192,88 @@ test dialog_preserves_catalog_position
   dispatch close_dialog
   expect !dialog_open
   expect scroller.scroll_y > 9000.0
+
+test focused_component_feedback
+  preset test
+  viewport 560 280
+  mount
+    col gap=20.0
+      box #otp-group
+        with
+          w=fill
+          h=48.0
+          p=4.0
+        extern input_otp("showcase-test-otp", otp, false, false) -> otp_changed _
+      DemoStage height=188.0 padding=8.0 #message-stage
+        extern message_scroller(message_scroller) -> message_scroller_changed _
+  target otp_group = #otp-group
+  target message_stage = #message-stage/root
+  click-at 40.0 28.0
+  type "12"
+  capture otp_group_focus
+  expect otp == "12"
+  click-at 220.0 150.0
+  capture message_pointer_focus
+  expect otp_group.width > 240.0
+  expect message_stage.height ~= 188.0
+
+test modal_trigger_is_only_the_action
+  preset test
+  viewport 560 240
+  mount
+    DemoStage height=190.0 padding=8.0 #modal-stage
+      extern alert_dialog(alert_dialog) -> alert_dialog_changed _
+  click-at 90.0 92.0
+  idle
+  expect !alert_dialog_is_open(alert_dialog)
+  click-at 455.0 92.0
+  idle
+  expect alert_dialog_is_open(alert_dialog)
+  expect text "Delete this component?"
+  capture modal_open_from_action
+
+test catalog_full_scroll_visuals
+  preset test
+  viewport 1120 820
+  target app = #app
+  target scroller = app/catalog-scroll
+  scroll-to scroller 0.0 2500.0
+  click-at 370.0 220.0
+  idle
+  capture dropdown_categories
+  expect dropdown_menu_is_open(dropdown)
+  key escape
+  scroll-to scroller 0.0 2950.0
+  capture identity_and_smooth_chart
+  scroll-to scroller 0.0 3700.0
+  capture modal_and_data_table
+  scroll-to scroller 0.0 4400.0
+  capture messages_and_edge_panels
+  scroll-to scroller 0.0 5320.0
+  click-at 160.0 266.0
+  idle
+  expect navigation_menu_is_open(navigation_menu)
+  capture navigation_menu_and_shell
+  key escape
+  resize 720 560
+  snap-end scroller
+  capture narrow_navigation_shell
+
+test dropdown_categories_open_from_pointer
+  preset test
+  viewport 420 360
+  mount
+    box p=24.0
+      extern dropdown_menu(dropdown) -> dropdown_changed _
+  click-at 70.0 42.0
+  idle
+  expect dropdown_menu_is_open(dropdown)
+  capture dropdown_pointer_open
+
+test smooth_chart_surface
+  preset test
+  viewport 560 620
+  mount
+    box p=24.0
+      extern chart(none) -> chart_hovered _
+  capture smooth_chart

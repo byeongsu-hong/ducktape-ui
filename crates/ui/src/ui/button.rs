@@ -51,12 +51,18 @@ where
     Message: Clone + 'a,
 {
     Button::new(
-        text(label).size(theme.typography.caption).font(Font {
-            weight: Weight::Semibold,
-            ..Font::DEFAULT
-        }),
+        text(label)
+            .size(theme.typography.caption)
+            .font(label_font(theme)),
         theme,
     )
+}
+
+fn label_font(theme: &Theme) -> Font {
+    Font {
+        weight: Weight::Semibold,
+        ..theme.typography.font
+    }
 }
 
 impl<'a, Message> Button<'a, Message>
@@ -338,6 +344,17 @@ mod tests {
 
         let leading: Button<'_, ()> = button("Leading", &LIGHT).align_x(Horizontal::Left);
         assert_eq!(leading.alignment, Horizontal::Left);
+    }
+
+    #[test]
+    fn label_weight_inherits_the_theme_font_family() {
+        let mut theme = LIGHT;
+        theme.typography.font = Font::with_name("Product Sans");
+
+        let font = label_font(&theme);
+
+        assert_eq!(font.family, Font::with_name("Product Sans").family);
+        assert_eq!(font.weight, Weight::Semibold);
     }
 
     #[test]

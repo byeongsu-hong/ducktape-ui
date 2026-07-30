@@ -52,6 +52,7 @@ extern crate::adapters
   task select_apply(state:SelectState, event:SelectEvent) -> SelectState
   component select(state:&SelectState) -> SelectEvent
   sync dropdown_menu_state() -> DropdownMenuState
+  sync dropdown_menu_is_open(state:DropdownMenuState) -> bool
   task dropdown_menu_apply(state:DropdownMenuState, event:DropdownMenuEvent) -> DropdownMenuState
   component dropdown_menu(state:&DropdownMenuState) -> DropdownMenuEvent
   sync context_menu_state() -> ContextMenuState
@@ -59,6 +60,7 @@ extern crate::adapters
   component context_menu(state:&ContextMenuState) -> ContextMenuEvent
   sync alert_dialog_state() -> AlertDialogState
   task alert_dialog_apply(state:AlertDialogState, event:AlertDialogEvent) -> AlertDialogState
+  sync alert_dialog_is_open(state:AlertDialogState) -> bool
   component alert_dialog(state:&AlertDialogState) -> AlertDialogEvent
   sync sidebar_state() -> SidebarState
   sync sidebar_apply(state:SidebarState, event:SidebarEvent) -> SidebarState
@@ -70,6 +72,7 @@ extern crate::adapters
   task drawer_apply(state:DrawerState, event:DrawerEvent) -> DrawerState
   component drawer(state:&DrawerState) -> DrawerEvent
   sync navigation_menu_state() -> NavigationMenuState
+  sync navigation_menu_is_open(state:NavigationMenuState) -> bool
   task navigation_menu_apply(event:NavigationMenuEvent) -> NavigationMenuState
   component navigation_menu(state:&NavigationMenuState) -> NavigationMenuEvent
   sync menubar_state() -> MenubarState
@@ -88,6 +91,10 @@ extern crate::adapters
   sync data_table_rows(query:str, sort:str, page:i64) -> [str]
   sync data_table_next_sort(sort:str) -> str
   sync data_table_can_next(query:str, page:i64) -> bool
+  sync data_table_page_count(query:str) -> i64
+  sync data_table_result_count(query:str) -> i64
+  sync data_table_page_range(query:str, page:i64) -> [i64]
+  sync data_table_page_label(page:i64, current:bool) -> str
   component resizable_demo(sizes:&[f64]) -> [f64]
   task popover_apply(event:PopoverEvent) -> bool
   component popover_demo(open:bool) -> PopoverEvent

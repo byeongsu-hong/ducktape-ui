@@ -474,14 +474,15 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
     fn diff(&self, tree: &mut widget::Tree) {
         tree.diff_children(&[self.trigger.as_widget(), self.content.as_widget()]);
         let state = tree.state.downcast_mut::<State>();
-        state.press = None;
         if self.open {
+            state.press = None;
             state.trigger_focus.unfocus();
         }
         if !self.open || self.disabled {
             state.content_focus.unfocus();
         }
         if self.disabled {
+            state.press = None;
             state.trigger_focus.unfocus();
         }
     }
@@ -1501,6 +1502,82 @@ mod tests {
         assert_eq!(Widget::children(&widget).len(), 2);
         let tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
         assert_eq!(tree.children.len(), 2);
+    }
+
+    #[test]
+    fn controlled_rerender_preserves_pending_trigger_press() {
+        let mut widget = popover(
+            PopoverIds::new("rerender"),
+            text("trigger"),
+            text("content"),
+            false,
+            Message::Popover,
+            &LIGHT,
+        )
+        .into_widget();
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        tree.state.downcast_mut::<State>().press = Some(Press::Mouse);
+
+        Widget::diff(&widget, &mut tree);
+
+        assert_eq!(tree.state.downcast_ref::<State>().press, Some(Press::Mouse));
+
+        widget.open = true;
+        Widget::diff(&widget, &mut tree);
+        assert_eq!(tree.state.downcast_ref::<State>().press, None);
+    }
+
+    #[test]
+    fn trigger_opens_when_press_and_release_span_a_rerender() {
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let viewport = rect(0.0, 0.0, 320.0, 240.0);
+        let mut widget = popover(
+            PopoverIds::new("click"),
+            text("trigger"),
+            text("content"),
+            false,
+            Message::Popover,
+            &LIGHT,
+        )
+        .into_widget();
+        let mut tree = widget::Tree::new(&widget as &dyn Widget<_, _, _>);
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let cursor = mouse::Cursor::Available(node.bounds().center());
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+
+        widget.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            cursor,
+            &renderer,
+            &mut clipboard,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+        Widget::diff(&widget, &mut tree);
+        widget.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            Layout::new(&node),
+            cursor,
+            &renderer,
+            &mut clipboard,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+
+        assert_eq!(messages, vec![Message::Popover(PopoverEvent::Open)]);
     }
 
     #[test]
