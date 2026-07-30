@@ -679,13 +679,16 @@ where
                     Edit::Paste(Arc::new(content.clone())),
                 ))));
                 state.preedit = None;
-                state.pending_ime_commit = Some(content.clone());
+                state.pending_ime_commit = cfg!(target_os = "macos").then(|| content.clone());
                 state.preferred_x = None;
                 shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyReleased { modified_key, .. })
                 if state.focus.is_some() && state.pending_ime_commit.is_some() =>
             {
+                // After a macOS IME commit, winit suppresses the key press that
+                // produced it but still reports the release. Recover only the
+                // boundary punctuation that was absent from the commit.
                 if let Some(character) = take_missing_ime_boundary_punctuation(
                     &mut state.pending_ime_commit,
                     modified_key,
