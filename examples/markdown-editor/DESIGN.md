@@ -60,7 +60,7 @@ hold:
 | Undo and redo | Command/Ctrl+Z and Command/Ctrl+Shift+Z (plus Ctrl+Y) reach the application under non-Latin input sources; adjacent typing is one bounded event; a new edit clears redo | `undo_and_redo_shortcuts_survive_a_non_latin_input_source`, `app_undo_and_redo_apply_grouped_typing`, and `undo_redo_tracks_deltas_and_saved_state` |
 | Document lifecycle | New, Open, Save, Save As, dirty-close confirmation, UTF-8 errors, and cancelled dialogs preserve the current document until the user makes an explicit choice | typed handlers in `ui/handlers/app.ice` and delta-based saved-revision tracking |
 | Find, formatting, and links | Find next/previous, bold, italic, inline code, link insertion, and safe HTTP(S) link opening work from toolbar or platform shortcuts | formatting/history tests, `resolves_only_the_link_under_the_cursor`, and Ice handler contracts |
-| Viewport and scale | The editor fills the window, wraps within the 800 px page, scrolls and reveals the rich caret, and edits a 10,000-line native buffer without copying it per key | `inline_editor_fills_the_window` and `large_document_edits_stay_in_the_native_buffer` |
+| Viewport and scale | The editor fills the window, wraps within the 800 px page, scrolls and reveals the rich caret, and edits a 10,000-line native buffer through the app update path | `inline_editor_fills_the_window` and `large_document_edits_stay_in_the_native_buffer` |
 
 ## Behavioral references
 
