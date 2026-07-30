@@ -937,7 +937,8 @@ view
   text "Brand" font=brand @font-bold
 "#;
     let generated = compile(source, "typography.ice").unwrap();
-    assert!(generated.contains(".default_font(::iced::Font"));
+    assert!(generated.contains("pub fn default_font() -> ::iced::Font { ::iced::Font"));
+    assert!(generated.contains(".default_font(Self::default_font())"));
     assert!(generated.contains("Family::Name(\"Inter\")"));
     assert!(generated.contains("Weight::Semibold"));
     assert!(generated.contains("Stretch::SemiExpanded"));
@@ -952,6 +953,12 @@ view
     assert!(inherited.contains(
         "weight: ::iced::font::Weight::Bold, ..::iced::Font { family: ::iced::font::Family::Name(\"Inter\")"
     ));
+
+    let builtin_default = compile(&source.replace(" default=true", ""), "typography.ice").unwrap();
+    assert!(
+        builtin_default.contains("pub fn default_font() -> ::iced::Font { ::iced::Font::DEFAULT }")
+    );
+    assert!(!builtin_default.contains(".default_font(Self::default_font())"));
 }
 
 #[test]
