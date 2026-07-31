@@ -404,6 +404,7 @@ impl From<ExternKind> for ApiExternKind {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub enum ApiExpression {
     Bool {
         value: bool,

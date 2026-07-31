@@ -24,7 +24,7 @@ pub(crate) fn valid_args(args: &[String]) -> bool {
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     match args {
-        [source] if source != "diff" => emit_fingerprint(root, &root.join(source)),
+        [source] if source != "diff" => emit_fingerprint(&root.join(source)),
         [command, baseline, current] if command == "diff" => diff_files(
             &root.join(baseline),
             &root.join(current),
@@ -47,10 +47,10 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     }
 }
 
-fn emit_fingerprint(root: &Path, source: &Path) -> Result<(), String> {
+fn emit_fingerprint(source: &Path) -> Result<(), String> {
     let api = ui_lang_core::analyze_api_file(source)
         .map_err(|error| error.render(&source.display().to_string()))?;
-    let package = package_for_source(root, source)?;
+    let package = package_for_source(source)?;
     let document = FingerprintDocument::new(package, api)?;
     println!(
         "{}",
@@ -175,17 +175,13 @@ fn read_fingerprint(path: &Path) -> Result<FingerprintDocument, String> {
     Ok(document)
 }
 
-fn package_for_source(root: &Path, source: &Path) -> Result<ApiPackage, String> {
+fn package_for_source(source: &Path) -> Result<ApiPackage, String> {
     let source = source
         .canonicalize()
         .map_err(|error| format!("cannot resolve API source `{}`: {error}", source.display()))?;
-    let boundary = root.canonicalize().unwrap_or_else(|_| root.to_owned());
     for directory in source.parent().into_iter().flat_map(Path::ancestors) {
         let manifest = directory.join("Cargo.toml");
         if !manifest.is_file() {
-            if directory == boundary {
-                break;
-            }
             continue;
         }
         let source = fs::read_to_string(&manifest)
@@ -200,9 +196,6 @@ fn package_for_source(root: &Path, source: &Path) -> Result<ApiPackage, String> 
             .get("package")
             .and_then(toml_edit::Item::as_table_like)
         else {
-            if directory == boundary {
-                break;
-            }
             continue;
         };
         let name = package
@@ -1061,7 +1054,7 @@ view
         let source = member.join("src/api.ice");
         fs::write(&source, "").unwrap();
 
-        let package = super::package_for_source(temp.path(), &source).unwrap();
+        let package = super::package_for_source(&source).unwrap();
         assert_eq!(package.name, "inherited");
         assert_eq!(package.version, "9.8.7");
     }
@@ -1069,7 +1062,11 @@ view
     #[test]
     fn rejects_unknown_schema_and_corrupt_payloads() {
         let temp = TempDir::new().unwrap();
-        let source = source("component Card()\n  space", "p-2", "extra");
+        let source = source(
+            "component Card(title:str=\"Draft\")\n  space",
+            "p-2",
+            "extra",
+        );
         let document = fingerprint(&source);
         let path = temp.path().join("api.json");
 
@@ -1082,6 +1079,12 @@ view
         value["api"]["components"][0]["name"] = serde_json::json!("Changed");
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(read_fingerprint(&path).unwrap_err().contains("corrupt"));
+
+        let mut value = serde_json::to_value(&document).unwrap();
+        value["api"]["components"][0]["props"][0]["default"]["unexpected"] =
+            serde_json::json!("tampered");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(read_fingerprint(&path).unwrap_err().contains("malformed"));
 
         fs::write(&path, b"{ definitely not json").unwrap();
         assert!(read_fingerprint(&path).unwrap_err().contains("malformed"));

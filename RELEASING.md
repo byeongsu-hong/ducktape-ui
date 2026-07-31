@@ -55,6 +55,13 @@ cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
 Breaking changes exit nonzero. Update the committed baseline only when the
 corresponding breaking/additive/behavioral report is intentional and reviewed;
 formatting and file relocation alone do not change its SHA-256 fingerprint.
+Pull requests always compare against the target branch's baseline, so updating
+the baseline in the same change cannot hide a breaking diff. The committed
+baseline must also match the command above byte-for-byte. After reviewing both
+the semantic diff and regenerated baseline, a maintainer explicitly accepts an
+intentional breaking change by applying the `api-breaking-approved` label. Label
+addition and removal rerun the gate; ordinary contributors and fork pull
+requests receive no write token or baseline override.
 
 ## Registry order
 

@@ -96,9 +96,11 @@ versioned SHA-256 JSON fingerprint over component, recipe, theme, type, and
 extern surfaces, retaining imported namespace identity without source paths or
 backend/HIR details. `cargo ice api diff` validates artifact schema and hash,
 emits human or machine-readable breaking/behavioral/additive classifications,
-and fails on breaking changes. CI compares the `ducktape-ui` graph with the
-reviewed `api/baselines/ducktape-ui.json`. This is tooling evidence over the
-existing Core contract, not a new syntax or LSP capability.
+and fails on breaking changes. Pull-request CI requires an exactly regenerated
+`ducktape-ui` artifact, compares it with the target commit's reviewed baseline,
+and accepts a breaking result only through a maintainer-controlled label. This
+is tooling evidence over the existing Core contract, not a new syntax or LSP
+capability.
 
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project

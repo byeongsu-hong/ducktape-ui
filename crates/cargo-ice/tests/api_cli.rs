@@ -1,13 +1,18 @@
 use serde_json::Value;
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn run(project: &TempDir, args: &[&str]) -> Output {
+    run_from(project.path(), args)
+}
+
+fn run_from(directory: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cargo-ice"))
         .arg("ice")
         .args(args)
-        .current_dir(project.path())
+        .current_dir(directory)
         .output()
         .unwrap()
 }
@@ -39,6 +44,28 @@ palette light for AppTheme
 {component}
 "#
     )
+}
+
+#[test]
+fn api_finds_the_containing_package_from_a_descendant_directory() {
+    let project = write_project();
+    let interface_directory = project.path().join("src/ui");
+    fs::create_dir_all(&interface_directory).unwrap();
+    fs::write(
+        interface_directory.join("api.ice"),
+        interface("component Card()\n  space"),
+    )
+    .unwrap();
+
+    let output = run_from(&interface_directory, &["api", "api.ice"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let fingerprint: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(fingerprint["package"]["name"], "api-fixture");
+    assert_eq!(fingerprint["package"]["version"], "3.2.1");
 }
 
 #[test]
