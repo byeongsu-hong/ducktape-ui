@@ -22,9 +22,18 @@ derived
   line_count = editor_line_count(document)
   current_line = editor_line(document, caret_line)
   confirming = pending != PendingAction.idle
-  editor_enabled = !busy && !confirming
+  interaction_blocked = busy || confirming
+  editor_enabled = !interaction_blocked
   has_error = !empty(error)
 
 preset test
   state
     document = editor("# Native Markdown\n\nA **focused** writing surface with [a link](https://example.com).")
+
+preset error
+  state
+    error = "Previous error"
+
+preset busy
+  state
+    busy = true

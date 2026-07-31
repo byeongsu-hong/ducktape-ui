@@ -15,19 +15,22 @@ on toggle_theme
   active_palette = AppTheme.dark
 
 on request_new
+  return if busy || confirming
   find_open = false
   find_query = ""
+  error = ""
   pending = PendingAction.new_document
   return if is_dirty()
   document = reset_document("")
   path = ""
   name = "Untitled.md"
   pending = PendingAction.idle
-  error = ""
 
 on request_open
+  return if busy || confirming
   find_open = false
   find_query = ""
+  error = ""
   pending = PendingAction.open_document
   return if is_dirty()
   pending = PendingAction.idle
@@ -35,10 +38,14 @@ on request_open
   run open_document() -> opened _ | failed _
 
 on request_save
+  return if busy || confirming
+  error = ""
   busy = true
   run save_current(path, name, editor_text(document), revision()) -> saved _ | failed _
 
 on request_save_as
+  return if busy || confirming
+  error = ""
   busy = true
   run save_document_as(name, editor_text(document), revision()) -> saved _ | failed _
 
@@ -60,6 +67,10 @@ on saved(file)
   error = ""
 
 on request_close
+  return if busy || confirming
+  find_open = false
+  find_query = ""
+  error = ""
   pending = PendingAction.close_window
   return if is_dirty()
   pending = PendingAction.idle
@@ -79,6 +90,7 @@ on discard_new
 
 on discard_open
   pending = PendingAction.idle
+  error = ""
   busy = true
   run open_document() -> opened _ | failed _
 

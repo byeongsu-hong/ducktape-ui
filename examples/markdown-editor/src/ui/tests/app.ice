@@ -15,15 +15,16 @@ test shell_layout_and_toolbar_contract
   viewport 1200 800
   target app = #app
   target toolbar = #app/toolbar/root
-  target file_actions = #app/toolbar/root/file-actions
-  target edit_actions = #app/toolbar/root/edit-actions
-  target format_actions = #app/toolbar/root/format-actions
-  target save = #app/toolbar/root/file-actions/save
-  target dark_theme = #app/toolbar/root/dark-theme
+  target file_actions = #app/toolbar/root/file-row/file-actions
+  target edit_actions = #app/toolbar/root/action-row/edit-actions
+  target format_actions = #app/toolbar/root/action-row/format-actions
+  target save = #app/toolbar/root/file-row/file-actions/save
+  target document_name = #app/toolbar/root/file-row/document-name
+  target dark_theme = #app/toolbar/root/action-row/dark-theme
   target editor_surface = #app/editor-surface/root
   target page = #app/editor-surface/root/page
   target status = #app/status-bar/root
-  expect toolbar.height ~= 58.0
+  expect toolbar.height ~= 92.0
   expect file_actions.visible
   expect edit_actions.visible
   expect format_actions.visible
@@ -31,10 +32,12 @@ test shell_layout_and_toolbar_contract
   expect editor_surface.y ~= toolbar.bottom
   expect status.bottom ~= app.bottom
   expect page.width <= 880.0
+  expect document_name.right <= toolbar.right
   expect a11y save name "Save"
   expect a11y dark_theme name "Use dark appearance"
   resize 720 520
   expect toolbar.width ~= app.width
+  expect document_name.right <= toolbar.right
   expect editor_surface.visible
   expect status.bottom ~= app.bottom
   expect save.visible
@@ -42,9 +45,9 @@ test shell_layout_and_toolbar_contract
 test toolbar_theme_and_find_interactions
   preset test
   viewport 1200 800
-  target find = #app/toolbar/root/find
-  target dark_theme = #app/toolbar/root/dark-theme
-  target light_theme = #app/toolbar/root/light-theme
+  target find = #app/toolbar/root/action-row/find
+  target dark_theme = #app/toolbar/root/action-row/dark-theme
+  target light_theme = #app/toolbar/root/action-row/light-theme
   target find_bar = #app/find_bar/root
   target query_input = #app/find_bar/root/find_query
   target close_find = #app/find_bar/root/close
@@ -61,6 +64,71 @@ test toolbar_theme_and_find_interactions
   expect query_input.value == "native"
   click close_find
   expect missing find_bar
+
+test dirty_new_confirmation_interaction
+  preset test
+  viewport 1200 800
+  target new = #app/toolbar/root/file-row/file-actions/new
+  target document_editor = #app/editor-surface/root/page/document
+  target save = #app/toolbar/root/file-row/file-actions/save
+  target dark_theme = #app/toolbar/root/action-row/dark-theme
+  target dialog = #confirm/root
+  target cancel = #confirm/root/cancel-new
+  click document_editor
+  type "!"
+  expect text "Unsaved"
+  click new
+  expect pending == PendingAction.new_document
+  expect dialog.visible
+  expect dialog.width == 440.0
+  expect a11y save disabled true
+  expect a11y dark_theme disabled true
+  expect exists cancel
+  click cancel
+  expect pending == PendingAction.idle
+  expect no text "Unsaved changes"
+
+test close_confirmation_closes_find
+  preset test
+  viewport 1200 800
+  target document_editor = #app/editor-surface/root/page/document
+  target find = #app/toolbar/root/action-row/find
+  target find_bar = #app/find_bar/root
+  target cancel = #confirm/root/cancel-close
+  click document_editor
+  type "!"
+  click find
+  expect find_bar.visible
+  dispatch request_close
+  expect pending == PendingAction.close_window
+  expect missing find_bar
+  expect exists cancel
+  click cancel
+  expect pending == PendingAction.idle
+
+test new_clears_previous_error
+  preset error
+  viewport 1200 800
+  target new = #app/toolbar/root/file-row/file-actions/new
+  expect text "Previous error"
+  click new
+  expect no text "Previous error"
+
+test close_clears_previous_error
+  preset error
+  viewport 1200 800
+  expect text "Previous error"
+  dispatch request_close
+  expect no text "Previous error"
+
+test busy_shell_contract
+  preset busy
+  viewport 1200 800
+  target save = #app/toolbar/root/file-row/file-actions/save
+  target dark_theme = #app/toolbar/root/action-row/dark-theme
+  expect text "Working…"
+  expect a11y save disabled true
+  expect a11y dark_theme disabled true
 
 test confirmation_dialog_contract
   viewport 560 320

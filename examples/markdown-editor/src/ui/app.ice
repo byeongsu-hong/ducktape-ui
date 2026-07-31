@@ -51,7 +51,7 @@ view
             with
               name=name
               dirty=is_dirty()
-              busy=busy
+              blocked=interaction_blocked
               undo_available=can_undo()
               redo_available=can_redo()
               dark=dark
