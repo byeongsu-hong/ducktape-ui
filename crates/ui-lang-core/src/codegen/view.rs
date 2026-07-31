@@ -30,17 +30,20 @@ pub(super) fn rendered_child_scope(
 }
 
 pub(in crate::codegen) fn component_slot_context(
-    slots: &[ComponentSlot],
-    document: &Document,
+    slots: &[ResolvedSlot],
+    document: &RenderDocument<'_>,
     env: &HashMap<String, Binding>,
     parent: Option<&SlotContext>,
 ) -> Result<Option<SlotContext>, Error> {
     let mut entries = Vec::new();
     for slot in slots {
-        if !node_is_omitted(&slot.content, document, env, parent)? {
+        let Some(content) = &slot.content else {
+            continue;
+        };
+        if !node_is_omitted(content, document, env, parent)? {
             entries.push(SlotContent {
                 name: slot.name.clone(),
-                node: (*slot.content).clone(),
+                node: content.clone(),
                 env: env.clone(),
             });
         }
@@ -53,7 +56,7 @@ pub(in crate::codegen) fn component_slot_context(
 
 pub(in crate::codegen) fn render_node_if_present(
     node: &ViewNode,
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,
@@ -68,7 +71,7 @@ pub(in crate::codegen) fn render_node_if_present(
 
 fn node_is_omitted(
     node: &ViewNode,
-    document: &Document,
+    document: &RenderDocument<'_>,
     env: &HashMap<String, Binding>,
     slot: Option<&SlotContext>,
 ) -> Result<bool, Error> {
@@ -84,15 +87,10 @@ fn node_is_omitted(
             };
             node_is_omitted(&content.node, document, &content.env, parent)?
         }
-        ViewNode::Component {
-            name, slots, span, ..
-        } => {
-            let component = document
-                .components
-                .iter()
-                .find(|component| component.name == *name)
-                .ok_or_else(|| Error::new("E122", span, format!("unknown component `{name}`")))?;
-            let slots = component_slot_context(slots, document, env, slot)?;
+        ViewNode::Component { span, .. } => {
+            let call = document.program().component_call(span)?;
+            let component = document.program().component(call.component);
+            let slots = component_slot_context(&call.slots, document, env, slot)?;
             node_is_omitted(&component.root, document, env, slots.as_ref())?
         }
         ViewNode::Layout {
@@ -158,7 +156,7 @@ fn node_is_omitted(
 
 pub(in crate::codegen) fn render_node(
     node: &ViewNode,
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,

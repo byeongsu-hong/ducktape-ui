@@ -181,9 +181,10 @@ pub(in crate::codegen) fn generate_theme(
 
 pub(in crate::codegen) fn generate_boot(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
+    let document = program.document();
     let accessibility_root = rust_string(&document.app);
     writeln!(out, "fn __state() -> Self {{").unwrap();
     for (node, test_only) in document_pane_grids(document) {
@@ -251,14 +252,15 @@ pub(in crate::codegen) fn generate_boot(
         writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    for component in document
-        .components
+    for component in program
+        .components()
         .iter()
-        .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
+        .filter(|component| component.storage != ComponentStorage::Stateless)
     {
-        let initial = match component.lifetime {
-            ComponentLifetime::Retained => "::std::collections::HashMap::new()",
-            ComponentLifetime::Mounted => "::ui_lang_runtime::MountedComponentState::default()",
+        let initial = match component.storage {
+            ComponentStorage::Retained => "::std::collections::HashMap::new()",
+            ComponentStorage::Mounted => "::ui_lang_runtime::MountedComponentState::default()",
+            ComponentStorage::Stateless => unreachable!(),
         };
         writeln!(
             out,
@@ -377,17 +379,21 @@ fn generate_initial_task_method(
 
 pub(in crate::codegen) fn generate_update(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
+    let document = program.document();
     let accessibility_root = rust_string(&document.app);
     let has_fallthrough_arm = document
         .handlers
         .iter()
         .any(|handler| handler.name != "mount")
-        || document.components.iter().any(|component| {
+        || program.components().iter().any(|component| {
             !component.handlers.is_empty()
-                || component.states.iter().any(|state| state.ty == Type::Str)
+                || component
+                    .states
+                    .iter()
+                    .any(|state| state.source.ty == Type::Str)
         })
         || document_pane_grids(document).into_iter().any(|(node, _)| {
             matches!(node, ViewNode::PaneGrid { options, .. } if options.resize_leeway.is_some() || options.draggable)
@@ -505,21 +511,27 @@ pub(in crate::codegen) fn generate_update(
         }
         writeln!(out, "}})(),").unwrap();
     }
-    for component in &document.components {
+    for component in program
+        .components()
+        .iter()
+        .filter(|component| component.storage != ComponentStorage::Stateless)
+    {
         let field = component_state_field(&component.name);
-        let values = match component.lifetime {
-            ComponentLifetime::Retained => format!("self.{field}"),
-            ComponentLifetime::Mounted => format!("self.{field}.values()"),
+        let values = match component.storage {
+            ComponentStorage::Retained => format!("self.{field}"),
+            ComponentStorage::Mounted => format!("self.{field}.values()"),
+            ComponentStorage::Stateless => unreachable!(),
         };
-        let entry = |scope: &str| match component.lifetime {
-            ComponentLifetime::Retained => {
+        let entry = |scope: &str| match component.storage {
+            ComponentStorage::Retained => {
                 format!("let __local = self.{field}.entry({scope}).or_default();")
             }
-            ComponentLifetime::Mounted => format!(
+            ComponentStorage::Mounted => format!(
                 "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).or_default();"
             ),
+            ComponentStorage::Stateless => unreachable!(),
         };
-        for line in component_generation_lines(component) {
+        for line in component_generation_lines(&component.handlers) {
             let generation = component_latest_field(line);
             let variant = component_latest_variant(&component.name, line);
             writeln!(
@@ -554,6 +566,7 @@ pub(in crate::codegen) fn generate_update(
             }
             let mut env = HashMap::new();
             for state in &component.states {
+                let state = &state.source;
                 env.insert(
                     state.name.clone(),
                     Binding {
@@ -597,9 +610,10 @@ pub(in crate::codegen) fn generate_update(
                     FutureMode::Latest | FutureMode::Replace => {
                         let generation = component_latest_field(line);
                         let future_variant = component_latest_variant(&component.name, line);
-                        match component.lifetime {
-                            ComponentLifetime::Retained => writeln!(out, "let __generation = {{ {} __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};", entry("__scope.clone()")).unwrap(),
-                            ComponentLifetime::Mounted => writeln!(out, "let __generation = self.{field}.next_generation(); {{ {} __local.{generation} = __generation; }}", entry("__scope.clone()")).unwrap(),
+                        match component.storage {
+                            ComponentStorage::Retained => writeln!(out, "let __generation = {{ {} __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};", entry("__scope.clone()")).unwrap(),
+                            ComponentStorage::Mounted => writeln!(out, "let __generation = self.{field}.next_generation(); {{ {} __local.{generation} = __generation; }}", entry("__scope.clone()")).unwrap(),
+                            ComponentStorage::Stateless => unreachable!(),
                         }
                         if mode == FutureMode::Replace {
                             let replace = component_replace_field(line);
@@ -616,6 +630,7 @@ pub(in crate::codegen) fn generate_update(
         for state in component
             .states
             .iter()
+            .map(|state| &state.source)
             .filter(|state| state.ty == Type::Str)
         {
             let variant = component_binding_variant(&component.name, &state.name);

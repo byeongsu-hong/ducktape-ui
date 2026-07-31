@@ -71,6 +71,29 @@ settings and tests, and finally the remaining backend surface. Each migrated
 slice removes its old code-generation path in the same change. There is no
 permanent mixed AST/HIR fallback or compatibility shim.
 
+### Implementation status
+
+The component-contract and component-call slice is implemented. The private
+owned `LoweredProgram` is now the only input accepted by Rust generation.
+Component and call IDs, ordered props with selected defaults, writable state
+references, direct/forwarded named events, ordered required/optional slots,
+output routes, scope identity, and storage lifetime are fixed before emission.
+The component call render path selects classified calls and contracts by source
+site and typed ID instead of repeating those decisions. Lowering still resolves
+component source names, while other unmigrated generation paths still consume
+AST names and nodes. Component state storage, boot, update, mounted cleanup, and
+call rendering consume the resolved contract.
+
+Normalized component records carry root/import locations through `OriginId`.
+The table's parent links are scaffolding for future expansion stacks: current
+lowering errors and generated source markers do not traverse them and continue
+to use source spans and the existing physical line-origin map.
+
+The program still owns AST-backed nodes for semantic families not yet migrated.
+Styles/themes, expressions/matches, asynchronous call sites, application
+settings, tests, and the remaining views therefore remain open implementation
+slices; this status does not satisfy the migration-complete criteria below.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;

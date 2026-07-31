@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_content(
     node: &ViewNode,
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,
@@ -90,88 +90,99 @@ pub(in crate::codegen) fn render_content(
             append_dimensions(&mut code, [width, height], env, document)?;
             Ok(format!("{code}.into()"))
         }
-        ViewNode::Component {
-            name,
-            args,
-            id,
-            slots,
-            events,
-            route,
-            span,
-        } => {
-            let component = document
-                .components
-                .iter()
-                .find(|item| item.name == *name)
-                .ok_or_else(|| Error::new("E122", span, format!("unknown component `{name}`")))?;
+        ViewNode::Component { span, .. } => {
+            let call = document.program().component_call(span)?;
+            let component = document.program().component(call.component);
+            let name = &component.name;
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
-            for param in &component.params {
-                let arg = args.iter().find(|arg| arg.name == param.name);
-                let state = match (param.bind, arg.map(|arg| &arg.value)) {
-                    (true, Some(Expr::Path(path))) if path.len() == 1 => {
-                        env.get(&path[0]).and_then(|binding| binding.state.clone())
-                    }
-                    _ => None,
+            for argument in &call.arguments {
+                let value_env = if argument.uses_definition_scope() {
+                    &default_env
+                } else {
+                    env
                 };
-                let value = arg.map(|arg| (&arg.value, env)).or_else(|| {
-                    param
-                        .default
-                        .as_ref()
-                        .map(|default| (default, &default_env))
-                });
-                let (value, value_env) = value.expect("checker requires a component prop value");
+                let state = argument
+                    .writable
+                    .as_ref()
+                    .map(|state| {
+                        env.get(state.name())
+                            .and_then(|binding| binding.state.clone())
+                            .ok_or_else(|| {
+                                Error::new(
+                                    "E196",
+                                    span,
+                                    format!(
+                                        "lowered writable state `{}` is absent from the render environment",
+                                        state.name()
+                                    ),
+                                )
+                            })
+                    })
+                    .transpose()?;
                 component_env.insert(
-                    param.name.clone(),
+                    argument.name.clone(),
                     Binding {
-                        code: expr_code(value, value_env, document, ValueMode::Borrowed)?,
-                        ty: param.ty.clone(),
+                        code: expr_code(
+                            &argument.expression,
+                            value_env,
+                            document,
+                            ValueMode::Borrowed,
+                        )?,
+                        ty: argument.ty.clone(),
                         local: false,
                         state,
                     },
                 );
             }
-            if let Some(route) = route {
+            if let ComponentOutputRoute::Direct { output, route, .. } = &call.output {
                 component_env.insert(
                     component_output_key(name),
                     Binding {
                         code: route_callback_code(
                             route, "__value", "__value", env, document, message,
                         )?,
-                        ty: component.output.clone(),
+                        ty: output.clone(),
                         local: true,
                         state: None,
                     },
                 );
             }
-            for event in &component.events {
-                let supplied = events
-                    .iter()
-                    .find(|supplied| supplied.name == event.name)
-                    .expect("checker requires every component event route");
-                let payloads = (0..event.payloads.len())
+            for event in &call.events {
+                let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
                 let payload_refs = payloads.iter().map(String::as_str).collect::<Vec<_>>();
-                let code = if let Some(route) = &supplied.route {
-                    ordered_route_callback_code(
+                let code = match event {
+                    ResolvedEventRoute::Direct { route, .. } => ordered_route_callback_code(
                         route,
                         &payloads.join(", "),
                         &payload_refs,
                         env,
                         document,
                         message,
-                    )?
-                } else {
-                    let (outer, _) = component_context(env)
-                        .expect("checker requires forward inside a component");
-                    component_event(env, outer, &event.name)
-                        .expect("checker requires matching forwarded event")
-                        .code
-                        .clone()
+                    )?,
+                    ResolvedEventRoute::Forward {
+                        outer_component, ..
+                    } => {
+                        let outer = &document.program().component(*outer_component).name;
+                        component_event(env, outer, event.name())
+                            .ok_or_else(|| {
+                                Error::new(
+                                    "E196",
+                                    span,
+                                    format!(
+                                        "lowered forwarded event `{}` is absent from component context",
+                                        event.name()
+                                    ),
+                                )
+                            })?
+                            .code
+                            .clone()
+                    }
                 };
                 component_env.insert(
-                    component_event_key(name, &event.name),
+                    component_event_key(name, event.name()),
                     Binding {
                         code,
                         ty: Type::Unit,
@@ -180,7 +191,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let component_slots = component_slot_context(slots, document, env, slot)?;
+            let component_slots = component_slot_context(&call.slots, document, env, slot)?;
             for component_slot in component_slots
                 .iter()
                 .flat_map(|slots| slots.entries.iter())
@@ -195,22 +206,24 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let component_scope = id.as_ref().map_or_else(
-                || {
+            let component_scope = match &call.scope {
+                ComponentScope::Implicit { call_site, .. } => {
                     let scope = reconciliation_scope(scope, env);
-                    format!("format!(\"{{}}/{}@{}\", {scope})", name, span.line)
-                },
-                |id| id_code(id, scope, env, document).unwrap_or_else(|_| scope.into()),
-            );
+                    format!("format!(\"{{}}/{}@{}\", {scope})", name, call_site)
+                }
+                ComponentScope::Explicit { id, .. } => id_code(id, scope, env, document)?,
+            };
             set_reconciliation_scope(&mut component_env, component_scope.clone());
-            let scope_binding = component_scope_binding(name, span.line);
-            if !component.states.is_empty() || !component.handlers.is_empty() {
+            let scope_binding = component_scope_binding(name, call.binding_site);
+            if call.storage != ComponentStorage::Stateless {
                 let field = component_state_field(name);
-                let states = match component.lifetime {
-                    ComponentLifetime::Retained => format!("self.{field}"),
-                    ComponentLifetime::Mounted => format!("self.{field}.values()"),
+                let states = match call.storage {
+                    ComponentStorage::Retained => format!("self.{field}"),
+                    ComponentStorage::Mounted => format!("self.{field}.values()"),
+                    ComponentStorage::Stateless => unreachable!(),
                 };
                 for state in &component.states {
+                    let state = &state.source;
                     component_env.insert(
                         state.name.clone(),
                         Binding {
@@ -239,10 +252,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            if !component.events.is_empty()
-                && component.states.is_empty()
-                && component.handlers.is_empty()
-            {
+            if !call.events.is_empty() && call.storage == ComponentStorage::Stateless {
                 component_env.insert(
                     component_context_key(name),
                     Binding {
@@ -253,7 +263,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let render_scope = if component.states.is_empty() && component.handlers.is_empty() {
+            let render_scope = if call.storage == ComponentStorage::Stateless {
                 component_scope.clone()
             } else {
                 format!("{scope_binding}.clone()")
@@ -266,10 +276,10 @@ pub(in crate::codegen) fn render_content(
                 &render_scope,
                 component_slots.as_ref(),
             )?;
-            let rendered = if component.states.is_empty() && component.handlers.is_empty() {
+            let rendered = if call.storage == ComponentStorage::Stateless {
                 rendered
             } else {
-                let mount = (component.lifetime == ComponentLifetime::Mounted).then(|| {
+                let mount = (call.storage == ComponentStorage::Mounted).then(|| {
                     let field = component_state_field(name);
                     format!("self.{field}.mount({scope_binding}.clone());")
                 });

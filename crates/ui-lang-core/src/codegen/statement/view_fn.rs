@@ -2,16 +2,15 @@ use super::*;
 
 pub(in crate::codegen) fn generate_view(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let mounted = document
-        .components
+    let document = program.document();
+    let render_document = RenderDocument::new(program);
+    let mounted = program
+        .components()
         .iter()
-        .filter(|component| {
-            component.lifetime == ComponentLifetime::Mounted
-                && (!component.states.is_empty() || !component.handlers.is_empty())
-        })
+        .filter(|component| component.storage == ComponentStorage::Mounted)
         .map(|component| component_state_field(&component.name))
         .collect::<Vec<_>>();
     let mut env = state_env(document, "self");
@@ -31,9 +30,15 @@ pub(in crate::codegen) fn generate_view(
     } else {
         "__ice_root_scope_ref".into()
     };
-    let rendered_root =
-        render_node_if_present(&document.view, document, message, &env, &root_scope, None)?
-            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
+    let rendered_root = render_node_if_present(
+        &document.view,
+        &render_document,
+        message,
+        &env,
+        &root_scope,
+        None,
+    )?
+    .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
     let window_arg = if document.daemon {
         ", window: ::iced::window::Id"
     } else {

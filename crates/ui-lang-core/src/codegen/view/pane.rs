@@ -6,7 +6,7 @@ pub(in crate::codegen) fn render_pane_grid(
     options: &PaneGridOptions,
     panes: &[PaneView],
     templates: &[PaneTemplate],
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,
@@ -283,7 +283,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
 
 pub(in crate::codegen) fn render_pane_content(
     pane: &PaneView,
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,

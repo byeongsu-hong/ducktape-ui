@@ -3,6 +3,7 @@ mod check;
 mod codegen;
 mod editor;
 mod format;
+mod lower;
 mod parser;
 mod source;
 #[cfg(test)]
@@ -254,6 +255,7 @@ impl CheckedDocument {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
         self.source_origins
             .get(merged_line.checked_sub(1)?)
@@ -408,5 +410,6 @@ pub fn analyze(source: &str) -> Result<CheckedDocument, Error> {
 
 pub fn compile(source: &str, source_path: &str) -> Result<String, Error> {
     let document = analyze(source)?;
-    codegen::generate(&document, source_path)
+    let program = lower::lower(document)?;
+    codegen::generate(&program, source_path)
 }

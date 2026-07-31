@@ -1,8 +1,13 @@
 use crate::ast::*;
 use crate::check::{controlled_editor_bindings, controlled_state_bindings, expr_type};
-use crate::{CheckedDocument, Error, canonical_snake};
+use crate::lower::{
+    ComponentOutputRoute, ComponentScope, ComponentStorage, LoweredProgram, ResolvedEventRoute,
+    ResolvedSlot,
+};
+use crate::{Error, canonical_snake};
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::ops::Deref;
 use std::path::Path;
 
 const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
@@ -45,7 +50,7 @@ fn encode_source_path(path: &str) -> String {
 
 fn resolve_source_markers(
     generated: String,
-    document: &CheckedDocument,
+    document: &LoweredProgram,
     source_path: &str,
 ) -> String {
     let mut output = String::with_capacity(generated.len());
@@ -76,7 +81,7 @@ fn resolve_source_markers(
 
 fn resolve_render_source_markers(
     line: &str,
-    document: &CheckedDocument,
+    document: &LoweredProgram,
     source_path: &str,
 ) -> String {
     let mut output = String::with_capacity(line.len());
@@ -196,10 +201,9 @@ pub(in crate::codegen) fn find_extern_function<'a>(
 }
 
 pub(in crate::codegen) fn component_generation_lines(
-    component: &Component,
+    handlers: &[Handler],
 ) -> impl Iterator<Item = usize> + '_ {
-    component
-        .handlers
+    handlers
         .iter()
         .flat_map(|handler| &handler.statements)
         .filter_map(|statement| match statement {
@@ -209,10 +213,9 @@ pub(in crate::codegen) fn component_generation_lines(
 }
 
 pub(in crate::codegen) fn component_replace_lines(
-    component: &Component,
+    handlers: &[Handler],
 ) -> impl Iterator<Item = usize> + '_ {
-    component
-        .handlers
+    handlers
         .iter()
         .flat_map(|handler| &handler.statements)
         .filter_map(|statement| match statement {
@@ -265,7 +268,8 @@ fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> 
     Ok(())
 }
 
-pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String, Error> {
+pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
+    let document = program.document();
     let message = format!("__{}Message", document.app);
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
     let mut out = String::new();
@@ -347,22 +351,23 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         writeln!(out, "}}").unwrap();
     }
 
-    for component in document
-        .components
+    for component in program
+        .components()
         .iter()
-        .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
+        .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let ty = component_state_type(&component.name);
         writeln!(out, "#[allow(dead_code)]\npub(crate) struct {ty} {{").unwrap();
         for state in &component.states {
+            let state = &state.source;
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for line in component_generation_lines(component) {
+        for line in component_generation_lines(&component.handlers) {
             writeln!(out, "{}: u64,", component_latest_field(line)).unwrap();
         }
-        for line in component_replace_lines(component) {
+        for line in component_replace_lines(&component.handlers) {
             writeln!(
                 out,
                 "{}: ::std::option::Option<::iced::task::Handle>,",
@@ -376,14 +381,15 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         )
         .unwrap();
         for state in &component.states {
+            let state = &state.source;
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for line in component_generation_lines(component) {
+        for line in component_generation_lines(&component.handlers) {
             writeln!(out, "{}: 0,", component_latest_field(line)).unwrap();
         }
-        for line in component_replace_lines(component) {
+        for line in component_replace_lines(&component.handlers) {
             writeln!(
                 out,
                 "{}: ::std::option::Option::None,",
@@ -454,24 +460,25 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    for component in document
-        .components
+    for component in program
+        .components()
         .iter()
-        .filter(|component| !component.states.is_empty() || !component.handlers.is_empty())
+        .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let field = component_state_field(&component.name);
         let ty = component_state_type(&component.name);
-        match component.lifetime {
-            ComponentLifetime::Retained => writeln!(
+        match component.storage {
+            ComponentStorage::Retained => writeln!(
                 out,
                 "pub(crate) {field}: ::std::collections::HashMap<::std::string::String, {ty}>,"
             )
             .unwrap(),
-            ComponentLifetime::Mounted => writeln!(
+            ComponentStorage::Mounted => writeln!(
                 out,
                 "pub(crate) {field}: ::ui_lang_runtime::MountedComponentState<{ty}>,"
             )
             .unwrap(),
+            ComponentStorage::Stateless => unreachable!(),
         }
     }
     writeln!(out, "}}").unwrap();
@@ -506,8 +513,8 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
             writeln!(out, "{variant}({fields}),").unwrap();
         }
     }
-    for component in &document.components {
-        for line in component_generation_lines(component) {
+    for component in program.components() {
+        for line in component_generation_lines(&component.handlers) {
             writeln!(
                 out,
                 "{}(::std::string::String, u64, ::std::boxed::Box<{message}>),",
@@ -531,6 +538,7 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
         for state in component
             .states
             .iter()
+            .map(|state| &state.source)
             .filter(|state| state.ty == Type::Str)
         {
             writeln!(
@@ -664,14 +672,14 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     } else {
         "::iced::application(Self::__boot, Self::__update, Self::__view)"
     };
-    let program = if document.daemon {
+    let program_kind = if document.daemon {
         "::iced::Daemon"
     } else {
         "::iced::Application"
     };
     writeln!(
         out,
-        "fn __program() -> {program}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
+        "fn __program() -> {program_kind}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
     )
     .unwrap();
     writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
@@ -682,16 +690,38 @@ pub fn generate(document: &CheckedDocument, source_path: &str) -> Result<String,
     .unwrap();
 
     generate_theme(&mut out, document)?;
-    generate_boot(&mut out, document, &message)?;
+    generate_boot(&mut out, program, &message)?;
     generate_presets(&mut out, document, &message)?;
-    generate_update(&mut out, document, &message)?;
+    generate_update(&mut out, program, &message)?;
     generate_subscription(&mut out, document, &message)?;
-    generate_view(&mut out, document, &message)?;
-    generate_test_mounts(&mut out, document, &message, source_path)?;
+    generate_view(&mut out, program, &message)?;
+    generate_test_mounts(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
-    generate_tests(&mut out, document, &message, source_path)?;
+    generate_tests(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
-    Ok(resolve_source_markers(out, document, source_path))
+    Ok(resolve_source_markers(out, program, source_path))
+}
+
+pub(in crate::codegen) struct RenderDocument<'a> {
+    program: &'a LoweredProgram,
+}
+
+impl<'a> RenderDocument<'a> {
+    pub(in crate::codegen) fn new(program: &'a LoweredProgram) -> Self {
+        Self { program }
+    }
+
+    pub(in crate::codegen) fn program(&self) -> &'a LoweredProgram {
+        self.program
+    }
+}
+
+impl Deref for RenderDocument<'_> {
+    type Target = Document;
+
+    fn deref(&self) -> &Self::Target {
+        self.program.document()
+    }
 }
 
 mod application;

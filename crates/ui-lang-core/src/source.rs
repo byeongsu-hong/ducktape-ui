@@ -1,4 +1,4 @@
-use crate::{CheckedDocument, Document, Error, Span, check, codegen, parser};
+use crate::{CheckedDocument, Document, Error, Span, check, codegen, lower, parser};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -118,7 +118,8 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
         .dependencies
         .first()
         .expect("a loaded source always has a root");
-    let mut rust = codegen::generate(&document, &root.display().to_string())
+    let program = lower::lower(document).map_err(|error| remap_error(error, &loaded))?;
+    let mut rust = codegen::generate(&program, &root.display().to_string())
         .map_err(|error| remap_error(error, &loaded))?;
     for dependency in loaded.dependencies.iter().skip(1) {
         rust.push_str(&format!(
