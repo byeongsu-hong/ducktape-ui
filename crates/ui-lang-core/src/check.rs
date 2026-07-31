@@ -7,6 +7,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     check(&mut document, &reachable, &reachable_handlers)?;
+    let facts = without_usage(|| facts::build(&document))?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(unreachable_handler_warnings(
         &document,
@@ -30,6 +31,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(
         document,
+        facts,
         warnings,
         reachable,
         reachable_handlers.app,
@@ -655,6 +657,8 @@ mod canvas;
 mod cycles;
 mod declarations;
 mod expr;
+#[allow(dead_code)]
+mod facts;
 mod handler;
 mod lifecycle;
 mod options;
@@ -688,6 +692,7 @@ use widgets::*;
 
 pub(crate) use expr::expr_type;
 use expr::{check_length_value, contains_ui_enum};
+pub(crate) use facts::CheckedFacts;
 pub(crate) use handler::task_flow_type;
 
 pub(in crate::check) type WidgetIdPath = Vec<(String, Option<Type>)>;

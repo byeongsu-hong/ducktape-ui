@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct CheckedDocument {
     document: Document,
+    facts: check::CheckedFacts,
     symbols: Vec<CheckedSymbol>,
     source_origins: Vec<(PathBuf, usize)>,
     warnings: Vec<Warning>,
@@ -138,12 +139,14 @@ pub struct CheckedSymbol {
 impl CheckedDocument {
     pub(crate) fn new(
         document: Document,
+        facts: check::CheckedFacts,
         warnings: Vec<Warning>,
         reachable_components: HashSet<String>,
         reachable_handlers: HashSet<String>,
     ) -> Self {
         Self {
             document,
+            facts,
             symbols: Vec::new(),
             source_origins: Vec::new(),
             warnings,
@@ -258,6 +261,7 @@ impl CheckedDocument {
             warning.path = Some(path.display().to_string());
             warning.line = *line;
         }
+        self.facts.remap_origins(&origins);
         self.source_origins = origins;
         self
     }

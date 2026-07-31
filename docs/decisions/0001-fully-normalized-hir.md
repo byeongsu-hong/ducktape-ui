@@ -117,6 +117,18 @@ the new style/theme nodes retain physical root/import locations, but current
 diagnostics and generated source markers still do not traverse expansion
 stacks.
 
+The checker now also preserves the first expression-family facts in a private,
+owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
+connect initializer expression trees to concrete types and to resolved value,
+enum, palette, extern, builtin, field-projection, and operator facts. The arena
+uses direct typed-ID indexing and carries imported physical origins; it does not
+recover facts from AST locations during lowering. This slice covers app state,
+derived-value, component-default, and component-state initializers, while
+indexing view owners for later expression attachment. It deliberately does not
+migrate view expressions, handlers, matches, or expression code generation, so
+those emitters remain AST-backed and the full-HIR completion criteria are still
+open.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;

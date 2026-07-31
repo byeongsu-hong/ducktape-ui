@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::check::CheckedFacts;
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -268,6 +269,7 @@ struct CallSite {
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
+    facts: CheckedFacts,
     components: Vec<ComponentContract>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
@@ -279,6 +281,11 @@ pub(crate) struct LoweredProgram {
 impl LoweredProgram {
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn checked_facts(&self) -> &CheckedFacts {
+        &self.facts
     }
 
     pub(crate) fn components(&self) -> &[ComponentContract] {
@@ -344,6 +351,7 @@ pub(crate) fn lower(checked: CheckedDocument) -> Result<LoweredProgram, Error> {
 
 struct Lowerer {
     document: Document,
+    facts: CheckedFacts,
     source_origins: Vec<(PathBuf, usize)>,
     components: Vec<ComponentContract>,
     component_indexes: Vec<ComponentIndex>,
@@ -359,6 +367,7 @@ impl Lowerer {
     fn new(checked: CheckedDocument) -> Self {
         let CheckedDocument {
             document,
+            facts,
             source_origins,
             ..
         } = checked;
@@ -370,6 +379,7 @@ impl Lowerer {
             .collect();
         Self {
             document,
+            facts,
             source_origins,
             components: Vec::new(),
             component_indexes: Vec::new(),
@@ -413,6 +423,7 @@ impl Lowerer {
         })?;
         Ok(LoweredProgram {
             document: self.document,
+            facts: self.facts,
             components: self.components,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
