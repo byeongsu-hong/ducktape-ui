@@ -43,6 +43,7 @@ jobs:
           cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
       - run: cargo ice compat
       - run: scripts/package-smoke.sh
+      - run: scripts/downstream-package-smoke.sh
 
   msrv:
     name: MSRV (1.88)
