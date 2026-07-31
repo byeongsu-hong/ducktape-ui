@@ -2,18 +2,25 @@ use super::inputs::{CargoInputGraph, normalize_watch_path};
 use crate::ignored_dir;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 const FULL_RESCAN_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum DevChange {
+    Paths(Vec<PathBuf>),
+    FullRescan,
+}
 
 pub(super) struct DevWatcher {
     watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
     configuration: WatchConfiguration,
     pending_rescan: bool,
-    last_snapshot: Instant,
+    last_full_rescan: Instant,
 }
 
 impl DevWatcher {
@@ -30,7 +37,7 @@ impl DevWatcher {
             events,
             configuration,
             pending_rescan: true,
-            last_snapshot: Instant::now(),
+            last_full_rescan: Instant::now(),
         })
     }
 
@@ -57,42 +64,43 @@ impl DevWatcher {
         Ok(())
     }
 
-    pub(super) fn wait_for_change(&mut self, timeout: Duration) -> Result<bool, String> {
+    pub(super) fn wait_for_change(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<DevChange>, String> {
         if self.pending_rescan {
             self.pending_rescan = false;
-            self.last_snapshot = Instant::now();
-            return Ok(true);
+            self.last_full_rescan = Instant::now();
+            return Ok(Some(DevChange::FullRescan));
         }
 
         let deadline = Instant::now() + timeout;
         loop {
             let now = Instant::now();
-            if now.duration_since(self.last_snapshot) >= FULL_RESCAN_INTERVAL {
-                self.last_snapshot = now;
-                return Ok(true);
+            if now.duration_since(self.last_full_rescan) >= FULL_RESCAN_INTERVAL {
+                self.last_full_rescan = now;
+                return Ok(Some(DevChange::FullRescan));
             }
             if now >= deadline {
-                return Ok(false);
+                return Ok(None);
             }
-            let rescan_deadline = self.last_snapshot + FULL_RESCAN_INTERVAL;
+            let rescan_deadline = self.last_full_rescan + FULL_RESCAN_INTERVAL;
             let wait_until = deadline.min(rescan_deadline);
             let wait = wait_until.saturating_duration_since(now);
             match self.events.recv_timeout(wait) {
-                Ok(Ok(event)) => {
-                    self.suppress_excluded_tree(&event);
-                    if self.event_requires_snapshot(&event) {
-                        self.drain_events();
-                        self.last_snapshot = Instant::now();
-                        return Ok(true);
+                Ok(result) => {
+                    let mut paths = BTreeSet::new();
+                    let mut full_rescan = self.collect_change(result, &mut paths);
+                    while let Ok(result) = self.events.try_recv() {
+                        full_rescan |= self.collect_change(result, &mut paths);
                     }
-                }
-                Ok(Err(error)) => {
-                    eprintln!(
-                        "ice dev: filesystem notification failed: {error}; verifying the complete input snapshot"
-                    );
-                    self.drain_events();
-                    self.last_snapshot = Instant::now();
-                    return Ok(true);
+                    if full_rescan {
+                        self.last_full_rescan = Instant::now();
+                        return Ok(Some(DevChange::FullRescan));
+                    }
+                    if !paths.is_empty() {
+                        return Ok(Some(DevChange::Paths(paths.into_iter().collect())));
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
@@ -102,23 +110,35 @@ impl DevWatcher {
         }
     }
 
-    fn drain_events(&self) {
-        loop {
-            match self.events.try_recv() {
-                Ok(_) => {}
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+    fn collect_change(
+        &mut self,
+        result: notify::Result<Event>,
+        paths: &mut BTreeSet<PathBuf>,
+    ) -> bool {
+        let event = match result {
+            Ok(event) => event,
+            Err(error) => {
+                eprintln!(
+                    "ice dev: filesystem notification failed: {error}; verifying the complete input snapshot"
+                );
+                return true;
             }
+        };
+        self.suppress_excluded_tree(&event);
+        if event.need_rescan() || event.paths.is_empty() {
+            return true;
         }
-    }
-
-    fn event_requires_snapshot(&self, event: &Event) -> bool {
-        event.need_rescan()
-            || !matches!(event.kind, EventKind::Access(_))
-                && (event.paths.is_empty()
-                    || event
-                        .paths
-                        .iter()
-                        .any(|path| !ignored_event_path(path, &self.configuration.excluded_roots)))
+        if matches!(event.kind, EventKind::Access(_)) {
+            return false;
+        }
+        paths.extend(
+            event
+                .paths
+                .into_iter()
+                .filter(|path| !ignored_event_path(path, &self.configuration.excluded_roots))
+                .map(|path| normalize_watch_path(&path)),
+        );
+        false
     }
 
     fn suppress_excluded_tree(&mut self, event: &Event) {
@@ -391,25 +411,28 @@ mod tests {
         fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\n").unwrap();
         fs::write(root.join("target/output"), "generated").unwrap();
         let graph = CargoInputGraph::workspace(root);
-        let watcher = DevWatcher::new(&[], &[], &graph).unwrap();
+        let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
+        let mut paths = BTreeSet::new();
 
         let access = Event {
             kind: EventKind::Access(AccessKind::Any),
             paths: vec![root.join("Cargo.toml")],
             attrs: Default::default(),
         };
-        assert!(!watcher.event_requires_snapshot(&access));
+        assert!(!watcher.collect_change(Ok(access), &mut paths));
+        assert!(paths.is_empty());
 
         let excluded = Event {
             kind: EventKind::Modify(ModifyKind::Any),
             paths: vec![root.join("target/output")],
             attrs: Default::default(),
         };
-        assert!(!watcher.event_requires_snapshot(&excluded));
         assert!(!event_may_change_inputs(
             &excluded,
             &watcher.configuration.excluded_roots
         ));
+        assert!(!watcher.collect_change(Ok(excluded), &mut paths));
+        assert!(paths.is_empty());
 
         let excluded_directory = Event {
             kind: EventKind::Create(CreateKind::Folder),
@@ -420,7 +443,8 @@ mod tests {
             &excluded_directory,
             &watcher.configuration.excluded_roots
         ));
-        assert!(!watcher.event_requires_snapshot(&excluded_directory));
+        assert!(!watcher.collect_change(Ok(excluded_directory), &mut paths));
+        assert!(paths.is_empty());
     }
 
     #[test]
@@ -433,10 +457,25 @@ mod tests {
         let graph = CargoInputGraph::workspace(root);
         let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
 
-        assert!(watcher.wait_for_change(Duration::ZERO).unwrap());
-        assert!(!watcher.wait_for_change(Duration::from_millis(50)).unwrap());
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            Some(DevChange::FullRescan)
+        );
+        assert_eq!(
+            watcher.wait_for_change(Duration::from_millis(50)).unwrap(),
+            None
+        );
+        let last_full_rescan = watcher.last_full_rescan;
         fs::write(&source, "fn main() { println!(\"changed\"); }\n").unwrap();
-        assert!(watcher.wait_for_change(Duration::from_secs(5)).unwrap());
+        let change = watcher
+            .wait_for_change(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let DevChange::Paths(paths) = change else {
+            panic!("source edit unexpectedly requested a complete rescan");
+        };
+        assert!(paths.contains(&source));
+        assert_eq!(watcher.last_full_rescan, last_full_rescan);
     }
 
     #[test]
@@ -448,14 +487,23 @@ mod tests {
         let graph = CargoInputGraph::workspace(root);
         let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
 
-        assert!(watcher.wait_for_change(Duration::ZERO).unwrap());
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            Some(DevChange::FullRescan)
+        );
         watcher
             .update(&[root.join("app.ice")], &[], &graph)
             .unwrap();
-        assert!(watcher.wait_for_change(Duration::ZERO).unwrap());
-        assert!(!watcher.wait_for_change(Duration::ZERO).unwrap());
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            Some(DevChange::FullRescan)
+        );
+        assert_eq!(watcher.wait_for_change(Duration::ZERO).unwrap(), None);
 
-        watcher.last_snapshot = Instant::now() - FULL_RESCAN_INTERVAL;
-        assert!(watcher.wait_for_change(Duration::ZERO).unwrap());
+        watcher.last_full_rescan = Instant::now() - FULL_RESCAN_INTERVAL;
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            Some(DevChange::FullRescan)
+        );
     }
 }

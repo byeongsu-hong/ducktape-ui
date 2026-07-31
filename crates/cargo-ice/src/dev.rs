@@ -5,21 +5,22 @@ mod watcher;
 #[cfg(test)]
 use self::inputs::{
     BUILD_FINGERPRINT_ENV, CargoBuildOutput, CargoInputGraph, FileStamp, build_script_inputs,
-    build_script_rerun_path, cargo_build_with_program, dev_stamps, parse_dep_info,
-    rustc_dep_info_path, settled_dev_stamps, settled_dev_stamps_after, source_stamp_fingerprint,
-    stamp_contains_snapshot,
+    build_script_rerun_path, cargo_build_with_program, dev_stamps, file_stamp_attempts,
+    parse_dep_info, reset_file_stamp_attempts, rustc_dep_info_path, settled_dev_stamps,
+    settled_dev_stamps_after, source_stamp_fingerprint, stamp_contains_snapshot,
 };
 use self::inputs::{
     build_observation_reuses_snapshot, cargo_build, cargo_input_graph,
     dev_stamps_with_cargo_inputs, first_unreadable_input, normalize_watch_path,
-    settled_dev_stamps_with_cargo_inputs, stamps_match_on_common_paths,
+    settled_dev_stamps_for_paths_with_cargo_inputs, settled_dev_stamps_with_cargo_inputs,
+    stamps_match_on_common_paths,
 };
 use self::process::{
     ChildGuard, install_stop_handler, runtime_args, stage_executable, stop_requested,
 };
 #[cfg(test)]
 use self::process::{READY_PATH_ENV, READY_TOKEN_ENV};
-use self::watcher::DevWatcher;
+use self::watcher::{DevChange, DevWatcher};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -143,17 +144,28 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             };
         }
         changes.update(&watched_dependencies, &watched_assets, &cargo_inputs)?;
-        if !changes.wait_for_change(Duration::from_millis(100))? {
+        let Some(change) = changes.wait_for_change(Duration::from_millis(100))? else {
             continue;
-        }
-        let Some(next_stamps) = settled_dev_stamps_with_cargo_inputs(
-            root,
-            &watched_dependencies,
-            &watched_assets,
-            &cargo_inputs,
-            &observed_stamps.0,
-            &observed_stamps.1,
-        ) else {
+        };
+        let next_stamps = match change {
+            DevChange::FullRescan => settled_dev_stamps_with_cargo_inputs(
+                root,
+                &watched_dependencies,
+                &watched_assets,
+                &cargo_inputs,
+                &observed_stamps.0,
+                &observed_stamps.1,
+            ),
+            DevChange::Paths(paths) => settled_dev_stamps_for_paths_with_cargo_inputs(
+                &watched_dependencies,
+                &watched_assets,
+                &cargo_inputs,
+                &observed_stamps.0,
+                &observed_stamps.1,
+                &paths,
+            ),
+        };
+        let Some(next_stamps) = next_stamps else {
             continue;
         };
         if let Some(path) = first_unreadable_input(&next_stamps) {

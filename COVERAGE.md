@@ -47,15 +47,18 @@ output pruning.
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,
-and build-script `rerun-if-changed` inputs. Native notification tests prove
-that a source edit wakes the runner while an idle wait performs no snapshot
-poll, and configuration-change plus periodic-rescan tests cover the two
-complete-snapshot safety paths. A changed snapshot is settled and built while
-the accepted process remains alive. The shadow executable is adopted only
-after its generated root completes a draw, atomically publishes the runner's
-exact readiness token, and is confirmed alive; failure and timeout tests keep
-the previous process and clean the candidate. This is process replacement, so
-no application, window, or widget state-preservation coverage is claimed.
+and build-script `rerun-if-changed` inputs. Native notification tests prove that
+a source edit wakes the runner while an idle wait performs no snapshot poll,
+and configuration-change plus periodic-rescan tests cover the two
+complete-snapshot safety paths. Selective-snapshot tests prove that a known
+Rust file or source-only Ice edit performs two content reads regardless of graph
+size, while new and removed files refresh the inventory. A changed snapshot is
+settled and built while the accepted process remains alive. The shadow
+executable is adopted only after its generated root completes a draw, atomically
+publishes the runner's exact readiness token, and is confirmed alive; failure
+and timeout tests keep the previous process and clean the candidate. This is
+process replacement, so no application, window, or widget state-preservation
+coverage is claimed.
 
 Source graphs support both bare fragment imports and aliased module imports.
 Aliases preserve checked `::` identity for components, recipes, extern

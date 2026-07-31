@@ -5193,8 +5193,12 @@ fixture, or VCS directories do not trigger verification. The idle runner does
 not content-hash the graph on its 100-millisecond process-liveness cadence. It
 performs a complete content rescan every 30 seconds and after watcher errors or
 rescan requests, so missed notifications and filesystems without reliable
-native events remain recoverable. A change is settled only when two complete
-content snapshots 50 milliseconds apart are identical.
+native events remain recoverable. For notifications naming known files, the
+runner reuses the accepted inventory and unchanged content stamps, and hashes
+only affected paths. A path absent from the accepted inventories, a removed or
+renamed path, or a directory path refreshes the metadata inventory so added and
+removed inputs participate without hashing unchanged contents. A change is
+settled only when two equivalent snapshots 50 milliseconds apart are identical.
 
 After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
 change, the runner builds a new executable while the accepted process remains

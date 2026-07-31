@@ -92,7 +92,155 @@ fn benchmark_full_dev_snapshot_at_1k_and_10k_files() {
         assert_eq!(snapshot.0.len(), 1);
         assert!(snapshot.1.len() >= file_count);
         eprintln!("{file_count} files: one complete content snapshot in {elapsed:?}");
+
+        let changed = root
+            .join("src")
+            .join(format!("{:02}", file_count / 200))
+            .join(format!("input-{:05}.rs", file_count / 2));
+        std::fs::write(&changed, "pub const CHANGED: bool = true;\n").unwrap();
+        let graph = CargoInputGraph::workspace(root);
+        reset_file_stamp_attempts();
+        let started = std::time::Instant::now();
+        let selective = settled_dev_stamps_for_paths_with_cargo_inputs(
+            std::slice::from_ref(&source),
+            &[],
+            &graph,
+            &snapshot.0,
+            &snapshot.1,
+            std::slice::from_ref(&changed),
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+
+        assert_ne!(selective.1, snapshot.1);
+        assert_eq!(file_stamp_attempts(), 2);
+        eprintln!(
+            "{file_count} files: selective two-pass verification in {elapsed:?} (2 content reads)"
+        );
     }
+}
+
+#[test]
+fn selective_snapshot_hashes_only_changed_file_content() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = root.join("app.ice");
+    std::fs::write(&source, valid_app()).unwrap();
+    let directory = root.join("src");
+    std::fs::create_dir(&directory).unwrap();
+    for index in 0..128 {
+        std::fs::write(
+            directory.join(format!("input-{index:03}.rs")),
+            format!("pub const INPUT_{index}: usize = {index};\n"),
+        )
+        .unwrap();
+    }
+    let changed = directory.join("input-064.rs");
+    let graph = CargoInputGraph::workspace(root);
+    let current = dev_stamps(root, std::slice::from_ref(&source), &[]);
+    std::fs::write(&changed, "pub const INPUT_64: usize = 640;\n").unwrap();
+
+    reset_file_stamp_attempts();
+    let next = settled_dev_stamps_for_paths_with_cargo_inputs(
+        std::slice::from_ref(&source),
+        &[],
+        &graph,
+        &current.0,
+        &current.1,
+        std::slice::from_ref(&changed),
+    )
+    .unwrap();
+
+    assert_ne!(next.1, current.1);
+    assert_eq!(
+        file_stamp_attempts(),
+        2,
+        "the changed file should be content-hashed once per settle pass"
+    );
+
+    std::fs::write(&source, valid_app().replace("ready", "changed")).unwrap();
+    reset_file_stamp_attempts();
+    let next = settled_dev_stamps_for_paths_with_cargo_inputs(
+        std::slice::from_ref(&source),
+        &[],
+        &graph,
+        &next.0,
+        &next.1,
+        std::slice::from_ref(&source),
+    )
+    .unwrap();
+
+    assert_ne!(next.0, current.0);
+    assert_eq!(
+        file_stamp_attempts(),
+        2,
+        "an Ice-only edit must not reread the Rust input inventory"
+    );
+}
+
+#[test]
+fn selective_snapshot_refreshes_new_and_removed_input_inventory() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = root.join("app.ice");
+    std::fs::write(&source, valid_app()).unwrap();
+    std::fs::create_dir(root.join("src")).unwrap();
+    let graph = CargoInputGraph::workspace(root);
+    let initial = dev_stamps(root, std::slice::from_ref(&source), &[]);
+    let added = root.join("src/new.rs");
+    std::fs::write(&added, "pub const NEW: bool = true;\n").unwrap();
+
+    let with_added = settled_dev_stamps_for_paths_with_cargo_inputs(
+        std::slice::from_ref(&source),
+        &[],
+        &graph,
+        &initial.0,
+        &initial.1,
+        std::slice::from_ref(&added),
+    )
+    .unwrap();
+    assert!(with_added.1.iter().any(|(path, _)| path == &added));
+
+    std::fs::remove_file(&added).unwrap();
+    let removed = settled_dev_stamps_for_paths_with_cargo_inputs(
+        std::slice::from_ref(&source),
+        &[],
+        &graph,
+        &with_added.0,
+        &with_added.1,
+        std::slice::from_ref(&added),
+    )
+    .unwrap();
+    assert!(removed.1.iter().all(|(path, _)| path != &added));
+}
+
+#[test]
+fn selective_snapshot_refreshes_when_an_ice_file_becomes_a_directory() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = root.join("app.ice");
+    let fragment = root.join("fragment.ice");
+    std::fs::write(&source, valid_app()).unwrap();
+    std::fs::write(&fragment, "component Fragment()\n  text \"ready\"\n").unwrap();
+    let dependencies = vec![source, fragment.clone()];
+    let graph = CargoInputGraph::workspace(root);
+    let current = dev_stamps(root, &dependencies, &[]);
+    std::fs::remove_file(&fragment).unwrap();
+    std::fs::create_dir(&fragment).unwrap();
+    let nested = fragment.join("nested.rs");
+    std::fs::write(&nested, "pub const NESTED: bool = true;\n").unwrap();
+
+    let next = settled_dev_stamps_for_paths_with_cargo_inputs(
+        &dependencies,
+        &[],
+        &graph,
+        &current.0,
+        &current.1,
+        std::slice::from_ref(&fragment),
+    )
+    .unwrap();
+
+    assert!(next.1.iter().any(|(path, _)| path == &nested));
 }
 
 #[test]
