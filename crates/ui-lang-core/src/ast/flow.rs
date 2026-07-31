@@ -203,6 +203,47 @@ impl Statement {
             | Self::PaneOperation { span, .. } => span,
         }
     }
+
+    pub(crate) fn immediate_task(&self) -> Option<ImmediateTask> {
+        match self {
+            Self::Let { .. }
+            | Self::Assign { .. }
+            | Self::MarkdownAppend { .. }
+            | Self::ComboPush { .. }
+            | Self::ReturnIf { .. }
+            | Self::Abort { .. }
+            | Self::DebugStart { .. }
+            | Self::DebugFinish { .. } => None,
+            Self::Exit { .. } => Some(ImmediateTask::Exit),
+            Self::Run { kind, .. } => Some(ImmediateTask::Run(*kind)),
+            Self::Sip { .. } => Some(ImmediateTask::Sip),
+            Self::TaskFlow { .. } => Some(ImmediateTask::Flow),
+            Self::TaskGroup { .. } => Some(ImmediateTask::Group),
+            Self::Abortable { .. } => Some(ImmediateTask::Abortable),
+            Self::ClipboardWrite { .. } => Some(ImmediateTask::Clipboard),
+            Self::WidgetOperation { .. } => Some(ImmediateTask::Widget),
+            Self::WindowOperation { .. } => Some(ImmediateTask::Window),
+            Self::PaneOperation {
+                operation: PaneOperation::Maximized | PaneOperation::Adjacent { .. },
+                ..
+            } => Some(ImmediateTask::PaneQuery),
+            Self::PaneOperation { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImmediateTask {
+    Exit,
+    Run(EffectKind),
+    Sip,
+    Flow,
+    Group,
+    Abortable,
+    Clipboard,
+    Widget,
+    Window,
+    PaneQuery,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

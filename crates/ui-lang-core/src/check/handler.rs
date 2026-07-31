@@ -16,6 +16,7 @@ pub(in crate::check) fn check_handler(
             .map(|param| (param.name.clone(), param.ty.clone())),
     );
     for (index, statement) in handler.statements.iter().enumerate() {
+        check_task_finality(statement, index + 1 == handler.statements.len())?;
         match statement {
             Statement::Let { name, value, span } => {
                 if env.contains_key(name) {
@@ -119,15 +120,7 @@ pub(in crate::check) fn check_handler(
                     span,
                 )?;
             }
-            Statement::Exit { span } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "exit must be the final statement in a handler",
-                    ));
-                }
-            }
+            Statement::Exit { .. } => {}
             Statement::Run {
                 kind,
                 function,
@@ -135,18 +128,6 @@ pub(in crate::check) fn check_handler(
                 span,
                 ..
             } => {
-                if index + 1 != handler.statements.len() {
-                    let effect = match kind {
-                        EffectKind::Future => "run",
-                        EffectKind::Task => "task",
-                        EffectKind::Stream => "stream",
-                    };
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        format!("{effect} must be the final statement in a handler"),
-                    ));
-                }
                 if builtin_task_type(*kind, function, args, span)?.is_some() {
                     if function == "__ice_font_load" {
                         require_type(
@@ -172,29 +153,12 @@ pub(in crate::check) fn check_handler(
                 span,
                 ..
             } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "sip must be the final statement in a handler",
-                    ));
-                }
                 let action = extern_function(document, function, ExternKind::Sip, span)?;
                 check_call_args(action, args, &env, document, span)?;
             }
             Statement::TaskFlow {
-                source,
-                transforms,
-                span,
-                ..
+                source, transforms, ..
             } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "flow must be the final statement in a handler",
-                    ));
-                }
                 task_flow_type(source, transforms, document, &env)?;
             }
             Statement::TaskGroup { statements, .. } => {
@@ -245,13 +209,6 @@ pub(in crate::check) fn check_handler(
                 record_write(target, span);
             }
             Statement::ClipboardWrite { value, span, .. } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "clipboard write must be the final statement in a handler",
-                    ));
-                }
                 require_type(&expr_type(value, &env, document, span)?, &Type::Str, span)?;
             }
             Statement::WidgetOperation {
@@ -259,13 +216,6 @@ pub(in crate::check) fn check_handler(
                 route,
                 span,
             } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E172",
-                        span,
-                        "widget operation must be the final statement in a handler",
-                    ));
-                }
                 let target = match operation {
                     WidgetOperation::FocusPrevious
                     | WidgetOperation::FocusNext
@@ -439,13 +389,6 @@ pub(in crate::check) fn check_handler(
                     operation,
                     PaneOperation::Maximized | PaneOperation::Adjacent { .. }
                 );
-                if query && index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E188",
-                        span,
-                        "pane query must be the final statement in a handler",
-                    ));
-                }
                 match (query, route) {
                     (true, None) => {
                         return Err(Error::new("E188", span, "pane query requires a route"));
@@ -472,13 +415,6 @@ pub(in crate::check) fn check_handler(
                 route,
                 span,
             } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E173",
-                        span,
-                        "window task must be the final statement in a handler",
-                    ));
-                }
                 let query = matches!(
                     operation,
                     WindowOperation::Open(_)
@@ -620,19 +556,41 @@ pub(in crate::check) fn check_handler(
     Ok(())
 }
 
+fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Error> {
+    if is_final {
+        return Ok(());
+    }
+    let Some(task) = statement.immediate_task() else {
+        return Ok(());
+    };
+    let (code, name) = match task {
+        ImmediateTask::Exit => ("E141", "exit"),
+        ImmediateTask::Run(EffectKind::Future) => ("E141", "run"),
+        ImmediateTask::Run(EffectKind::Task) => ("E141", "task"),
+        ImmediateTask::Run(EffectKind::Stream) => ("E141", "stream"),
+        ImmediateTask::Sip => ("E141", "sip"),
+        ImmediateTask::Flow => ("E141", "flow"),
+        ImmediateTask::Group => ("E141", "task group"),
+        ImmediateTask::Abortable => ("E141", "abortable task"),
+        ImmediateTask::Clipboard => ("E141", "clipboard write"),
+        ImmediateTask::Widget => ("E172", "widget operation"),
+        ImmediateTask::Window => ("E173", "window task"),
+        ImmediateTask::PaneQuery => ("E188", "pane query"),
+    };
+    Err(Error::new(
+        code,
+        statement.span(),
+        format!(
+            "{name} must be the final statement in a handler; use `parallel` or `sequential` to compose tasks"
+        ),
+    ))
+}
+
 pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), Error> {
     for (index, statement) in handler.statements.iter().enumerate() {
         match statement {
-            Statement::TaskGroup {
-                statements, span, ..
-            } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "task group must be the final statement in a handler",
-                    ));
-                }
+            Statement::TaskGroup { statements, .. } => {
+                check_task_finality(statement, index + 1 == handler.statements.len())?;
                 if let Some(span) = statements.iter().find_map(invalid_task_producer) {
                     return Err(Error::new(
                         "E143",
@@ -641,14 +599,8 @@ pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), 
                     ));
                 }
             }
-            Statement::Abortable { task, span, .. } => {
-                if index + 1 != handler.statements.len() {
-                    return Err(Error::new(
-                        "E141",
-                        span,
-                        "abortable task must be the final statement in a handler",
-                    ));
-                }
+            Statement::Abortable { task, .. } => {
+                check_task_finality(statement, index + 1 == handler.statements.len())?;
                 if let Some(span) = invalid_task_producer(task) {
                     return Err(Error::new(
                         "E143",
@@ -665,30 +617,12 @@ pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), 
 
 pub(in crate::check) fn invalid_task_producer(statement: &Statement) -> Option<&Span> {
     match statement {
-        Statement::Exit { .. }
-        | Statement::Run { .. }
-        | Statement::Sip { .. }
-        | Statement::TaskFlow { .. }
-        | Statement::ClipboardWrite { .. }
-        | Statement::WidgetOperation { .. }
-        | Statement::WindowOperation { .. }
-        | Statement::PaneOperation {
-            operation: PaneOperation::Maximized | PaneOperation::Adjacent { .. },
-            ..
-        } => None,
         Statement::Abortable { task, .. } => invalid_task_producer(task),
         Statement::TaskGroup { statements, .. } => {
             statements.iter().find_map(invalid_task_producer)
         }
-        Statement::Assign { .. }
-        | Statement::Let { .. }
-        | Statement::MarkdownAppend { .. }
-        | Statement::ComboPush { .. }
-        | Statement::ReturnIf { .. }
-        | Statement::Abort { .. }
-        | Statement::DebugStart { .. }
-        | Statement::DebugFinish { .. }
-        | Statement::PaneOperation { .. } => Some(statement_span(statement)),
+        _ if statement.immediate_task().is_some() => None,
+        _ => Some(statement.span()),
     }
 }
 
@@ -720,29 +654,6 @@ pub(in crate::check) fn require_debug_span_state(
         );
     };
     require_type(actual, &Type::Option(Box::new(Type::DebugSpan)), span)
-}
-
-pub(in crate::check) fn statement_span(statement: &Statement) -> &Span {
-    match statement {
-        Statement::Let { span, .. }
-        | Statement::Assign { span, .. }
-        | Statement::MarkdownAppend { span, .. }
-        | Statement::ComboPush { span, .. }
-        | Statement::ReturnIf { span, .. }
-        | Statement::Exit { span }
-        | Statement::Run { span, .. }
-        | Statement::Sip { span, .. }
-        | Statement::TaskFlow { span, .. }
-        | Statement::TaskGroup { span, .. }
-        | Statement::Abortable { span, .. }
-        | Statement::Abort { span, .. }
-        | Statement::DebugStart { span, .. }
-        | Statement::DebugFinish { span, .. }
-        | Statement::ClipboardWrite { span, .. }
-        | Statement::WidgetOperation { span, .. }
-        | Statement::WindowOperation { span, .. }
-        | Statement::PaneOperation { span, .. } => span,
-    }
 }
 
 impl From<EffectKind> for ExternKind {
@@ -1051,3 +962,7 @@ pub(crate) fn task_flow_type(
     }
     Ok((Some(output), error_ty))
 }
+
+#[cfg(test)]
+#[path = "tests/task_finality.rs"]
+mod task_finality_tests;
