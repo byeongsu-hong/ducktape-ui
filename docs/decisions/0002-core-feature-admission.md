@@ -5,11 +5,12 @@
 
 ## Context
 
-Ice can express a complete native application, but every new Core construct
-expands the parser, formatter, checker, HIR, code generator, schema, LSP,
-source-map, test, documentation, and performance surface. Product needs can
-usually be delivered through a native runtime widget, a reusable `ducktape-ui`
-component, or an application-local typed Rust boundary without adding syntax.
+Ice can express the repository's complete native reference applications, but
+every new Core construct expands the parser, formatter, checker, HIR, code
+generator, schema, LSP, source-map, test, documentation, and performance
+surface. Product needs can usually be delivered through a native runtime
+widget, a reusable `ducktape-ui` component, or an application-local typed Rust
+boundary without adding syntax.
 
 The fully normalized HIR migration is still in progress. Adding syntax during
 that migration would multiply mixed AST/HIR paths and make the boundary harder
@@ -18,8 +19,10 @@ to finish.
 ## Decision
 
 New Ice Core syntax is frozen until the HIR completion criteria in decision
-0001 are met. Every proposed feature must be assigned to exactly one owner
-before implementation:
+0001 are met. Its `Accepted` status records the target architecture, not HIR
+completion; decision 0001's completion criteria remain authoritative. Every
+proposed feature must name exactly one primary semantic owner before
+implementation:
 
 | Owner | Admitted work |
 | --- | --- |
@@ -28,11 +31,16 @@ before implementation:
 | `ducktape-ui` | reusable screen composition, interaction patterns, and design-system contracts |
 | application Rust boundary | domain logic or product/platform-specific lifecycle |
 
+A vertical feature may require integration evidence in adjacent layers without
+giving those layers duplicate semantic ownership. For example, a runtime-owned
+native widget can also require a public `ducktape-ui` interface and an Ice extern
+example; that does not make it a Core feature.
+
 A feature becomes a Core candidate only after the same problem appears in at
 least three independent applications or screens and implementing it as a
-component or typed Rust boundary would materially destroy its meaning or static
-safety. Meeting that threshold starts a design review; it does not authorize
-syntax by itself.
+runtime widget, component, or typed Rust boundary would materially destroy its
+meaning or static safety. Meeting that threshold starts a design review; it
+does not authorize syntax by itself.
 
 Every admitted Core proposal must provide one canonical form, explicit invalid
 cases, formatter idempotence, checked semantics, normalized HIR, source-mapped

@@ -1,10 +1,12 @@
 # Feature evidence contracts
 
-Every feature proposal names its owning layer under decision 0002 before
-implementation. A pull request is complete only when it supplies the evidence
-for that layer and updates `SPEC.md`, `README.md`, and `COVERAGE.md` for any
-public claim. Evidence may be split across stacked pull requests, but the epic
-cannot be declared complete while a required row is missing.
+Every feature proposal names its primary semantic owner under decision 0002
+before implementation and identifies any adjacent integration layers. A
+feature or epic is complete only when it supplies the applicable evidence for
+its owner and integrations and updates `SPEC.md`, `README.md`, and
+`COVERAGE.md` wherever their public claims change. Evidence may be split across
+stacked pull requests; each pull request states which rows it supplies, and the
+epic cannot be declared complete while a required row is missing.
 
 ## Ice Core
 
@@ -28,7 +30,7 @@ cannot be declared complete while a required row is missing.
 | --- | --- |
 | Typed API | no unchecked dynamic payload or hidden capability |
 | Lifecycle | state ownership, reconciliation, stable identity, and removal rules |
-| Interaction | mouse, keyboard, focus, and scrolling behavior |
+| Interaction | applicable mouse, keyboard, focus, and scrolling behavior; unsupported inputs are explicit |
 | Unicode/IME | required for every text-editing surface |
 | Accessibility | native semantics or an explicit supported-limit statement |
 | Headless | inspectable geometry and semantics |
@@ -39,7 +41,7 @@ cannot be declared complete while a required row is missing.
 
 | Evidence | Required result |
 | --- | --- |
-| Contract | typed props, events, slots, output, and lifetime |
+| Contract | applicable typed props, events, slots, output, and lifetime are explicit |
 | Visual state | active, hover, pressed, disabled, and focus where applicable |
 | Accessibility | name, role, actions, and keyboard behavior |
 | Theme | application font and semantic token inheritance |

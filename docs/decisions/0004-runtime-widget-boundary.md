@@ -11,12 +11,17 @@ are important product capabilities, but that does not make them Ice syntax.
 Premature syntax would freeze assumptions before real applications establish
 the reusable contract.
 
+The surfaces named here are motivating categories, not a support inventory or
+roadmap commitment. A widget is supported only when its public documentation
+and `COVERAGE.md` say so and the evidence below exists.
+
 ## Decision
 
 A reusable native data surface is implemented first in `ui-lang-runtime` with
-a typed Rust API. `ducktape-ui` exposes the reusable component/interface and
-design-system behavior. Ice applications consume that typed extern component;
-Core does not gain a special loop, selector, or widget syntax.
+a typed Rust API. `ducktape-ui` may expose a themed Rust interface and reusable
+Ice composition around it. Each application keeps its domain item/state types
+and declares the typed extern component that adapts the native widget into its
+Ice graph. Core does not gain a special loop, selector, or widget syntax.
 
 The runtime API must define:
 
@@ -29,10 +34,11 @@ The runtime API must define:
 - a native WGPU first-draw or renderer-specific smoke; and
 - a realistic large-data performance contract.
 
-The component layer separately owns props, events, slots, visual interaction
-states, semantic theme/font inheritance, responsive examples, and accessibility
-names and keyboard behavior. The showcase must consume the same public
-interface as downstream applications.
+The integration and component layers separately own applicable props, events,
+slots, visual interaction states, semantic theme/font inheritance, responsive
+examples, and accessibility names and keyboard behavior. The showcase must
+consume the same public runtime and `ducktape-ui` interfaces as downstream
+applications; app-local extern glue is not presented as library API.
 
 Virtualization begins with fixed row height, stable keys, overscan, selection,
 keyboard navigation, scroll-to-item, visible-range inspection, item count/index

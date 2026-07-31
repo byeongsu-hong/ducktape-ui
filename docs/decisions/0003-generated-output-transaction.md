@@ -12,8 +12,10 @@ partially written manifest must not leave a cache that requires a user to run
 `cargo clean` manually.
 
 `OUT_DIR` is a disposable cache, not user-authored state. Correctness therefore
-depends on publishing a complete generation as one observable state and
-recovering automatically from incomplete cache data.
+depends on never publishing a partial individual file, using the manifest as
+the commit record for a completed inventory, and recovering automatically from
+incomplete cache data. This is not a claim that a filesystem can atomically
+replace the entire multi-file directory for unsynchronized readers.
 
 ## Decision
 
@@ -23,10 +25,12 @@ atomically replaces final output files. It writes and atomically replaces the
 versioned manifest last. Readers never treat an uncommitted staged file as a
 generated output.
 
-The manifest records the full SHA-256 source-path identity, source mapping, and
-generated-content digest required to validate the cache. A filename collision
-with a different normalized source remains a hard error. Re-emitting identical
-bytes preserves the existing output and its modification time.
+The manifest records the full SHA-256 source-path identity, its hash-to-source
+mapping, and each generated-content digest required to validate the cache. A
+filename collision with a different normalized source remains a hard error.
+Re-emitting identical bytes preserves the existing output and its modification
+time. Generated Rust source markers remain the separate diagnostic source-map
+mechanism.
 
 On lock acquisition, generation removes abandoned transaction files. A
 missing, malformed, unsupported, or digest-inconsistent manifest invalidates
@@ -58,7 +62,8 @@ tooling unreliable.
 ## Consequences
 
 Generation performs extra staging, synchronization, and locking work. In
-return, every visible manifest describes committed outputs, identical builds
+return, every newly committed manifest describes fully written outputs,
+individual output files are never visible partially written, identical builds
 avoid needless recompilation, and failed publishers recover without manual
 cleanup.
 
