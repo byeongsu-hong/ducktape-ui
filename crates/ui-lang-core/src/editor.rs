@@ -33,11 +33,19 @@ pub const STYLE_STATUS_NAMES: &[&str] = &[
     "dragged",
 ];
 
+fn editor_ignored_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.is_empty() || trimmed.starts_with("//")
+}
+
 pub fn editor_indentation(line: &str) -> usize {
     line.len() - line.trim_start().len()
 }
 
 pub fn editor_first_word(line: &str) -> Option<&str> {
+    if editor_ignored_line(line) {
+        return None;
+    }
     line.trim().split_ascii_whitespace().next()
 }
 
@@ -46,7 +54,7 @@ pub fn editor_ancestor_lines<'a>(lines: &'a [&str], line: usize) -> Vec<(usize, 
     let mut limit = indent;
     let mut ancestors = Vec::new();
     for (index, candidate) in lines[..line.min(lines.len())].iter().enumerate().rev() {
-        if candidate.trim().is_empty() || editor_indentation(candidate) >= limit {
+        if editor_ignored_line(candidate) || editor_indentation(candidate) >= limit {
             continue;
         }
         limit = editor_indentation(candidate);
@@ -60,7 +68,7 @@ pub fn editor_ancestor_lines<'a>(lines: &'a [&str], line: usize) -> Vec<(usize, 
 
 pub fn editor_block_end(lines: &[&str], line: usize, indent: usize) -> usize {
     for (index, candidate) in lines.iter().enumerate().skip(line + 1) {
-        if !candidate.trim().is_empty() && editor_indentation(candidate) <= indent {
+        if !editor_ignored_line(candidate) && editor_indentation(candidate) <= indent {
             return index;
         }
     }
@@ -222,6 +230,47 @@ pub fn cursor_context(
 mod tests {
     use super::*;
 
+    fn source_line(source: &str, needle: &str) -> usize {
+        source
+            .lines()
+            .position(|line| line.trim() == needle)
+            .unwrap_or_else(|| panic!("missing source line `{needle}`"))
+    }
+
+    fn context_signature(source: &str, context: CursorContext) -> String {
+        match context {
+            CursorContext::TopLevel => "top-level".into(),
+            CursorContext::HandlerBody => "handler-body".into(),
+            CursorContext::ViewNode => "view-node".into(),
+            CursorContext::NodeMetadata { node } => format!("metadata:{node:?}"),
+            CursorContext::ComponentCall { component } => format!("component:{component}"),
+            CursorContext::ComponentEvents {
+                component,
+                forwarding,
+            } => format!("events:{component}:{forwarding}"),
+            CursorContext::MatchArms { match_line } => format!(
+                "match:{}",
+                source.lines().nth(match_line).unwrap_or_default().trim()
+            ),
+            CursorContext::PaletteValue { contract } => format!("palette:{contract}"),
+            CursorContext::StyleStatus { target } => format!("status:{target:?}"),
+            CursorContext::ThemeContract => "theme-contract".into(),
+            CursorContext::TestBody => "test-body".into(),
+        }
+    }
+
+    fn context_on(source: &str, needle: &str, document: Option<&Document>) -> CursorContext {
+        let line = source_line(source, needle);
+        cursor_context(
+            source,
+            SourcePosition {
+                line,
+                column: source.lines().nth(line).unwrap_or_default().chars().count(),
+            },
+            document,
+        )
+    }
+
     #[test]
     fn classifies_incomplete_nested_source_without_parsing_it() {
         let source = "component Shell()\n  ui::Dialog\n    with\n      title=\n    events\n      \nview\n  match request\n    \n";
@@ -258,5 +307,163 @@ mod tests {
             cursor_context(source, SourcePosition { line: 2, column: 8 }, None),
             CursorContext::HandlerBody
         );
+    }
+
+    #[test]
+    fn ignores_comments_at_any_indentation_like_the_parser() {
+        let source = "app Demo\ncomponent Dialog(title:str)\n  emits\n    close\n  text title\nview\n  Dialog\n// parser ignores this line\n    with\n// regardless of its indentation\n      title=\"Demo\"\n// and this one\n    events\n// too\n      close -> closed\non closed\n  exit\n";
+        assert!(crate::parse(source).is_ok());
+        assert_eq!(
+            context_on(source, "title=\"Demo\"", None),
+            CursorContext::NodeMetadata {
+                node: Some("Dialog".into())
+            }
+        );
+        assert_eq!(
+            context_on(source, "close -> closed", None),
+            CursorContext::ComponentEvents {
+                component: "Dialog".into(),
+                forwarding: false,
+            }
+        );
+        assert_eq!(context_on(source, "exit", None), CursorContext::HandlerBody);
+
+        let lines = source.lines().collect::<Vec<_>>();
+        let view = source_line(source, "view");
+        let handler = source_line(source, "on closed");
+        assert_eq!(editor_block_end(&lines, view, 0), handler);
+        assert_eq!(editor_first_word("// comment"), None);
+    }
+
+    #[test]
+    fn parsed_spans_and_editor_context_agree_before_and_after_formatting() {
+        fn assert_contexts(source: &str) {
+            let document = crate::parse(source).unwrap();
+            let handler_statement = document.handlers[0].statements[0].span().line - 1;
+            let test_step = document.tests[0].steps[0].span.line - 1;
+            let component_root = document.components[0].root.span().line - 1;
+            let view_root = document.view.span().line - 1;
+
+            assert_eq!(
+                cursor_context(
+                    source,
+                    SourcePosition {
+                        line: handler_statement,
+                        column: 0,
+                    },
+                    Some(&document),
+                ),
+                CursorContext::HandlerBody
+            );
+            assert_eq!(
+                cursor_context(
+                    source,
+                    SourcePosition {
+                        line: test_step,
+                        column: 0,
+                    },
+                    Some(&document),
+                ),
+                CursorContext::TestBody
+            );
+            assert_eq!(
+                cursor_context(
+                    source,
+                    SourcePosition {
+                        line: component_root,
+                        column: 0,
+                    },
+                    Some(&document),
+                ),
+                CursorContext::ViewNode
+            );
+            assert_eq!(
+                cursor_context(
+                    source,
+                    SourcePosition {
+                        line: view_root,
+                        column: 0,
+                    },
+                    Some(&document),
+                ),
+                CursorContext::ComponentCall {
+                    component: "Card".into(),
+                }
+            );
+        }
+
+        let source = "app ContextFixture\nstate\n    count = 0\ncomponent Card(title:str)\n    text title\non increment\n    count = count + 1\nview\n    Card title=\"Ready\"\ntest increments\n    dispatch increment\n";
+        assert_contexts(source);
+        assert_contexts(&crate::format_source(source).unwrap());
+    }
+
+    #[test]
+    fn comment_insertion_preserves_incomplete_source_contexts() {
+        let source = "component Shell()\n  on submit\n    run \n  ui::Dialog\n    with\n      title=\n    events\n      close\nview\n  match request\n    pa\ntest interaction\n  click #submit\n";
+        let anchors = [
+            "run",
+            "title=",
+            "close",
+            "ui::Dialog",
+            "pa",
+            "click #submit",
+        ];
+        let expected = anchors
+            .iter()
+            .map(|anchor| {
+                let context = context_on(source, anchor, None);
+                (*anchor, context_signature(source, context))
+            })
+            .collect::<Vec<_>>();
+        let lines = source.lines().collect::<Vec<_>>();
+
+        for insertion in 0..=lines.len() {
+            let mut mutated = lines.clone();
+            mutated.insert(insertion, "// mutation");
+            let mutated = format!("{}\n", mutated.join("\n"));
+            for (anchor, expected) in &expected {
+                let context = context_on(&mutated, anchor, None);
+                assert_eq!(
+                    context_signature(&mutated, context),
+                    *expected,
+                    "context changed after inserting a comment at line {insertion}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_source_mutations_never_panic() {
+        let source = "component Shell()\n  on submit\n    run \n  ui::Dialog\n    with\n      title=\n    events\n      close\nview\n  match request\n    \ntest interaction\n  click #submit\n";
+        let fragments = [
+            "",
+            "// mutation",
+            "  // mutation",
+            "  ui::",
+            "    with",
+            "      title=",
+            "  on",
+            "    match",
+        ];
+        let base = source.lines().collect::<Vec<_>>();
+        let mut state = 0x4d59_5df4_usize;
+
+        for _ in 0..512 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let mut lines = base.clone();
+            let index = state % lines.len();
+            if state & 1 == 0 {
+                lines.remove(index);
+            } else {
+                let fragment = fragments[(state >> 8) % fragments.len()];
+                lines.insert(index, fragment);
+            }
+            let mutated = lines.join("\n");
+            for line in 0..=lines.len() {
+                for column in [0, lines.get(line).map_or(0, |line| line.len()), usize::MAX] {
+                    let _ = cursor_context(&mutated, SourcePosition { line, column }, None);
+                }
+            }
+        }
     }
 }
