@@ -63,6 +63,60 @@ pub struct ContentVersion {
     revision: u64,
 }
 
+/// The logical-line span replaced by one content revision.
+///
+/// The span is bound to an exact [`ContentVersion`] transition. The editor
+/// only uses it when `from` is the version that produced the cached layout and
+/// `to` is the version passed to [`RichTextEditor::new`]. A
+/// character edit within one line replaces one line with one line; splitting
+/// one line replaces one line with two; joining two lines replaces two lines
+/// with one.
+///
+/// A skipped render, stale transition, document replacement, overflowing
+/// bound, or inconsistent resulting line count falls back to exact line
+/// diffing. The caller must still ensure that lines outside an accepted span
+/// are unchanged between `from` and `to`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EditorChange {
+    from: ContentVersion,
+    to: ContentVersion,
+    /// The first logical line affected by the edit.
+    pub first_changed_line: usize,
+    /// The number of lines replaced in the previous revision.
+    pub removed_lines: usize,
+    /// The number of lines present in the new revision at the same position.
+    pub inserted_lines: usize,
+}
+
+impl EditorChange {
+    /// Creates a logical-line replacement hint.
+    pub const fn new(
+        from: ContentVersion,
+        to: ContentVersion,
+        first_changed_line: usize,
+        removed_lines: usize,
+        inserted_lines: usize,
+    ) -> Self {
+        Self {
+            from,
+            to,
+            first_changed_line,
+            removed_lines,
+            inserted_lines,
+        }
+    }
+
+    /// Returns the content version before the edit.
+    pub const fn from(self) -> ContentVersion {
+        self.from
+    }
+
+    /// Returns the content version after the edit.
+    pub const fn to(self) -> ContentVersion {
+        self.to
+    }
+}
+
 impl ContentVersion {
     /// Creates a document-scoped content version.
     pub const fn new(document: u64, revision: u64) -> Self {
@@ -101,6 +155,7 @@ where
     id: Option<widget::Id>,
     content: &'a Content,
     content_version: ContentVersion,
+    change_hint: Option<EditorChange>,
     placeholder: Option<String>,
     font: Option<Font>,
     text_size: Option<Pixels>,
@@ -127,6 +182,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             id: None,
             content,
             content_version,
+            change_hint: None,
             placeholder: None,
             font: None,
             text_size: None,
@@ -231,6 +287,20 @@ where
         self
     }
 
+    /// Describes the logical lines replaced since the previous content
+    /// version rendered by this widget.
+    ///
+    /// This optional optimization avoids discovering the unchanged line
+    /// prefix and suffix after a text mutation. Its `from` and `to` versions
+    /// must exactly match the cached and current [`ContentVersion`]. Initial
+    /// layout, skipped revisions, document replacement, unchanged versions,
+    /// active IME composition, and structurally invalid spans use exact
+    /// diffing instead.
+    pub fn change_hint(mut self, change: EditorChange) -> Self {
+        self.change_hint = Some(change);
+        self
+    }
+
     /// Uses a custom highlighter and rich formatting function.
     ///
     /// `format_key` must change whenever captured values that affect formatting
@@ -248,6 +318,7 @@ where
             id: self.id,
             content: self.content,
             content_version: self.content_version,
+            change_hint: self.change_hint,
             placeholder: self.placeholder,
             font: self.font,
             text_size: self.text_size,
@@ -376,10 +447,26 @@ where
 }
 
 #[cfg(test)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct LayoutMetrics {
     full_text_materializations: usize,
+    materialized_source_bytes: usize,
+    parsed_line_strings: usize,
+    parsed_line_bytes: usize,
+    composition_display_strings: usize,
+    composition_display_bytes: usize,
+    composition_line_strings: usize,
+    composition_line_bytes: usize,
+    mapping_line_comparisons: usize,
+    styled_signature_comparisons: usize,
+    newly_owned_styled_texts: usize,
+    newly_owned_styled_text_bytes: usize,
+    line_vector_slots_prepared: usize,
     rebuilt_lines: usize,
+    shaped_paragraphs: usize,
+    highlighted_lines: usize,
+    accepted_change_hints: usize,
+    rejected_change_hints: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -493,7 +580,8 @@ where
         let cursor = self.content.cursor();
         let state = tree.state.downcast_mut::<State<Highlighter>>();
 
-        let version_matches = state.content_version == Some(self.content_version);
+        let previous_content_version = state.content_version;
+        let version_matches = previous_content_version == Some(self.content_version);
         let materialized_source = if version_matches {
             None
         } else {
@@ -508,6 +596,13 @@ where
         if source_changed {
             let source = materialized_source.expect("changed content was materialized");
             let (source_lines, source_line_map) = TextLines::parse(&source);
+            #[cfg(test)]
+            {
+                state.metrics.materialized_source_bytes += source.len();
+                state.metrics.parsed_line_strings += source_lines.len();
+                state.metrics.parsed_line_bytes +=
+                    source_lines.iter().map(String::len).sum::<usize>();
+            }
             state.source = source;
             state.source_lines = source_lines;
             state.source_line_map = source_line_map;
@@ -544,6 +639,14 @@ where
                     preedit,
                 )
             });
+            #[cfg(test)]
+            if let Some(composition) = composition.as_ref() {
+                state.metrics.composition_display_strings += 1;
+                state.metrics.composition_display_bytes += composition.display_bytes;
+                state.metrics.composition_line_strings += composition.lines.len();
+                state.metrics.composition_line_bytes +=
+                    composition.lines.iter().map(String::len).sum::<usize>();
+            }
             let shaped_lines = composition
                 .as_ref()
                 .map_or(state.source_lines.as_slice(), |composition| {
@@ -556,7 +659,24 @@ where
                 || state.wrapping != self.wrapping;
             let format_changed = state.format_key != self.format_key;
 
-            let rebuilt = state.document.update(
+            let supplied_change = source_changed.then_some(self.change_hint).flatten();
+            let accepted_change = supplied_change.filter(|change| {
+                previous_content_version == Some(change.from())
+                    && self.content_version == change.to()
+                    && change.from().document() == change.to().document()
+                    && state.shaped_preedit.is_none()
+                    && state.preedit.is_none()
+            });
+            #[cfg(test)]
+            let transition_hint_rejected = supplied_change.is_some() && accepted_change.is_none();
+            let document_change = if let Some(change) = accepted_change {
+                DocumentChange::Hint(change)
+            } else if source_changed || preedit_changed {
+                DocumentChange::Discover
+            } else {
+                DocumentChange::Unchanged
+            };
+            let update = state.document.update(
                 shaped_lines,
                 &mut state.highlighter,
                 self.format.as_ref(),
@@ -567,15 +687,28 @@ where
                     line_height: self.line_height,
                     wrapping: self.wrapping,
                 },
-                geometry_changed,
-                format_changed,
+                DocumentUpdate {
+                    change: document_change,
+                    geometry_changed,
+                    format_changed,
+                },
             );
             #[cfg(test)]
             {
-                state.metrics.rebuilt_lines += rebuilt;
+                state.metrics.mapping_line_comparisons += update.mapping_line_comparisons;
+                state.metrics.styled_signature_comparisons += update.styled_signature_comparisons;
+                state.metrics.newly_owned_styled_texts += update.newly_owned_styled_texts;
+                state.metrics.newly_owned_styled_text_bytes += update.newly_owned_styled_text_bytes;
+                state.metrics.line_vector_slots_prepared += update.line_vector_slots_prepared;
+                state.metrics.rebuilt_lines += update.rebuilt_lines;
+                state.metrics.shaped_paragraphs += update.shaped_paragraphs;
+                state.metrics.highlighted_lines += update.highlighted_lines;
+                state.metrics.accepted_change_hints += usize::from(update.change_hint_used);
+                state.metrics.rejected_change_hints +=
+                    usize::from(transition_hint_rejected || update.change_hint_rejected);
             }
             #[cfg(not(test))]
-            let _ = rebuilt;
+            let _ = update;
             state.content_height = state.document.height;
             state.composition = composition.map(|composition| composition.layout);
             state.shaped_preedit = state.preedit.clone();

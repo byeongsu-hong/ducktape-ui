@@ -66,6 +66,30 @@ and interrupted output replacement cause full cache regeneration, stale
 transaction artifacts are removed, concurrent publishers retain both roots,
 and an unchanged pass preserves output and manifest mtimes.
 
+The runtime `RichTextEditor` uses caller-owned `ContentVersion` identity to
+skip full native-buffer materialization for caret and selection layouts.
+`EditorChange` optionally supplies an exact `from`/`to` content-version pair and
+logical-line replacement span. The fast path is accepted only when both
+versions match the cached and current layout, retain the same document identity,
+and the span passes overflow, bounds, and line-count checks. Skipped or batched
+revisions, stale hints, document replacement, and active composition use exact
+diff discovery. Accepted spans perform zero mapping-discovery comparisons;
+styled-signature comparisons and stateful highlighter work are counted
+separately. The markdown editor derives these transitions from its real edit,
+undo, redo, selection-replacement, and IME-commit history.
+
+The explicit 100,000-line contracts separately drive 1,000 caret layouts,
+1,000 pointer drag events, `ㅇ → 으 → 응` preedit, one-character insertion,
+and viewport resize under wall-time budgets. They record materialized source
+bytes, owned parsed-line strings and bytes, owned styled text, line-vector
+slots, mapping and styled-signature comparisons, highlighting, rebuilding, and
+shaping. These are deterministic allocations owned by this code. A global
+allocator hook is intentionally not used: the workspace forbids unsafe Rust
+and dependency/platform allocator calls are not a stable contract. Text
+revisions still materialize and parse the native buffer, line layout still
+prepares O(N) slots and top offsets, and a stateful highlighter may rescan the
+suffix; the counters make those remaining costs explicit.
+
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,

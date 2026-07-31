@@ -9,7 +9,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use ui_lang_runtime::rich_text_editor::{ContentVersion, Format, RichTextEditor};
+use ui_lang_runtime::rich_text_editor::{ContentVersion, EditorChange, Format, RichTextEditor};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub use ui_lang_runtime::rich_text_editor::Action as RichEditorAction;
@@ -111,7 +111,14 @@ pub fn markdown_editor<'a>(
 ) -> Element<'a, RichEditorAction> {
     let cursor = document.cursor().position;
     let format_theme = if dark { Theme::Dark } else { Theme::Light };
-    let editor = RichTextEditor::new(document, current_content_version())
+    let (content_version, change_hint) = current_editor_state();
+    let editor = RichTextEditor::new(document, content_version);
+    let editor = if let Some(change) = change_hint {
+        editor.change_hint(change)
+    } else {
+        editor
+    };
+    let editor = editor
         .id("markdown-editor")
         .placeholder("Start writing…")
         .width(iced::Length::Fill)
@@ -973,6 +980,7 @@ struct History {
     current_id: u64,
     saved_id: u64,
     next_id: u64,
+    pending_change: Option<EditorChange>,
 }
 
 impl Default for History {
@@ -987,6 +995,7 @@ impl Default for History {
             current_id: 0,
             saved_id: 0,
             next_id: 1,
+            pending_change: None,
         }
     }
 }
@@ -996,22 +1005,29 @@ impl History {
         self.bytes -= self.redo.iter().map(Change::bytes).sum::<usize>();
         self.redo.clear();
 
+        let before = self.content_version();
+        let after_id = self.next_id;
+        let after = ContentVersion::new(self.document_id, after_id);
+        let pending_change = change.data.editor_change(before, after, true);
+
         if self.current_id != self.saved_id
             && let Some(previous) = self.undo.last_mut()
             && coalesce(previous, &change)
         {
-            previous.after_id = self.next_id;
-            self.current_id = self.next_id;
+            previous.after_id = after_id;
+            self.current_id = after_id;
             self.next_id = self.next_id.saturating_add(1);
+            self.pending_change = pending_change;
             self.bytes += change.bytes();
             self.trim();
             return;
         }
 
         change.before_id = self.current_id;
-        change.after_id = self.next_id;
+        change.after_id = after_id;
         self.next_id = self.next_id.saturating_add(1);
         self.current_id = change.after_id;
+        self.pending_change = pending_change;
         self.bytes += change.bytes();
         self.undo.push(change);
         self.trim();
@@ -1025,6 +1041,49 @@ impl History {
             self.bytes = self.bytes.saturating_sub(self.undo.remove(0).bytes());
         }
     }
+
+    fn content_version(&self) -> ContentVersion {
+        ContentVersion::new(self.document_id, self.current_id)
+    }
+}
+
+impl ChangeData {
+    fn editor_change(
+        &self,
+        from: ContentVersion,
+        to: ContentVersion,
+        forward: bool,
+    ) -> Option<EditorChange> {
+        let Self::Replace {
+            start,
+            removed,
+            inserted,
+        } = self
+        else {
+            // Batch edits and full snapshots deliberately use exact discovery;
+            // their independently positioned replacements do not form one
+            // trustworthy contiguous line span.
+            return None;
+        };
+        let (removed, inserted) = if forward {
+            (removed, inserted)
+        } else {
+            (inserted, removed)
+        };
+        Some(EditorChange::new(
+            from,
+            to,
+            start.line,
+            logical_line_span(removed),
+            logical_line_span(inserted),
+        ))
+    }
+}
+
+fn logical_line_span(text: &str) -> usize {
+    position_after(Position { line: 0, column: 0 }, text)
+        .line
+        .saturating_add(1)
 }
 
 // ponytail: one process-wide history matches this single-document example.
@@ -1846,8 +1905,12 @@ pub fn undo_document(mut content: Content) -> Content {
         let Some(change) = history.undo.pop() else {
             return content;
         };
+        let from = history.content_version();
+        let to = ContentVersion::new(history.document_id, change.before_id);
+        let pending_change = change.data.editor_change(from, to, false);
         apply_change(&mut content, &change, false);
         history.current_id = change.before_id;
+        history.pending_change = pending_change;
         history.redo.push(change);
     }
     content
@@ -1859,8 +1922,12 @@ pub fn redo_document(mut content: Content) -> Content {
         let Some(change) = history.redo.pop() else {
             return content;
         };
+        let from = history.content_version();
+        let to = ContentVersion::new(history.document_id, change.after_id);
+        let pending_change = change.data.editor_change(from, to, true);
         apply_change(&mut content, &change, true);
         history.current_id = change.after_id;
+        history.pending_change = pending_change;
         history.undo.push(change);
     }
     content
@@ -2109,9 +2176,14 @@ pub fn revision() -> i64 {
     i64::try_from(history().current_id).unwrap_or(i64::MAX)
 }
 
+#[cfg(test)]
 fn current_content_version() -> ContentVersion {
+    current_editor_state().0
+}
+
+fn current_editor_state() -> (ContentVersion, Option<EditorChange>) {
     let history = history();
-    ContentVersion::new(history.document_id, history.current_id)
+    (history.content_version(), history.pending_change)
 }
 
 pub fn mark_saved(revision: i64) {
@@ -2202,11 +2274,12 @@ fn position_at(content: &Content, mut offset: usize) -> Position {
 mod tests {
     use super::{
         MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, clear_editor_selection,
-        current_content_version, format_document, inline_highlights, is_dirty, mark_saved,
-        redo_document, reset_document, revision, track_action, undo_document,
+        current_content_version, current_editor_state, format_document, inline_highlights,
+        is_dirty, mark_saved, redo_document, reset_document, revision, track_action, undo_document,
     };
     use iced::advanced::text::Highlighter;
     use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
+    use std::sync::Arc;
 
     #[test]
     fn keeps_unparsed_whitespace_at_body_metrics() {
@@ -2618,6 +2691,98 @@ mod tests {
         assert_eq!(replacement.text(), document.text());
         assert_ne!(replaced.document(), initial.document());
         assert_eq!(replaced.revision(), initial.revision());
+    }
+
+    #[test]
+    fn production_history_emits_exact_editor_change_transitions() {
+        let _lock = super::test_history_lock();
+
+        let mut document = reset_document("hello".into());
+        let initial = current_content_version();
+        track_action(&mut document, Action::Edit(Edit::Insert('!')));
+        let (inserted, insertion) = current_editor_state();
+        let insertion = insertion.expect("ordinary edit transition");
+        assert_eq!(insertion.from(), initial);
+        assert_eq!(insertion.to(), inserted);
+        assert_eq!(insertion.first_changed_line, 0);
+        assert_eq!(insertion.removed_lines, 1);
+        assert_eq!(insertion.inserted_lines, 1);
+
+        document = undo_document(document);
+        let (undone, undo) = current_editor_state();
+        let undo = undo.expect("undo transition");
+        assert_eq!(undone, initial);
+        assert_eq!(undo.from(), inserted);
+        assert_eq!(undo.to(), initial);
+        assert_eq!(undo.removed_lines, 1);
+        assert_eq!(undo.inserted_lines, 1);
+
+        document = redo_document(document);
+        assert_eq!(document.text(), "!hello");
+        let (redone, redo) = current_editor_state();
+        let redo = redo.expect("redo transition");
+        assert_eq!(redone, inserted);
+        assert_eq!(redo.from(), initial);
+        assert_eq!(redo.to(), inserted);
+
+        let mut document = reset_document("alpha\nbeta\ngamma".into());
+        let before_selection = current_content_version();
+        document.move_to(Cursor {
+            position: Position { line: 2, column: 3 },
+            selection: Some(Position { line: 0, column: 2 }),
+        });
+        track_action(
+            &mut document,
+            Action::Edit(Edit::Paste(Arc::new("응\n답".into()))),
+        );
+        let (after_selection, selection) = current_editor_state();
+        let selection = selection.expect("selection replacement transition");
+        assert_eq!(selection.from(), before_selection);
+        assert_eq!(selection.to(), after_selection);
+        assert_eq!(selection.first_changed_line, 0);
+        assert_eq!(selection.removed_lines, 3);
+        assert_eq!(selection.inserted_lines, 2);
+
+        let mut document = reset_document("앞 ".into());
+        document.move_to(Cursor {
+            position: Position { line: 0, column: 4 },
+            selection: None,
+        });
+        let before_ime = current_content_version();
+        // RichTextEditor publishes IME commits as a native Paste action.
+        track_action(
+            &mut document,
+            Action::Edit(Edit::Paste(Arc::new("응".into()))),
+        );
+        let (after_ime, ime) = current_editor_state();
+        let ime = ime.expect("IME commit transition");
+        assert_eq!(ime.from(), before_ime);
+        assert_eq!(ime.to(), after_ime);
+        assert_eq!(ime.first_changed_line, 0);
+        assert_eq!(ime.removed_lines, 1);
+        assert_eq!(ime.inserted_lines, 1);
+    }
+
+    #[test]
+    fn batched_frames_expose_only_the_latest_exact_transition() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("first\nsecond".into());
+        let rendered = current_content_version();
+
+        track_action(&mut document, Action::Edit(Edit::Insert('A')));
+        let intermediate = current_content_version();
+        document.move_to(Cursor {
+            position: Position { line: 1, column: 0 },
+            selection: None,
+        });
+        track_action(&mut document, Action::Edit(Edit::Insert('B')));
+
+        let (current, latest) = current_editor_state();
+        let latest = latest.expect("latest edit transition");
+        assert_eq!(latest.from(), intermediate);
+        assert_eq!(latest.to(), current);
+        assert_ne!(latest.from(), rendered);
+        assert_eq!(latest.first_changed_line, 1);
     }
 
     #[test]
