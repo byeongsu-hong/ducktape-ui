@@ -44,6 +44,28 @@ ICE_PACKAGE_ALLOW_DIRTY=1 scripts/package-smoke.sh
 
 The default remains strict so the release command refuses a dirty checkout.
 
+The default component library also keeps a reviewed semantic API baseline at
+`api/baselines/ducktape-ui.json`. Before release, regenerate and compare it:
+
+```bash
+cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
+cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
+```
+
+Breaking changes exit nonzero. Update the committed baseline only when the
+corresponding breaking/additive/behavioral report is intentional and reviewed;
+formatting and file relocation alone do not change its SHA-256 fingerprint.
+Pull requests always compare against the target branch's baseline, so updating
+the baseline in the same change cannot hide a breaking diff. The committed
+baseline must also match the command above byte-for-byte. After reviewing both
+the semantic diff and regenerated baseline, a maintainer explicitly accepts an
+intentional breaking change by applying the `api-breaking-approved` label. Label
+addition and removal rerun the gate. The approval applies only to the current
+head: any later push makes the synchronize run fail until a maintainer removes
+and reapplies the label. Ordinary contributors and fork pull requests receive
+no write token or baseline override. Retargeting a pull request also reruns the
+gate against the new target commit and requires a fresh breaking approval.
+
 ## Registry order
 
 The first crates.io publication must respect this dependency graph:

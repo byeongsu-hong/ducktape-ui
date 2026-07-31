@@ -847,7 +847,9 @@ dependencies = [
  "notify",
  "png 0.18.1",
  "same-file",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "toml_edit",
  "ui-lang-core",
@@ -5515,7 +5517,9 @@ name = "ui-lang-core"
 version = "0.1.0"
 dependencies = [
  "qrcode 0.14.1",
+ "serde",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

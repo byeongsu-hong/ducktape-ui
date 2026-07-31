@@ -431,6 +431,21 @@ pub(crate) fn parse_with_symbols_and_namespaces(
     source: &str,
     namespaces: &[Option<String>],
 ) -> Result<(Document, Vec<ParsedSymbol>), Error> {
+    parse_document(source, namespaces, false)
+}
+
+pub(crate) fn parse_interface_with_symbols_and_namespaces(
+    source: &str,
+    namespaces: &[Option<String>],
+) -> Result<(Document, Vec<ParsedSymbol>), Error> {
+    parse_document(source, namespaces, true)
+}
+
+fn parse_document(
+    source: &str,
+    namespaces: &[Option<String>],
+    interface: bool,
+) -> Result<(Document, Vec<ParsedSymbol>), Error> {
     let symbols = Rc::new(RefCell::new(Vec::new()));
     let lines = line_tree(source, namespaces, Rc::clone(&symbols))?;
     let mut app = None;
@@ -821,14 +836,19 @@ pub(crate) fn parse_with_symbols_and_namespaces(
     }
 
     let span = Span::line(1);
+    let declaration_only = interface && app.is_none() && view.is_none();
     let document = Document {
-        app: app.ok_or_else(|| {
-            Error::new(
-                "E006",
-                &span,
-                "missing `app Name` or `daemon Name` declaration",
-            )
-        })?,
+        app: match app {
+            Some(app) => app,
+            None if declaration_only => "__IceApiInterface".into(),
+            None => {
+                return Err(Error::new(
+                    "E006",
+                    &span,
+                    "missing `app Name` or `daemon Name` declaration",
+                ));
+            }
+        },
         daemon,
         settings,
         presets,
@@ -845,7 +865,17 @@ pub(crate) fn parse_with_symbols_and_namespaces(
         components,
         handlers,
         tests,
-        view: view.ok_or_else(|| Error::new("E008", &span, "missing `view` block"))?,
+        view: match view {
+            Some(view) => view,
+            None if declaration_only => ViewNode::Space {
+                id: None,
+                width: None,
+                height: None,
+                styles: Vec::new(),
+                span: span.clone(),
+            },
+            None => return Err(Error::new("E008", &span, "missing `view` block")),
+        },
     };
     Ok((document, symbols.borrow().clone()))
 }

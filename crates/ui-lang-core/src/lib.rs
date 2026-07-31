@@ -1,4 +1,5 @@
 mod analysis_db;
+mod api;
 mod ast;
 mod check;
 mod codegen;
@@ -14,6 +15,7 @@ pub use analysis_db::{
     AnalysisConfig, AnalysisDb, AnalysisInvalidation, AnalysisMetrics, AnalysisTimings,
     CompilerFeatureSet, ContentHash, FileKey, LANGUAGE_REVISION,
 };
+pub use api::*;
 pub use ast::*;
 pub use editor::{
     CursorContext, STYLE_STATUS_NAMES, SourcePosition, cursor_context, editor_ancestor_lines,

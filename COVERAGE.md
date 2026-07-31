@@ -90,6 +90,20 @@ revisions still materialize and parse the native buffer, line layout still
 prepares O(N) slots and top offsets, and a stateful highlighter may rescan the
 suffix; the counters make those remaining costs explicit.
 
+The checked public package contract is separately executable through
+`cargo ice api`: a declaration-only or application root produces a sorted,
+versioned SHA-256 JSON fingerprint over component, recipe, theme, type, and
+extern surfaces, retaining imported namespace identity without source paths or
+backend/HIR details. `cargo ice api diff` validates artifact schema, hash,
+canonical ordering, unique names, and required/default consistency, emits human
+or machine-readable breaking/behavioral/additive classifications, and fails on
+breaking changes. Pull-request CI requires an exactly regenerated `ducktape-ui`
+artifact, compares it with the target commit's reviewed baseline, and accepts a
+breaking result only through a maintainer-controlled label event for the latest
+head. This
+is tooling evidence over the existing Core contract, not a new syntax or LSP
+capability.
+
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,

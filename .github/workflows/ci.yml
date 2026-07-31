@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -24,8 +25,50 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - run: cargo ice fmt --check
       - run: cargo ice clippy
+      - name: Check public Ice API baseline
+        env:
+          # A label authorizes only the head that triggered its `labeled` event.
+          # A later synchronize run must fail until a maintainer reapplies it.
+          ICE_API_ACCEPT_BREAKING: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'api-breaking-approved' }}
+          ICE_API_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          committed=api/baselines/ducktape-ui.json
+          current=target/ducktape-ui-api.json
+          cargo ice api crates/ui/src/ice/default.ice > "$current"
+
+          if ! cmp -- "$committed" "$current"; then
+            echo "::error file=$committed::regenerate the committed API baseline with the documented cargo ice api command"
+            diff -u -- "$committed" "$current" || true
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            exit 0
+          fi
+          if [[ ! "$ICE_API_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::pull request base SHA is unavailable or malformed"
+            exit 1
+          fi
+
+          baseline=target/ducktape-ui-api-base.json
+          if ! git cat-file -e "$ICE_API_BASE_SHA:$committed" 2>/dev/null; then
+            echo "::notice::establishing the repository's first reviewed Ice API baseline"
+            exit 0
+          fi
+          git show "$ICE_API_BASE_SHA:$committed" > "$baseline"
+          cargo ice api diff "$baseline" "$baseline" > /dev/null
+          if cargo ice api diff "$baseline" "$current"; then
+            exit 0
+          fi
+          if [[ "$ICE_API_ACCEPT_BREAKING" != "true" ]]; then
+            echo "::error::breaking Ice API changes require a maintainer to apply or reapply the api-breaking-approved label after the latest commit"
+            exit 1
+          fi
+          echo "::notice::breaking Ice API change accepted for this head by the api-breaking-approved label event"
       - name: Check standalone UI feature on native and wasm
         run: |
           cargo check --locked -p ducktape-ui --no-default-features --features button,x11
