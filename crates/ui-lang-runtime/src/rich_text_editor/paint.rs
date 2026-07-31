@@ -1,4 +1,5 @@
-use super::{CompositionLayout, DocumentLayout, State, ordered_positions};
+use super::composition::CompositionLayout;
+use super::document::{DocumentLayout, ordered_positions};
 use iced::advanced::graphics::text::cosmic_text;
 use iced::advanced::text::{self, Paragraph as _};
 use iced::advanced::{Renderer as _, renderer};
@@ -48,17 +49,15 @@ pub(super) fn visit_line_highlight_groups(
     }
 }
 
-pub(super) fn draw_line_highlights<H>(
+pub(super) fn draw_line_highlights(
     renderer: &mut iced::Renderer,
-    state: &State<H>,
+    document: &DocumentLayout,
     clip: Rectangle,
     origin: Point,
-) where
-    H: text::Highlighter,
-{
+) {
     renderer.with_layer(clip, |renderer| {
         visit_line_highlight_groups(
-            state.document.lines.iter().map(|line| {
+            document.lines.iter().map(|line| {
                 (
                     line.signature.line_highlight,
                     origin.y + line.top,
@@ -85,15 +84,13 @@ pub(super) fn draw_line_highlights<H>(
     });
 }
 
-pub(super) fn draw_span_highlights<H>(
+pub(super) fn draw_span_highlights(
     renderer: &mut iced::Renderer,
-    state: &State<H>,
+    document: &DocumentLayout,
     clip: Rectangle,
     origin: Point,
-) where
-    H: text::Highlighter,
-{
-    for line in &state.document.lines {
+) {
+    for line in &document.lines {
         let top = origin.y + line.top;
         if top + line.height < clip.y || top > clip.y + clip.height {
             continue;
@@ -142,23 +139,21 @@ pub(super) fn span_highlight_bounds(
     ))
 }
 
-pub(super) fn draw_selection<H>(
+pub(super) fn draw_selection(
     renderer: &mut iced::Renderer,
-    state: &State<H>,
+    document: &DocumentLayout,
     cursor: Cursor,
     clip: Rectangle,
     origin: Point,
     color: Color,
-) where
-    H: text::Highlighter,
-{
+) {
     let Some(anchor) = cursor.selection else {
         return;
     };
     let (start, end) = ordered_positions(cursor.position, anchor);
 
     for line_index in start.line..=end.line {
-        let Some(line) = state.document.line(line_index) else {
+        let Some(line) = document.line(line_index) else {
             continue;
         };
         let from = if line_index == start.line {
@@ -198,15 +193,13 @@ pub(super) fn draw_selection<H>(
     }
 }
 
-pub(super) fn draw_strikethroughs<H>(
+pub(super) fn draw_strikethroughs(
     renderer: &mut iced::Renderer,
-    state: &State<H>,
+    document: &DocumentLayout,
     clip: Rectangle,
     origin: Point,
-) where
-    H: text::Highlighter,
-{
-    for document_line in &state.document.lines {
+) {
+    for document_line in &document.lines {
         let top = origin.y + document_line.top;
         if top + document_line.height < clip.y || top > clip.y + clip.height {
             continue;
@@ -241,20 +234,18 @@ pub(super) fn draw_strikethroughs<H>(
     }
 }
 
-pub(super) fn draw_composition<H>(
+pub(super) fn draw_composition(
     renderer: &mut iced::Renderer,
-    state: &State<H>,
+    document: &DocumentLayout,
     composition: &CompositionLayout,
     clip: Rectangle,
     origin: Point,
     color: Color,
     cursor_visible: bool,
-) where
-    H: text::Highlighter,
-{
+) {
     draw_range_underline(
         renderer,
-        &state.document,
+        document,
         composition.range,
         clip,
         origin,
@@ -265,19 +256,11 @@ pub(super) fn draw_composition<H>(
     if let Some((start, end)) = composition.selection
         && start != end
     {
-        draw_range_underline(
-            renderer,
-            &state.document,
-            (start, end),
-            clip,
-            origin,
-            color,
-            2.0,
-        );
+        draw_range_underline(renderer, document, (start, end), clip, origin, color, 2.0);
     }
 
     if cursor_visible && composition.cursor_visible {
-        let caret = state.document.caret(composition.cursor) + (origin - Point::ORIGIN);
+        let caret = document.caret(composition.cursor) + (origin - Point::ORIGIN);
         if let Some(caret) = clip.intersection(&caret) {
             renderer.fill_quad(
                 renderer::Quad {

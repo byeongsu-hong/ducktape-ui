@@ -1,9 +1,29 @@
 use super::movement::{move_cursor, uses_rich_geometry};
-use super::{Action, State};
-use iced::advanced::{Clipboard, Shell, text};
+use super::{Action, document::DocumentLayout};
+use iced::advanced::{Clipboard, Shell};
 use iced::keyboard::{self, key};
 use iced::widget::text_editor::{self, Binding, Content, Edit, Motion};
 use std::sync::Arc;
+
+pub(super) struct BindingContext<'a> {
+    document: &'a DocumentLayout,
+    preferred_x: &'a mut Option<f32>,
+    viewport_height: f32,
+}
+
+impl<'a> BindingContext<'a> {
+    pub(super) fn new(
+        document: &'a DocumentLayout,
+        preferred_x: &'a mut Option<f32>,
+        viewport_height: f32,
+    ) -> Self {
+        Self {
+            document,
+            preferred_x,
+            viewport_height,
+        }
+    }
+}
 
 pub(super) fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
     match press.modified_key.as_ref() {
@@ -168,26 +188,21 @@ pub(super) fn ime_boundary_character(
         })
 }
 
-pub(super) fn apply_binding<H, Message>(
+pub(super) fn apply_binding<Message>(
     binding: Binding<Edit>,
     content: &Content,
-    state: &mut State<H>,
+    context: &mut BindingContext<'_>,
     on_action: &dyn Fn(Action) -> Message,
     clipboard: &mut dyn Clipboard,
     shell: &mut Shell<'_, Message>,
-) where
-    H: text::Highlighter,
-{
+) -> bool {
     let publish = |shell: &mut Shell<'_, Message>, action| {
         shell.publish(on_action(action));
     };
 
     match binding {
         Binding::Unfocus => {
-            state.focus = None;
-            state.drag_anchor = None;
-            state.drag_moved = false;
-            state.release_bubbles = None;
+            return true;
         }
         Binding::Copy => {
             if let Some(selection) = content.selection() {
@@ -199,7 +214,7 @@ pub(super) fn apply_binding<H, Message>(
                 clipboard.write(iced::advanced::clipboard::Kind::Standard, selection);
                 publish(shell, Action::Edit(text_editor::Action::Edit(Edit::Delete)));
             }
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Paste => {
             if let Some(source) = clipboard.read(iced::advanced::clipboard::Kind::Standard) {
@@ -208,68 +223,86 @@ pub(super) fn apply_binding<H, Message>(
                     Action::Edit(text_editor::Action::Edit(Edit::Paste(Arc::new(source)))),
                 );
             }
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Move(motion) => {
             if uses_rich_geometry(motion) {
-                let cursor = move_cursor(state, content.cursor(), motion, false);
+                let cursor = move_cursor(
+                    context.document,
+                    context.preferred_x,
+                    context.viewport_height,
+                    content.cursor(),
+                    motion,
+                    false,
+                );
                 publish(shell, Action::MoveTo(cursor));
             } else {
                 publish(shell, Action::Edit(text_editor::Action::Move(motion)));
-                state.preferred_x = None;
+                *context.preferred_x = None;
             }
         }
         Binding::Select(motion) => {
             if uses_rich_geometry(motion) {
-                let cursor = move_cursor(state, content.cursor(), motion, true);
+                let cursor = move_cursor(
+                    context.document,
+                    context.preferred_x,
+                    context.viewport_height,
+                    content.cursor(),
+                    motion,
+                    true,
+                );
                 publish(shell, Action::MoveTo(cursor));
             } else {
                 publish(shell, Action::Edit(text_editor::Action::Select(motion)));
-                state.preferred_x = None;
+                *context.preferred_x = None;
             }
         }
         Binding::SelectWord => {
             publish(shell, Action::Edit(text_editor::Action::SelectWord));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::SelectLine => {
             publish(shell, Action::Edit(text_editor::Action::SelectLine));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::SelectAll => {
             publish(shell, Action::Edit(text_editor::Action::SelectAll));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Insert(character) => {
             publish(
                 shell,
                 Action::Edit(text_editor::Action::Edit(Edit::Insert(character))),
             );
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Enter => {
             publish(shell, Action::Edit(text_editor::Action::Edit(Edit::Enter)));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Backspace => {
             publish(
                 shell,
                 Action::Edit(text_editor::Action::Edit(Edit::Backspace)),
             );
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Delete => {
             publish(shell, Action::Edit(text_editor::Action::Edit(Edit::Delete)));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
         Binding::Sequence(bindings) => {
+            let mut unfocus = false;
             for binding in bindings {
-                apply_binding(binding, content, state, on_action, clipboard, shell);
+                unfocus |= apply_binding(binding, content, context, on_action, clipboard, shell);
             }
+            return unfocus;
         }
         Binding::Custom(edit) => {
             publish(shell, Action::Edit(text_editor::Action::Edit(edit)));
-            state.preferred_x = None;
+            *context.preferred_x = None;
         }
     }
+
+    false
 }

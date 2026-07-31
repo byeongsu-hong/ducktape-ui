@@ -1,9 +1,7 @@
-use super::{State, ordered_positions};
+use super::document::{DocumentLayout, ordered_positions};
 use iced::Point;
-use iced::advanced::text;
-use iced::widget::text_editor::{Content, Cursor, Motion, Position};
+use iced::widget::text_editor::{Cursor, Motion, Position};
 use std::cmp::Ordering;
-use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) fn uses_rich_geometry(motion: Motion) -> bool {
     matches!(
@@ -12,15 +10,14 @@ pub(super) fn uses_rich_geometry(motion: Motion) -> bool {
     )
 }
 
-pub(super) fn move_cursor<H>(
-    state: &mut State<H>,
+pub(super) fn move_cursor(
+    document: &DocumentLayout,
+    preferred_x: &mut Option<f32>,
+    viewport_height: f32,
     cursor: Cursor,
     motion: Motion,
     select: bool,
-) -> Cursor
-where
-    H: text::Highlighter,
-{
+) -> Cursor {
     let anchor = select.then(|| cursor.selection.unwrap_or(cursor.position));
     let position = if let Some(selection) = cursor.selection
         && !select
@@ -35,7 +32,13 @@ where
             end
         }
     } else {
-        rich_motion(state, cursor.position, motion)
+        rich_motion(
+            document,
+            preferred_x,
+            viewport_height,
+            cursor.position,
+            motion,
+        )
     };
     Cursor {
         position,
@@ -43,10 +46,13 @@ where
     }
 }
 
-fn rich_motion<H>(state: &mut State<H>, position: Position, motion: Motion) -> Position
-where
-    H: text::Highlighter,
-{
+fn rich_motion(
+    document: &DocumentLayout,
+    preferred_x: &mut Option<f32>,
+    viewport_height: f32,
+    position: Position,
+    motion: Motion,
+) -> Position {
     struct VisualRun {
         line: usize,
         top: f32,
@@ -55,10 +61,9 @@ where
         end: usize,
     }
 
-    let caret = state.document.caret(position);
-    let preferred_x = *state.preferred_x.get_or_insert(caret.x);
-    let runs = state
-        .document
+    let caret = document.caret(position);
+    let preferred_x_value = *preferred_x.get_or_insert(caret.x);
+    let runs = document
         .lines
         .iter()
         .enumerate()
@@ -103,21 +108,21 @@ where
         Motion::Down => (current + 1).min(runs.len().saturating_sub(1)),
         Motion::PageUp => runs
             .iter()
-            .rposition(|run| run.top <= caret.y - state.viewport_height)
+            .rposition(|run| run.top <= caret.y - viewport_height)
             .unwrap_or(0),
         Motion::PageDown => runs
             .iter()
-            .position(|run| run.top >= caret.y + state.viewport_height)
+            .position(|run| run.top >= caret.y + viewport_height)
             .unwrap_or_else(|| runs.len().saturating_sub(1)),
         Motion::Home => {
-            state.preferred_x = None;
+            *preferred_x = None;
             return runs.get(current).map_or(position, |run| Position {
                 line: run.line,
                 column: run.start,
             });
         }
         Motion::End => {
-            state.preferred_x = None;
+            *preferred_x = None;
             return runs.get(current).map_or(position, |run| Position {
                 line: run.line,
                 column: run.end,
@@ -129,58 +134,5 @@ where
     let Some(run) = runs.get(target) else {
         return position;
     };
-    state
-        .document
-        .hit(Point::new(preferred_x, run.top + run.height / 2.0))
-}
-
-pub(super) fn select_word(content: &Content, position: Position) -> Cursor {
-    let Some(line) = content.line(position.line) else {
-        return Cursor {
-            position,
-            selection: None,
-        };
-    };
-    let mut selected = None;
-    for (start, word) in line.text.split_word_bound_indices() {
-        let end = start + word.len();
-        if start <= position.column && position.column < end
-            || position.column == line.text.len() && end == line.text.len()
-        {
-            selected = Some(start..end);
-            break;
-        }
-    }
-    let Some(range) = selected else {
-        return Cursor {
-            position,
-            selection: None,
-        };
-    };
-    Cursor {
-        position: Position {
-            line: position.line,
-            column: range.end,
-        },
-        selection: Some(Position {
-            line: position.line,
-            column: range.start,
-        }),
-    }
-}
-
-pub(super) fn select_line(content: &Content, position: Position) -> Cursor {
-    let end = content
-        .line(position.line)
-        .map_or(0, |line| line.text.len());
-    Cursor {
-        position: Position {
-            line: position.line,
-            column: end,
-        },
-        selection: (end > 0).then_some(Position {
-            line: position.line,
-            column: 0,
-        }),
-    }
+    document.hit(Point::new(preferred_x_value, run.top + run.height / 2.0))
 }
