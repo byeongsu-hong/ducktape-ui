@@ -11,6 +11,11 @@ const GENERATED_MANIFEST_SCHEMA: u32 = 1;
 const COMPILER_STACK_SIZE: usize = 8 * 1024 * 1024;
 const DEV_BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
 
+#[cfg(test)]
+std::thread_local! {
+    static GENERATED_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Debug)]
 pub struct Error(String);
 
@@ -254,14 +259,7 @@ fn compile_one(
             directory.display()
         ))
     })?;
-    if fs::read_to_string(&destination).ok().as_deref() != Some(&compilation.rust) {
-        fs::write(&destination, compilation.rust).map_err(|error| {
-            Error(format!(
-                "ui-lang-build: cannot write {}: {error}",
-                destination.display()
-            ))
-        })?;
-    }
+    write_generated_if_changed(&destination, &compilation.rust, "generated output")?;
     Ok(destination)
 }
 
@@ -323,14 +321,22 @@ fn write_generated_manifest(
         ))
     })?;
     contents.push('\n');
-    if fs::read_to_string(&path).ok().as_deref() != Some(&contents) {
-        fs::write(&path, contents).map_err(|error| {
-            Error(format!(
-                "ui-lang-build: cannot write generated manifest {}: {error}",
-                path.display()
-            ))
-        })?;
+    write_generated_if_changed(&path, &contents, "generated manifest")?;
+    Ok(())
+}
+
+fn write_generated_if_changed(path: &Path, contents: &str, kind: &str) -> Result<(), Error> {
+    if fs::read_to_string(path).ok().as_deref() == Some(contents) {
+        return Ok(());
     }
+    fs::write(path, contents).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot write {kind} {}: {error}",
+            path.display()
+        ))
+    })?;
+    #[cfg(test)]
+    GENERATED_WRITES.with(|writes| writes.set(writes.get() + 1));
     Ok(())
 }
 
@@ -458,8 +464,17 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn reset_generated_writes() {
+        super::GENERATED_WRITES.with(|writes| writes.set(0));
+    }
+
+    fn generated_writes() -> usize {
+        super::GENERATED_WRITES.with(std::cell::Cell::get)
+    }
 
     #[test]
     fn cargo_tracks_dev_fingerprint_sources_and_assets() {
@@ -614,6 +629,77 @@ mod tests {
                 .outputs
                 .contains_key(&generated_file_name("src/ui/fragments/text.ice"))
         );
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    #[ignore = "CI performance contract; run explicitly"]
+    fn performance_contract_compiles_one_hundred_roots_incrementally() {
+        const ROOTS: usize = 100;
+        const COLD_BUDGET: Duration = Duration::from_secs(10);
+        const INCREMENTAL_BUDGET: Duration = Duration::from_secs(5);
+
+        let fixture = std::env::temp_dir().join(format!(
+            "ui-lang-build-performance-{}-{}",
+            std::process::id(),
+            FIXTURE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(&source_dir).unwrap();
+        for index in 0..ROOTS {
+            fs::write(
+                source_dir.join(format!("app-{index:03}.ice")),
+                format!(
+                    concat!(
+                        "app Performance{}\n",
+                        "theme contract AppTheme\n",
+                        "  bg\n",
+                        "  fg\n",
+                        "  primary\n",
+                        "  danger\n",
+                        "palette app for AppTheme\n",
+                        "  bg #000000\n",
+                        "  fg #ffffff\n",
+                        "  primary #333333\n",
+                        "  danger #ff0000\n",
+                        "view\n",
+                        "  text \"ready\"\n",
+                    ),
+                    index
+                ),
+            )
+            .unwrap();
+        }
+
+        reset_generated_writes();
+        let started = Instant::now();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let cold = started.elapsed();
+        assert_eq!(generated_writes(), ROOTS + 1);
+        assert!(
+            cold <= COLD_BUDGET,
+            "cold AOT codegen for {ROOTS} roots took {cold:?}; budget is {COLD_BUDGET:?}"
+        );
+
+        reset_generated_writes();
+        let started = Instant::now();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let incremental = started.elapsed();
+        assert_eq!(
+            generated_writes(),
+            0,
+            "unchanged incremental codegen must not rewrite generated outputs"
+        );
+        assert!(
+            incremental <= INCREMENTAL_BUDGET,
+            "incremental AOT codegen for {ROOTS} unchanged roots took {incremental:?}; budget is {INCREMENTAL_BUDGET:?}"
+        );
+        eprintln!(
+            "{ROOTS} roots: cold {cold:?}, unchanged incremental {incremental:?}, incremental writes 0"
+        );
+
         fs::remove_dir_all(fixture).unwrap();
     }
 }
