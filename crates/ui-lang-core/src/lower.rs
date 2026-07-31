@@ -1388,6 +1388,31 @@ view
     }
 
     #[test]
+    fn preserves_maximum_exact_padding_without_sentinel_values() {
+        let source = format!(
+            r#"app Padding
+recipe all for box
+  p-65535px
+recipe axes for box
+  px-65535px py-65534px
+{THEME}view
+  col
+    box @all
+      text "all"
+    box @axes
+      text "axes"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        assert_eq!(program.styles.recipes[0].style.padding, [u16::MAX; 4]);
+        assert_eq!(
+            program.styles.recipes[1].style.padding,
+            [u16::MAX - 1, u16::MAX, u16::MAX - 1, u16::MAX]
+        );
+    }
+
+    #[test]
     fn resolves_theme_contract_palettes_and_native_factories() {
         let source = r#"extern crate::backend
   theme native_theme(dark:bool)

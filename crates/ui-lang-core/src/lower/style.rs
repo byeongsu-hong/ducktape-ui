@@ -121,7 +121,7 @@ pub(crate) enum ResolvedStyleProperty {
 pub(crate) enum ResolvedUtilityValue {
     Flag,
     Pixels(u16),
-    Padding([u16; 4]),
+    Padding([Option<u16>; 4]),
     TextSize(f32),
     LineHeight(f32),
     FontWeight(ResolvedStyleFontWeight),
@@ -205,7 +205,7 @@ impl ResolvedStyle {
             }
             (Variant::Base, Property::Padding, ResolvedUtilityValue::Padding(value)) => {
                 for (slot, value) in self.padding.iter_mut().zip(value) {
-                    if *value != u16::MAX {
+                    if let Some(value) = value {
                         *slot = *value;
                     }
                 }
@@ -344,7 +344,7 @@ fn utility_property_mask(utility: &ResolvedUtility) -> u64 {
             return values
                 .iter()
                 .enumerate()
-                .filter(|(_, value)| **value != u16::MAX)
+                .filter(|(_, value)| value.is_some())
                 .fold(0, |mask, (index, _)| mask | (1 << (3 + index)));
         }
         _ => unreachable!("checker-approved utility has a canonical property mask"),
@@ -1028,7 +1028,7 @@ impl Lowerer {
                 })?;
                 (
                     ResolvedStyleProperty::Padding,
-                    ResolvedUtilityValue::Padding([value; 4]),
+                    ResolvedUtilityValue::Padding([Some(value); 4]),
                 )
             }
             value if value.starts_with("px-") => {
@@ -1037,7 +1037,7 @@ impl Lowerer {
                 })?;
                 (
                     ResolvedStyleProperty::Padding,
-                    ResolvedUtilityValue::Padding([u16::MAX, value, u16::MAX, value]),
+                    ResolvedUtilityValue::Padding([None, Some(value), None, Some(value)]),
                 )
             }
             value if value.starts_with("py-") => {
@@ -1046,7 +1046,7 @@ impl Lowerer {
                 })?;
                 (
                     ResolvedStyleProperty::Padding,
-                    ResolvedUtilityValue::Padding([value, u16::MAX, value, u16::MAX]),
+                    ResolvedUtilityValue::Padding([Some(value), None, Some(value), None]),
                 )
             }
             value if value.starts_with("bg-") => (
