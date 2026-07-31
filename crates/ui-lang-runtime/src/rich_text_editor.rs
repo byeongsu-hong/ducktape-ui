@@ -25,6 +25,35 @@ type FormatFn<'a, H> = dyn Fn(&<H as text::Highlighter>::Highlight) -> Format + 
 type MouseInteractionFn<'a> = dyn Fn(&str, Position) -> mouse::Interaction + 'a;
 type StyleFn<'a> = dyn Fn(&Theme, text_editor::Status) -> text_editor::Style + 'a;
 
+/// Caller-owned identity for the text stored in an editor [`Content`].
+///
+/// Two equal versions must always produce the same [`Content::text`]. Change
+/// `document` when replacing the document and change `revision` after every
+/// successful text mutation. Cursor and selection changes keep the same
+/// version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentVersion {
+    document: u64,
+    revision: u64,
+}
+
+impl ContentVersion {
+    /// Creates a document-scoped content version.
+    pub const fn new(document: u64, revision: u64) -> Self {
+        Self { document, revision }
+    }
+
+    /// Returns the identity of the containing document.
+    pub const fn document(self) -> u64 {
+        self.document
+    }
+
+    /// Returns the revision of the document text.
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+}
+
 /// An edit produced by a [`RichTextEditor`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -108,6 +137,7 @@ where
 {
     id: Option<widget::Id>,
     content: &'a Content,
+    content_version: ContentVersion,
     placeholder: Option<String>,
     font: Option<Font>,
     text_size: Option<Pixels>,
@@ -128,11 +158,12 @@ where
 }
 
 impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
-    /// Creates a plain rich editor backed by `content`.
-    pub fn new(content: &'a Content) -> Self {
+    /// Creates a plain rich editor backed by `content` at `content_version`.
+    pub fn new(content: &'a Content, content_version: ContentVersion) -> Self {
         Self {
             id: None,
             content,
+            content_version,
             placeholder: None,
             font: None,
             text_size: None,
@@ -253,6 +284,7 @@ where
         RichTextEditor {
             id: self.id,
             content: self.content,
+            content_version: self.content_version,
             placeholder: self.placeholder,
             font: self.font,
             text_size: self.text_size,
@@ -371,6 +403,9 @@ where
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
+    source_lines: Vec<String>,
+    source_line_map: TextLines,
+    content_version: Option<ContentVersion>,
     width: f32,
     font: Font,
     text_size: Pixels,
@@ -382,6 +417,15 @@ where
     scroll: f32,
     preferred_x: Option<f32>,
     last_cursor: Cursor,
+    #[cfg(test)]
+    metrics: LayoutMetrics,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct LayoutMetrics {
+    full_text_materializations: usize,
+    rebuilt_lines: usize,
 }
 
 #[derive(Default)]
@@ -491,6 +535,9 @@ where
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
+            source_lines: vec![String::new()],
+            source_line_map: TextLines::empty(),
+            content_version: None,
             width: 0.0,
             font,
             text_size,
@@ -502,6 +549,8 @@ where
             scroll: 0.0,
             preferred_x: None,
             last_cursor: self.content.cursor(),
+            #[cfg(test)]
+            metrics: LayoutMetrics::default(),
         })
     }
 
@@ -525,9 +574,28 @@ where
         let viewport_height = (maximum.height - self.padding.y()).max(0.0);
         let font = self.font.unwrap_or_else(|| renderer.default_font());
         let text_size = self.text_size.unwrap_or_else(|| renderer.default_size());
-        let source = self.content.text();
         let cursor = self.content.cursor();
         let state = tree.state.downcast_mut::<State<Highlighter>>();
+
+        let version_matches = state.content_version == Some(self.content_version);
+        let materialized_source = if version_matches {
+            None
+        } else {
+            #[cfg(test)]
+            {
+                state.metrics.full_text_materializations += 1;
+            }
+            Some(self.content.text())
+        };
+        let source_changed = materialized_source.is_some();
+        state.content_version = Some(self.content_version);
+        if source_changed {
+            let source = materialized_source.expect("changed content was materialized");
+            let (source_lines, source_line_map) = TextLines::parse(&source);
+            state.source = source;
+            state.source_lines = source_lines;
+            state.source_line_map = source_line_map;
+        }
 
         // Caret-aware highlighters may reveal hidden syntax and change glyph
         // widths. Keep the exact layout that produced the press position for
@@ -540,7 +608,6 @@ where
             state.settings = self.highlighter_settings.clone();
         }
 
-        let source_changed = state.source != source;
         let preedit_changed = state.shaped_preedit != state.preedit;
         let needs_shape = source_changed
             || preedit_changed
@@ -553,13 +620,17 @@ where
             || state.format_key != self.format_key;
 
         if needs_shape {
-            let (source_lines, source_line_map) = TextLines::parse(&source);
             let composition = state.preedit.as_ref().and_then(|preedit| {
-                CompositionDocument::new(cursor, &source, source_line_map, preedit)
+                CompositionDocument::new(
+                    cursor,
+                    &state.source,
+                    state.source_line_map.clone(),
+                    preedit,
+                )
             });
             let shaped_lines = composition
                 .as_ref()
-                .map_or(source_lines.as_slice(), |composition| {
+                .map_or(state.source_lines.as_slice(), |composition| {
                     composition.lines.as_slice()
                 });
             let geometry_changed = state.width != inner_width
@@ -569,7 +640,7 @@ where
                 || state.wrapping != self.wrapping;
             let format_changed = state.format_key != self.format_key;
 
-            state.document.update(
+            let rebuilt = state.document.update(
                 shaped_lines,
                 &mut state.highlighter,
                 self.format.as_ref(),
@@ -583,9 +654,14 @@ where
                 geometry_changed,
                 format_changed,
             );
+            #[cfg(test)]
+            {
+                state.metrics.rebuilt_lines += rebuilt;
+            }
+            #[cfg(not(test))]
+            let _ = rebuilt;
             state.content_height = state.document.height;
             state.composition = composition.map(|composition| composition.layout);
-            state.source = source;
             state.shaped_preedit = state.preedit.clone();
             state.width = inner_width;
             state.font = font;
@@ -1383,6 +1459,13 @@ struct TextLines {
 }
 
 impl TextLines {
+    fn empty() -> Self {
+        Self {
+            starts: vec![0],
+            lengths: vec![0],
+        }
+    }
+
     fn parse(source: &str) -> (Vec<String>, Self) {
         let bytes = source.as_bytes();
         let mut lines = Vec::new();
@@ -2605,6 +2688,17 @@ mod tests {
         content.lines().map(|line| line.text.into_owned()).collect()
     }
 
+    fn headless_renderer() -> iced::Renderer {
+        use iced::advanced::renderer::Headless;
+
+        iced_test::futures::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer")
+    }
+
     #[test]
     fn overlapping_formats_keep_block_metrics_under_token_colors() {
         let block = Format {
@@ -3167,6 +3261,129 @@ mod tests {
     }
 
     #[test]
+    fn content_version_distinguishes_document_replacement_from_text_revision() {
+        let renderer = headless_renderer();
+        let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 120.0));
+        let mut content = Content::with_text("first document");
+        let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(7, 0))
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(120.0));
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+
+        editor.layout(&mut tree, &renderer, &limits);
+        drop(editor);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .metrics = LayoutMetrics::default();
+
+        content = Content::with_text("second document");
+        let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(8, 0))
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(120.0));
+        editor.layout(&mut tree, &renderer, &limits);
+
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        assert_eq!(state.source, "second document");
+        assert_eq!(state.metrics.full_text_materializations, 1);
+        assert_eq!(state.metrics.rebuilt_lines, 1);
+        assert_eq!(state.content_version, Some(ContentVersion::new(8, 0)));
+    }
+
+    #[test]
+    #[ignore = "large-document performance contract run explicitly in CI"]
+    fn performance_contract_content_version_skips_large_caret_snapshots() {
+        let source = (0..100_000)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>();
+        let mut content = Content::with_text(&source);
+        let renderer = headless_renderer();
+        let limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
+        let version = ContentVersion::new(11, 0);
+        let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+            .width(Length::Fixed(800.0))
+            .height(Length::Fixed(600.0))
+            .wrapping(text::Wrapping::None);
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+
+        editor.layout(&mut tree, &renderer, &limits);
+        drop(editor);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .metrics = LayoutMetrics::default();
+
+        for event in 0..1_000 {
+            let line = event * 97 % 100_000;
+            content.move_to(Cursor {
+                position: Position {
+                    line,
+                    column: event % 8,
+                },
+                selection: (event % 2 == 0).then_some(Position {
+                    line: line.saturating_sub(1),
+                    column: 0,
+                }),
+            });
+            let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+                .width(Length::Fixed(800.0))
+                .height(Length::Fixed(600.0))
+                .wrapping(text::Wrapping::None);
+            editor.layout(&mut tree, &renderer, &limits);
+        }
+
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        assert_eq!(state.document.lines.len(), 100_001);
+        assert_eq!(state.metrics.full_text_materializations, 0);
+        assert_eq!(state.metrics.rebuilt_lines, 0);
+
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .metrics = LayoutMetrics::default();
+        content.perform(text_editor::Action::Move(Motion::Right));
+        content.move_to(Cursor {
+            position: Position {
+                line: 50_000,
+                column: 4,
+            },
+            selection: None,
+        });
+        assert_eq!(
+            content.line(50_000).map(|line| line.text.into_owned()),
+            Some("line 50000".to_owned())
+        );
+        assert_eq!(
+            content.cursor(),
+            Cursor {
+                position: Position {
+                    line: 50_000,
+                    column: 4,
+                },
+                selection: None,
+            }
+        );
+        content.perform(text_editor::Action::Edit(Edit::Insert('x')));
+        assert_eq!(
+            content.line(50_000).map(|line| line.text.into_owned()),
+            Some("linex 50000".to_owned())
+        );
+        let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(11, 1))
+            .width(Length::Fixed(800.0))
+            .height(Length::Fixed(600.0))
+            .wrapping(text::Wrapping::None);
+        editor.layout(&mut tree, &renderer, &limits);
+
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        assert_eq!(state.metrics.full_text_materializations, 1);
+        assert_eq!(state.metrics.rebuilt_lines, 1);
+        assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
+    }
+
+    #[test]
     fn hangul_ime_stages_relayout_before_the_next_key() {
         use iced::advanced::clipboard;
         use iced::advanced::renderer::Headless;
@@ -3176,7 +3393,7 @@ mod tests {
             position: Position { line: 0, column: 4 },
             selection: None,
         });
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(120.0))
             .height(Length::Fixed(80.0))
             .on_action(|action| action);
@@ -3190,6 +3407,9 @@ mod tests {
             .focus = Some(Focus::now());
         let limits = layout::Limits::new(Size::ZERO, Size::new(120.0, 80.0));
         let mut node = editor.layout(&mut tree, &renderer, &limits);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .metrics = LayoutMetrics::default();
         let viewport = Rectangle::with_size(Size::new(120.0, 80.0));
         let mut clipboard = clipboard::Null;
 
@@ -3227,6 +3447,13 @@ mod tests {
                 Some(stage)
             );
         }
+        assert_eq!(
+            tree.state
+                .downcast_ref::<State<text::highlighter::PlainText>>()
+                .metrics
+                .full_text_materializations,
+            0
+        );
 
         // winit clears preedit immediately before the assembled commit. These
         // two events belong to the same OS event cycle; no full string was
@@ -3287,7 +3514,7 @@ mod tests {
         use iced::keyboard::{Key, Location, Modifiers};
 
         let content = Content::with_text("ㄹ");
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(120.0))
             .height(Length::Fixed(80.0))
             .on_action(|action| action);
@@ -3353,7 +3580,7 @@ mod tests {
         use iced::keyboard::{Key, Location, Modifiers};
 
         let content = Content::with_text("ㄹ");
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(120.0))
             .height(Length::Fixed(80.0))
             .on_action(|action| action);
@@ -3487,7 +3714,7 @@ mod tests {
             position: Position { line: 0, column: 5 },
             selection: Some(Position { line: 0, column: 0 }),
         });
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(160.0))
             .height(Length::Fixed(80.0))
             .padding(16.0)
@@ -3588,7 +3815,7 @@ mod tests {
 
         let content = Content::with_text("alpha beta gamma");
         let padding = 8.0;
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(220.0))
             .height(Length::Fixed(80.0))
             .padding(padding)
@@ -3715,7 +3942,7 @@ mod tests {
             size: Some(Pixels(if *expanded { 64.0 } else { 0.01 })),
             ..Format::default()
         };
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(220.0))
             .height(Length::Fixed(80.0))
             .padding(padding)
@@ -3763,7 +3990,7 @@ mod tests {
         drop(editor);
         content.move_to(clicked);
 
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(220.0))
             .height(Length::Fixed(80.0))
             .padding(padding)
@@ -3831,7 +4058,7 @@ mod tests {
 
         let content = Content::with_text("link text");
         let padding = 8.0;
-        let mut editor = RichTextEditor::new(&content)
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
             .width(Length::Fixed(220.0))
             .height(Length::Fixed(100.0))
             .padding(padding)

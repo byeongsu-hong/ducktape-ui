@@ -18,7 +18,7 @@ pub use dynamic_themer::*;
 pub use flex::*;
 pub use qr::*;
 pub use resize_handle::*;
-pub use rich_text_editor::RichTextEditor;
+pub use rich_text_editor::{ContentVersion, RichTextEditor};
 pub use selectable_text::*;
 pub use zstack::*;
 

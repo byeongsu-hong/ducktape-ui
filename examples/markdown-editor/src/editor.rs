@@ -6,9 +6,10 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use ui_lang_runtime::rich_text_editor::{Format, RichTextEditor};
+use ui_lang_runtime::rich_text_editor::{ContentVersion, Format, RichTextEditor};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub use ui_lang_runtime::rich_text_editor::Action as RichEditorAction;
@@ -110,7 +111,7 @@ pub fn markdown_editor<'a>(
 ) -> Element<'a, RichEditorAction> {
     let cursor = document.cursor().position;
     let format_theme = if dark { Theme::Dark } else { Theme::Light };
-    let editor = RichTextEditor::new(document)
+    let editor = RichTextEditor::new(document, current_content_version())
         .id("markdown-editor")
         .placeholder("Start writing…")
         .width(iced::Length::Fill)
@@ -968,6 +969,7 @@ struct History {
     undo: Vec<Change>,
     redo: Vec<Change>,
     bytes: usize,
+    document_id: u64,
     current_id: u64,
     saved_id: u64,
     next_id: u64,
@@ -975,10 +977,13 @@ struct History {
 
 impl Default for History {
     fn default() -> Self {
+        static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
+
         Self {
             undo: Vec::new(),
             redo: Vec::new(),
             bytes: 0,
+            document_id: NEXT_DOCUMENT_ID.fetch_add(1, AtomicOrdering::Relaxed),
             current_id: 0,
             saved_id: 0,
             next_id: 1,
@@ -2104,6 +2109,11 @@ pub fn revision() -> i64 {
     i64::try_from(history().current_id).unwrap_or(i64::MAX)
 }
 
+fn current_content_version() -> ContentVersion {
+    let history = history();
+    ContentVersion::new(history.document_id, history.current_id)
+}
+
 pub fn mark_saved(revision: i64) {
     let Ok(revision) = u64::try_from(revision) else {
         return;
@@ -2192,11 +2202,11 @@ fn position_at(content: &Content, mut offset: usize) -> Position {
 mod tests {
     use super::{
         MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, clear_editor_selection,
-        format_document, inline_highlights, is_dirty, mark_saved, redo_document, reset_document,
-        revision, track_action, undo_document,
+        current_content_version, format_document, inline_highlights, is_dirty, mark_saved,
+        redo_document, reset_document, revision, track_action, undo_document,
     };
     use iced::advanced::text::Highlighter;
-    use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
+    use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
 
     #[test]
     fn keeps_unparsed_whitespace_at_body_metrics() {
@@ -2583,6 +2593,31 @@ mod tests {
 
         document = redo_document(document);
         assert_eq!(document.text(), "!?hello");
+    }
+
+    #[test]
+    fn content_version_tracks_text_states_and_document_replacement() {
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("hello".into());
+        let initial = current_content_version();
+
+        track_action(&mut document, Action::Move(Motion::Right));
+        assert_eq!(current_content_version(), initial);
+
+        track_action(&mut document, Action::Edit(Edit::Insert('!')));
+        let edited = current_content_version();
+        assert_eq!(edited.document(), initial.document());
+        assert_ne!(edited.revision(), initial.revision());
+
+        document = undo_document(document);
+        assert_eq!(document.text(), "hello");
+        assert_eq!(current_content_version(), initial);
+
+        let replacement = reset_document("hello".into());
+        let replaced = current_content_version();
+        assert_eq!(replacement.text(), document.text());
+        assert_ne!(replaced.document(), initial.document());
+        assert_eq!(replaced.revision(), initial.revision());
     }
 
     #[test]
