@@ -449,15 +449,14 @@ impl AnalysisDb {
         let source_origins = analysis.document.source_origins().to_vec();
         let program = lower::lower(analysis.document)
             .map_err(|error| remap_origin(error, &source_origins))?;
-        let mut rust = codegen::generate(&program, &path.display().to_string()).map_err(
-            |mut error| {
+        let mut rust =
+            codegen::generate(&program, &path.display().to_string()).map_err(|mut error| {
                 if let Some((origin, line)) = program.source_origin(error.line) {
                     error.path = Some(origin.display().to_string());
                     error.line = line;
                 }
                 error
-            },
-        )?;
+            })?;
         for dependency in analysis.dependencies.iter().filter(|entry| *entry != &path) {
             rust.push_str(&format!(
                 "const _: &str = include_str!({:?});\n",

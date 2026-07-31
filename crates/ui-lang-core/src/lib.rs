@@ -260,14 +260,15 @@ impl CheckedDocument {
         self
     }
 
+    pub(crate) fn source_origins(&self) -> &[(PathBuf, usize)] {
+        &self.source_origins
+    }
+
+    #[cfg(test)]
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
         self.source_origins
             .get(merged_line.checked_sub(1)?)
             .map(|(path, line)| (path.as_path(), *line))
-    }
-
-    pub(crate) fn source_origins(&self) -> &[(PathBuf, usize)] {
-        &self.source_origins
     }
 }
 
