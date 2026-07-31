@@ -1689,7 +1689,7 @@ view
 
     #[test]
     #[ignore = "explicit large style lowering performance contract"]
-    fn lowering_many_deep_recipes_and_uses_has_constant_per_use_recipe_work() {
+    fn performance_contract_lowering_many_deep_recipes_and_uses_has_constant_per_use_recipe_work() {
         const TOKENS: usize = 128;
         const RECIPES: usize = 256;
         const USES: usize = 10_000;
