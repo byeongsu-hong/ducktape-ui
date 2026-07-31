@@ -504,6 +504,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "atomicwrites"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef1bb8d1b645fe38d51dfc331d720fb5fc2c94b440c76cc79c80ff265ca33e3"
+dependencies = [
+ "rustix 0.38.44",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "atspi"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1709,6 +1720,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b91aa448ca50d7e79433bdf3ee8d99215430d2ec02ade5aefab2a073a1822e8a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -5481,6 +5502,8 @@ dependencies = [
 name = "ui-lang-build"
 version = "0.1.0"
 dependencies = [
+ "atomicwrites",
+ "fs2",
  "serde",
  "serde_json",
  "sha2",

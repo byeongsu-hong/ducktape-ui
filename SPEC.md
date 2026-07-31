@@ -161,8 +161,14 @@ package, profile, and target and removes it with `cargo clean`. A generated
 Rust filename is the lowercase full SHA-256 of the normalized
 manifest-relative Ice root plus `.rs`; its component length never grows with
 the source path. `OUT_DIR/ui-lang-generated/manifest.json` is the canonical
-versioned mapping from those filenames back to source roots. An invalid
-mapping, unsupported manifest schema, or hash collision fails the build.
+versioned mapping from those filenames back to source roots and generated
+content digests. A generation-directory lock serializes publishers. Each
+changed output and the next manifest are staged, flushed, and synced before
+outputs are atomically replaced and the manifest is atomically replaced last.
+Missing, malformed, unsupported, incomplete, or digest-mismatched cache state
+is disposable and triggers full regeneration; stale transaction files are
+removed automatically. A hash collision remains a hard build error, and
+byte-identical output is not replaced so its mtime remains stable.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
 Only the checker can construct it, and backend generation accepts that checked

@@ -43,6 +43,15 @@ macro only includes those outputs. Generated filenames use the full SHA-256 of
 the normalized manifest-relative root, and a versioned manifest is the
 executable hash-to-source inventory used for collision detection and stale
 output pruning.
+The schema-v2 inventory also stores each generated content digest. A
+directory-scoped cross-process lock covers manifest load, compile, staging,
+and publication; changed outputs and the manifest are flushed and synced in a
+private transaction directory, outputs are atomically replaced before the
+manifest, and the manifest is the final atomic commit. Unit contracts prove
+that a later compile error publishes none of an earlier root, corrupt manifests
+and interrupted output replacement cause full cache regeneration, stale
+transaction artifacts are removed, concurrent publishers retain both roots,
+and an unchanged pass preserves output and manifest mtimes.
 
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
