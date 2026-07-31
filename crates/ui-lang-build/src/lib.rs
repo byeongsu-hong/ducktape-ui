@@ -1,9 +1,13 @@
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
+const GENERATED_MANIFEST: &str = "manifest.json";
+const GENERATED_MANIFEST_SCHEMA: u32 = 1;
 const COMPILER_STACK_SIZE: usize = 8 * 1024 * 1024;
 const DEV_BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
 
@@ -17,6 +21,61 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeneratedManifest {
+    schema_version: u32,
+    outputs: BTreeMap<String, String>,
+}
+
+impl Default for GeneratedManifest {
+    fn default() -> Self {
+        Self {
+            schema_version: GENERATED_MANIFEST_SCHEMA,
+            outputs: BTreeMap::new(),
+        }
+    }
+}
+
+impl GeneratedManifest {
+    fn record(&mut self, relative: &str) -> Result<String, Error> {
+        let output = generated_file_name(relative);
+        self.insert(output.clone(), relative.to_owned())?;
+        Ok(output)
+    }
+
+    fn insert(&mut self, output: String, relative: String) -> Result<(), Error> {
+        if let Some(existing) = self.outputs.get(&output)
+            && existing != &relative
+        {
+            return Err(Error(format!(
+                "ui-lang-build: generated output collision: {output} maps to both {existing} and {relative}"
+            )));
+        }
+        self.outputs.insert(output, relative);
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.schema_version != GENERATED_MANIFEST_SCHEMA {
+            return Err(Error(format!(
+                "ui-lang-build: unsupported generated manifest schema {}; expected {GENERATED_MANIFEST_SCHEMA}",
+                self.schema_version
+            )));
+        }
+        for (output, relative) in &self.outputs {
+            let normalized = normalized_relative(Path::new(relative))?;
+            let expected = generated_file_name(&normalized);
+            if relative != &normalized || output != &expected {
+                return Err(Error(format!(
+                    "ui-lang-build: invalid generated manifest mapping {output} -> {relative}; expected {expected} -> {normalized}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Compiles one manifest-relative Ice root into Cargo's `OUT_DIR`.
 pub fn compile(path: impl AsRef<Path>) -> Result<(), Error> {
@@ -36,9 +95,11 @@ where
     compiler_thread(move || {
         let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
         let out_dir = cargo_path("OUT_DIR")?;
+        let mut generated_manifest = load_generated_manifest(&out_dir)?;
         for path in paths {
-            compile_one(&manifest, &out_dir, &path)?;
+            compile_one(&manifest, &out_dir, &path, &mut generated_manifest)?;
         }
+        write_generated_manifest(&out_dir, &generated_manifest)?;
         Ok(())
     })
 }
@@ -56,15 +117,22 @@ pub fn compile_dir(path: impl AsRef<Path>) -> Result<(), Error> {
 /// Returns the generated Rust path used by both the build script and proc macro.
 pub fn generated_path(out_dir: impl AsRef<Path>, relative: &str) -> Result<PathBuf, Error> {
     let relative = normalized_relative(Path::new(relative))?;
-    let encoded = relative
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
     Ok(out_dir
         .as_ref()
         .join(GENERATED_DIRECTORY)
-        .join(format!("{encoded}.rs")))
+        .join(generated_file_name(&relative)))
+}
+
+fn generated_file_name(relative: &str) -> String {
+    use std::fmt::Write as _;
+
+    let digest = Sha256::digest(relative.as_bytes());
+    let mut encoded = String::with_capacity(digest.len() * 2 + 3);
+    for byte in digest {
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded.push_str(".rs");
+    encoded
 }
 
 fn cargo_path(name: &str) -> Result<PathBuf, Error> {
@@ -125,11 +193,13 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
             directory.display()
         )));
     }
+    let mut generated_manifest = load_generated_manifest(out_dir)?;
     let generated = roots
         .iter()
-        .map(|root| compile_one(manifest, out_dir, root))
+        .map(|root| compile_one(manifest, out_dir, root, &mut generated_manifest))
         .collect::<Result<HashSet<_>, _>>()?;
-    prune_generated(out_dir, &relative, &generated)?;
+    prune_generated(out_dir, &relative, &generated, &mut generated_manifest)?;
+    write_generated_manifest(out_dir, &generated_manifest)?;
     Ok(())
 }
 
@@ -162,7 +232,12 @@ fn collect_ice_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
-fn compile_one(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<PathBuf, Error> {
+fn compile_one(
+    manifest: &Path,
+    out_dir: &Path,
+    relative: &Path,
+    generated_manifest: &mut GeneratedManifest,
+) -> Result<PathBuf, Error> {
     let relative = normalized_relative(relative)?;
     let source = manifest.join(Path::new(&relative));
     let compilation = ui_lang_core::compile_file(&source)
@@ -170,11 +245,10 @@ fn compile_one(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<PathB
     for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
         println!("{directive}");
     }
-    let destination = generated_path(out_dir, &relative)?;
-    let directory = destination
-        .parent()
-        .expect("a generated path always has a parent");
-    fs::create_dir_all(directory).map_err(|error| {
+    let output = generated_manifest.record(&relative)?;
+    let directory = out_dir.join(GENERATED_DIRECTORY);
+    let destination = directory.join(output);
+    fs::create_dir_all(&directory).map_err(|error| {
         Error(format!(
             "ui-lang-build: cannot create {}: {error}",
             directory.display()
@@ -204,22 +278,72 @@ fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
     .collect()
 }
 
-fn prune_generated(
-    out_dir: &Path,
-    relative_directory: &str,
-    expected: &HashSet<PathBuf>,
-) -> Result<(), Error> {
-    let directory = out_dir.join(GENERATED_DIRECTORY);
-    let entries = match fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+fn load_generated_manifest(out_dir: &Path) -> Result<GeneratedManifest, Error> {
+    let path = out_dir.join(GENERATED_DIRECTORY).join(GENERATED_MANIFEST);
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GeneratedManifest::default());
+        }
         Err(error) => {
             return Err(Error(format!(
-                "ui-lang-build: cannot read {}: {error}",
-                directory.display()
+                "ui-lang-build: cannot read generated manifest {}: {error}",
+                path.display()
             )));
         }
     };
+    let manifest = serde_json::from_str::<GeneratedManifest>(&contents).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot parse generated manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+fn write_generated_manifest(
+    out_dir: &Path,
+    generated_manifest: &GeneratedManifest,
+) -> Result<(), Error> {
+    generated_manifest.validate()?;
+    let directory = out_dir.join(GENERATED_DIRECTORY);
+    fs::create_dir_all(&directory).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot create {}: {error}",
+            directory.display()
+        ))
+    })?;
+    prune_untracked_generated(&directory, generated_manifest)?;
+    let path = directory.join(GENERATED_MANIFEST);
+    let mut contents = serde_json::to_string_pretty(generated_manifest).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot serialize generated manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    contents.push('\n');
+    if fs::read_to_string(&path).ok().as_deref() != Some(&contents) {
+        fs::write(&path, contents).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot write generated manifest {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn prune_untracked_generated(
+    directory: &Path,
+    generated_manifest: &GeneratedManifest,
+) -> Result<(), Error> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot read {}: {error}",
+            directory.display()
+        ))
+    })?;
     for entry in entries {
         let entry = entry.map_err(|error| {
             Error(format!(
@@ -228,15 +352,24 @@ fn prune_generated(
             ))
         })?;
         let path = entry.path();
-        if generated_relative(&path).is_some_and(|relative| {
-            relative
-                .strip_prefix(relative_directory)
-                .is_some_and(|suffix| suffix.starts_with('/'))
-        }) && !expected.contains(&path)
+        if entry
+            .file_type()
+            .map_err(|error| {
+                Error(format!(
+                    "ui-lang-build: cannot inspect {}: {error}",
+                    path.display()
+                ))
+            })?
+            .is_file()
+            && path.extension().is_some_and(|extension| extension == "rs")
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_none_or(|name| !generated_manifest.outputs.contains_key(name))
         {
             fs::remove_file(&path).map_err(|error| {
                 Error(format!(
-                    "ui-lang-build: cannot remove stale output {}: {error}",
+                    "ui-lang-build: cannot remove untracked output {}: {error}",
                     path.display()
                 ))
             })?;
@@ -245,20 +378,39 @@ fn prune_generated(
     Ok(())
 }
 
-fn generated_relative(path: &Path) -> Option<String> {
-    let encoded = path.file_name()?.to_str()?.strip_suffix(".rs")?;
-    if encoded.len() % 2 != 0 {
-        return None;
-    }
-    let bytes = encoded
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let pair = std::str::from_utf8(pair).ok()?;
-            u8::from_str_radix(pair, 16).ok()
+fn prune_generated(
+    out_dir: &Path,
+    relative_directory: &str,
+    expected: &HashSet<PathBuf>,
+    generated_manifest: &mut GeneratedManifest,
+) -> Result<(), Error> {
+    let directory = out_dir.join(GENERATED_DIRECTORY);
+    let stale = generated_manifest
+        .outputs
+        .iter()
+        .filter(|(output, relative)| {
+            relative
+                .strip_prefix(relative_directory)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+                && !expected.contains(&directory.join(output))
         })
-        .collect::<Option<Vec<_>>>()?;
-    String::from_utf8(bytes).ok()
+        .map(|(output, _)| output.clone())
+        .collect::<Vec<_>>();
+    for output in stale {
+        let path = directory.join(&output);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(Error(format!(
+                    "ui-lang-build: cannot remove stale output {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+        generated_manifest.outputs.remove(&output);
+    }
+    Ok(())
 }
 
 fn normalized_relative(path: &Path) -> Result<String, Error> {
@@ -299,7 +451,10 @@ fn validate_relative(relative: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_dir_at, generated_path, rerun_directives};
+    use super::{
+        GeneratedManifest, compile_dir_at, generated_file_name, generated_path,
+        load_generated_manifest, rerun_directives, write_generated_manifest,
+    };
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -324,7 +479,64 @@ mod tests {
     }
 
     #[test]
-    fn generates_roots_below_cargo_out_dir() {
+    fn generated_paths_use_fixed_length_stable_hashes() {
+        let out_dir = Path::new("/target/out");
+        let generated = generated_path(out_dir, "src/ui/app.ice").unwrap();
+        assert_eq!(
+            generated.file_name().unwrap(),
+            "b9aad780c706fd9ac71260fc38ade7ed3328145af1306eb3683d056e3d3b7c92.rs"
+        );
+        assert_eq!(generated.file_name().unwrap().len(), 67);
+        assert_eq!(
+            generated,
+            generated_path(out_dir, "src/ui/../ui/app.ice").unwrap()
+        );
+
+        let deep = format!("src/{}/화면.ice", vec!["nested-component"; 64].join("/"));
+        let deep_generated = generated_path(out_dir, &deep).unwrap();
+        assert_eq!(deep_generated.file_name().unwrap().len(), 67);
+        assert_ne!(generated, deep_generated);
+        assert!(generated_path(out_dir, "/tmp/app.ice").is_err());
+    }
+
+    #[test]
+    fn manifest_rejects_output_collisions() {
+        let mut manifest = GeneratedManifest::default();
+        let output = manifest.record("src/ui/app.ice").unwrap();
+        let error = manifest
+            .insert(output, "src/ui/other.ice".to_owned())
+            .unwrap_err();
+        assert!(error.to_string().contains("generated output collision"));
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_schema_and_invalid_mappings() {
+        let mut manifest = GeneratedManifest::default();
+        manifest.schema_version += 1;
+        assert!(
+            manifest
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported generated manifest schema")
+        );
+
+        let mut manifest = GeneratedManifest::default();
+        manifest.outputs.insert(
+            "not-the-source-hash.rs".to_owned(),
+            "src/ui/app.ice".to_owned(),
+        );
+        assert!(
+            manifest
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid generated manifest mapping")
+        );
+    }
+
+    #[test]
+    fn generates_and_prunes_roots_below_cargo_out_dir() {
         let fixture = std::env::temp_dir().join(format!(
             "ui-lang-build-{}-{}",
             std::process::id(),
@@ -364,20 +576,44 @@ mod tests {
         fs::write(&marker, "not generated Rust").unwrap();
         let outside = generated_path(&out_dir, "other/app.ice").unwrap();
         fs::write(&outside, "another compile call owns this output").unwrap();
+        let mut previous_manifest = GeneratedManifest::default();
+        previous_manifest
+            .record("src/ui/fragments/text.ice")
+            .unwrap();
+        previous_manifest.record("other/app.ice").unwrap();
+        write_generated_manifest(&out_dir, &previous_manifest).unwrap();
+        let untracked = stale.parent().unwrap().join("untracked.rs");
+        fs::write(&untracked, "not in the canonical manifest").unwrap();
 
         compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
 
         let generated = generated_path(&out_dir, "src/ui/app.ice").unwrap();
         assert!(generated.starts_with(&out_dir));
         assert!(generated.is_file());
-        assert_eq!(
-            generated,
-            generated_path(&out_dir, "src/ui/../ui/app.ice").unwrap()
-        );
-        assert!(generated_path(&out_dir, "/tmp/app.ice").is_err());
         assert!(!stale.exists());
+        assert!(!untracked.exists());
         assert!(marker.exists());
         assert!(outside.exists());
+        let generated_manifest = load_generated_manifest(&out_dir).unwrap();
+        assert_eq!(
+            generated_manifest
+                .outputs
+                .get(&generated_file_name("src/ui/app.ice"))
+                .map(String::as_str),
+            Some("src/ui/app.ice")
+        );
+        assert_eq!(
+            generated_manifest
+                .outputs
+                .get(&generated_file_name("other/app.ice"))
+                .map(String::as_str),
+            Some("other/app.ice")
+        );
+        assert!(
+            !generated_manifest
+                .outputs
+                .contains_key(&generated_file_name("src/ui/fragments/text.ice"))
+        );
         fs::remove_dir_all(fixture).unwrap();
     }
 }
