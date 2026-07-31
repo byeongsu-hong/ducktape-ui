@@ -1504,6 +1504,72 @@ view
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("invalid checked radius utility"));
+
+        let inheritance = format!(
+            "app Demo\nrecipe base for text\n  text-fg\nrecipe child for text extends base\n  font-bold\n{THEME}view\n  text \"ok\" @child\n"
+        );
+        let mut checked = analyze(&inheritance).unwrap();
+        checked.document.recipes[1].target = StyleRecipeTarget::Container;
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains(
+                "recipe `child` targets `box` but its checked base `base` targets `text`"
+            )
+        );
+
+        let mut checked = analyze(&inheritance).unwrap();
+        checked.document.recipes[0].base = Some("child".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked recipe cycle includes"));
+    }
+
+    #[test]
+    fn classifies_static_app_and_nested_builtin_theme_choices() {
+        let source = r#"app StaticThemes
+  theme "dark"
+  palette AppTheme.second
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette first for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #336699
+  danger #cc0000
+palette second for AppTheme
+  bg #ffffff
+  fg #000000
+  primary #6688cc
+  danger #dd3344
+view
+  theme light
+    text "built in"
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        assert!(matches!(
+            program.theme().active_palette,
+            ResolvedPaletteSelection::Static(PaletteId(1))
+        ));
+        assert!(matches!(
+            &program.theme().app_theme,
+            ResolvedAppThemeSelection::BuiltIn(name) if name == "dark"
+        ));
+        let nested = program.nested_theme(program.document.view.span()).unwrap();
+        assert!(matches!(
+            &nested.preset,
+            ResolvedThemePreset::BuiltIn(name) if name == "light"
+        ));
+
+        let explicit_default = source.replace("theme \"dark\"", "theme \"default\"");
+        let program = lower(analyze(&explicit_default).unwrap()).unwrap();
+        assert!(matches!(
+            program.theme().app_theme,
+            ResolvedAppThemeSelection::Default
+        ));
     }
 
     #[test]
@@ -1568,13 +1634,30 @@ view
         );
         let style = program.style_use(content.span()).unwrap();
         assert_eq!(style.recipes, [recipe.id]);
-        assert!(program.styles.style_uses.iter().any(|style| {
-            style.style.background
-                == Some(ResolvedThemeColor {
-                    base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
-                    opacity: None,
-                })
-        }));
+        let imported_style = program
+            .styles
+            .style_uses
+            .iter()
+            .find(|style| {
+                style.style.background
+                    == Some(ResolvedThemeColor {
+                        base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
+                        opacity: None,
+                    })
+            })
+            .expect("imported component style must be lowered");
+        assert_eq!(
+            program.origin(imported_style.origin).path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(imported_style.origin).line, 8);
+        assert_eq!(
+            imported_style.style.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
+                opacity: None,
+            })
+        );
 
         fs::remove_dir_all(directory).unwrap();
     }

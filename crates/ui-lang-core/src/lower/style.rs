@@ -483,6 +483,7 @@ pub(super) struct StyleProgramBuilder {
     recipe_ids: HashMap<String, RecipeId>,
     token_ids: HashMap<String, ThemeTokenId>,
     palette_ids: HashMap<String, PaletteId>,
+    theme_factory_ids: HashMap<String, ExternFnId>,
     style_uses: Vec<ResolvedStyleUse>,
     style_uses_by_site: HashMap<CallSite, StyleUseId>,
     nested_themes: Vec<ResolvedNestedTheme>,
@@ -544,8 +545,29 @@ impl StyleProgram {
 
 impl Lowerer {
     pub(super) fn lower_style_program(&mut self) -> Result<(), Error> {
+        self.index_theme_factories()?;
         self.lower_theme_declarations()?;
         self.lower_recipes()?;
+        Ok(())
+    }
+
+    fn index_theme_factories(&mut self) -> Result<(), Error> {
+        for (index, function) in self.document.functions.iter().enumerate() {
+            if function.kind != ExternKind::Theme {
+                continue;
+            }
+            if self
+                .styles
+                .theme_factory_ids
+                .insert(function.name.clone(), ExternFnId(index as u32))
+                .is_some()
+            {
+                return Err(self.invariant(
+                    &function.span,
+                    format!("duplicate checked theme factory `{}`", function.name),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -696,7 +718,7 @@ impl Lowerer {
                 Ok(ResolvedAppThemeSelection::BuiltIn(name))
             }
             Expr::Call { name, args } => {
-                if let Some(function) = self.extern_function_id(&name, ExternKind::Theme) {
+                if let Some(function) = self.theme_factory_id(&name) {
                     let origin = self.push_origin(&setting.span, None);
                     Ok(ResolvedAppThemeSelection::Factory(ResolvedThemeFactory {
                         function,
@@ -714,12 +736,8 @@ impl Lowerer {
         }
     }
 
-    fn extern_function_id(&self, name: &str, kind: ExternKind) -> Option<ExternFnId> {
-        self.document
-            .functions
-            .iter()
-            .position(|function| function.name == name && function.kind == kind)
-            .map(|index| ExternFnId(index as u32))
+    fn theme_factory_id(&self, name: &str) -> Option<ExternFnId> {
+        self.styles.theme_factory_ids.get(name).copied()
     }
 
     fn lower_recipes(&mut self) -> Result<(), Error> {
@@ -814,6 +832,17 @@ impl Lowerer {
                     format!("unknown checked recipe base `{base}`"),
                 )
             })?;
+            if source[id.0 as usize].target != recipe.target {
+                return Err(self.invariant(
+                    &recipe.span,
+                    format!(
+                        "recipe `{}` targets `{}` but its checked base `{base}` targets `{}`",
+                        recipe.name,
+                        recipe.target.source_name(),
+                        source[id.0 as usize].target.source_name()
+                    ),
+                ));
+            }
             self.flatten_recipe(
                 id.0 as usize,
                 source,
@@ -1217,14 +1246,12 @@ impl Lowerer {
             ThemePreset::App => ResolvedThemePreset::App,
             ThemePreset::BuiltIn(name) => ResolvedThemePreset::BuiltIn(name.clone()),
             ThemePreset::Factory(factory) => ResolvedThemePreset::Factory(ResolvedThemeFactory {
-                function: self
-                    .extern_function_id(&factory.function, ExternKind::Theme)
-                    .ok_or_else(|| {
-                        self.invariant(
-                            span,
-                            format!("unknown checked theme factory `{}`", factory.function),
-                        )
-                    })?,
+                function: self.theme_factory_id(&factory.function).ok_or_else(|| {
+                    self.invariant(
+                        span,
+                        format!("unknown checked theme factory `{}`", factory.function),
+                    )
+                })?,
                 arguments: factory.args.clone(),
                 origin,
             }),
