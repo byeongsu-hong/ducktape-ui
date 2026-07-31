@@ -629,7 +629,9 @@ where
                     shell.request_redraw();
                 } else if state.focus.is_some() {
                     state.focus = None;
-                    state.preedit = None;
+                    if state.replace_preedit(None) {
+                        shell.invalidate_layout();
+                    }
                     state.pending_ime_commit.clear();
                     state.drag_anchor = None;
                     shell.request_redraw();
@@ -654,23 +656,31 @@ where
                 state.drag_anchor = None;
             }
             Event::InputMethod(input_method::Event::Opened) => {
-                state.preedit = Some(input_method::Preedit::new());
+                if state.replace_preedit(Some(input_method::Preedit::new())) {
+                    shell.invalidate_layout();
+                }
                 state.pending_ime_commit.clear();
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Closed) => {
-                state.preedit = None;
+                if state.replace_preedit(None) {
+                    shell.invalidate_layout();
+                }
                 state.pending_ime_commit.clear();
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Preedit(content, selection))
                 if state.focus.is_some() =>
             {
-                state.preedit = Some(input_method::Preedit {
+                if state.replace_preedit(Some(input_method::Preedit {
                     content: content.clone(),
                     selection: selection.clone(),
                     text_size: None,
-                });
+                })) {
+                    // Rich composition is part of the shaped paragraph, so a
+                    // redraw alone cannot expose the new IME stage.
+                    shell.invalidate_layout();
+                }
                 state.pending_ime_commit.on_preedit(content);
                 shell.request_redraw();
             }
@@ -678,7 +688,9 @@ where
                 shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
                     Edit::Paste(Arc::new(content.clone())),
                 ))));
-                state.preedit = None;
+                if state.replace_preedit(None) {
+                    shell.invalidate_layout();
+                }
                 if cfg!(target_os = "macos") {
                     state.pending_ime_commit.on_commit(content);
                 } else {
@@ -723,7 +735,9 @@ where
                 {
                     state.pending_ime_commit.clear();
                     if modifiers.command() {
-                        state.preedit = None;
+                        if state.replace_preedit(None) {
+                            shell.invalidate_layout();
+                        }
                         shell.request_redraw();
                     } else {
                         shell.capture_event();
@@ -951,6 +965,15 @@ impl<H> State<H>
 where
     H: text::Highlighter,
 {
+    fn replace_preedit(&mut self, preedit: Option<input_method::Preedit>) -> bool {
+        if self.preedit == preedit {
+            return false;
+        }
+
+        self.preedit = preedit;
+        true
+    }
+
     fn max_scroll(&self) -> f32 {
         (self.content_height - self.viewport_height).max(0.0)
     }
@@ -2270,6 +2293,99 @@ mod tests {
             }),
             Position { line: 0, column: 7 }
         );
+    }
+
+    #[test]
+    fn hangul_ime_stages_relayout_before_the_next_key() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+
+        let mut content = Content::with_text("앞 ");
+        content.move_to(Cursor {
+            position: Position { line: 0, column: 4 },
+            selection: None,
+        });
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0))
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .focus = Some(Focus::now());
+        let limits = layout::Limits::new(Size::ZERO, Size::new(120.0, 80.0));
+        let mut node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(120.0, 80.0));
+        let mut clipboard = clipboard::Null;
+
+        for stage in ["ㅇ", "으", "응"] {
+            let event =
+                Event::InputMethod(input_method::Event::Preedit(stage.to_owned(), Some(3..3)));
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+
+            editor.update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+
+            assert!(
+                shell.is_layout_invalid(),
+                "{stage:?} must reshape in the same event cycle"
+            );
+            shell.revalidate_layout(|| {
+                node = editor.layout(&mut tree, &renderer, &limits);
+            });
+            assert!(messages.is_empty());
+            assert_eq!(
+                tree.state
+                    .downcast_ref::<State<text::highlighter::PlainText>>()
+                    .shaped_preedit
+                    .as_ref()
+                    .map(|preedit| preedit.content.as_str()),
+                Some(stage)
+            );
+        }
+
+        // winit clears preedit immediately before the assembled commit. These
+        // two events belong to the same OS event cycle; no full string was
+        // inserted during the three composition updates above.
+        let mut messages = Vec::new();
+        for event in [
+            Event::InputMethod(input_method::Event::Preedit(String::new(), None)),
+            Event::InputMethod(input_method::Event::Commit("응".to_owned())),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            shell.revalidate_layout(|| {
+                node = editor.layout(&mut tree, &renderer, &limits);
+            });
+        }
+
+        let [Action::Edit(text_editor::Action::Edit(Edit::Paste(committed)))] = messages.as_slice()
+        else {
+            panic!("IME commit must produce exactly one text edit: {messages:?}");
+        };
+        assert_eq!(committed.as_str(), "응");
     }
 
     #[test]
