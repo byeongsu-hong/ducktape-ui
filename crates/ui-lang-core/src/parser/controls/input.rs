@@ -402,6 +402,7 @@ pub(in crate::parser) fn parse_toggler(
     for part in &parts[2..] {
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E075", "toggler")?;
+        } else if parse_accessibility_option(part, &mut options.accessibility, line)? {
         } else if let Some(value) = part.strip_prefix("checked=") {
             checked = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("disabled=") {

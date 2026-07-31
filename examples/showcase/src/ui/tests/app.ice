@@ -39,7 +39,7 @@ test language_feature_contracts
         events
           previous -> demo_page_previous
           next -> demo_page_next
-      AspectRatioDemo #aspect
+      extern aspect_ratio_demo() #aspect
   target show_code = #tabs/show-code
   target pagination_next = #pagination/next
   expect show_code.height ~= 32.0
@@ -56,6 +56,65 @@ test language_feature_contracts
   click pagination_next
   expect demo_page == 2
   expect text "16 / 9"
+
+test generated_control_accessibility
+  preset test
+  viewport 520 420
+  mount
+    col p=20.0 gap=12.0
+      toggler "Feature" #toggle -> accepted_changed _
+        with
+          label="Feature toggle"
+          description="Controls feature state"
+          checked=accepted
+      slider volume #slider min=0.0 max=100.0 -> volume_changed _
+      progress volume #progress
+      pick native_select_frameworks native_select_framework #pick -> framework_changed _
+        with
+          hint="Framework"
+      combo combobox_frameworks searched_framework "Framework search" #combo -> searched_framework_changed _
+      editor #editor <-> textarea_notes
+        with
+          hint="Notes"
+          disabled=true
+          h=72.0
+  target toggle = #toggle
+  target slider = #slider
+  target progress = #progress
+  target pick = #pick
+  target combo = #combo
+  target editor = #editor
+  expect a11y toggle role "switch"
+  expect a11y toggle name "Feature toggle"
+  expect toggle.accessibility_description == "Controls feature state"
+  expect a11y toggle checked false
+  expect a11y toggle action click
+  expect a11y toggle action focus
+  a11y activate toggle
+  expect accepted
+  expect a11y slider role "slider"
+  expect a11y slider name "Slider"
+  expect a11y slider value "58"
+  expect a11y slider action focus
+  expect a11y progress role "progress-indicator"
+  expect a11y progress name "Progress"
+  expect a11y progress value "58"
+  expect a11y progress action focus false
+  dispatch framework_changed("iced")
+  expect a11y pick role "combo-box"
+  expect a11y pick name "Framework"
+  expect a11y pick value "iced"
+  expect a11y pick action focus
+  dispatch searched_framework_changed("Rust")
+  expect a11y combo role "combo-box"
+  expect a11y combo name "Framework search"
+  expect a11y combo value "Rust"
+  expect a11y combo action focus
+  expect a11y editor role "multiline-text-input"
+  expect a11y editor name "Notes"
+  expect a11y editor value "Default multiline editor"
+  expect a11y editor disabled true
+  expect a11y editor action focus false
 
 test catalog_layout
   preset test
@@ -248,8 +307,10 @@ test catalog_full_scroll_visuals
   viewport 1120 820
   target app = #app
   target scroller = app/catalog-scroll
+  target dropdown_trigger = app/catalog-scroll/page/catalog-grid/root/advanced-selection-panel/root/advanced-selection-content/dropdown-trigger
+  target navigation_trigger = app/catalog-scroll/page/catalog-grid/root/navigation-shell/root/navigation-trigger
   scroll-to scroller 0.0 2500.0
-  click-at 370.0 220.0
+  click dropdown_trigger
   idle
   capture dropdown_categories
   expect dropdown_menu_is_open(dropdown)
@@ -261,7 +322,7 @@ test catalog_full_scroll_visuals
   scroll-to scroller 0.0 4400.0
   capture messages_and_edge_panels
   scroll-to scroller 0.0 5320.0
-  click-at 160.0 266.0
+  click navigation_trigger
   idle
   expect navigation_menu_is_open(navigation_menu)
   capture navigation_menu_and_shell

@@ -796,8 +796,15 @@ view
         generated.contains("pub(crate) selected: ::std::option::Option<::std::string::String>")
     );
     assert!(generated.contains("::std::vec![\"List\".to_owned(), \"Board\".to_owned()]"));
-    assert!(generated.contains("::iced::widget::pick_list(__pick_options, self.selected.clone()"));
+    assert!(generated.contains(
+        "let __pick_selected = self.selected.clone(); let __pick = { let __pick_options"
+    ));
+    assert!(
+        generated.contains("::iced::widget::pick_list(__pick_options, __pick_selected.clone()")
+    );
     assert!(generated.contains("let __pick_option_count = __pick_options.len()"));
+    assert!(generated.contains("::ui_lang_runtime::Role::ComboBox"));
+    assert!(generated.contains(".value_maybe(__pick_selected.map(|__value| __value.to_string()))"));
     assert!(
         generated.contains(
             ".padding(::ui_lang_runtime::bounded_table_metric(8.0, __pick_option_count))"
@@ -895,6 +902,8 @@ view
         "::iced::widget::combo_box(&self.modes, \"Search modes\", __combo_selection.as_ref()"
     ));
     assert!(generated.contains("let __combo_option_count = self.modes.options().len()"));
+    assert!(generated.contains("::ui_lang_runtime::Role::ComboBox"));
+    assert!(generated.contains(".value_maybe(__combo_selection)"));
     assert!(
         generated.contains(
             ".padding(::ui_lang_runtime::bounded_table_metric(8.0, __combo_option_count))"

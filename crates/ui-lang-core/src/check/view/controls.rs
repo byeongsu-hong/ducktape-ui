@@ -122,6 +122,7 @@ pub(in crate::check) fn infer_controls_group(
                     span,
                 )?;
             }
+            check_accessibility_options(&options.accessibility, env, document, span)?;
             check_bool_control_options(options, env, document, span)?;
             if let Some(style) = &style.custom {
                 let function =

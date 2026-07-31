@@ -149,34 +149,50 @@ pub(in crate::codegen) fn render_controls(
         }
         ViewNode::Toggler {
             label,
+            id,
             checked,
             disabled,
             options,
             style,
             route,
+            span,
             ..
         } => {
             let label = expr_code(label, env, document, ValueMode::Owned)?;
             let checked = expr_code(checked, env, document, ValueMode::Owned)?;
             let callback =
                 route_callback_code(route, "__value", "__value", env, document, message)?;
-            let mut code = format!("::iced::widget::toggler({checked}).label({label})");
+            let activation = route_code(route, "!__checked", env, document, message)?;
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "toggler", span, scope, env, document)?;
+            let (accessibility_label, accessibility_description) = accessibility_code(
+                &options.accessibility,
+                || "__label.clone()".into(),
+                env,
+                document,
+            )?;
+            let disabled_value = disabled
+                .as_ref()
+                .map(|value| expr_code(value, env, document, ValueMode::Owned))
+                .transpose()?
+                .unwrap_or_else(|| "false".into());
+            let mut code = format!(
+                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __disabled = {disabled_value}; let __activate = {activation}; let __toggler = ::iced::widget::toggler(__checked).label(__label.clone())"
+            );
             append_bool_control_options(&mut code, options, env, document, true)?;
-            if let Some(disabled) = disabled {
-                let disabled = expr_code(disabled, env, document, ValueMode::Owned)?;
-                write!(
-                    code,
-                    ".on_toggle_maybe(if {disabled} {{ None }} else {{ Some({callback}) }})"
-                )
-                .unwrap();
-            } else {
-                write!(code, ".on_toggle({callback})").unwrap();
-            }
+            write!(
+                code,
+                ".on_toggle_maybe(if __disabled {{ None }} else {{ Some({callback}) }})"
+            )
+            .unwrap();
             code.push_str(&toggler_style_code(style, env, document)?);
-            Ok(format!("{code}.into()"))
+            Ok(format!(
+                "{code}; ::ui_lang_runtime::accessible(__toggler, __a11y_id, ::ui_lang_runtime::Role::Switch).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+            ))
         }
         ViewNode::Slider {
             value,
+            id,
             min,
             max,
             step,
@@ -184,6 +200,7 @@ pub(in crate::codegen) fn render_controls(
             vertical,
             route,
             release,
+            span,
             ..
         } => {
             let value = expr_code(value, env, document, ValueMode::Borrowed)?;
@@ -198,7 +215,7 @@ pub(in crate::codegen) fn render_controls(
                 "slider"
             };
             let mut code = format!(
-                "::iced::widget::{helper}(({min})..=({max}), {value}, {callback}).step({step})"
+                "::iced::widget::{helper}(({min})..=({max}), __slider_value, {callback}).step({step})"
             );
             if let Some(default) = &options.default {
                 write!(
@@ -230,22 +247,27 @@ pub(in crate::codegen) fn render_controls(
                 )
                 .unwrap();
             }
-            Ok(format!("{code}.into()"))
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "slider", span, scope, env, document)?;
+            Ok(format!(
+                "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {code}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id(__a11y_key.clone()).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
+            ))
         }
         ViewNode::Progress {
             value,
+            id,
             min,
             max,
             options,
             vertical,
+            span,
             ..
         } => {
             let value = expr_code(value, env, document, ValueMode::Owned)?;
             let min = expr_code(min, env, document, ValueMode::Owned)?;
             let max = expr_code(max, env, document, ValueMode::Owned)?;
-            let mut code = format!(
-                "{{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, {value}); ::iced::widget::progress_bar(__progress_range, __progress_value)"
-            );
+            let mut code =
+                "::iced::widget::progress_bar(__progress_range, __progress_value)".to_owned();
             if let Some(length) = &options.length {
                 write!(code, ".length({})", length_code(length, env, document)?).unwrap();
             }
@@ -256,7 +278,11 @@ pub(in crate::codegen) fn render_controls(
                 code.push_str(".vertical()");
             }
             append_progress_options(&mut code, options, env, document)?;
-            Ok(format!("{code}.into() }}"))
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "progress", span, scope, env, document)?;
+            Ok(format!(
+                "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {code} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id(__a11y_key.clone()).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
+            ))
         }
         ViewNode::Radio {
             label,
@@ -279,10 +305,12 @@ pub(in crate::codegen) fn render_controls(
             Ok(format!("{code}.into()"))
         }
         ViewNode::PickList {
+            id,
             options,
             selected,
             options_config,
             route,
+            span,
             ..
         } => {
             let options = expr_code(options, env, document, ValueMode::Owned)?;
@@ -290,7 +318,7 @@ pub(in crate::codegen) fn render_controls(
             let callback =
                 route_callback_code(route, "__value", "__value", env, document, message)?;
             let mut code = format!(
-                "{{ let __pick_options = {options}; let __pick_option_count = __pick_options.len(); ::iced::widget::pick_list(__pick_options, {selected}, {callback})"
+                "{{ let __pick_options = {options}; let __pick_option_count = __pick_options.len(); ::iced::widget::pick_list(__pick_options, __pick_selected.clone(), {callback})"
             );
             if let Some(placeholder) = &options_config.placeholder {
                 write!(
@@ -371,10 +399,21 @@ pub(in crate::codegen) fn render_controls(
                 .unwrap();
             }
             code.push_str(&pick_list_style_code(options_config, env, document)?);
-            Ok(format!("{code}.into() }}"))
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "pick-list", span, scope, env, document)?;
+            let accessibility_label = options_config
+                .placeholder
+                .as_ref()
+                .map(|value| expr_code(value, env, document, ValueMode::Owned))
+                .transpose()?
+                .unwrap_or_else(|| "\"Select\"".to_owned());
+            Ok(format!(
+                "{{ let __a11y_key = {accessibility_key}; let __pick_selected = {selected}; let __pick = {code} }}; ::ui_lang_runtime::accessible(__pick, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key.clone()).label({accessibility_label}).value_maybe(__pick_selected.map(|__value| __value.to_string())).into() }}"
+            ))
         }
         ViewNode::ComboBox {
             state,
+            id,
             selected,
             placeholder,
             options,
@@ -389,7 +428,7 @@ pub(in crate::codegen) fn render_controls(
             let callback =
                 route_callback_code(route, "__value", "__value", env, document, message)?;
             let mut code = format!(
-                "{{ let __combo_selection = {selected}; let __combo_option_count = {}.options().len(); ::iced::widget::combo_box(&{}, {}, __combo_selection.as_ref(), {callback})",
+                "{{ let __combo_option_count = {}.options().len(); ::iced::widget::combo_box(&{}, {}, __combo_selection.as_ref(), {callback})",
                 state.code,
                 state.code,
                 rust_string(placeholder)
@@ -489,7 +528,12 @@ pub(in crate::codegen) fn render_controls(
                 env,
                 document,
             )?);
-            Ok(format!("{code}.into() }}"))
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "combo-box", span, scope, env, document)?;
+            Ok(format!(
+                "{{ let __a11y_key = {accessibility_key}; let __combo_selection = {selected}; let __combo = {code} }}; ::ui_lang_runtime::accessible(__combo, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key.clone()).label({}).value_maybe(__combo_selection).into() }}",
+                rust_string(placeholder)
+            ))
         }
         _ => return Ok(None),
     }?;

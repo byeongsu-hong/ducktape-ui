@@ -26,7 +26,13 @@ pub(in crate::codegen) fn render_media(
             ..
         } => {
             let source_type = expr_type(source, &env_types(env), document, span)?;
-            let source = expr_code(source, env, document, ValueMode::Owned)?;
+            let source_mode =
+                if *kind == MediaKind::Svg && options.svg_memory && source_type == Type::Str {
+                    ValueMode::Borrowed
+                } else {
+                    ValueMode::Owned
+                };
+            let source = expr_code(source, env, document, source_mode)?;
             let mut code = match kind {
                 MediaKind::Image => format!("::iced::widget::image({source})"),
                 MediaKind::Viewer if source_type == Type::Str => format!(

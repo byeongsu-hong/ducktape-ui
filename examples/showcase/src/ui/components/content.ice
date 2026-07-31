@@ -1,25 +1,3 @@
-component AspectRatioDemo(label:str="16 / 9")
-  box
-    with
-      w=fill
-      max-w=360.0
-      h=202.5
-      align-x=center
-      align-y=center
-      bg=accent
-      border=border
-      border-w=1.0
-      r=10.0
-    col align=center
-      if provided(Content)
-        slot Content?
-      if !provided(Content)
-        text label
-          with
-            size=20.0
-            @font-bold
-            @text-primary
-
 component ScrollAreaDemo()
   scroll
     with

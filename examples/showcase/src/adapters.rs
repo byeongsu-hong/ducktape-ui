@@ -60,6 +60,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::font::{Style as FontStyle, Weight};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
+use ui_lang_runtime::{Role, StableId, accessible};
 
 const ACTION_HEIGHT: f32 = 36.0;
 const DEMO_STAGE_HEIGHT: f32 = 208.0;
@@ -81,6 +82,22 @@ pub use ducktape_ui::ui::{
 
 pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogItem {
+    pub name: String,
+    pub source: String,
+}
+
+fn semantic<'a, Message: Clone + 'static>(
+    content: impl Into<Element<'a, Message>>,
+    key: &str,
+    role: Role,
+) -> Element<'a, Message> {
+    accessible(content, StableId::new(key), role)
+        .logical_id(key)
+        .into()
+}
 
 #[derive(Debug, Clone)]
 pub enum AlertDialogEvent {
@@ -111,6 +128,7 @@ pub struct DropdownMenuState {
     entries: Vec<MenuEntry>,
     menu: MenuState,
     open: bool,
+    last_action: String,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +138,7 @@ pub struct ContextMenuState {
     menu: MenuState,
     open: bool,
     anchor: Option<iced::Point>,
+    last_action: String,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +163,7 @@ pub enum SidebarEvent {
 pub struct SonnerState {
     queue: UiSonnerState,
     shown: i64,
+    elapsed: std::time::Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -163,12 +183,7 @@ pub struct MenubarState {
     bar: UiMenubarState,
     menu: MenuState,
     menus: Vec<MenubarMenu>,
-}
-
-#[derive(Debug, Clone)]
-pub struct MessageScrollerResult {
-    state: MessageScrollerState,
-    followup: Option<MessageScrollerEvent>,
+    last_action: String,
 }
 
 #[derive(Debug, Clone)]
@@ -186,14 +201,20 @@ pub fn checkbox_style(
 }
 
 pub fn switch(id: &str, checked: bool, disabled: bool) -> Element<'static, bool> {
-    ui_switch(
+    let control = ui_switch(
         iced::widget::Id::from(id.to_owned()),
         checked,
         !checked,
         &theme(),
     )
-    .disabled(disabled)
-    .into()
+    .disabled(disabled);
+    accessible(control, StableId::new(id), Role::Switch)
+        .logical_id(id)
+        .label("Product notifications")
+        .checked(checked)
+        .disabled(disabled)
+        .on_activate_maybe((!disabled).then_some(!checked))
+        .into()
 }
 
 pub fn progress_style(_iced_theme: &iced::Theme) -> iced::widget::progress_bar::Style {
@@ -218,29 +239,63 @@ pub fn input_otp<'a>(
     invalid: bool,
     disabled: bool,
 ) -> Element<'a, String> {
-    ui_input_otp(value, 6, OtpPattern::Digits, String::from, &theme())
+    let input = ui_input_otp(value, 6, OtpPattern::Digits, String::from, &theme())
         .groups([3, 3])
         .id(iced::widget::Id::from(id.to_owned()))
         .invalid(invalid)
+        .disabled(disabled);
+    let semantic_id = format!("{id}-semantic");
+    accessible(input, StableId::new(semantic_id.clone()), Role::TextInput)
+        .logical_id(semantic_id)
+        .label("Verification code")
+        .value(value)
         .disabled(disabled)
         .into()
 }
 
 pub fn spinner(frame: i64, reduced_motion: bool) -> Element<'static, ()> {
-    ui_spinner(
+    let spinner = ui_spinner(
         frame.rem_euclid(ducktape_ui::ui::spinner::FRAME_COUNT.into()) as u8,
         reduced_motion,
         &theme(),
+    );
+    semantic(spinner, "showcase-spinner", Role::ProgressIndicator)
+}
+
+fn current_date() -> Option<Date> {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs()
+        / 86_400;
+    let z = i64::try_from(days).ok()?.checked_add(719_468)?;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let day_of_year = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month + 2) / 5 + 1;
+    let month = month + if month < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    Date::new(
+        year.try_into().ok()?,
+        month.try_into().ok()?,
+        day.try_into().ok()?,
     )
-    .into()
+    .ok()
 }
 
 pub fn calendar_state() -> CalendarState {
+    let today = current_date();
     CalendarState::new(
-        Month::new(2026, 7).expect("fixed calendar month is valid"),
+        today.map_or_else(
+            || Month::new(2026, 7).expect("fallback calendar month is valid"),
+            Date::month,
+        ),
         CalendarSelection::Single(None),
     )
-    .focused(Date::new(2026, 7, 23).ok())
+    .focused(today)
 }
 
 pub fn calendar_apply(mut state: CalendarState, event: CalendarEvent) -> iced::Task<CalendarState> {
@@ -249,19 +304,26 @@ pub fn calendar_apply(mut state: CalendarState, event: CalendarEvent) -> iced::T
 }
 
 pub fn calendar(state: &CalendarState) -> Element<'static, CalendarEvent> {
-    controlled_calendar("ice-default-calendar", state, |event| event, &theme())
-        .today(Date::new(2026, 7, 23).ok())
+    let calendar = controlled_calendar("ice-default-calendar", state, |event| event, &theme())
+        .today(current_date())
         .month_dropdown(true)
         .year_dropdown(true)
-        .year_range(2024, 2028)
-        .into()
+        .year_range(
+            current_date().map_or(2024, |date| date.year() - 2),
+            current_date().map_or(2028, |date| date.year() + 2),
+        );
+    semantic(calendar, "ice-default-calendar", Role::Group)
 }
 
 pub fn date_picker_state() -> DatePickerState {
+    let today = current_date();
     DatePickerState {
         ids: DatePickerIds::new("ice-default"),
-        month: Month::new(2026, 7).expect("fixed date picker month is valid"),
-        focused: Date::new(2026, 7, 23).ok(),
+        month: today.map_or_else(
+            || Month::new(2026, 7).expect("fallback date picker month is valid"),
+            Date::month,
+        ),
+        focused: today,
         value: DatePickerValue::Single(None),
         open: false,
     }
@@ -286,7 +348,7 @@ pub fn date_picker_apply(
 }
 
 pub fn date_picker(state: &DatePickerState) -> Element<'static, DatePickerEvent> {
-    ui_date_picker(
+    let picker = ui_date_picker(
         state.ids.clone(),
         state.month,
         state.focused,
@@ -295,14 +357,45 @@ pub fn date_picker(state: &DatePickerState) -> Element<'static, DatePickerEvent>
         |event| event,
         &theme(),
     )
-    .today(Date::new(2026, 7, 23).ok())
+    .today(current_date())
     .month_dropdown(true)
     .year_dropdown(true)
-    .year_range(2024, 2028)
+    .year_range(
+        current_date().map_or(2024, |date| date.year() - 2),
+        current_date().map_or(2028, |date| date.year() + 2),
+    )
     .placeholder("Choose a date")
     .format(DateFormat::MonthDayYear)
-    .width(272.0)
+    .width(272.0);
+    accessible(
+        picker,
+        StableId::new("ice-default-date-picker"),
+        Role::DateInput,
+    )
+    .logical_id("ice-default-date-picker")
+    .label("Choose a date")
+    .value_maybe(state.value.anchor().map(|date| date.to_string()))
     .into()
+}
+
+pub fn aspect_ratio_demo() -> Element<'static, ()> {
+    let theme = theme();
+    let view = ducktape_ui::ui::aspect_ratio::aspect_ratio(16.0 / 9.0, move || {
+        container(
+            text("16 / 9")
+                .size(20)
+                .color(theme.palette.primary)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    })
+    .width(Length::Fill);
+    semantic(view, "showcase-aspect-ratio", Role::GenericContainer)
 }
 
 pub fn chart(hovered: Option<ChartHit>) -> Element<'static, Option<ChartHit>> {
@@ -410,7 +503,7 @@ pub fn command(state: &CommandState) -> Element<'static, CommandEvent> {
         ),
     ];
 
-    ui_command(
+    let palette = ui_command(
         "ice-default-command",
         state,
         groups,
@@ -418,7 +511,16 @@ pub fn command(state: &CommandState) -> Element<'static, CommandEvent> {
         &theme(),
     )
     .results_height(180.0)
-    .into_element()
+    .into_element();
+    let status = state.active().map_or_else(
+        || "No command selected".to_owned(),
+        |item| format!("Active: {item}"),
+    );
+    semantic(
+        column![palette, text(status).size(12)].spacing(8),
+        "ice-default-command",
+        Role::Search,
+    )
 }
 
 pub fn select_state() -> SelectState {
@@ -446,23 +548,7 @@ pub fn select_apply(mut state: SelectState, event: SelectEvent) -> iced::Task<Se
 }
 
 pub fn select<'a>(state: &'a SelectState) -> Element<'a, SelectEvent> {
-    let theme = theme();
-    let selected = state.selected.as_deref().unwrap_or("Choose a component");
-    let trigger = surface(
-        row![
-            container(text(selected).size(13)).width(Length::Fill),
-            text("⌄").size(13),
-        ]
-        .align_y(iced::Alignment::Center),
-        SurfaceVariant::Default,
-        &theme,
-    )
-    .width(Length::Fill)
-    .height(ACTION_HEIGHT)
-    .padding([0, 12])
-    .align_y(Vertical::Center);
-
-    ui_select(
+    let control = ui_select(
         state.ids.clone(),
         select_groups(),
         state.selected.clone(),
@@ -470,11 +556,22 @@ pub fn select<'a>(state: &'a SelectState) -> Element<'a, SelectEvent> {
         &state.menu,
         state.open,
         |event| event,
-        &theme,
+        &theme(),
     )
     .width(272.0)
-    .content_width(272.0)
-    .trigger(trigger)
+    .content_width(272.0);
+    let selected = state
+        .selected
+        .as_deref()
+        .map_or("No component selected", |value| value);
+    accessible(
+        column![control, text(format!("Selected: {selected}"))].spacing(4),
+        StableId::new("ice-default-select"),
+        Role::ComboBox,
+    )
+    .logical_id("ice-default-select")
+    .label("Choose a component")
+    .value(selected)
     .into()
 }
 
@@ -485,6 +582,7 @@ pub fn dropdown_menu_state() -> DropdownMenuState {
         menu: MenuState::initial(&entries),
         entries,
         open: false,
+        last_action: String::new(),
     }
 }
 
@@ -500,13 +598,16 @@ pub fn dropdown_menu_apply(
     if let DropdownMenuEvent::Menu(MenuEvent::StateChanged(menu)) = &event {
         state.menu.clone_from(menu);
     }
+    if let DropdownMenuEvent::Menu(MenuEvent::Activated(action)) = &event {
+        state.last_action.clone_from(&action.id);
+    }
     let focus = event.focus_task(&state.ids, &state.entries, &state.menu);
     iced::Task::done(state).chain(focus)
 }
 
 pub fn dropdown_menu(state: &DropdownMenuState) -> Element<'_, DropdownMenuEvent> {
     let theme = theme();
-    ui_dropdown_menu(
+    let menu = ui_dropdown_menu(
         state.ids.clone(),
         surface(text("Open menu"), SurfaceVariant::Default, &theme)
             .height(ACTION_HEIGHT)
@@ -518,8 +619,17 @@ pub fn dropdown_menu(state: &DropdownMenuState) -> Element<'_, DropdownMenuEvent
         |event| event,
         &theme,
     )
-    .width(248.0)
-    .into()
+    .width(248.0);
+    let status = if state.last_action.is_empty() {
+        "No menu action"
+    } else {
+        state.last_action.as_str()
+    };
+    semantic(
+        column![menu, text(format!("Action: {status}"))].spacing(4),
+        "ice-default-dropdown",
+        Role::Button,
+    )
 }
 
 pub fn context_menu_state() -> ContextMenuState {
@@ -530,6 +640,7 @@ pub fn context_menu_state() -> ContextMenuState {
         entries,
         open: false,
         anchor: None,
+        last_action: String::new(),
     }
 }
 
@@ -542,13 +653,16 @@ pub fn context_menu_apply(
     if let ContextMenuEvent::Menu(MenuEvent::StateChanged(menu)) = &event {
         state.menu.clone_from(menu);
     }
+    if let ContextMenuEvent::Menu(MenuEvent::Activated(action)) = &event {
+        state.last_action.clone_from(&action.id);
+    }
     let focus = event.focus_task(&state.ids, &state.entries, &state.menu);
     iced::Task::done(state).chain(focus)
 }
 
 pub fn context_menu(state: &ContextMenuState) -> Element<'_, ContextMenuEvent> {
     let theme = theme();
-    ui_context_menu(
+    let menu = ui_context_menu(
         state.ids.clone(),
         surface(
             text("Right-click or touch this region"),
@@ -565,8 +679,17 @@ pub fn context_menu(state: &ContextMenuState) -> Element<'_, ContextMenuEvent> {
         |event| event,
         &theme,
     )
-    .width(248.0)
-    .into()
+    .width(248.0);
+    let status = if state.last_action.is_empty() {
+        "No context action"
+    } else {
+        state.last_action.as_str()
+    };
+    semantic(
+        column![menu, text(format!("Action: {status}"))].spacing(4),
+        "ice-default-context-menu",
+        Role::Button,
+    )
 }
 
 pub fn alert_dialog_state() -> AlertDialogState {
@@ -643,7 +766,7 @@ pub fn alert_dialog(state: &AlertDialogState) -> Element<'static, AlertDialogEve
     .height(Length::Fill)
     .padding(12)
     .align_y(Vertical::Center);
-    ui_alert_dialog(
+    let dialog = ui_alert_dialog(
         trigger_content,
         state.open,
         &state.focus,
@@ -654,7 +777,8 @@ pub fn alert_dialog(state: &AlertDialogState) -> Element<'static, AlertDialogEve
         AlertDialogActionVariant::Destructive,
         AlertDialogEvent::Dialog,
         &theme,
-    )
+    );
+    semantic(dialog, "ice-default-alert-dialog", Role::AlertDialog)
 }
 
 pub fn sidebar_state() -> SidebarState {
@@ -1012,7 +1136,7 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
     .height(Length::Fill)
     .padding(16);
 
-    container(sidebar_layout(
+    let layout = container(sidebar_layout(
         main,
         panel,
         state.navigation,
@@ -1021,17 +1145,20 @@ pub fn sidebar(state: &SidebarState) -> Element<'static, SidebarEvent> {
         SidebarEvent::Action(SidebarAction::CloseMobile),
         &theme,
     ))
-    .height(SIDEBAR_STAGE_HEIGHT)
-    .into()
+    .height(SIDEBAR_STAGE_HEIGHT);
+    semantic(layout, "ice-default-sidebar", Role::Navigation)
 }
 
 pub fn sonner_state() -> SonnerState {
     let mut queue = UiSonnerState::new(2, ToastPlacement::TopRight);
-    queue.info(
-        "Ice owns this notification queue.",
-        std::time::Duration::ZERO,
-    );
-    SonnerState { queue, shown: 1 }
+    let elapsed = std::time::Duration::ZERO;
+    queue.set_default_duration(std::time::Duration::from_secs(4));
+    queue.info("Ice owns this notification queue.", elapsed);
+    SonnerState {
+        queue,
+        shown: 1,
+        elapsed,
+    }
 }
 
 pub fn sonner_apply(mut state: SonnerState, event: SonnerEvent) -> SonnerState {
@@ -1040,11 +1167,11 @@ pub fn sonner_apply(mut state: SonnerState, event: SonnerEvent) -> SonnerState {
             state.shown = state.shown.saturating_add(1);
             state.queue.success(
                 format!("Default notification #{}", state.shown),
-                std::time::Duration::ZERO,
+                state.elapsed,
             );
         }
         SonnerEvent::Toast(event) => {
-            state.queue.update(event, std::time::Duration::ZERO);
+            state.queue.update(event, state.elapsed);
         }
     }
     state
@@ -1071,12 +1198,28 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
     .height(Length::Fill)
     .padding(16);
 
-    iced::widget::Stack::new()
+    let view = iced::widget::Stack::new()
         .push(underlay)
         .push(ui_sonner(&state.queue, SonnerEvent::Toast, &theme))
         .width(Length::Fill)
-        .height(DEMO_STAGE_HEIGHT)
-        .into()
+        .height(DEMO_STAGE_HEIGHT);
+    semantic(view, "ice-default-sonner", Role::Log)
+}
+
+pub fn sonner_set_reduced_motion(
+    mut state: SonnerState,
+    reduced_motion: bool,
+) -> iced::Task<SonnerState> {
+    state.queue.set_reduced_motion(reduced_motion);
+    iced::Task::done(state)
+}
+
+pub fn sonner_tick(mut state: SonnerState) -> iced::Task<SonnerState> {
+    state.elapsed = state
+        .elapsed
+        .saturating_add(std::time::Duration::from_secs(1));
+    state.queue.tick(state.elapsed);
+    iced::Task::done(state)
 }
 
 pub fn drawer_state() -> DrawerState {
@@ -1101,7 +1244,7 @@ pub fn drawer_apply(mut state: DrawerState, event: DrawerEvent) -> iced::Task<Dr
     iced::Task::done(state).chain(focus)
 }
 
-pub fn drawer(state: &DrawerState) -> Element<'static, DrawerEvent> {
+pub fn drawer(state: &DrawerState, reduced_motion: bool) -> Element<'static, DrawerEvent> {
     let theme = theme();
     let trigger_content = surface(
         row![
@@ -1152,7 +1295,7 @@ pub fn drawer(state: &DrawerState) -> Element<'static, DrawerEvent> {
     )
     .close(close);
 
-    ui_drawer(
+    let drawer = ui_drawer(
         trigger,
         &state.drawer,
         panel,
@@ -1160,8 +1303,9 @@ pub fn drawer(state: &DrawerState) -> Element<'static, DrawerEvent> {
         DrawerEvent::Drawer,
         &theme,
     )
-    .size(190.0)
-    .into()
+    .size(220.0)
+    .reduced_motion(reduced_motion);
+    semantic(drawer, "ice-default-drawer", Role::Dialog)
 }
 
 pub fn navigation_menu_state() -> NavigationMenuState {
@@ -1170,6 +1314,14 @@ pub fn navigation_menu_state() -> NavigationMenuState {
 
 pub fn navigation_menu_is_open(state: NavigationMenuState) -> bool {
     state.open.is_some()
+}
+
+pub fn navigation_menu_route(state: NavigationMenuState) -> String {
+    match state.active.as_deref() {
+        Some("components") => "Components".to_owned(),
+        Some("docs") => "Documentation".to_owned(),
+        _ => "Home".to_owned(),
+    }
 }
 
 pub fn navigation_menu_apply(event: NavigationMenuEvent) -> iced::Task<NavigationMenuState> {
@@ -1243,7 +1395,7 @@ pub fn navigation_menu(state: &NavigationMenuState) -> Element<'static, Navigati
         ]
         .spacing(8)
         .align_y(iced::Alignment::Start);
-    ui_navigation_menu(
+    let menu = ui_navigation_menu(
         "ice-default-navigation",
         [
             NavigationMenuItem::link("home", "Home"),
@@ -1254,8 +1406,8 @@ pub fn navigation_menu(state: &NavigationMenuState) -> Element<'static, Navigati
         |event| event,
         &theme,
     )
-    .content_width(520.0)
-    .into()
+    .content_width(520.0);
+    semantic(menu, "ice-default-navigation", Role::Navigation)
 }
 
 pub fn menubar_state() -> MenubarState {
@@ -1264,6 +1416,7 @@ pub fn menubar_state() -> MenubarState {
         bar: UiMenubarState::initial(&menus),
         menu: MenuState::initial(&menus[0].entries),
         menus,
+        last_action: String::new(),
     }
 }
 
@@ -1276,25 +1429,41 @@ pub fn menubar_apply(mut state: MenubarState, event: MenubarEvent) -> iced::Task
     {
         state.menu.clone_from(menu);
     }
+    if let MenubarEvent::Menu {
+        event: MenuEvent::Activated(action),
+        ..
+    } = &event
+    {
+        state.last_action.clone_from(&action.id);
+    }
     let focus = event.focus_task("ice-default-menubar", &state.menus, &state.menu);
     iced::Task::done(state).chain(focus)
 }
 
 pub fn menubar(state: &MenubarState) -> Element<'static, MenubarEvent> {
-    ui_menubar(
+    let menu = ui_menubar(
         "ice-default-menubar",
         state.menus.clone(),
         &state.bar,
         &state.menu,
         |event| event,
         &theme(),
+    );
+    let status = if state.last_action.is_empty() {
+        "No menu action"
+    } else {
+        state.last_action.as_str()
+    };
+    semantic(
+        column![menu, text(format!("Action: {status}"))].spacing(4),
+        "ice-default-menubar",
+        Role::MenuBar,
     )
-    .into()
 }
 
-pub fn hover_card() -> Element<'static, ()> {
+pub fn hover_card() -> Element<'static, bool> {
     let theme = theme();
-    ui_hover_card(
+    let card = ui_hover_card(
         HoverCardId::new("ice-default"),
         surface(
             text("Hover or focus profile"),
@@ -1309,13 +1478,13 @@ pub fn hover_card() -> Element<'static, ()> {
             text("Default components authored from Ice."),
             ducktape_ui::ui::button::button("Open profile", &theme)
                 .height(ACTION_HEIGHT)
-                .on_press(())
+                .on_press(true)
         ]
         .spacing(8),
         &theme,
     )
-    .width(280.0)
-    .into()
+    .width(280.0);
+    semantic(card, "ice-default-hover-card", Role::Group)
 }
 
 pub fn slider(values: &[f64]) -> Element<'static, Vec<f64>> {
@@ -1332,7 +1501,7 @@ pub fn slider(values: &[f64]) -> Element<'static, Vec<f64>> {
 
 pub fn radio_group(selected: &str) -> Element<'static, String> {
     let theme = theme();
-    ui_radio_group(
+    let control = ui_radio_group(
         "ice-default-radio",
         ["default", "comfortable", "compact"]
             .map(|value| radio_option(value.to_owned(), value, &theme)),
@@ -1340,7 +1509,15 @@ pub fn radio_group(selected: &str) -> Element<'static, String> {
         |value| value,
         &theme,
     )
-    .orientation(RadioOrientation::Horizontal)
+    .orientation(RadioOrientation::Horizontal);
+    accessible(
+        control,
+        StableId::new("ice-default-radio"),
+        Role::RadioGroup,
+    )
+    .logical_id("ice-default-radio")
+    .label("Density")
+    .value(selected)
     .into()
 }
 
@@ -1354,49 +1531,36 @@ pub fn radio_apply(next: String) -> iced::Task<String> {
 }
 
 pub fn message_scroller_state() -> MessageScrollerState {
-    let mut state = MessageScrollerState::new("ice-default-transcript").auto_scroll(true);
-    let _ = state.update(MessageScrollerEvent::ItemsChanged(transcript_metadata()));
-    state
+    MessageScrollerState::new("ice-default-transcript").auto_scroll(true)
+}
+
+fn message_scroller_settle(
+    mut state: MessageScrollerState,
+    event: MessageScrollerEvent,
+) -> iced::Task<MessageScrollerState> {
+    let followup = state.update(event);
+    let next = state.clone();
+    iced::Task::done(next)
+        .chain(followup.then(move |event| message_scroller_settle(state.clone(), event)))
+}
+
+pub fn message_scroller_bootstrap(state: MessageScrollerState) -> iced::Task<MessageScrollerState> {
+    message_scroller_settle(
+        state,
+        MessageScrollerEvent::ItemsChanged(transcript_metadata()),
+    )
 }
 
 pub fn message_scroller_apply(
-    mut state: MessageScrollerState,
-    event: MessageScrollerEvent,
-) -> iced::Task<MessageScrollerResult> {
-    let followup = state.update(event);
-    let immediate = MessageScrollerResult {
-        state: state.clone(),
-        followup: None,
-    };
-    iced::Task::done(immediate).chain(followup.map(move |followup| MessageScrollerResult {
-        state: state.clone(),
-        followup: Some(followup),
-    }))
-}
-
-pub fn message_scroller_result_state(result: MessageScrollerResult) -> MessageScrollerState {
-    result.state
-}
-
-pub fn message_scroller_result() -> MessageScrollerResult {
-    MessageScrollerResult {
-        state: message_scroller_state(),
-        followup: None,
-    }
-}
-
-pub fn message_scroller_continue(
     state: MessageScrollerState,
-    result: MessageScrollerResult,
-) -> iced::Task<MessageScrollerResult> {
-    result.followup.map_or_else(iced::Task::none, |event| {
-        message_scroller_apply(state, event)
-    })
+    event: MessageScrollerEvent,
+) -> iced::Task<MessageScrollerState> {
+    message_scroller_settle(state, event)
 }
 
 pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScrollerEvent> {
     let theme = theme();
-    controlled_message_scroller(
+    let view = controlled_message_scroller(
         state,
         [
             message_scroller_item(
@@ -1440,11 +1604,11 @@ pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScro
         |event| event,
         &theme,
     )
-    .height(DEMO_STAGE_HEIGHT - 16.0)
-    .into()
+    .height(DEMO_STAGE_HEIGHT - 16.0);
+    semantic(view, "ice-default-transcript", Role::Log)
 }
 
-pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<String> {
+pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<CatalogItem> {
     let mut state = DataTableState::new(DATA_TABLE_PAGE_SIZE);
     state.set_query(query.clone());
     state.sort = match sort.as_str() {
@@ -1460,12 +1624,21 @@ pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<String> {
     };
     let mut rows = catalog_items(&query);
     match state.sort.as_ref().map(|sort| sort.direction) {
-        Some(SortDirection::Ascending) => rows.sort(),
-        Some(SortDirection::Descending) => rows.sort_by(|left, right| right.cmp(left)),
+        Some(SortDirection::Ascending) => rows.sort_by(|left, right| left.name.cmp(&right.name)),
+        Some(SortDirection::Descending) => {
+            rows.sort_by(|left, right| right.name.cmp(&left.name));
+        }
         None => {}
     }
-    state.set_page(page_index(page), rows.len());
+    state.set_page(data_table_page(query, page) as usize, rows.len());
     rows[state.visible_range(rows.len())].to_vec()
+}
+
+pub fn data_table_page(query: String, page: i64) -> i64 {
+    let rows = catalog_items(&query);
+    let pages = DataTableState::<()>::new(DATA_TABLE_PAGE_SIZE).page_count(rows.len());
+    let page = page_index(page).min(pages.saturating_sub(1));
+    i64::try_from(page).unwrap_or(i64::MAX)
 }
 
 pub fn data_table_next_sort(sort: String) -> String {
@@ -1479,7 +1652,8 @@ pub fn data_table_next_sort(sort: String) -> String {
 
 pub fn data_table_can_next(query: String, page: i64) -> bool {
     let state = DataTableState::<()>::new(DATA_TABLE_PAGE_SIZE);
-    page_index(page).saturating_add(1) < state.page_count(catalog_items(&query).len())
+    data_table_page(query.clone(), page) as usize + 1
+        < state.page_count(catalog_items(&query).len())
 }
 
 pub fn data_table_page_count(query: String) -> i64 {
@@ -1522,7 +1696,7 @@ pub fn resizable_demo(sizes: &[f64]) -> Element<'static, Vec<f64>> {
         .map(|label| container(text(label)).center(Length::Fill).into());
     let theme = theme();
 
-    resizable(
+    let view = resizable(
         "ice-native-resizable",
         panels,
         sizes,
@@ -1531,8 +1705,8 @@ pub fn resizable_demo(sizes: &[f64]) -> Element<'static, Vec<f64>> {
         &theme,
     )
     .with_handles(true)
-    .height(96)
-    .into()
+    .height(96);
+    semantic(view, "ice-native-resizable", Role::Splitter)
 }
 
 pub fn popover_apply(event: PopoverEvent) -> iced::Task<bool> {
@@ -1542,7 +1716,7 @@ pub fn popover_apply(event: PopoverEvent) -> iced::Task<bool> {
 
 pub fn popover_demo(open: bool) -> Element<'static, PopoverEvent> {
     let theme = theme();
-    popover(
+    let view = popover(
         PopoverIds::new("ice-native-popover"),
         surface(text("Toggle popover"), SurfaceVariant::Default, &theme)
             .height(ACTION_HEIGHT)
@@ -1560,8 +1734,20 @@ pub fn popover_demo(open: bool) -> Element<'static, PopoverEvent> {
     .placement(Placement::Right)
     .alignment(Alignment::Start)
     .side_offset(8.0)
-    .width(280.0)
-    .into()
+    .width(280.0);
+    semantic(
+        column![
+            view,
+            text(if open {
+                "Popover open"
+            } else {
+                "Popover closed"
+            })
+        ]
+        .spacing(4),
+        "ice-native-popover",
+        Role::Group,
+    )
 }
 
 fn select_groups() -> [SelectGroup<String>; 2] {
@@ -1670,7 +1856,7 @@ fn transcript_metadata() -> Vec<MessageScrollerItemMeta> {
     ]
 }
 
-fn catalog_items(query: &str) -> Vec<String> {
+fn catalog_items(query: &str) -> Vec<CatalogItem> {
     let query = query.to_lowercase();
     [
         "Accordion",
@@ -1695,7 +1881,14 @@ fn catalog_items(query: &str) -> Vec<String> {
     ]
     .into_iter()
     .filter(|row| row.to_lowercase().contains(&query))
-    .map(str::to_owned)
+    .map(|name| CatalogItem {
+        name: name.to_owned(),
+        source: if name == "Button" || name == "Input" || name == "Dialog" {
+            "Ice".to_owned()
+        } else {
+            "ducktape-ui".to_owned()
+        },
+    })
     .collect()
 }
 
@@ -1771,12 +1964,12 @@ mod tests {
         let sonner = sonner_state();
         let _: Element<'_, SonnerEvent> = super::sonner(&sonner);
         let drawer = drawer_state();
-        let _: Element<'_, DrawerEvent> = super::drawer(&drawer);
+        let _: Element<'_, DrawerEvent> = super::drawer(&drawer, false);
         let navigation = navigation_menu_state();
         let _: Element<'_, NavigationMenuEvent> = navigation_menu(&navigation);
         let menubar = menubar_state();
         let _: Element<'_, MenubarEvent> = super::menubar(&menubar);
-        let _: Element<'_, ()> = hover_card();
+        let _: Element<'_, bool> = hover_card();
         let _: Element<'_, Vec<f64>> = slider(&[25.0, 75.0]);
         let _: Element<'_, String> = radio_group("default");
         let scroller = message_scroller_state();
@@ -1869,14 +2062,20 @@ mod tests {
         assert_eq!(saturated.shown, i64::MAX);
 
         assert_eq!(
-            data_table_rows("a".to_owned(), "ascending".to_owned(), 0),
+            data_table_rows("a".to_owned(), "ascending".to_owned(), 0)
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>(),
             ["Accordion", "Alert dialog", "Calendar"]
         );
         assert!(data_table_can_next(String::new(), 0));
         assert!(!data_table_can_next("button".to_owned(), 0));
         assert!(!data_table_can_next(String::new(), i64::MAX));
         assert_eq!(
-            data_table_rows(String::new(), "none".to_owned(), i64::MAX),
+            data_table_rows(String::new(), "none".to_owned(), i64::MAX)
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>(),
             ["Sonner"]
         );
         assert_eq!(data_table_next_sort("ascending".to_owned()), "descending");

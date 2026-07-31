@@ -80,10 +80,15 @@ view
                 catalog_at_start=catalog_at_start
                 catalog_page_number=catalog_page_number
                 demo_page=demo_page
+                demo_page_max=demo_page_max
+                reduced_motion=reduced_motion
                 otp=otp
                 calendar=calendar
                 date_picker=date_picker
                 chart_hover=chart_hover
+                hover_card_open=hover_card_open
+                navigation_route=navigation_route
+                card_action=card_action
                 command=command
                 select=select
                 dropdown=dropdown
@@ -110,6 +115,7 @@ view
                 calendar_changed -> calendar_changed _
                 date_picker_changed -> date_picker_changed _
                 chart_hovered -> chart_hovered _
+                hover_card_changed -> hover_card_changed _
                 command_changed -> command_changed _
                 select_changed -> select_changed _
                 dropdown_changed -> dropdown_changed _
@@ -117,6 +123,7 @@ view
                 alert_dialog_changed -> alert_dialog_changed _
                 sidebar_changed -> sidebar_changed _
                 sonner_changed -> sonner_changed _
+                reduced_motion_changed -> reduced_motion_changed _
                 drawer_changed -> drawer_changed _
                 navigation_menu_changed -> navigation_menu_changed _
                 menubar_changed -> menubar_changed _
@@ -128,6 +135,10 @@ view
                 catalog_page_changed -> catalog_page_changed _
                 demo_page_previous -> demo_page_previous
                 demo_page_next -> demo_page_next
+                card_cancel -> card_cancel
+                card_apply -> card_apply
+                navigate_home -> navigate_home
+                navigate_library -> navigate_library
                 message_scroller_changed -> message_scroller_changed _
                 native_popover_changed -> native_popover_changed _
             row
@@ -140,6 +151,8 @@ view
                   h=36.0
                   @primary_action
                   @py-8px
+              if dialog_result != "none"
+                text dialog_result size=12.0 @text-muted
               if !toast_visible
                 button "Show toast" -> show_toast
                   with
@@ -186,12 +199,12 @@ view
               gap=8.0
               align=end
             space w=fill h=1.0
-            button "Cancel" -> close_dialog
+            button "Cancel" -> cancel_dialog
               with
                 h=36.0
                 @secondary_action
                 @py-8px
-            button "Continue" -> close_dialog
+            button "Continue" -> continue_dialog
               with
                 h=36.0
                 @primary_action

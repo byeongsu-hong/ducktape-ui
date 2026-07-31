@@ -54,7 +54,7 @@ pub(in crate::codegen) fn render_foundation(
             span,
         } => {
             let style = Style::parse(styles, document);
-            let value = expr_code(value, env, document, ValueMode::Owned)?;
+            let value = expr_code(value, env, document, ValueMode::Borrowed)?;
             let accessibility_key =
                 accessibility_key_code(id.as_ref(), "text", span, scope, env, document)?;
             let code = text_code(options, &style, message, env, document)?;

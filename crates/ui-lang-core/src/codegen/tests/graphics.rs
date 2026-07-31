@@ -209,9 +209,7 @@ view
     assert!(generated.contains(".crop(::iced::Rectangle { x: (1).clamp(0, u32::MAX as i64) as u32, y: (2).clamp(0, u32::MAX as i64) as u32, width: (30).clamp(0, u32::MAX as i64) as u32, height: (40).clamp(0, u32::MAX as i64) as u32 })"));
     assert!(generated.contains(".filter_method(::iced::widget::image::FilterMethod::Nearest)"));
     assert!(generated.contains("::iced::widget::svg(\"icon.svg\".to_owned())"));
-    assert!(
-        generated.contains("svg::Handle::from_memory((\"<svg/>\".to_owned()).as_bytes().to_vec())")
-    );
+    assert!(generated.contains("svg::Handle::from_memory((\"<svg/>\").as_bytes().to_vec())"));
     assert!(generated.contains(
         "svg::Handle::from_memory(::std::vec![0x3cu8, 0x73u8, 0x76u8, 0x67u8, 0x2fu8, 0x3eu8])"
     ));
@@ -280,9 +278,6 @@ view
 "#;
 
     let generated = compile(source, "media.ice").unwrap();
-
-    assert!(
-        generated.contains("svg::Handle::from_memory((\"<svg/>\".to_owned()).as_bytes().to_vec())")
-    );
+    assert!(generated.contains("svg::Handle::from_memory((\"<svg/>\").as_bytes().to_vec())"));
     assert!(!generated.contains(".into_bytes()"));
 }

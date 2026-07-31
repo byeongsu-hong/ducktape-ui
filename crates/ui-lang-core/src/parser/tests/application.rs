@@ -599,6 +599,7 @@ view
     input "Name" #name label="Full name" description="Profile name" <-> name
     button "Save" #save description="Save changes" -> press
     checkbox "Ready" #ready label="Ready state" description="Current readiness" checked=checked -> toggle _
+    toggler "Online" #online label="Online state" description="Current availability" checked=checked -> toggle _
     image "photo.ppm" label="Portrait" description="Profile portrait"
 "#,
     )
@@ -619,7 +620,12 @@ view
         panic!("expected checkbox");
     };
     assert!(options.accessibility.label.is_some());
-    let ViewNode::Media { options, .. } = &children[3] else {
+    let ViewNode::Toggler { options, .. } = &children[3] else {
+        panic!("expected toggler");
+    };
+    assert!(options.accessibility.label.is_some());
+    assert!(options.accessibility.description.is_some());
+    let ViewNode::Media { options, .. } = &children[4] else {
         panic!("expected image");
     };
     assert!(options.accessibility.label.is_some());

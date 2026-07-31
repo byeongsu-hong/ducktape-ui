@@ -16,7 +16,11 @@ component ProjectSlugInput(bind value:str)
       focused bg=transparent border=transparent border-w=0.0 value=fg placeholder=muted selection=primary
 
 component FrameworkCombo(options:combo[str], selected:str?) -> str
-  combo options selected "Search frameworks" #root w=fill p=9.0 -> emit(_)
+  combo options selected "Search frameworks" #root -> emit(_)
+    with
+      w=fill
+      p=9.0
+      input=emit(_)
     active bg=surface border=border border-w=1.0 r=9.0 placeholder=muted value=fg selection=primary icon=muted
     hovered bg=surface border=control_line border-w=1.0 r=9.0 placeholder=muted value=fg selection=primary icon=fg
     focused bg=surface border=primary border-w=2.0 r=9.0 placeholder=muted value=fg selection=primary icon=fg
@@ -62,18 +66,7 @@ component ToggleDemo()
   on toggle
     pressed = !pressed
   row gap=8.0 align=center
-    if pressed
-      button "Bold" #toggle-on -> toggle
-        with
-          h=32.0
-          @primary_action
-          @py-6px
-    if !pressed
-      button "Bold" #toggle-off -> toggle
-        with
-          h=32.0
-          @outline_action
-          @py-6px
+    toggler "Bold" #toggle checked=pressed size=18.0 -> toggle
     if pressed
       text "On" size=12.0 @text-muted
     if !pressed
@@ -90,42 +83,9 @@ component SegmentedControlDemo()
       p=4.0
       @bg-accent
       @rounded-lg
-    if selected == "day"
-      button "Day" -> select "day"
-        with
-          h=32.0
-          @secondary_action
-          @py-6px
-    if selected != "day"
-      button "Day" -> select "day"
-        with
-          h=32.0
-          @ghost_action
-          @py-6px
-    if selected == "week"
-      button "Week" -> select "week"
-        with
-          h=32.0
-          @secondary_action
-          @py-6px
-    if selected != "week"
-      button "Week" -> select "week"
-        with
-          h=32.0
-          @ghost_action
-          @py-6px
-    if selected == "month"
-      button "Month" -> select "month"
-        with
-          h=32.0
-          @secondary_action
-          @py-6px
-    if selected != "month"
-      button "Month" -> select "month"
-        with
-          h=32.0
-          @ghost_action
-          @py-6px
+    radio "Day" value="day" selected=(selected == "day") -> select _
+    radio "Week" value="week" selected=(selected == "week") -> select _
+    radio "Month" value="month" selected=(selected == "month") -> select _
 
 component ToggleGroupDemo()
   SegmentedControlDemo #toggle-group

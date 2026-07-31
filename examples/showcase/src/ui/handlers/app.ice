@@ -40,6 +40,21 @@ on date_picker_applied(next)
 on chart_hovered(next)
   chart_hover = next
 
+on hover_card_changed(next)
+  hover_card_open = next
+
+on card_cancel
+  card_action = "cancelled"
+
+on card_apply
+  card_action = "applied"
+
+on navigate_home
+  navigation_route = "Home"
+
+on navigate_library
+  navigation_route = "Library"
+
 on command_changed(event)
   task command_apply(command, event) -> command_applied _
 
@@ -76,6 +91,19 @@ on sidebar_changed(event)
 on sonner_changed(event)
   sonner = sonner_apply(sonner, event)
 
+on sonner_tick
+  task sonner_tick(sonner) -> sonner_ticked _
+
+on sonner_ticked(next)
+  sonner = next
+
+on reduced_motion_changed(next)
+  reduced_motion = next
+  task sonner_set_reduced_motion(sonner, next) -> sonner_reduced_motion_applied _
+
+on sonner_reduced_motion_applied(next)
+  sonner = next
+
 on drawer_changed(event)
   task drawer_apply(drawer, event) -> drawer_applied _
 
@@ -87,6 +115,7 @@ on navigation_menu_changed(event)
 
 on navigation_menu_applied(next)
   navigation_menu = next
+  navigation_route = navigation_menu_route(navigation_menu)
 
 on menubar_changed(event)
   task menubar_apply(menubar, event) -> menubar_applied _
@@ -113,24 +142,24 @@ on catalog_next
   catalog_page = catalog_page + 1
 
 on catalog_page_changed(page)
-  catalog_page = page - 1
+  catalog_page = data_table_page(catalog_query, page - 1)
 
 on demo_page_previous
   return if demo_page <= 1
   demo_page = demo_page - 1
 
 on demo_page_next
-  return if demo_page >= 5
+  return if demo_page >= demo_page_max
   demo_page = demo_page + 1
+
+on message_scroller_bootstrapped(next)
+  message_scroller = next
 
 on message_scroller_changed(event)
   task message_scroller_apply(message_scroller, event) -> message_scroller_applied _
 
-on message_scroller_applied(result)
-  message_scroller_update = result
-  let next_state = message_scroller_result_state(message_scroller_update)
-  message_scroller = next_state
-  task message_scroller_continue(message_scroller, message_scroller_update) -> message_scroller_applied _
+on message_scroller_applied(next)
+  message_scroller = next
 
 on native_popover_changed(event)
   task popover_apply(event) -> native_popover_applied _
@@ -141,6 +170,14 @@ on native_popover_applied(next)
 on open_dialog
   dialog_open = true
 
+on cancel_dialog
+  dialog_result = "cancelled"
+  dialog_open = false
+
+on continue_dialog
+  dialog_result = "continued"
+  dialog_open = false
+
 on close_dialog
   dialog_open = false
 
@@ -149,3 +186,9 @@ on dismiss_toast
 
 on show_toast
   toast_visible = true
+
+on mount
+  task message_scroller_bootstrap(message_scroller) -> message_scroller_bootstrapped _
+
+subscribe
+  every 1s -> sonner_tick

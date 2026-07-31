@@ -161,6 +161,13 @@ pub(in crate::codegen) fn render_documents(
                 Error::new("E150", span, format!("unknown editor state `{binding}`"))
             })?;
             let state_name = controlled_state_name(&state.code, "editor", span)?;
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "editor", span, scope, env, document)?;
+            let accessibility_label = options
+                .placeholder
+                .as_deref()
+                .map(rust_string)
+                .unwrap_or_else(|| "\"Editor\"".to_owned());
             let mut code = format!("::iced::widget::text_editor(&{})", state.code);
             if let Some(id) = id {
                 write!(
@@ -284,14 +291,22 @@ pub(in crate::codegen) fn render_documents(
                 "{code}.on_action({message}::{variant} as fn(::iced::widget::text_editor::Action) -> {message})"
             );
             if let Some(disabled) = disabled {
-                let disabled = expr_code(disabled, env, document, ValueMode::Owned)?;
+                let disabled_value = expr_code(disabled, env, document, ValueMode::Owned)?;
                 let disabled_editor = finish(code)?;
                 let enabled_editor = finish(enabled)?;
+                let editor = format!(
+                    "if __disabled {{ {disabled_editor}.into() }} else {{ {enabled_editor}.into() }}"
+                );
                 Ok(format!(
-                    "if {disabled} {{ {disabled_editor}.into() }} else {{ {enabled_editor}.into() }}"
+                    "{{ let __a11y_key = {accessibility_key}; let __disabled = {disabled_value}; let __editor_value = (&{}).text(); let __editor: __IceElement<'_, {message}> = {editor}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}",
+                    state.code
                 ))
             } else {
-                Ok(format!("{}.into()", finish(enabled)?))
+                let editor = format!("{}.into()", finish(enabled)?);
+                Ok(format!(
+                    "{{ let __a11y_key = {accessibility_key}; let __editor_value = (&{}).text(); let __editor: __IceElement<'_, {message}> = {editor}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).into() }}",
+                    state.code
+                ))
             }
         }
         ViewNode::Table {
