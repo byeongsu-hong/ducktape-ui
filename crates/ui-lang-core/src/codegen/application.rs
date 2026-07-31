@@ -723,7 +723,7 @@ pub(in crate::codegen) fn generate_update(
     } else {
         writeln!(
             out,
-            "}};\n::iced::Task::batch([__task, ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))])\n}}"
+            "}};\n// Snapshotting the widget tree after every message serves ONLY an attached\n// assistive technology (and the test harness, which drives the app through\n// this tree) — ungated it walked every widget, built a TreeUpdate nobody\n// read, and scheduled a second frame per message.\nlet __accessibility = if cfg!(test) || ::ui_lang_runtime::accessibility_active() {{\n::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))\n}} else {{\n::iced::Task::none()\n}};\n::iced::Task::batch([__task, __accessibility])\n}}"
         )
         .unwrap();
     }

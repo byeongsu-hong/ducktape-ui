@@ -1203,9 +1203,14 @@ view
     assert!(generated.contains("__AccessibleMessage::Press => (|| {"));
     assert!(generated.contains("if false { return ::iced::Task::none(); }"));
     assert!(generated.contains("return ::iced::Task::perform"));
+    // The snapshot rides EVERY update — including handlers that return a
+    // task early — but only behind the activation gate: with no assistive
+    // technology attached it is a whole-tree walk nobody reads.
     assert!(generated.contains(
-        "::iced::Task::batch([__task, ::ui_lang_runtime::snapshot::<__AccessibleMessage>"
+        "let __accessibility = if cfg!(test) || ::ui_lang_runtime::accessibility_active()"
     ));
+    assert!(generated.contains("::ui_lang_runtime::snapshot::<__AccessibleMessage>"));
+    assert!(generated.contains("::iced::Task::batch([__task, __accessibility])"));
 }
 
 #[test]
