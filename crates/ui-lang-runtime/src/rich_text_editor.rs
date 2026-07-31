@@ -91,9 +91,9 @@ impl Format {
 
 /// An editable rich-text surface.
 ///
-/// Unlike [`iced::widget::TextEditor`], this widget shapes the highlighted spans
-/// first and uses that same paragraph for painting, hit testing, selections,
-/// vertical movement, and IME placement.
+/// Unlike [`iced::widget::TextEditor`], this widget shapes each highlighted
+/// logical line once and uses the same cached line paragraphs for painting,
+/// hit testing, selections, vertical movement, and IME placement.
 pub struct RichTextEditor<'a, Highlighter, Message>
 where
     Highlighter: text::Highlighter,
@@ -223,7 +223,7 @@ where
     /// Uses a custom highlighter and rich formatting function.
     ///
     /// `format_key` must change whenever captured values that affect formatting
-    /// change. It lets the widget reuse its shaped paragraph otherwise.
+    /// change. It lets the widget reuse its shaped line paragraphs otherwise.
     pub fn highlight_with<H>(
         self,
         settings: H::Settings,
@@ -305,14 +305,14 @@ where
             .map_or(self.content.cursor().position, |composition| {
                 composition.cursor
             });
-        let caret = caret_rectangle(state.paragraph.buffer(), position);
+        let caret = state.document.caret(position);
         let translation = text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll);
         let cursor = caret + translation;
 
         InputMethod::Enabled {
             cursor,
             purpose: input_method::Purpose::Normal,
-            // The preedit is already shaped into the editor paragraph. Passing it
+            // The preedit is already shaped into the editor document. Passing it
             // to iced_winit as well would draw a second overlay with the default
             // font and a different baseline.
             preedit: None,
@@ -328,13 +328,10 @@ where
     preedit: Option<input_method::Preedit>,
     shaped_preedit: Option<input_method::Preedit>,
     composition: Option<CompositionLayout>,
+    document: DocumentLayout,
     pending_ime_commit: PendingImeCommit,
     last_click: Option<mouse::Click>,
     drag_anchor: Option<Position>,
-    paragraph: GraphicsParagraph,
-    spans: Vec<Span<'static, (), Font>>,
-    strikethroughs: Vec<Option<Color>>,
-    line_highlights: Vec<Option<text::Highlight>>,
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
@@ -349,6 +346,38 @@ where
     scroll: f32,
     preferred_x: Option<f32>,
     last_cursor: Cursor,
+}
+
+#[derive(Default)]
+struct DocumentLayout {
+    lines: Vec<DocumentLine>,
+    height: f32,
+}
+
+struct DocumentLine {
+    signature: StyledLine,
+    paragraph: GraphicsParagraph,
+    spans: Vec<Span<'static, (), Font>>,
+    strikethroughs: Vec<Option<Color>>,
+    top: f32,
+    height: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StyledLine {
+    text: String,
+    segments: Vec<Segment>,
+    empty_format: Format,
+    line_highlight: Option<text::Highlight>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineLayoutStyle {
+    width: f32,
+    font: Font,
+    text_size: Pixels,
+    line_height: text::LineHeight,
+    wrapping: text::Wrapping,
 }
 
 #[derive(Debug, Clone)]
@@ -414,13 +443,10 @@ where
             preedit: None,
             shaped_preedit: None,
             composition: None,
+            document: DocumentLayout::default(),
             pending_ime_commit: PendingImeCommit::default(),
             last_click: None,
             drag_anchor: None,
-            paragraph: GraphicsParagraph::default(),
-            spans: Vec::new(),
-            strikethroughs: Vec::new(),
-            line_highlights: Vec::new(),
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
@@ -481,31 +507,37 @@ where
             || state.format_key != self.format_key;
 
         if needs_shape {
-            state.highlighter.change_line(0);
-            let composition = state
-                .preedit
-                .as_ref()
-                .and_then(|preedit| CompositionDocument::new(self.content, preedit));
-            let shaped_content = composition
-                .as_ref()
-                .map_or(self.content, |composition| &composition.content);
-            let shaped = shape_spans(shaped_content, &mut state.highlighter, self.format.as_ref());
-
-            state.paragraph = GraphicsParagraph::with_spans(Text {
-                content: shaped.spans.as_slice(),
-                bounds: Size::new(inner_width, i32::MAX as f32),
-                size: text_size,
-                line_height: self.line_height,
-                font,
-                align_x: text::Alignment::Default,
-                align_y: alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: self.wrapping,
+            let (source_lines, source_line_map) = TextLines::parse(&source);
+            let composition = state.preedit.as_ref().and_then(|preedit| {
+                CompositionDocument::new(cursor, &source, source_line_map, preedit)
             });
-            state.content_height = paragraph_height(&state.paragraph, text_size, self.line_height);
-            state.spans = shaped.spans;
-            state.strikethroughs = shaped.strikethroughs;
-            state.line_highlights = shaped.line_highlights;
+            let shaped_lines = composition
+                .as_ref()
+                .map_or(source_lines.as_slice(), |composition| {
+                    composition.lines.as_slice()
+                });
+            let geometry_changed = state.width != inner_width
+                || state.font != font
+                || state.text_size != text_size
+                || state.line_height != self.line_height
+                || state.wrapping != self.wrapping;
+            let format_changed = state.format_key != self.format_key;
+
+            state.document.update(
+                shaped_lines,
+                &mut state.highlighter,
+                self.format.as_ref(),
+                LineLayoutStyle {
+                    width: inner_width,
+                    font,
+                    text_size,
+                    line_height: self.line_height,
+                    wrapping: self.wrapping,
+                },
+                geometry_changed,
+                format_changed,
+            );
+            state.content_height = state.document.height;
             state.composition = composition.map(|composition| composition.layout);
             state.source = source;
             state.shaped_preedit = state.preedit.clone();
@@ -601,8 +633,7 @@ where
                 if let Some(point) = cursor.position_in(text_bounds) {
                     let local = point + Vector::new(0.0, state.scroll);
                     let click = mouse::Click::new(local, mouse::Button::Left, state.last_click);
-                    let position =
-                        state.source_position(hit_position(state.paragraph.buffer(), local));
+                    let position = state.source_position(state.document.hit(local));
                     let next = match click.kind() {
                         mouse::click::Kind::Single => {
                             state.drag_anchor = Some(position);
@@ -641,10 +672,9 @@ where
                 if let Some(anchor) = state.drag_anchor
                     && let Some(point) = cursor.position_in(text_bounds)
                 {
-                    let position = state.source_position(hit_position(
-                        state.paragraph.buffer(),
-                        point + Vector::new(0.0, state.scroll),
-                    ));
+                    let position = state.source_position(
+                        state.document.hit(point + Vector::new(0.0, state.scroll)),
+                    );
                     shell.publish(on_action(Action::MoveTo(Cursor {
                         position,
                         selection: (position != anchor).then_some(anchor),
@@ -677,7 +707,7 @@ where
                     selection: selection.clone(),
                     text_size: None,
                 })) {
-                    // Rich composition is part of the shaped paragraph, so a
+                    // Rich composition is part of the shaped document, so a
                     // redraw alone cannot expose the new IME stage.
                     shell.invalidate_layout();
                 }
@@ -867,7 +897,9 @@ where
                 );
             }
         } else {
-            renderer.fill_paragraph(&state.paragraph, origin, style.value, text_bounds);
+            state
+                .document
+                .draw_text(renderer, origin, style.value, text_bounds);
         }
 
         draw_strikethroughs(renderer, state, text_bounds, origin);
@@ -887,8 +919,7 @@ where
             }
 
             let cursor_position = self.content.cursor().position;
-            let caret = caret_rectangle(state.paragraph.buffer(), cursor_position)
-                + (origin - Point::ORIGIN);
+            let caret = state.document.caret(cursor_position) + (origin - Point::ORIGIN);
 
             if focus.is_cursor_visible()
                 && let Some(caret) = text_bounds.intersection(&caret)
@@ -920,10 +951,8 @@ where
         let text_bounds = bounds.shrink(self.padding);
         if let Some(point) = cursor.position_in(text_bounds) {
             let state = tree.state.downcast_ref::<State<Highlighter>>();
-            let position = state.source_position(hit_position(
-                state.paragraph.buffer(),
-                point + Vector::new(0.0, state.scroll),
-            ));
+            let position =
+                state.source_position(state.document.hit(point + Vector::new(0.0, state.scroll)));
             if let Some(line) = self.content.line(position.line)
                 && let Some(interaction) = self.mouse_interaction.as_ref()
             {
@@ -961,6 +990,217 @@ where
     }
 }
 
+impl DocumentLayout {
+    fn update<H>(
+        &mut self,
+        texts: &[String],
+        highlighter: &mut H,
+        format: &dyn Fn(&H::Highlight) -> Format,
+        style: LineLayoutStyle,
+        geometry_changed: bool,
+        format_changed: bool,
+    ) -> usize
+    where
+        H: text::Highlighter,
+    {
+        let old_len = self.lines.len();
+        let new_len = texts.len();
+        let common_prefix = self
+            .lines
+            .iter()
+            .zip(texts)
+            .take_while(|(line, text)| line.signature.text == text.as_str())
+            .count();
+        let common_suffix = self
+            .lines
+            .iter()
+            .rev()
+            .zip(texts.iter().rev())
+            .take(old_len.min(new_len).saturating_sub(common_prefix))
+            .take_while(|(line, text)| line.signature.text == text.as_str())
+            .count();
+        let text_changed = common_prefix < old_len || common_prefix < new_len;
+
+        let mut scan_start = highlighter.current_line().min(new_len);
+        if text_changed {
+            scan_start = scan_start.min(common_prefix);
+        }
+        if format_changed {
+            scan_start = 0;
+        }
+        if scan_start < new_len {
+            highlighter.change_line(scan_start);
+        }
+
+        let mut old = std::mem::take(&mut self.lines)
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        let new_suffix_start = new_len.saturating_sub(common_suffix);
+        let old_suffix_start = old_len.saturating_sub(common_suffix);
+        let mut lines = Vec::with_capacity(new_len);
+        let mut rebuilt = 0;
+
+        for (index, text) in texts.iter().enumerate() {
+            let candidate = if index < common_prefix {
+                Some(index)
+            } else if index >= new_suffix_start {
+                Some(old_suffix_start + index - new_suffix_start)
+            } else if index < old_len {
+                Some(index)
+            } else {
+                None
+            };
+
+            if index < scan_start {
+                let mut line = candidate
+                    .and_then(|candidate| old.get_mut(candidate))
+                    .and_then(Option::take)
+                    .expect("unchanged rich line");
+                if geometry_changed {
+                    line = DocumentLine::new(line.signature.clone(), style);
+                    rebuilt += 1;
+                }
+                lines.push(line);
+                continue;
+            }
+
+            let signature = styled_line(text.clone(), highlighter, format);
+            let reusable = candidate
+                .and_then(|candidate| old.get_mut(candidate))
+                .and_then(|line| {
+                    if line
+                        .as_ref()
+                        .is_some_and(|line| !geometry_changed && line.signature == signature)
+                    {
+                        line.take()
+                    } else {
+                        None
+                    }
+                });
+            let line = reusable.unwrap_or_else(|| {
+                rebuilt += 1;
+                DocumentLine::new(signature, style)
+            });
+            lines.push(line);
+        }
+
+        let mut top = 0.0;
+        for line in &mut lines {
+            line.top = top;
+            top += line.height;
+        }
+        self.lines = lines;
+        self.height = top.max(style.line_height.to_absolute(style.text_size).0);
+        rebuilt
+    }
+
+    fn caret(&self, position: Position) -> Rectangle {
+        let Some(line) = self.line(position.line) else {
+            return Rectangle::new(Point::ORIGIN, Size::new(1.0, 0.0));
+        };
+        let caret = caret_rectangle(
+            line.paragraph.buffer(),
+            Position {
+                line: 0,
+                column: position.column.min(line.signature.text.len()),
+            },
+        );
+        caret + Vector::new(0.0, line.top)
+    }
+
+    fn hit(&self, point: Point) -> Position {
+        let Some(last) = self.lines.len().checked_sub(1) else {
+            return Position { line: 0, column: 0 };
+        };
+        let line_index = self
+            .lines
+            .partition_point(|line| line.top + line.height <= point.y)
+            .min(last);
+        let line = &self.lines[line_index];
+        let local = hit_position(
+            line.paragraph.buffer(),
+            Point::new(point.x, (point.y - line.top).max(0.0)),
+        );
+        Position {
+            line: line_index,
+            column: local.column.min(line.signature.text.len()),
+        }
+    }
+
+    fn draw_text(
+        &self,
+        renderer: &mut iced::Renderer,
+        origin: Point,
+        color: Color,
+        clip: Rectangle,
+    ) {
+        for line in &self.lines {
+            let top = origin.y + line.top;
+            if top + line.height < clip.y || top > clip.y + clip.height {
+                continue;
+            }
+            renderer.fill_paragraph(
+                &line.paragraph,
+                origin + Vector::new(0.0, line.top),
+                color,
+                clip,
+            );
+        }
+    }
+
+    fn line(&self, index: usize) -> Option<&DocumentLine> {
+        let index = index.min(self.lines.len().checked_sub(1)?);
+        self.lines.get(index)
+    }
+}
+
+impl DocumentLine {
+    fn new(signature: StyledLine, style: LineLayoutStyle) -> Self {
+        let mut spans = Vec::new();
+        let mut strikethroughs = Vec::new();
+        if signature.segments.is_empty() {
+            push_span(
+                &mut spans,
+                &mut strikethroughs,
+                String::new(),
+                signature.empty_format,
+            );
+        } else {
+            for segment in &signature.segments {
+                push_span(
+                    &mut spans,
+                    &mut strikethroughs,
+                    signature.text[segment.range.clone()].to_owned(),
+                    segment.format,
+                );
+            }
+        }
+
+        let paragraph = GraphicsParagraph::with_spans(Text {
+            content: spans.as_slice(),
+            bounds: Size::new(style.width, i32::MAX as f32),
+            size: style.text_size,
+            line_height: style.line_height,
+            font: style.font,
+            align_x: text::Alignment::Default,
+            align_y: alignment::Vertical::Top,
+            shaping: text::Shaping::Advanced,
+            wrapping: style.wrapping,
+        });
+        let height = paragraph_height(&paragraph, style.text_size, style.line_height);
+
+        Self {
+            signature,
+            paragraph,
+            spans,
+            strikethroughs,
+            top: 0.0,
+            height,
+        }
+    }
+}
+
 impl<H> State<H>
 where
     H: text::Highlighter,
@@ -979,7 +1219,7 @@ where
     }
 
     fn reveal(&mut self, position: Position) {
-        let caret = caret_rectangle(self.paragraph.buffer(), position);
+        let caret = self.document.caret(position);
         if caret.y < self.scroll {
             self.scroll = caret.y;
         } else if caret.y + caret.height > self.scroll + self.viewport_height {
@@ -1002,26 +1242,36 @@ struct TextLines {
 }
 
 impl TextLines {
-    fn new(content: &Content) -> Self {
-        let line_count = content.line_count();
-        let mut starts = Vec::with_capacity(line_count);
-        let mut lengths = Vec::with_capacity(line_count);
-        let mut offset = 0;
+    fn parse(source: &str) -> (Vec<String>, Self) {
+        let bytes = source.as_bytes();
+        let mut lines = Vec::new();
+        let mut starts = vec![0];
+        let mut lengths = Vec::new();
+        let mut line_start = 0;
+        let mut index = 0;
 
-        for (index, line) in content.lines().enumerate() {
-            starts.push(offset);
-            lengths.push(line.text.len());
-            offset += line.text.len();
-
-            let ending = if index + 1 < line_count && line.ending.as_str().is_empty() {
-                text_editor::LineEnding::default().as_str()
-            } else {
-                line.ending.as_str()
+        while index < bytes.len() {
+            let ending_len = match bytes[index] {
+                b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+                b'\n' if bytes.get(index + 1) == Some(&b'\r') => 2,
+                b'\r' | b'\n' => 1,
+                _ => {
+                    index += 1;
+                    continue;
+                }
             };
-            offset += ending.len();
+
+            lines.push(source[line_start..index].to_owned());
+            lengths.push(index - line_start);
+            index += ending_len;
+            line_start = index;
+            starts.push(index);
         }
 
-        Self { starts, lengths }
+        lines.push(source[line_start..].to_owned());
+        lengths.push(source.len() - line_start);
+
+        (lines, Self { starts, lengths })
     }
 
     fn offset(&self, position: Position) -> usize {
@@ -1075,19 +1325,21 @@ impl CompositionLayout {
 }
 
 struct CompositionDocument {
-    content: Content,
+    lines: Vec<String>,
     layout: CompositionLayout,
 }
 
 impl CompositionDocument {
-    fn new(content: &Content, preedit: &input_method::Preedit) -> Option<Self> {
+    fn new(
+        cursor: Cursor,
+        source: &str,
+        source_lines: TextLines,
+        preedit: &input_method::Preedit,
+    ) -> Option<Self> {
         if preedit.content.is_empty() {
             return None;
         }
 
-        let source = content.text();
-        let source_lines = TextLines::new(content);
-        let cursor = content.cursor();
         let (start, end) = cursor
             .selection
             .map_or((cursor.position, cursor.position), |anchor| {
@@ -1100,8 +1352,7 @@ impl CompositionDocument {
         display.push_str(&preedit.content);
         display.push_str(&source[source_range.end..]);
 
-        let display_content = Content::with_text(&display);
-        let display_lines = TextLines::new(&display_content);
+        let (lines, display_lines) = TextLines::parse(&display);
         let display_range =
             source_range.start..source_range.start.saturating_add(preedit.content.len());
         let selection = preedit.selection.as_ref().map(|selection| {
@@ -1127,10 +1378,7 @@ impl CompositionDocument {
             cursor_visible: preedit.selection.is_some(),
         };
 
-        Some(Self {
-            content: display_content,
-            layout,
-        })
+        Some(Self { lines, layout })
     }
 }
 
@@ -1142,75 +1390,32 @@ fn char_boundary_at_or_before(source: &str, index: usize) -> usize {
     index
 }
 
-struct ShapedSpans {
-    spans: Vec<Span<'static, (), Font>>,
-    strikethroughs: Vec<Option<Color>>,
-    line_highlights: Vec<Option<text::Highlight>>,
-}
-
-fn shape_spans<H>(
-    content: &Content,
+fn styled_line<H>(
+    source: String,
     highlighter: &mut H,
     format: &dyn Fn(&H::Highlight) -> Format,
-) -> ShapedSpans
+) -> StyledLine
 where
     H: text::Highlighter,
 {
-    let line_count = content.line_count();
-    let mut spans = Vec::new();
-    let mut strikethroughs = Vec::new();
-    let mut line_highlights = Vec::with_capacity(line_count);
+    let highlights = highlighter
+        .highlight_line(&source)
+        .map(|(range, highlight)| (range, format(&highlight)))
+        .collect::<Vec<_>>();
+    let segments = compose_segments(&source, &highlights);
+    let empty_format = highlights
+        .iter()
+        .fold(Format::default(), |base, (_, next)| base.overlay(*next));
+    let line_highlight = highlights
+        .iter()
+        .filter_map(|(_, format)| format.line_highlight)
+        .next_back();
 
-    for (line_index, line) in content.lines().enumerate() {
-        let highlights = highlighter
-            .highlight_line(&line.text)
-            .map(|(range, highlight)| (range, format(&highlight)))
-            .collect::<Vec<_>>();
-        let segments = compose_segments(&line.text, &highlights);
-        let line_highlight = highlights
-            .iter()
-            .filter_map(|(_, format)| format.line_highlight)
-            .next_back();
-        line_highlights.push(line_highlight);
-
-        let ending = if line_index + 1 < line_count && line.ending.as_str().is_empty() {
-            text_editor::LineEnding::default().as_str()
-        } else {
-            line.ending.as_str()
-        };
-
-        if segments.is_empty() {
-            let line_format = highlights
-                .iter()
-                .fold(Format::default(), |base, (_, next)| base.overlay(*next));
-            push_span(
-                &mut spans,
-                &mut strikethroughs,
-                ending.to_owned(),
-                line_format,
-            );
-            continue;
-        }
-
-        for (index, segment) in segments.iter().enumerate() {
-            let mut source = line.text[segment.range.clone()].to_owned();
-            if index + 1 == segments.len() {
-                source.push_str(ending);
-            }
-            push_span(&mut spans, &mut strikethroughs, source, segment.format);
-        }
-    }
-
-    if spans.is_empty() {
-        spans.push(Span::new(String::new()));
-        strikethroughs.push(None);
-        line_highlights.push(None);
-    }
-
-    ShapedSpans {
-        spans,
-        strikethroughs,
-        line_highlights,
+    StyledLine {
+        text: source,
+        segments,
+        empty_format,
+        line_highlight,
     }
 }
 
@@ -1294,7 +1499,8 @@ fn paragraph_height(
         .buffer()
         .layout_runs()
         .map(|run| run.line_top + run.line_height)
-        .fold(line_height.to_absolute(size).0, f32::max)
+        .reduce(f32::max)
+        .unwrap_or_else(|| line_height.to_absolute(size).0)
 }
 
 fn hit_position(buffer: &cosmic_text::Buffer, point: Point) -> Position {
@@ -1378,14 +1584,13 @@ struct LineHighlightGroup {
 }
 
 fn visit_line_highlight_groups(
-    runs: impl IntoIterator<Item = (usize, f32, f32)>,
-    line_highlights: &[Option<text::Highlight>],
+    runs: impl IntoIterator<Item = (Option<text::Highlight>, f32, f32)>,
     mut visit: impl FnMut(LineHighlightGroup),
 ) {
     let mut current = None;
 
-    for (line, top, height) in runs {
-        let Some(highlight) = line_highlights.get(line).copied().flatten() else {
+    for (highlight, top, height) in runs {
+        let Some(highlight) = highlight else {
             if let Some(group) = current.take() {
                 visit(group);
             }
@@ -1424,12 +1629,13 @@ fn draw_line_highlights<H>(
 {
     renderer.with_layer(clip, |renderer| {
         visit_line_highlight_groups(
-            state
-                .paragraph
-                .buffer()
-                .layout_runs()
-                .map(|run| (run.line_i, origin.y + run.line_top, run.line_height)),
-            &state.line_highlights,
+            state.document.lines.iter().map(|line| {
+                (
+                    line.signature.line_highlight,
+                    origin.y + line.top,
+                    line.height,
+                )
+            }),
             |group| {
                 let bounds = Rectangle::new(
                     Point::new(clip.x, group.top),
@@ -1458,25 +1664,32 @@ fn draw_span_highlights<H>(
 ) where
     H: text::Highlighter,
 {
-    let translation = origin - Point::ORIGIN;
-    for (index, span) in state.spans.iter().enumerate() {
-        let Some(highlight) = span.highlight else {
+    for line in &state.document.lines {
+        let top = origin.y + line.top;
+        if top + line.height < clip.y || top > clip.y + clip.height {
             continue;
-        };
-        for bounds in state.paragraph.span_bounds(index) {
-            let bounds = Rectangle::new(
-                bounds.position() + translation - Vector::new(span.padding.left, span.padding.top),
-                bounds.size() + Size::new(span.padding.x(), span.padding.y()),
-            );
-            if let Some(bounds) = clip.intersection(&bounds) {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds,
-                        border: highlight.border,
-                        ..renderer::Quad::default()
-                    },
-                    highlight.background,
+        }
+        let translation = origin - Point::ORIGIN + Vector::new(0.0, line.top);
+        for (index, span) in line.spans.iter().enumerate() {
+            let Some(highlight) = span.highlight else {
+                continue;
+            };
+            for bounds in line.paragraph.span_bounds(index) {
+                let bounds = Rectangle::new(
+                    bounds.position() + translation
+                        - Vector::new(span.padding.left, span.padding.top),
+                    bounds.size() + Size::new(span.padding.x(), span.padding.y()),
                 );
+                if let Some(bounds) = clip.intersection(&bounds) {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds,
+                            border: highlight.border,
+                            ..renderer::Quad::default()
+                        },
+                        highlight.background,
+                    );
+                }
             }
         }
     }
@@ -1496,25 +1709,41 @@ fn draw_selection<H>(
         return;
     };
     let (start, end) = ordered_positions(cursor.position, anchor);
-    let start = cosmic_text::Cursor::new(start.line, start.column);
-    let end = cosmic_text::Cursor::new(end.line, end.column);
 
-    for run in state.paragraph.buffer().layout_runs() {
-        let Some((x, width)) = run.highlight(start, end) else {
+    for line_index in start.line..=end.line {
+        let Some(line) = state.document.line(line_index) else {
             continue;
         };
-        let bounds = Rectangle::new(
-            Point::new(origin.x + x, origin.y + run.line_top),
-            Size::new(width.max(1.0), run.line_height),
-        );
-        if let Some(bounds) = clip.intersection(&bounds) {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds,
-                    ..renderer::Quad::default()
-                },
-                color,
+        let from = if line_index == start.line {
+            start.column.min(line.signature.text.len())
+        } else {
+            0
+        };
+        let to = if line_index == end.line {
+            end.column.min(line.signature.text.len())
+        } else {
+            line.signature.text.len()
+        };
+        let from = cosmic_text::Cursor::new(0, from);
+        let to = cosmic_text::Cursor::new(0, to);
+
+        for run in line.paragraph.buffer().layout_runs() {
+            let Some((x, width)) = run.highlight(from, to) else {
+                continue;
+            };
+            let bounds = Rectangle::new(
+                Point::new(origin.x + x, origin.y + line.top + run.line_top),
+                Size::new(width.max(1.0), run.line_height),
             );
+            if let Some(bounds) = clip.intersection(&bounds) {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds,
+                        ..renderer::Quad::default()
+                    },
+                    color,
+                );
+            }
         }
     }
 }
@@ -1527,26 +1756,32 @@ fn draw_strikethroughs<H>(
 ) where
     H: text::Highlighter,
 {
-    let translation = origin - Point::ORIGIN;
-    for (index, color) in state
-        .strikethroughs
-        .iter()
-        .enumerate()
-        .filter_map(|(index, color)| color.map(|color| (index, color)))
-    {
-        for bounds in state.paragraph.span_bounds(index) {
-            let line = Rectangle::new(
-                Point::new(bounds.x, bounds.y + bounds.height * 0.55) + translation,
-                Size::new(bounds.width, 1.0),
-            );
-            if let Some(line) = clip.intersection(&line) {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: line,
-                        ..renderer::Quad::default()
-                    },
-                    color,
+    for document_line in &state.document.lines {
+        let top = origin.y + document_line.top;
+        if top + document_line.height < clip.y || top > clip.y + clip.height {
+            continue;
+        }
+        let translation = origin - Point::ORIGIN + Vector::new(0.0, document_line.top);
+        for (index, color) in document_line
+            .strikethroughs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, color)| color.map(|color| (index, color)))
+        {
+            for bounds in document_line.paragraph.span_bounds(index) {
+                let line = Rectangle::new(
+                    Point::new(bounds.x, bounds.y + bounds.height * 0.55) + translation,
+                    Size::new(bounds.width, 1.0),
                 );
+                if let Some(line) = clip.intersection(&line) {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: line,
+                            ..renderer::Quad::default()
+                        },
+                        color,
+                    );
+                }
             }
         }
     }
@@ -1563,46 +1798,80 @@ fn draw_composition<H>(
 ) where
     H: text::Highlighter,
 {
-    let start = cosmic_text::Cursor::new(composition.range.0.line, composition.range.0.column);
-    let end = cosmic_text::Cursor::new(composition.range.1.line, composition.range.1.column);
+    draw_range_underline(
+        renderer,
+        &state.document,
+        composition.range,
+        clip,
+        origin,
+        color,
+        1.0,
+    );
 
-    for run in state.paragraph.buffer().layout_runs() {
-        let Some((x, width)) = run.highlight(start, end) else {
-            continue;
-        };
-        let underline = Rectangle::new(
-            Point::new(
-                origin.x + x,
-                origin.y + run.line_top + run.line_height - 1.0,
-            ),
-            Size::new(width.max(1.0), 1.0),
+    if let Some((start, end)) = composition.selection
+        && start != end
+    {
+        draw_range_underline(
+            renderer,
+            &state.document,
+            (start, end),
+            clip,
+            origin,
+            color,
+            2.0,
         );
-        if let Some(underline) = clip.intersection(&underline) {
+    }
+
+    if cursor_visible && composition.cursor_visible {
+        let caret = state.document.caret(composition.cursor) + (origin - Point::ORIGIN);
+        if let Some(caret) = clip.intersection(&caret) {
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: underline,
+                    bounds: caret,
                     ..renderer::Quad::default()
                 },
                 color,
             );
         }
     }
+}
 
-    if let Some((start, end)) = composition.selection
-        && start != end
-    {
-        let start = cosmic_text::Cursor::new(start.line, start.column);
-        let end = cosmic_text::Cursor::new(end.line, end.column);
-        for run in state.paragraph.buffer().layout_runs() {
-            let Some((x, width)) = run.highlight(start, end) else {
+fn draw_range_underline(
+    renderer: &mut iced::Renderer,
+    document: &DocumentLayout,
+    range: (Position, Position),
+    clip: Rectangle,
+    origin: Point,
+    color: Color,
+    thickness: f32,
+) {
+    let (start, end) = ordered_positions(range.0, range.1);
+    for line_index in start.line..=end.line {
+        let Some(line) = document.line(line_index) else {
+            continue;
+        };
+        let from = if line_index == start.line {
+            start.column.min(line.signature.text.len())
+        } else {
+            0
+        };
+        let to = if line_index == end.line {
+            end.column.min(line.signature.text.len())
+        } else {
+            line.signature.text.len()
+        };
+        let from = cosmic_text::Cursor::new(0, from);
+        let to = cosmic_text::Cursor::new(0, to);
+        for run in line.paragraph.buffer().layout_runs() {
+            let Some((x, width)) = run.highlight(from, to) else {
                 continue;
             };
             let underline = Rectangle::new(
                 Point::new(
                     origin.x + x,
-                    origin.y + run.line_top + run.line_height - 2.0,
+                    origin.y + line.top + run.line_top + run.line_height - thickness,
                 ),
-                Size::new(width.max(1.0), 2.0),
+                Size::new(width.max(1.0), thickness),
             );
             if let Some(underline) = clip.intersection(&underline) {
                 renderer.fill_quad(
@@ -1613,20 +1882,6 @@ fn draw_composition<H>(
                     color,
                 );
             }
-        }
-    }
-
-    if cursor_visible && composition.cursor_visible {
-        let caret = caret_rectangle(state.paragraph.buffer(), composition.cursor)
-            + (origin - Point::ORIGIN);
-        if let Some(caret) = clip.intersection(&caret) {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: caret,
-                    ..renderer::Quad::default()
-                },
-                color,
-            );
         }
     }
 }
@@ -1935,17 +2190,53 @@ fn rich_motion<H>(state: &mut State<H>, position: Position, motion: Motion) -> P
 where
     H: text::Highlighter,
 {
-    let buffer = state.paragraph.buffer();
-    let caret = caret_rectangle(buffer, position);
+    struct VisualRun {
+        line: usize,
+        top: f32,
+        height: f32,
+        start: usize,
+        end: usize,
+    }
+
+    let caret = state.document.caret(position);
     let preferred_x = *state.preferred_x.get_or_insert(caret.x);
-    let runs = buffer.layout_runs().collect::<Vec<_>>();
+    let runs = state
+        .document
+        .lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line_index, line)| {
+            line.paragraph
+                .buffer()
+                .layout_runs()
+                .map(move |run| VisualRun {
+                    line: line_index,
+                    top: line.top + run.line_top,
+                    height: run.line_height,
+                    start: run.glyphs.first().map_or(0, |glyph| glyph.start),
+                    end: run
+                        .glyphs
+                        .last()
+                        .map_or(line.signature.text.len(), |glyph| glyph.end),
+                })
+        })
+        .collect::<Vec<_>>();
     let caret_center = caret.y + caret.height / 2.0;
     let current = runs
         .iter()
         .enumerate()
         .min_by(|(_, left), (_, right)| {
-            distance_to_run(caret_center, left)
-                .partial_cmp(&distance_to_run(caret_center, right))
+            let distance = |run: &VisualRun| {
+                if caret_center < run.top {
+                    run.top - caret_center
+                } else if caret_center > run.top + run.height {
+                    caret_center - run.top - run.height
+                } else {
+                    0.0
+                }
+            };
+            distance(left)
+                .partial_cmp(&distance(right))
                 .unwrap_or(Ordering::Equal)
         })
         .map_or(0, |(index, _)| index);
@@ -1955,24 +2246,24 @@ where
         Motion::Down => (current + 1).min(runs.len().saturating_sub(1)),
         Motion::PageUp => runs
             .iter()
-            .rposition(|run| run.line_top <= caret.y - state.viewport_height)
+            .rposition(|run| run.top <= caret.y - state.viewport_height)
             .unwrap_or(0),
         Motion::PageDown => runs
             .iter()
-            .position(|run| run.line_top >= caret.y + state.viewport_height)
+            .position(|run| run.top >= caret.y + state.viewport_height)
             .unwrap_or_else(|| runs.len().saturating_sub(1)),
         Motion::Home => {
             state.preferred_x = None;
             return runs.get(current).map_or(position, |run| Position {
-                line: run.line_i,
-                column: run.glyphs.first().map_or(0, |glyph| glyph.start),
+                line: run.line,
+                column: run.start,
             });
         }
         Motion::End => {
             state.preferred_x = None;
             return runs.get(current).map_or(position, |run| Position {
-                line: run.line_i,
-                column: run.glyphs.last().map_or(run.text.len(), |glyph| glyph.end),
+                line: run.line,
+                column: run.end,
             });
         }
         _ => return position,
@@ -1981,20 +2272,9 @@ where
     let Some(run) = runs.get(target) else {
         return position;
     };
-    hit_position(
-        buffer,
-        Point::new(preferred_x, run.line_top + run.line_height / 2.0),
-    )
-}
-
-fn distance_to_run(y: f32, run: &cosmic_text::LayoutRun<'_>) -> f32 {
-    if y < run.line_top {
-        run.line_top - y
-    } else if y > run.line_top + run.line_height {
-        y - run.line_top - run.line_height
-    } else {
-        0.0
-    }
+    state
+        .document
+        .hit(Point::new(preferred_x, run.top + run.height / 2.0))
 }
 
 fn select_word(content: &Content, position: Position) -> Cursor {
@@ -2060,7 +2340,10 @@ fn ordered_positions(left: Position, right: Position) -> (Position, Position) {
 mod tests {
     use super::*;
 
-    struct WholeLine;
+    #[derive(Default)]
+    struct WholeLine {
+        current_line: usize,
+    }
 
     impl text::Highlighter for WholeLine {
         type Settings = ();
@@ -2068,20 +2351,37 @@ mod tests {
         type Iterator<'a> = std::iter::Once<(Range<usize>, ())>;
 
         fn new(_settings: &Self::Settings) -> Self {
-            Self
+            Self::default()
         }
 
         fn update(&mut self, _new_settings: &Self::Settings) {}
 
-        fn change_line(&mut self, _line: usize) {}
+        fn change_line(&mut self, line: usize) {
+            self.current_line = line;
+        }
 
         fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
+            self.current_line += 1;
             std::iter::once((0..line.len(), ()))
         }
 
         fn current_line(&self) -> usize {
-            0
+            self.current_line
         }
+    }
+
+    fn test_layout_style(width: f32) -> LineLayoutStyle {
+        LineLayoutStyle {
+            width,
+            font: Font::DEFAULT,
+            text_size: Pixels(16.0),
+            line_height: text::LineHeight::Relative(1.6),
+            wrapping: text::Wrapping::Word,
+        }
+    }
+
+    fn content_lines(content: &Content) -> Vec<String> {
+        content.lines().map(|line| line.text.into_owned()).collect()
     }
 
     #[test]
@@ -2150,6 +2450,128 @@ mod tests {
     }
 
     #[test]
+    fn line_paragraphs_preserve_whole_document_caret_geometry() {
+        let heading = Format {
+            size: Some(Pixels(30.0)),
+            line_height: Some(text::LineHeight::Absolute(Pixels(42.0))),
+            ..Format::default()
+        };
+        let hidden = Format {
+            size: Some(Pixels(0.01)),
+            color: Some(Color::TRANSPARENT),
+            ..Format::default()
+        };
+        let code = Format {
+            size: Some(Pixels(14.0)),
+            line_height: Some(text::LineHeight::Absolute(Pixels(24.0))),
+            ..Format::default()
+        };
+        let signatures = [
+            StyledLine {
+                text: "# 제목".to_owned(),
+                segments: vec![
+                    Segment {
+                        range: 0..2,
+                        format: hidden,
+                    },
+                    Segment {
+                        range: 2.."# 제목".len(),
+                        format: heading,
+                    },
+                ],
+                empty_format: Format::default(),
+                line_highlight: None,
+            },
+            StyledLine {
+                text: "a body line long enough to wrap".to_owned(),
+                segments: vec![Segment {
+                    range: 0.."a body line long enough to wrap".len(),
+                    format: Format::default(),
+                }],
+                empty_format: Format::default(),
+                line_highlight: None,
+            },
+            StyledLine {
+                text: String::new(),
+                segments: Vec::new(),
+                empty_format: code,
+                line_highlight: None,
+            },
+            StyledLine {
+                text: "let value = 1;".to_owned(),
+                segments: vec![Segment {
+                    range: 0.."let value = 1;".len(),
+                    format: code,
+                }],
+                empty_format: Format::default(),
+                line_highlight: None,
+            },
+        ];
+        let style = test_layout_style(120.0);
+
+        let mut document = DocumentLayout::default();
+        for signature in signatures.iter().cloned() {
+            let mut line = DocumentLine::new(signature, style);
+            line.top = document.height;
+            document.height += line.height;
+            document.lines.push(line);
+        }
+
+        let mut legacy_spans = Vec::new();
+        for (line_index, signature) in signatures.iter().enumerate() {
+            let ending = (line_index + 1 < signatures.len()).then_some("\n");
+            if signature.segments.is_empty() {
+                legacy_spans.push(to_span(
+                    ending.unwrap_or_default().to_owned(),
+                    signature.empty_format,
+                ));
+                continue;
+            }
+            for (segment_index, segment) in signature.segments.iter().enumerate() {
+                let mut text = signature.text[segment.range.clone()].to_owned();
+                if segment_index + 1 == signature.segments.len()
+                    && let Some(ending) = ending
+                {
+                    text.push_str(ending);
+                }
+                legacy_spans.push(to_span(text, segment.format));
+            }
+        }
+        let legacy = GraphicsParagraph::with_spans(Text {
+            content: legacy_spans.as_slice(),
+            bounds: Size::new(style.width, i32::MAX as f32),
+            size: style.text_size,
+            line_height: style.line_height,
+            font: style.font,
+            align_x: text::Alignment::Default,
+            align_y: alignment::Vertical::Top,
+            shaping: text::Shaping::Advanced,
+            wrapping: style.wrapping,
+        });
+
+        let legacy_height = paragraph_height(&legacy, style.text_size, style.line_height);
+        assert!(
+            (document.height - legacy_height).abs() < 0.01,
+            "document height {} != legacy height {legacy_height}",
+            document.height
+        );
+        for (line, signature) in signatures.iter().enumerate() {
+            for column in [0, signature.text.len()] {
+                let expected = caret_rectangle(legacy.buffer(), Position { line, column });
+                let actual = document.caret(Position { line, column });
+                assert!(
+                    (actual.x - expected.x).abs() < 0.01
+                        && (actual.y - expected.y).abs() < 0.01
+                        && (actual.height - expected.height).abs() < 0.01,
+                    "caret mismatch at {line}:{column}: {actual:?} != {expected:?}"
+                );
+                let point = Point::new(expected.x, expected.y + expected.height / 2.0);
+                assert_eq!(document.hit(point), hit_position(legacy.buffer(), point));
+            }
+        }
+    }
+
+    #[test]
     fn empty_formatted_lines_keep_their_rich_metrics() {
         let content = Content::with_text("\n");
         let format = Format {
@@ -2157,12 +2579,30 @@ mod tests {
             line_height: Some(text::LineHeight::Absolute(Pixels(23.0))),
             ..Format::default()
         };
-        let shaped = shape_spans(&content, &mut WholeLine, &|_| format);
+        let mut document = DocumentLayout::default();
+        let rebuilt = document.update(
+            &content_lines(&content),
+            &mut WholeLine::default(),
+            &|_| format,
+            test_layout_style(500.0),
+            false,
+            false,
+        );
 
-        assert_eq!(shaped.line_highlights.len(), content.line_count());
-        assert_eq!(shaped.spans.len(), content.line_count());
-        assert!(shaped.spans.iter().all(|span| span.size == format.size));
-        assert_eq!(shaped.strikethroughs, vec![None; shaped.spans.len()]);
+        assert_eq!(rebuilt, content.line_count());
+        assert_eq!(document.lines.len(), content.line_count());
+        assert!(
+            document
+                .lines
+                .iter()
+                .all(|line| line.spans.len() == 1 && line.spans[0].size == format.size)
+        );
+        assert!(
+            document
+                .lines
+                .iter()
+                .all(|line| line.strikethroughs == [None] && line.height >= 23.0)
+        );
     }
 
     #[test]
@@ -2203,42 +2643,46 @@ mod tests {
     }
 
     #[test]
-    fn preedit_uses_the_same_wrapped_paragraph_as_committed_text() {
-        fn geometry(content: &Content) -> Vec<(usize, usize, f32, f32, f32)> {
-            let shaped = shape_spans(content, &mut WholeLine, &|_| Format::default());
-            let paragraph = GraphicsParagraph::with_spans(Text {
-                content: shaped.spans.as_slice(),
-                bounds: Size::new(70.0, 500.0),
-                size: Pixels(16.0),
-                line_height: text::LineHeight::Relative(1.6),
-                font: Font::DEFAULT,
-                align_x: text::Alignment::Default,
-                align_y: alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::Word,
-            });
-            paragraph
-                .buffer()
-                .layout_runs()
-                .map(|run| {
-                    (
-                        run.line_i,
-                        run.glyphs.len(),
-                        run.line_top,
-                        run.line_height,
-                        run.line_w,
-                    )
+    fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
+        fn geometry(lines: &[String]) -> Vec<(usize, usize, f32, f32, f32)> {
+            let mut document = DocumentLayout::default();
+            document.update(
+                lines,
+                &mut WholeLine::default(),
+                &|_| Format::default(),
+                test_layout_style(70.0),
+                false,
+                false,
+            );
+            document
+                .lines
+                .iter()
+                .enumerate()
+                .flat_map(|(line_index, line)| {
+                    line.paragraph.buffer().layout_runs().map(move |run| {
+                        (
+                            line_index,
+                            run.glyphs.len(),
+                            line.top + run.line_top,
+                            run.line_height,
+                            run.line_w,
+                        )
+                    })
                 })
                 .collect()
         }
 
-        let mut source = Content::with_text("앞 뒤");
+        let mut source: Content = Content::with_text("앞 뒤");
         source.move_to(Cursor {
             position: Position { line: 0, column: 4 },
             selection: None,
         });
+        let source_text = source.text();
+        let (_, source_lines) = TextLines::parse(&source_text);
         let composition = CompositionDocument::new(
-            &source,
+            source.cursor(),
+            &source_text,
+            source_lines,
             &input_method::Preedit {
                 content: "한글입력".into(),
                 selection: Some(12..12),
@@ -2249,8 +2693,11 @@ mod tests {
         let committed = Content::with_text("앞 한글입력뒤");
 
         assert_eq!(source.text(), "앞 뒤");
-        assert_eq!(composition.content.text(), committed.text());
-        assert_eq!(geometry(&composition.content), geometry(&committed));
+        assert_eq!(composition.lines, content_lines(&committed));
+        assert_eq!(
+            geometry(&composition.lines),
+            geometry(&content_lines(&committed))
+        );
         assert_eq!(
             composition.layout.cursor,
             Position {
@@ -2269,13 +2716,17 @@ mod tests {
 
     #[test]
     fn preedit_replaces_the_selected_source_without_committing_it() {
-        let mut source = Content::with_text("앞 OLD 뒤");
+        let mut source: Content = Content::with_text("앞 OLD 뒤");
         source.move_to(Cursor {
             position: Position { line: 0, column: 7 },
             selection: Some(Position { line: 0, column: 4 }),
         });
+        let source_text = source.text();
+        let (_, source_lines) = TextLines::parse(&source_text);
         let composition = CompositionDocument::new(
-            &source,
+            source.cursor(),
+            &source_text,
+            source_lines,
             &input_method::Preedit {
                 content: "한글".into(),
                 selection: Some(6..6),
@@ -2285,13 +2736,127 @@ mod tests {
         .expect("visible composition");
 
         assert_eq!(source.text(), "앞 OLD 뒤");
-        assert_eq!(composition.content.text(), "앞 한글 뒤");
+        assert_eq!(composition.lines, ["앞 한글 뒤"]);
         assert_eq!(
             composition.layout.display_to_source(Position {
                 line: 0,
                 column: 10
             }),
             Position { line: 0, column: 7 }
+        );
+    }
+
+    #[test]
+    fn lightweight_composition_parser_matches_iced_line_boundaries() {
+        for source in [
+            "",
+            "\n",
+            "\r",
+            "\r\n",
+            "\n\r",
+            "첫째\n둘째",
+            "첫째\r\n둘째\n",
+            "첫째\n\r둘째\r",
+        ] {
+            let content = Content::with_text(source);
+            let normalized = content.text();
+            let (lines, parsed) = TextLines::parse(&normalized);
+
+            assert_eq!(lines, content_lines(&content), "{source:?}");
+            for (line, text) in lines.iter().enumerate() {
+                for column in [0, text.len()] {
+                    let position = Position { line, column };
+                    assert_eq!(
+                        parsed.position(parsed.offset(position)),
+                        position,
+                        "{source:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ime_stages_rebuild_only_the_changed_line_in_a_long_document() {
+        let mut lines = (0..1_000)
+            .map(|index| format!("stable line {index}"))
+            .collect::<Vec<_>>();
+        let mut highlighter = WholeLine::default();
+        let mut document = DocumentLayout::default();
+        let style = test_layout_style(700.0);
+
+        assert_eq!(
+            document.update(
+                &lines,
+                &mut highlighter,
+                &|_| Format::default(),
+                style,
+                false,
+                false,
+            ),
+            lines.len()
+        );
+
+        for stage in ["ㅇ", "으", "응"] {
+            lines[500] = format!("stable line 500 {stage}");
+            assert_eq!(
+                document.update(
+                    &lines,
+                    &mut highlighter,
+                    &|_| Format::default(),
+                    style,
+                    false,
+                    false,
+                ),
+                1,
+                "{stage:?} must not reshape unchanged paragraphs"
+            );
+        }
+    }
+
+    #[test]
+    fn line_insertions_reuse_the_unchanged_suffix() {
+        let mut lines = vec!["first".to_owned(), "second".to_owned(), "third".to_owned()];
+        let mut highlighter = WholeLine::default();
+        let mut document = DocumentLayout::default();
+        let style = test_layout_style(700.0);
+
+        assert_eq!(
+            document.update(
+                &lines,
+                &mut highlighter,
+                &|_| Format::default(),
+                style,
+                false,
+                false,
+            ),
+            3
+        );
+
+        lines.insert(1, "inserted".to_owned());
+        assert_eq!(
+            document.update(
+                &lines,
+                &mut highlighter,
+                &|_| Format::default(),
+                style,
+                false,
+                false,
+            ),
+            1
+        );
+
+        lines.remove(1);
+        assert_eq!(
+            document.update(
+                &lines,
+                &mut highlighter,
+                &|_| Format::default(),
+                style,
+                false,
+                false,
+            ),
+            0
         );
     }
 
@@ -2490,18 +3055,17 @@ mod tests {
             background: iced::Background::Color(Color::WHITE),
             border: iced::Border::default(),
         };
-        let highlights = [Some(code), Some(code), None, Some(code), Some(quote)];
         let runs = [
-            (0, 0.0, 12.0),
-            (1, 12.0, 12.0),
-            (1, 24.0, 12.0),
-            (2, 36.0, 12.0),
-            (3, 48.0, 12.0),
-            (4, 60.0, 12.0),
+            (Some(code), 0.0, 12.0),
+            (Some(code), 12.0, 12.0),
+            (Some(code), 24.0, 12.0),
+            (None, 36.0, 12.0),
+            (Some(code), 48.0, 12.0),
+            (Some(quote), 60.0, 12.0),
         ];
         let mut groups = Vec::new();
 
-        visit_line_highlight_groups(runs, &highlights, |group| groups.push(group));
+        visit_line_highlight_groups(runs, |group| groups.push(group));
 
         assert_eq!(
             groups,
@@ -2525,10 +3089,14 @@ mod tests {
         );
 
         let highlights = vec![Some(code); 256];
-        let runs = (0..highlights.len()).map(|line| (line, line as f32 * 12.0, 12.0));
+        let runs = highlights
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(line, highlight)| (highlight, line as f32 * 12.0, 12.0));
         groups.clear();
 
-        visit_line_highlight_groups(runs, &highlights, |group| groups.push(group));
+        visit_line_highlight_groups(runs, |group| groups.push(group));
 
         assert_eq!(
             groups,
