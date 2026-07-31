@@ -36,6 +36,10 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     ))
 }
 
+pub(crate) fn component_slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
+    declarations::slots(node)
+}
+
 fn check(
     document: &mut Document,
     reachable: &HashSet<String>,

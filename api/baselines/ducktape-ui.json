@@ -1,0 +1,1218 @@
+{
+  "schema_version": 1,
+  "fingerprint": "sha256:f35f0263c7e0119bab3def0d2640fc7aa51e89e9167094cd7cd4a4c46e352235",
+  "language_revision": "2.0",
+  "package": {
+    "name": "ducktape-ui",
+    "version": "0.1.0"
+  },
+  "api": {
+    "components": [
+      {
+        "name": "AccordionItem",
+        "props": [
+          {
+            "name": "answer",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "question",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Alert",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Alert.Destructive",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Alert.Success",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Alert.Warning",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Attachment",
+        "props": [
+          {
+            "name": "meta",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "name",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Avatar",
+        "props": [
+          {
+            "name": "initials",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Avatar.Agent",
+        "props": [
+          {
+            "name": "initials",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge.Destructive",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge.Outline",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge.Secondary",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge.Success",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Badge.Warning",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Breadcrumb",
+        "props": [
+          {
+            "name": "current",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Bubble",
+        "props": [
+          {
+            "name": "copy",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "outgoing",
+            "ty": "bool",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "ButtonGroup",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Card",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "Body",
+            "required": true
+          },
+          {
+            "name": "Footer",
+            "required": true
+          },
+          {
+            "name": "Header",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Card.Body",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Card.Footer",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Card.Header",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Dialog",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "Actions",
+            "required": true
+          },
+          {
+            "name": "Body",
+            "required": true
+          },
+          {
+            "name": "Header",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Dialog.Actions",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Dialog.Body",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Dialog.Header",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "EmptyState",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Field",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "InputGroup",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Item",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "meta",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Kbd",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Marker",
+        "props": [
+          {
+            "name": "active",
+            "ty": "bool",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Message",
+        "props": [
+          {
+            "name": "author",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "copy",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "initials",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "outgoing",
+            "ty": "bool",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "PageHeader",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Panel",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Separator",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Surface",
+        "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Toast",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Tooltip",
+        "props": [
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Typography",
+        "props": [
+          {
+            "name": "content",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Typography.Caption",
+        "props": [
+          {
+            "name": "content",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Typography.Machine",
+        "props": [
+          {
+            "name": "content",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Typography.SectionTitle",
+        "props": [
+          {
+            "name": "content",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
+        "lifetime": "retained"
+      }
+    ],
+    "recipes": [
+      {
+        "name": "badge_label",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-9px",
+          "leading-snug",
+          "font-semibold",
+          "text-fg"
+        ]
+      },
+      {
+        "name": "body",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-13.5px",
+          "leading-normal",
+          "text-accent_fg"
+        ]
+      },
+      {
+        "name": "caption",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "leading-normal",
+          "text-muted"
+        ]
+      },
+      {
+        "name": "cluster",
+        "target": "row",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "gap-2",
+          "items-center"
+        ]
+      },
+      {
+        "name": "content",
+        "target": "column",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "gap-4"
+        ]
+      },
+      {
+        "name": "control",
+        "target": "input",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "px-13px",
+          "py-11px",
+          "bg-surface",
+          "border",
+          "border-border",
+          "rounded-10px",
+          "focus:border-ring"
+        ]
+      },
+      {
+        "name": "danger_action",
+        "target": "button",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "font-semibold",
+          "px-16px",
+          "py-11px",
+          "bg-danger",
+          "text-danger_fg",
+          "rounded-9px",
+          "hover:bg-danger/90",
+          "pressed:bg-danger/80",
+          "disabled:opacity-50"
+        ]
+      },
+      {
+        "name": "display",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-22px",
+          "leading-tight",
+          "font-semibold",
+          "text-primary"
+        ]
+      },
+      {
+        "name": "field",
+        "target": "column",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "gap-2"
+        ]
+      },
+      {
+        "name": "field_label",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "leading-normal",
+          "font-semibold",
+          "text-fg"
+        ]
+      },
+      {
+        "name": "ghost_action",
+        "target": "button",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "font-semibold",
+          "px-12px",
+          "py-7px",
+          "bg-transparent",
+          "text-fg",
+          "rounded-8px",
+          "hover:bg-accent",
+          "pressed:bg-border",
+          "disabled:opacity-50"
+        ]
+      },
+      {
+        "name": "inset",
+        "target": "container",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "p-3",
+          "bg-muted_bg",
+          "rounded-11px"
+        ]
+      },
+      {
+        "name": "list",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-13px",
+          "leading-snug",
+          "font-medium",
+          "text-accent_fg"
+        ]
+      },
+      {
+        "name": "machine",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-12px",
+          "leading-normal",
+          "font-mono",
+          "text-secondary_fg"
+        ]
+      },
+      {
+        "name": "meta",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-11px",
+          "leading-normal",
+          "font-medium",
+          "text-muted"
+        ]
+      },
+      {
+        "name": "meta_compact",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-10.5px",
+          "leading-normal",
+          "font-medium",
+          "text-muted"
+        ]
+      },
+      {
+        "name": "nav_label",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-9.5px",
+          "leading-snug",
+          "font-semibold",
+          "text-accent_fg"
+        ]
+      },
+      {
+        "name": "outline_action",
+        "target": "button",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "font-semibold",
+          "px-12px",
+          "py-8px",
+          "bg-surface",
+          "text-accent_fg",
+          "border",
+          "border-border",
+          "rounded-8px",
+          "hover:bg-muted_bg",
+          "pressed:bg-accent",
+          "disabled:opacity-50"
+        ]
+      },
+      {
+        "name": "page",
+        "target": "column",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "h-full",
+          "p-6",
+          "gap-4",
+          "bg-bg"
+        ]
+      },
+      {
+        "name": "pane_header",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-14px",
+          "leading-snug",
+          "font-semibold",
+          "text-fg"
+        ]
+      },
+      {
+        "name": "panel",
+        "target": "container",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "p-5",
+          "bg-surface",
+          "border",
+          "border-border",
+          "rounded-11px",
+          "overflow-hidden"
+        ]
+      },
+      {
+        "name": "primary_action",
+        "target": "button",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "font-semibold",
+          "px-16px",
+          "py-11px",
+          "bg-primary",
+          "text-primary_fg",
+          "rounded-9px",
+          "hover:bg-primary_hover",
+          "pressed:bg-primary/80",
+          "disabled:bg-disabled",
+          "disabled:text-disabled_fg"
+        ]
+      },
+      {
+        "name": "screen_title",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-20px",
+          "leading-tight",
+          "font-semibold",
+          "text-primary"
+        ]
+      },
+      {
+        "name": "secondary_action",
+        "target": "button",
+        "base": null,
+        "flattened_utilities": [
+          "text-12.5px",
+          "font-semibold",
+          "px-16px",
+          "py-11px",
+          "bg-secondary",
+          "text-secondary_fg",
+          "border",
+          "border-control_line",
+          "rounded-9px",
+          "hover:bg-accent",
+          "pressed:bg-muted_bg",
+          "disabled:opacity-50"
+        ]
+      },
+      {
+        "name": "section",
+        "target": "column",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "gap-3"
+        ]
+      },
+      {
+        "name": "section_title",
+        "target": "text",
+        "base": null,
+        "flattened_utilities": [
+          "text-16px",
+          "leading-snug",
+          "font-semibold",
+          "text-primary"
+        ]
+      },
+      {
+        "name": "surface",
+        "target": "container",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "p-3",
+          "bg-surface",
+          "border",
+          "border-border",
+          "rounded-11px"
+        ]
+      },
+      {
+        "name": "toolbar",
+        "target": "row",
+        "base": null,
+        "flattened_utilities": [
+          "w-full",
+          "gap-3",
+          "items-center"
+        ]
+      }
+    ],
+    "theme": {
+      "name": "AppTheme",
+      "tokens": [
+        "accent",
+        "accent_fg",
+        "avatar_bg",
+        "avatar_fg",
+        "bg",
+        "border",
+        "brand",
+        "brand_bg",
+        "brand_fg",
+        "brand_line",
+        "control_line",
+        "danger",
+        "danger_bg",
+        "danger_dot",
+        "danger_fg",
+        "danger_line",
+        "disabled",
+        "disabled_fg",
+        "fg",
+        "glass_regular",
+        "glass_sheet",
+        "glass_thin",
+        "input",
+        "muted",
+        "muted_bg",
+        "primary",
+        "primary_fg",
+        "primary_hover",
+        "ring",
+        "secondary",
+        "secondary_fg",
+        "shadow_modal",
+        "shadow_popover",
+        "shadow_toast",
+        "shadow_window",
+        "shadow_window_secondary",
+        "success",
+        "success_bg",
+        "success_dot",
+        "success_fg",
+        "success_line",
+        "surface",
+        "toast_bg",
+        "toast_fg",
+        "warning",
+        "warning_bg",
+        "warning_dot",
+        "warning_fg",
+        "warning_line"
+      ]
+    },
+    "extern_types": [],
+    "enums": [],
+    "extern_functions": []
+  }
+}

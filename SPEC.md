@@ -5286,6 +5286,8 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | watches complete source/build inputs and replaces the running app only after a rebuilt shadow candidate reports ready |
 | `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
+| `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |
+| `cargo ice api diff BASE.json CURRENT.json [--format human\|json]` | verifies both fingerprints, classifies public changes, and exits nonzero when any breaking change is present |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
 | `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
 
@@ -5299,6 +5301,31 @@ child cardinality, typed properties, binding, and route. It also describes test
 configuration, actions, assertions, target fields, execution settling, paint
 inspection, and runtime support. Completion entries are generated from that
 same construct table instead of a separate vocabulary.
+
+The public API fingerprint is a checked semantic artifact, not source text or
+generated Rust. Its schema-versioned SHA-256 payload contains the language
+revision, containing Cargo package name/version, components (sorted
+read/bind/default/required props, named-event payloads, default output,
+required/optional slots, and lifetime), recipes (target, base, and base-first
+flattened utilities), the global theme token contract, UI enums, extern types,
+and all typed extern function kinds. Named declarations and unordered contract
+sets are sorted; positional payload and extern parameter order and recipe
+utility precedence remain ordered. Consequently formatting, source relocation,
+and declaration reordering do not change the fingerprint, while imported bare
+and aliased declarations retain their checked `::` identities.
+
+The diff contract is independently schema-versioned. Removed components and
+contract members, new required props or slots, read/bind capability changes,
+event signature changes, theme-token changes, and extern/type signature changes
+are breaking. New components, defaulted props, optional slots, recipes, types,
+and extern functions are additive. Recipe flattening, existing default values,
+and component lifetime changes require behavioral review. Named events form a
+closed routing contract, so adding one is breaking. Package version changes are
+metadata; a package name or language revision change is breaking. Malformed,
+unknown-schema, or hash-inconsistent inputs are rejected before comparison.
+This batch release gate adds no Ice syntax and no LSP method; diagnostics,
+completion, hover, signature help, and code actions continue to consume the
+ordinary checked document.
 
 The LSP uses Content-Length framed stdio, full-document synchronization, and
 the same parser/checker/source map as the compiler. Completion distinguishes

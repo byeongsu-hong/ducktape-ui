@@ -26,6 +26,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo ice fmt --check
       - run: cargo ice clippy
+      - name: Check public Ice API baseline
+        run: |
+          cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
+          cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
       - name: Check standalone UI feature on native and wasm
         run: |
           cargo check --locked -p ducktape-ui --no-default-features --features button,x11

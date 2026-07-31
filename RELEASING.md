@@ -44,6 +44,18 @@ ICE_PACKAGE_ALLOW_DIRTY=1 scripts/package-smoke.sh
 
 The default remains strict so the release command refuses a dirty checkout.
 
+The default component library also keeps a reviewed semantic API baseline at
+`api/baselines/ducktape-ui.json`. Before release, regenerate and compare it:
+
+```bash
+cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
+cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
+```
+
+Breaking changes exit nonzero. Update the committed baseline only when the
+corresponding breaking/additive/behavioral report is intentional and reviewed;
+formatting and file relocation alone do not change its SHA-256 fingerprint.
+
 ## Registry order
 
 The first crates.io publication must respect this dependency graph:

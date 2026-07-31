@@ -13,7 +13,9 @@ ctrlc = "3.5"
 notify = "8.2.0"
 png = "0.18"
 same-file = "1.0.6"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10.9"
 toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 ui-lang-core.workspace = true
 

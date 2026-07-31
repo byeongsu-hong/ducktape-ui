@@ -134,6 +134,27 @@ fn analyze_loaded_without_assets(loaded: &LoadedSource) -> Result<CheckedDocumen
         ))
 }
 
+fn analyze_interface_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
+    let namespaces = loaded
+        .origins
+        .iter()
+        .map(|origin| origin.namespace.clone())
+        .collect::<Vec<_>>();
+    let (document, symbols) =
+        parser::parse_interface_with_symbols_and_namespaces(&loaded.source, &namespaces)
+            .map_err(|error| remap_error(error, loaded))?;
+    let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
+    Ok(document
+        .with_parsed_symbols(remap_symbols(symbols, loaded))
+        .with_source_origins(
+            loaded
+                .origins
+                .iter()
+                .map(|origin| (origin.path.clone(), origin.line))
+                .collect(),
+        ))
+}
+
 pub(crate) fn asset_dependencies(document: &Document, loaded: &LoadedSource) -> Vec<PathBuf> {
     let root = loaded
         .dependencies

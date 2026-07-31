@@ -550,6 +550,8 @@ cargo ice expand examples/iced-app/src/ui/tasks.ice
 cargo ice dev examples/showcase/src/ui/app.ice -- -p showcase
 cargo ice inspect examples/showcase/src/ui/app.ice --viewport 1440x900 --theme light --name showcase_light
 cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_app/showcase_light.json
+cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
+cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
 cargo ice schema
 cargo ice lsp
 scripts/a11y-smoke.sh
@@ -594,6 +596,18 @@ restart instead of relying on a second runtime interpreter. A daemon reports
 readiness through its first drawn window; a windowless daemon candidate cannot
 satisfy this draw boundary and is rejected after the 30-second readiness timeout
 without replacing the current process.
+
+`cargo ice api ROOT.ice` checks an ordinary app root or a declaration-only
+interface root and prints a versioned deterministic JSON fingerprint. The
+fingerprint records the containing Cargo package and independent Ice language
+revision plus checked components, flattened recipes, theme tokens, UI/extern
+types, and every typed extern boundary. Imported declarations keep their
+qualified alias identity; absolute source paths and codegen/HIR internals are
+not part of the hash. `cargo ice api diff BASE.json CURRENT.json` prints a
+human report by default, or versioned JSON with `--format json`, classifying
+changes as `breaking`, `behavioral_review`, or `additive`. Breaking changes
+exit nonzero. The reviewed public baseline for `ducktape-ui` lives at
+`api/baselines/ducktape-ui.json`.
 
 `cargo ice schema` prints a generative JSON description of each Core
 construct's context, syntax, child shape, typed properties, binding, and route,

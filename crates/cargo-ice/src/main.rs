@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+mod api;
 mod cargo_config;
 mod compat;
 mod dev;
@@ -49,9 +50,10 @@ fn run() -> Result<(), String> {
         "lsp" => return lsp::run_stdio(),
         "inspect" => return inspection::inspect(&root_for_command()?, trailing),
         "diff" => return inspection::diff(&root_for_command()?, trailing),
+        "api" => return api::run(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | schema | lsp>"
             );
             return Ok(());
         }
@@ -153,6 +155,7 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
                 || trailing.len() >= 2 && trailing.get(1).is_some_and(|arg| arg == "--")
         }
         "test" | "inspect" | "diff" => true,
+        "api" => api::valid_args(trailing),
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }
@@ -550,6 +553,18 @@ mod tests {
         ));
         assert!(valid_command_args("expand", &["app.ice".into()]));
         assert!(!valid_command_args("expand", &[]));
+        assert!(valid_command_args("api", &["public.ice".into()]));
+        assert!(valid_command_args(
+            "api",
+            &[
+                "diff".into(),
+                "baseline.json".into(),
+                "current.json".into(),
+                "--format".into(),
+                "json".into(),
+            ]
+        ));
+        assert!(!valid_command_args("api", &["diff".into()]));
     }
 
     #[test]
