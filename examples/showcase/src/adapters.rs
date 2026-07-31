@@ -1700,8 +1700,10 @@ fn catalog_items(query: &str) -> Vec<String> {
 }
 
 fn theme() -> ducktape_ui::ui::theme::Theme {
-    let font = crate::Showcase::default_font();
-    LIGHT.with_fonts(font, font)
+    LIGHT.with_fonts(
+        crate::Showcase::default_font(),
+        Font::with_name("Geist Mono"),
+    )
 }
 
 fn ui_font(weight: Weight) -> Font {
@@ -1726,7 +1728,14 @@ mod tests {
     fn adapters_build_the_checked_default_contracts() {
         let font = crate::Showcase::default_font();
         assert_eq!(theme().typography.font, font);
-        assert_eq!(theme().typography.monospace_font, font);
+        assert_eq!(
+            theme().typography.monospace_font,
+            Font::with_name("Geist Mono")
+        );
+        assert_ne!(
+            theme().typography.monospace_font.family,
+            theme().typography.font.family
+        );
 
         let _: Element<'_, String> = input_otp("otp", "", false, false);
         let _: Element<'_, ()> = spinner(-1, false);
@@ -1791,7 +1800,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_geist_has_real_regular_bold_and_italic_faces() {
+    fn bundled_geist_families_have_real_regular_bold_and_italic_faces() {
         use iced::advanced::graphics::text::cosmic_text::fontdb::{
             Database, Family, Query, Stretch, Style, Weight,
         };
@@ -1800,31 +1809,37 @@ mod tests {
         fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Regular.ttf").to_vec());
         fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Bold.ttf").to_vec());
         fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Italic.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Regular.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Bold.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Italic.ttf").to_vec());
 
-        for weight in [Weight::NORMAL, Weight::BOLD] {
-            let id = fonts
+        for family in ["Geist", "Geist Mono"] {
+            for weight in [Weight::NORMAL, Weight::BOLD] {
+                let id = fonts
+                    .query(&Query {
+                        families: &[Family::Name(family)],
+                        weight,
+                        stretch: Stretch::Normal,
+                        style: Style::Normal,
+                    })
+                    .expect("bundled Geist face must resolve");
+                let face = fonts.face(id).expect("resolved face");
+                assert_eq!(face.weight, weight);
+                assert_eq!(face.monospaced, family == "Geist Mono");
+            }
+
+            let italic = fonts
                 .query(&Query {
-                    families: &[Family::Name("Geist")],
-                    weight,
+                    families: &[Family::Name(family)],
+                    weight: Weight::NORMAL,
                     stretch: Stretch::Normal,
-                    style: Style::Normal,
+                    style: Style::Italic,
                 })
-                .expect("bundled Geist face must resolve");
-            assert_eq!(fonts.face(id).expect("resolved face").weight, weight);
+                .expect("bundled Geist italic face must resolve");
+            let face = fonts.face(italic).expect("resolved face");
+            assert_eq!(face.style, Style::Italic);
+            assert_eq!(face.monospaced, family == "Geist Mono");
         }
-
-        let italic = fonts
-            .query(&Query {
-                families: &[Family::Name("Geist")],
-                weight: Weight::NORMAL,
-                stretch: Stretch::Normal,
-                style: Style::Italic,
-            })
-            .expect("bundled Geist italic face must resolve");
-        assert_eq!(
-            fonts.face(italic).expect("resolved face").style,
-            Style::Italic
-        );
     }
 
     #[test]
