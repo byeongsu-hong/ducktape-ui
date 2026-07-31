@@ -5401,6 +5401,9 @@ dependencies = [
 name = "ui-lang-build"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
  "ui-lang-core",
 ]
 

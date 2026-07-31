@@ -39,7 +39,10 @@ the generated item boundary so they do not pollute consumer Clippy output;
 core semantic warnings continue to be published directly by the language
 checker, while `W010` remains `cargo ice`-only. Consumer build scripts generate
 every Ice root below Cargo's package/profile/target-scoped `OUT_DIR`; the proc
-macro only includes those outputs.
+macro only includes those outputs. Generated filenames use the full SHA-256 of
+the normalized manifest-relative root, and a versioned manifest is the
+executable hash-to-source inventory used for collision detection and stale
+output pruning.
 
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project

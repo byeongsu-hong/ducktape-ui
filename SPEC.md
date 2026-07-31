@@ -148,7 +148,12 @@ The build helper discovers every top-level `app` or `daemon` root below that
 directory, checks each complete import graph, emits dependency tracking for all
 root and imported `.ice` files, and writes generated Rust below
 `OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
-package, profile, and target and removes it with `cargo clean`.
+package, profile, and target and removes it with `cargo clean`. A generated
+Rust filename is the lowercase full SHA-256 of the normalized
+manifest-relative Ice root plus `.rs`; its component length never grows with
+the source path. `OUT_DIR/ui-lang-generated/manifest.json` is the canonical
+versioned mapping from those filenames back to source roots. An invalid
+mapping, unsupported manifest schema, or hash collision fails the build.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
 Only the checker can construct it, and backend generation accepts that checked

@@ -52,9 +52,12 @@ component themes can reuse the effective Ice application font instead of
 repeating its family descriptor.
 
 Generated files live below `OUT_DIR/ui-lang-generated`, are isolated per Cargo
-package/profile/target, and are removed by `cargo clean`. Their emitted items
-suppress backend-only Rust and Clippy warnings, so normal consumer lint output
-contains only actionable source warnings; generated errors remain visible.
+package/profile/target, and are removed by `cargo clean`. Each Rust filename is
+the full SHA-256 of its normalized manifest-relative Ice root, so filesystem
+component length is independent of source depth; `manifest.json` records the
+canonical hash-to-source mapping. Generated items suppress backend-only Rust
+and Clippy warnings, so normal consumer lint output contains only actionable
+source warnings; generated errors remain visible.
 
 ## Taste of the language
 

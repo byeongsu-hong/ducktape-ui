@@ -2403,6 +2403,9 @@ pub fn document() -> Value {
                 "phase": "Cargo build script",
                 "sourceDirectoryApi": "ui_lang_build::compile_dir",
                 "output": "OUT_DIR/ui-lang-generated",
+                "outputFileName": "lowercase full SHA-256 of normalized manifest-relative Ice root plus .rs",
+                "manifest": "OUT_DIR/ui-lang-generated/manifest.json",
+                "manifestSchemaVersion": 1,
                 "includeMacro": "ui_lang::include_app!",
                 "procMacroWritesFiles": false,
             },
@@ -2677,6 +2680,11 @@ mod tests {
             schema["backend"]["build"]["output"],
             "OUT_DIR/ui-lang-generated"
         );
+        assert_eq!(
+            schema["backend"]["build"]["manifest"],
+            "OUT_DIR/ui-lang-generated/manifest.json"
+        );
+        assert_eq!(schema["backend"]["build"]["manifestSchemaVersion"], 1);
         assert_eq!(schema["backend"]["build"]["procMacroWritesFiles"], false);
         assert_eq!(
             schema["backend"]["runtime"]["version"],
