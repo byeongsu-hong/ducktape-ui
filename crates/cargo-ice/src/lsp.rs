@@ -108,6 +108,7 @@ pub fn run_stdio() -> Result<(), String> {
 
 fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
     let mut documents = HashMap::<String, String>::new();
+    let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut diagnostic_reports = HashMap::<String, DiagnosticReport>::new();
     let mut cargo_diagnostic_reports = CargoDiagnosticReports::new();
     let mut workspace_roots = Vec::<PathBuf>::new();
@@ -227,9 +228,13 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                 let params = &message["params"]["textDocument"];
                 if let (Some(uri), Some(text)) = (params["uri"].as_str(), params["text"].as_str()) {
                     documents.insert(uri.to_owned(), text.to_owned());
+                    if let Some(path) = file_uri_path(uri) {
+                        let _ = analysis_db.set_overlay(path, text);
+                    }
                     reanalyze_open_roots(
                         writer,
                         &documents,
+                        &mut analysis_db,
                         &mut diagnostic_reports,
                         &cargo_diagnostic_reports,
                     )?;
@@ -243,9 +248,13 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     .and_then(|change| change["text"].as_str());
                 if let (Some(uri), Some(text)) = (uri, text) {
                     documents.insert(uri.to_owned(), text.to_owned());
+                    if let Some(path) = file_uri_path(uri) {
+                        let _ = analysis_db.set_overlay(path, text);
+                    }
                     reanalyze_open_roots(
                         writer,
                         &documents,
+                        &mut analysis_db,
                         &mut diagnostic_reports,
                         &cargo_diagnostic_reports,
                     )?;
@@ -253,10 +262,19 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             }
             "textDocument/didClose" => {
                 if let Some(uri) = message["params"]["textDocument"]["uri"].as_str() {
-                    documents.remove(uri);
+                    let was_root = documents
+                        .remove(uri)
+                        .is_some_and(|source| ui_lang_core::source_is_app(&source));
+                    if let Some(path) = file_uri_path(uri) {
+                        let _ = analysis_db.remove_overlay(&path);
+                        if was_root {
+                            analysis_db.forget_root(path);
+                        }
+                    }
                     reanalyze_open_roots(
                         writer,
                         &documents,
+                        &mut analysis_db,
                         &mut diagnostic_reports,
                         &cargo_diagnostic_reports,
                     )?;
@@ -455,15 +473,20 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
 fn reanalyze_open_roots(
     writer: &mut impl Write,
     documents: &HashMap<String, String>,
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     reports: &mut HashMap<String, DiagnosticReport>,
     cargo_reports: &CargoDiagnosticReports,
 ) -> io::Result<()> {
     let overlays = source_overlays(documents);
-    // ponytail: Add a dependency graph only if profiling shows open-root scale matters.
     let next = documents
         .iter()
         .filter(|(_, source)| ui_lang_core::source_is_app(source))
-        .map(|(uri, source)| (uri.clone(), analyze_diagnostics(uri, source, &overlays)))
+        .map(|(uri, source)| {
+            (
+                uri.clone(),
+                analyze_diagnostics(analysis_db, uri, source, &overlays),
+            )
+        })
         .collect::<HashMap<_, _>>();
     let targets = reports
         .values()
@@ -685,13 +708,18 @@ fn source_overlays(documents: &HashMap<String, String>) -> HashMap<PathBuf, Stri
 }
 
 fn analyze_diagnostics(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     uri: &str,
     source: &str,
     overlays: &HashMap<PathBuf, String>,
 ) -> DiagnosticReport {
     let analysis = file_uri_path(uri).map_or_else(
         || ui_lang_core::analyze(source),
-        |path| ui_lang_core::analyze_file_with_overlays(path, overlays),
+        |path| {
+            analysis_db
+                .analyze_root(path)
+                .map(|analysis| analysis.document)
+        },
     );
     match analysis {
         Ok(document) => {
@@ -3181,7 +3209,8 @@ mod tests {
         Navigation, accepts_code_action_kind, code_actions_at, collect_cargo_lint_diagnostics,
         compiler_diagnostic_to_lsp, completion_items_at, diagnostic_range, file_path_uri,
         file_uri_path, has_unsaved_workspace_document, hover_at, lint_code_action, navigation_at,
-        read_message, serve, signature_help_at, source_range, whole_document_range, workspace_edit,
+        read_message, reanalyze_open_roots, serve, signature_help_at, source_range,
+        whole_document_range, workspace_edit,
     };
     use serde_json::{Value, json};
     use std::collections::{BTreeSet, HashMap};
@@ -3919,6 +3948,68 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn lsp_db_rechecks_only_the_root_affected_by_an_overlay() {
+        let fixture = Fixture::new();
+        let theme = APP_THEME;
+        fixture.write(
+            "a.ice",
+            &format!("app A\nuse \"a_part.ice\"\n{theme}view\n  AView\n"),
+        );
+        fixture.write("a_part.ice", "component AView()\n  text \"A\"\n");
+        fixture.write(
+            "b.ice",
+            &format!("app B\nuse \"b_part.ice\"\n{theme}view\n  BView\n"),
+        );
+        fixture.write("b_part.ice", "component BView()\n  text \"B\"\n");
+        let a_uri = file_path_uri(&fixture.path("a.ice"));
+        let b_uri = file_path_uri(&fixture.path("b.ice"));
+        let part_uri = file_path_uri(&fixture.path("a_part.ice"));
+        let mut documents = HashMap::from([
+            (
+                a_uri.clone(),
+                fs::read_to_string(fixture.path("a.ice")).unwrap(),
+            ),
+            (b_uri, fs::read_to_string(fixture.path("b.ice")).unwrap()),
+            (
+                part_uri.clone(),
+                fs::read_to_string(fixture.path("a_part.ice")).unwrap(),
+            ),
+        ]);
+        let mut db = ui_lang_core::AnalysisDb::default();
+        for (uri, source) in &documents {
+            db.set_overlay(file_uri_path(uri).unwrap(), source).unwrap();
+        }
+        let mut reports = HashMap::new();
+        let cargo_reports = HashMap::new();
+        let mut writer = Vec::new();
+        reanalyze_open_roots(
+            &mut writer,
+            &documents,
+            &mut db,
+            &mut reports,
+            &cargo_reports,
+        )
+        .unwrap();
+        db.take_metrics();
+
+        let changed = "component AView()\n  text \"changed\"\n";
+        documents.insert(part_uri, changed.to_owned());
+        db.set_overlay(fixture.path("a_part.ice"), changed).unwrap();
+        reanalyze_open_roots(
+            &mut writer,
+            &documents,
+            &mut db,
+            &mut reports,
+            &cargo_reports,
+        )
+        .unwrap();
+
+        let metrics = db.take_metrics();
+        assert_eq!(metrics.roots_rechecked, 1);
+        assert_eq!(metrics.roots_reused, 1);
     }
 
     #[test]

@@ -213,9 +213,10 @@ where
 }
 
 fn compile_many_at(manifest: &Path, out_dir: &Path, paths: &[PathBuf]) -> Result<(), Error> {
+    let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
     for path in paths {
-        compile_one(manifest, path, &mut transaction)?;
+        compile_one(&mut analysis_db, manifest, path, &mut transaction)?;
     }
     transaction.commit()
 }
@@ -253,10 +254,11 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
             directory.display()
         )));
     }
+    let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
     let generated = roots
         .iter()
-        .map(|root| compile_one(manifest, root, &mut transaction))
+        .map(|root| compile_one(&mut analysis_db, manifest, root, &mut transaction))
         .collect::<Result<HashSet<_>, _>>()?;
     prune_generated(&relative, &generated, &mut transaction.manifest);
     transaction.commit()
@@ -292,13 +294,15 @@ fn collect_ice_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(
 }
 
 fn compile_one(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     manifest: &Path,
     relative: &Path,
     transaction: &mut GenerationTransaction,
 ) -> Result<String, Error> {
     let relative = normalized_relative(relative)?;
     let source = manifest.join(Path::new(&relative));
-    let compilation = ui_lang_core::compile_file(&source)
+    let compilation = analysis_db
+        .compile_root(&source)
         .map_err(|error| Error(error.render(&source.display().to_string())))?;
     for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
         println!("{directive}");

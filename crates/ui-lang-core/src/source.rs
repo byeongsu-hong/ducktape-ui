@@ -1,16 +1,16 @@
-use crate::{CheckedDocument, Document, Error, Span, check, codegen, lower, parser};
+use crate::{AnalysisDb, CheckedDocument, Document, Error, Span, check, parser};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FileCompilation {
     pub rust: String,
     pub dependencies: Vec<PathBuf>,
     pub asset_dependencies: Vec<PathBuf>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FileAnalysis {
     pub document: CheckedDocument,
     pub dependencies: Vec<PathBuf>,
@@ -18,17 +18,17 @@ pub struct FileAnalysis {
 }
 
 #[derive(Clone, Debug)]
-struct Origin {
-    path: PathBuf,
-    line: usize,
-    namespace: Option<String>,
+pub(crate) struct Origin {
+    pub(crate) path: PathBuf,
+    pub(crate) line: usize,
+    pub(crate) namespace: Option<String>,
 }
 
 #[derive(Debug)]
-struct LoadedSource {
-    source: String,
-    origins: Vec<Origin>,
-    dependencies: Vec<PathBuf>,
+pub(crate) struct LoadedSource {
+    pub(crate) source: String,
+    pub(crate) origins: Vec<Origin>,
+    pub(crate) dependencies: Vec<PathBuf>,
 }
 
 pub fn source_is_app(source: &str) -> bool {
@@ -44,18 +44,7 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
 
 /// Analyzes one root and returns every source and asset input used by it.
 pub fn analyze_file_graph(path: impl AsRef<Path>) -> Result<FileAnalysis, Error> {
-    let loaded = load(path.as_ref())?;
-    let document = analyze_loaded(&loaded)?;
-    let mut dependencies = discover_file_dependencies(path.as_ref())?;
-    dependencies.extend(loaded.dependencies.iter().cloned());
-    dependencies.sort();
-    dependencies.dedup();
-    let asset_dependencies = asset_dependencies(&document, &loaded);
-    Ok(FileAnalysis {
-        document,
-        dependencies,
-        asset_dependencies,
-    })
+    AnalysisDb::default().analyze_root(path)
 }
 
 /// Returns readable and missing Ice paths referenced by a root.
@@ -96,9 +85,9 @@ pub fn analyze_file_with_source(
     source: &str,
 ) -> Result<CheckedDocument, Error> {
     let path = path.as_ref();
-    let overlays = HashMap::from([(path.to_owned(), source)]);
-    let loaded = load_with_overlays(path, &overlays)?;
-    analyze_loaded(&loaded)
+    let mut db = AnalysisDb::default();
+    db.set_overlay(path, source)?;
+    Ok(db.analyze_root(path)?.document)
 }
 
 /// Analyze a file graph with in-memory sources replacing matching disk files.
@@ -106,35 +95,19 @@ pub fn analyze_file_with_overlays(
     path: impl AsRef<Path>,
     overlays: &HashMap<PathBuf, String>,
 ) -> Result<CheckedDocument, Error> {
-    let loaded = load_with_overlays(path.as_ref(), overlays)?;
-    analyze_loaded(&loaded)
+    let path = path.as_ref();
+    let mut db = AnalysisDb::default();
+    for (overlay_path, source) in overlays {
+        db.set_overlay(overlay_path, source.clone())?;
+    }
+    Ok(db.analyze_root(path)?.document)
 }
 
 pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
-    let loaded = load(path.as_ref())?;
-    let document = analyze_loaded(&loaded)?;
-    let asset_dependencies = asset_dependencies(&document, &loaded);
-    let root = loaded
-        .dependencies
-        .first()
-        .expect("a loaded source always has a root");
-    let program = lower::lower(document).map_err(|error| remap_error(error, &loaded))?;
-    let mut rust = codegen::generate(&program, &root.display().to_string())
-        .map_err(|error| remap_error(error, &loaded))?;
-    for dependency in loaded.dependencies.iter().skip(1) {
-        rust.push_str(&format!(
-            "const _: &str = include_str!({:?});\n",
-            dependency.display().to_string()
-        ));
-    }
-    Ok(FileCompilation {
-        rust,
-        dependencies: loaded.dependencies,
-        asset_dependencies,
-    })
+    AnalysisDb::default().compile_root(path)
 }
 
-fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
+pub(crate) fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
     let document = analyze_loaded_without_assets(loaded)?;
     check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
     Ok(document)
@@ -161,7 +134,7 @@ fn analyze_loaded_without_assets(loaded: &LoadedSource) -> Result<CheckedDocumen
         ))
 }
 
-fn asset_dependencies(document: &Document, loaded: &LoadedSource) -> Vec<PathBuf> {
+pub(crate) fn asset_dependencies(document: &Document, loaded: &LoadedSource) -> Vec<PathBuf> {
     let root = loaded
         .dependencies
         .first()
@@ -215,7 +188,7 @@ fn remap_symbols(
     symbols
 }
 
-fn check_assets(document: &Document, loaded: &LoadedSource) -> Result<(), Error> {
+pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result<(), Error> {
     let root = loaded
         .dependencies
         .first()
@@ -436,12 +409,16 @@ fn load_into(
 }
 
 #[derive(Debug)]
-struct Import<'a> {
-    path: &'a str,
-    alias: Option<&'a str>,
+pub(crate) struct Import<'a> {
+    pub(crate) path: &'a str,
+    pub(crate) alias: Option<&'a str>,
 }
 
-fn parse_use<'a>(source: &'a str, path: &Path, line: usize) -> Result<Import<'a>, Error> {
+pub(crate) fn parse_use<'a>(
+    source: &'a str,
+    path: &Path,
+    line: usize,
+) -> Result<Import<'a>, Error> {
     let value = source[4..].trim();
     let Some(value) = value.strip_prefix('"') else {
         return Err(file_error(
@@ -596,7 +573,7 @@ fn normalize_overlay_path(path: &Path) -> std::io::Result<PathBuf> {
     })
 }
 
-fn remap_error(mut error: Error, loaded: &LoadedSource) -> Error {
+pub(crate) fn remap_error(mut error: Error, loaded: &LoadedSource) -> Error {
     if let Some(origin) = error
         .line
         .checked_sub(1)
@@ -608,7 +585,12 @@ fn remap_error(mut error: Error, loaded: &LoadedSource) -> Error {
     error
 }
 
-fn file_error(code: &'static str, path: &Path, line: usize, message: impl Into<String>) -> Error {
+pub(crate) fn file_error(
+    code: &'static str,
+    path: &Path,
+    line: usize,
+    message: impl Into<String>,
+) -> Error {
     Error::new(code, &Span::line(line), message).at_path(path.display().to_string())
 }
 

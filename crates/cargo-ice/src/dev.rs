@@ -61,6 +61,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         std::process::id()
     ));
     let mut revision = 0_u64;
+    let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut previous_cargo_inputs = None;
     let (
         mut watched_dependencies,
@@ -77,7 +78,8 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             cargo_inputs.inherit_discovered_inputs(previous);
         }
         revision = revision.wrapping_add(1);
-        let current = compile_dev(&source).map_err(|error| error.message)?;
+        let current =
+            compile_dev_with_db(&mut analysis_db, &source).map_err(|error| error.message)?;
         let initial_stamps = dev_stamps_with_cargo_inputs(
             root,
             &current.dependencies,
@@ -197,7 +199,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         }
         let (next_ice_stamp, next_build_stamp) = next_stamps;
         revision = revision.wrapping_add(1);
-        let next = match compile_dev(&source) {
+        let next = match compile_dev_with_db(&mut analysis_db, &source) {
             Ok(next) => next,
             Err(error) => {
                 let dependencies_changed =
@@ -338,8 +340,16 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
     }
 }
 
+#[cfg(test)]
 fn compile_dev(source: &Path) -> Result<DevCompilation, DevCompileError> {
-    match ui_lang_core::analyze_file_graph(source) {
+    compile_dev_with_db(&mut ui_lang_core::AnalysisDb::default(), source)
+}
+
+fn compile_dev_with_db(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    source: &Path,
+) -> Result<DevCompilation, DevCompileError> {
+    match analysis_db.analyze_root(source) {
         Ok(analysis) => Ok(DevCompilation {
             dependencies: analysis.dependencies,
             asset_dependencies: analysis.asset_dependencies,

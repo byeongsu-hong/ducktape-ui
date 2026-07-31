@@ -659,6 +659,29 @@ because they are not actionable Ice diagnostics; Ice's non-CLI-only semantic
 warnings (`W001-W009` and `W011-W015`) continue to appear directly from the
 language checker.
 
+All file-backed frontends share `ui_lang_core::AnalysisDb`, a process-local
+incremental analysis API. Its parsed-file key contains the canonical path,
+SHA-256 content hash, Ice language revision, and compiler feature set. The DB
+retains parsed files, direct and reverse import edges, and checked roots. A
+changed overlay or disk file invalidates only roots reachable through reverse
+imports; byte-identical updates keep checked roots reusable. It also exposes
+per-session counters for files parsed, roots rechecked/reused, symbols resolved,
+codegen roots, and load/check/codegen elapsed time.
+
+The cache lifetime is explicit: the LSP owns one DB for its server lifetime,
+`cargo ice dev` owns one for its rebuild loop, `cargo ice check` owns one for a
+command, and `ui-lang-build` owns one for a build-script compilation batch.
+There is no global singleton, background daemon, Salsa dependency, or
+process-persistent cache. Library callers that need the same behavior create
+and retain their own DB:
+
+```rust
+let mut db = ui_lang_core::AnalysisDb::default();
+db.set_overlay("src/ui/part.ice", unsaved_source)?;
+let checked = db.analyze_root("src/ui/app.ice")?;
+let metrics = db.take_metrics();
+```
+
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:
 
