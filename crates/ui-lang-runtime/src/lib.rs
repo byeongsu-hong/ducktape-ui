@@ -1191,6 +1191,21 @@ fn action_stream(
 
 static NEXT_BRIDGE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// Whether any platform assistive technology has activated the accessibility
+/// tree in this process. Flipped by the adapters' activation/deactivation
+/// callbacks below; read by the generated per-update snapshot gate.
+static AT_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True from the moment assistive technology asks for the tree (and, on
+/// Linux, until it deactivates). Generated applications gate the per-update
+/// accessibility snapshot on this: until an AT connects, walking the whole
+/// widget tree after every message builds a `TreeUpdate` nobody consumes and
+/// schedules an extra frame to deliver it. Test builds bypass the gate with
+/// `cfg!(test)` — the Ice test harness drives the app through this tree.
+pub fn accessibility_active() -> bool {
+    AT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The native Win32 handle captured before Iced shows its first window.
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Copy)]
@@ -1252,6 +1267,7 @@ struct Activation {
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl accesskit::ActivationHandler for Activation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+        AT_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
         self.latest_tree
             .lock()
             .expect("accessibility tree lock")
@@ -1276,7 +1292,9 @@ struct Deactivation;
 
 #[cfg(target_os = "linux")]
 impl accesskit::DeactivationHandler for Deactivation {
-    fn deactivate_accessibility(&mut self) {}
+    fn deactivate_accessibility(&mut self) {
+        AT_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl<Message> Bridge<Message> {
@@ -1342,18 +1360,22 @@ impl<Message> Bridge<Message> {
     }
 
     pub fn update(&mut self, snapshot: Snapshot<Message>) {
+        // One clone out of the snapshot; the adapter clone happens inside
+        // `update_if_active`'s closure, so it is paid only while assistive
+        // technology is actually listening, and the activation cache takes
+        // the value by move.
         let update = snapshot.update.clone();
-        *self.latest_tree.lock().expect("accessibility tree lock") = Some(update.clone());
         #[cfg(target_os = "linux")]
         if let Some(adapter) = &mut self.adapter {
-            adapter.update_if_active(|| update);
+            adapter.update_if_active(|| update.clone());
         }
         #[cfg(target_os = "windows")]
         if let Some(adapter) = &mut self.adapter
-            && let Some(events) = adapter.update_if_active(|| update)
+            && let Some(events) = adapter.update_if_active(|| update.clone())
         {
             events.raise();
         }
+        *self.latest_tree.lock().expect("accessibility tree lock") = Some(update);
         self.snapshot = Some(snapshot);
     }
 
@@ -2779,6 +2801,14 @@ mod tests {
             .expect("latest tree");
         assert_eq!(initial.nodes, snapshot.update.nodes);
         assert_eq!(initial.focus, snapshot.update.focus);
+
+        // Activation is also what opens the generated per-update snapshot
+        // gate, and deactivation is what closes it. Asserted here — in the
+        // one test that calls the activation handler — so no parallel test
+        // races the process-wide flag.
+        assert!(accessibility_active());
+        accesskit::DeactivationHandler::deactivate_accessibility(&mut Deactivation);
+        assert!(!accessibility_active());
 
         let first = iced::window::Id::unique();
         let second = iced::window::Id::unique();
