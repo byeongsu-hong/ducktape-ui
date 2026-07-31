@@ -100,8 +100,8 @@ COVERAGE.md                              exact Iced surface ledger
 ```
 
 When those upstream files are not present in the working project, use the
-public [language specification](https://github.com/byeongsu-hong/ducktape-ui-lang/blob/main/SPEC.md)
-and [coverage ledger](https://github.com/byeongsu-hong/ducktape-ui-lang/blob/main/COVERAGE.md).
+public [language specification](https://github.com/byeongsu-hong/ducktape-ui/blob/main/SPEC.md)
+and [coverage ledger](https://github.com/byeongsu-hong/ducktape-ui/blob/main/COVERAGE.md).
 
 ## Make the smallest valid change
 

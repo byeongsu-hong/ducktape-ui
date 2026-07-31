@@ -504,7 +504,7 @@ Install the repository's detailed Ice authoring skill with the open
 [`skills`](https://github.com/vercel-labs/skills) CLI:
 
 ```bash
-npx skills add byeongsu-hong/ducktape-ui-lang --skill design-ice-ui
+npx skills add byeongsu-hong/ducktape-ui --skill design-ice-ui
 ```
 
 Use `-g` for a global install, or install from a local checkout while developing

@@ -5,7 +5,7 @@ Like shadcn/ui, ducktape-ui treats a data table as a composition recipe because 
 Enable the headless state plus its UI building blocks:
 
 ```toml
-ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", features = ["data-table"] }
+ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui", features = ["data-table"] }
 ```
 
 Own `DataTableState<Column>` in your application state. Apply `query` and `sort` to your domain rows, slice the result with `visible_range`, then render it with `table`. Compose `input`, `checkbox`, and `pagination` for the controls.
