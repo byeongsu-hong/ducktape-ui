@@ -4,6 +4,7 @@ use crate::schema::{
 };
 use std::fs;
 use std::path::Path;
+use toml_edit::{DocumentMut, Item};
 
 const DIRECT_DEPENDENCIES: &str = "[dependencies]";
 const BUILD_DEPENDENCIES: &str = "[build-dependencies]";
@@ -12,7 +13,11 @@ const WINDOWS_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "windows")
 
 pub fn verify(root: &Path) -> Result<(), String> {
     verify_lock(&root.join("Cargo.lock"))?;
+    let workspace_manifest_path = root.join("Cargo.toml");
+    let workspace_manifest = read_manifest(&workspace_manifest_path)?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &root.join("examples/iced-app/Cargo.toml"),
         "iced",
         &format!("={ICED_VERSION}"),
@@ -20,6 +25,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
         DIRECT_DEPENDENCIES,
     )?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &root.join("examples/iced-app/Cargo.toml"),
         "ui-lang-build",
         &format!("={UI_LANG_BUILD_VERSION}"),
@@ -27,6 +34,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
         BUILD_DEPENDENCIES,
     )?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &root.join("examples/iced-app/Cargo.toml"),
         "ui-lang-runtime",
         &format!("={UI_LANG_RUNTIME_VERSION}"),
@@ -35,6 +44,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
     )?;
     let runtime = root.join("crates/ui-lang-runtime/Cargo.toml");
     verify_dependency(
+        &workspace_manifest,
+        root,
         &runtime,
         "iced",
         &format!("={ICED_VERSION}"),
@@ -42,6 +53,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
         DIRECT_DEPENDENCIES,
     )?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &runtime,
         "accesskit",
         &format!("={ACCESSKIT_VERSION}"),
@@ -49,6 +62,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
         DIRECT_DEPENDENCIES,
     )?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &runtime,
         "accesskit_unix",
         &format!("={ACCESSKIT_UNIX_VERSION}"),
@@ -56,6 +71,8 @@ pub fn verify(root: &Path) -> Result<(), String> {
         LINUX_TARGET_DEPENDENCIES,
     )?;
     verify_dependency(
+        &workspace_manifest,
+        root,
         &runtime,
         "accesskit_windows",
         &format!("={ACCESSKIT_WINDOWS_VERSION}"),
@@ -110,21 +127,40 @@ fn verify_lock_contents(lock: &str) -> Result<(), String> {
 }
 
 fn verify_dependency(
+    workspace_manifest: &DocumentMut,
+    workspace_root: &Path,
     manifest_path: &Path,
     name: &str,
     expected_version: &str,
     expected_path: Option<&Path>,
     dependency_section: &str,
 ) -> Result<(), String> {
-    let manifest = fs::read_to_string(manifest_path)
-        .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
-    let value = direct_dependency(&manifest, name, dependency_section).ok_or_else(|| {
+    let manifest = read_manifest(manifest_path)?;
+    let declared = dependency(&manifest, name, dependency_section).ok_or_else(|| {
         format!(
             "{} must list `{name}` in {dependency_section}",
             manifest_path.display()
         )
     })?;
-    let actual_version = dependency_version(value);
+    let (resolved, path_base) = if declared.workspace {
+        let resolved =
+            dependency(workspace_manifest, name, "[workspace.dependencies]").ok_or_else(|| {
+                format!(
+                    "{} inherits `{name}` from [workspace.dependencies], but the workspace does not define it",
+                    manifest_path.display()
+                )
+            })?;
+        if resolved.workspace {
+            return Err(format!(
+                "[workspace.dependencies] cannot inherit `{name}` from itself"
+            ));
+        }
+        (resolved, workspace_root)
+    } else {
+        let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+        (declared, parent)
+    };
+    let actual_version = resolved.version;
     if actual_version != Some(expected_version) {
         return Err(format!(
             "{} requires `{name}` version {actual_version:?}; compatibility requires \"{expected_version}\"",
@@ -132,17 +168,16 @@ fn verify_dependency(
         ));
     }
     if let Some(expected_path) = expected_path {
-        let relative = quoted_field(value, "path").ok_or_else(|| {
+        let relative = resolved.path.ok_or_else(|| {
             format!(
                 "{} must use the local `{name}` path",
                 manifest_path.display()
             )
         })?;
-        let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-        let actual = parent.join(relative).canonicalize().map_err(|error| {
+        let actual = path_base.join(relative).canonicalize().map_err(|error| {
             format!(
                 "cannot resolve `{name}` path `{relative}` from {}: {error}",
-                manifest_path.display()
+                path_base.display()
             )
         })?;
         let expected = expected_path.canonicalize().map_err(|error| {
@@ -163,79 +198,58 @@ fn verify_dependency(
     Ok(())
 }
 
-fn dependency_version(source: &str) -> Option<&str> {
-    source
-        .strip_prefix('"')
-        .and_then(|value| value.split_once('"').map(|(value, _)| value))
-        .or_else(|| quoted_field(source, "version"))
+fn read_manifest(path: &Path) -> Result<DocumentMut, String> {
+    let manifest = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    manifest
+        .parse()
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))
 }
 
-fn direct_dependency<'a>(
-    manifest: &'a str,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Dependency<'a> {
+    version: Option<&'a str>,
+    path: Option<&'a str>,
+    workspace: bool,
+}
+
+fn dependency<'a>(
+    manifest: &'a DocumentMut,
     package: &str,
     dependency_section: &str,
-) -> Option<&'a str> {
-    let mut section = "";
-    for raw in manifest.lines() {
-        let line = raw.trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line;
-            continue;
-        }
-        if section != dependency_section {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if name.trim().trim_matches(['\'', '"']) == package {
-            return Some(value.trim());
-        }
-    }
-    None
+) -> Option<Dependency<'a>> {
+    let item = dependency_section_item(manifest, dependency_section)?.get(package)?;
+    Some(Dependency {
+        version: item
+            .as_str()
+            .or_else(|| item.get("version").and_then(Item::as_str)),
+        path: item.get("path").and_then(Item::as_str),
+        workspace: item
+            .get("workspace")
+            .and_then(Item::as_bool)
+            .unwrap_or(false),
+    })
 }
 
-fn quoted_field<'a>(source: &'a str, field: &str) -> Option<&'a str> {
-    let key_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.');
-    let mut string = false;
-    let mut escaped = false;
-    for (start, ch) in source.char_indices() {
-        if string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                string = false;
-            }
-            continue;
-        }
-        if ch == '"' {
-            string = true;
-            continue;
-        }
-        if ch == '#' {
-            break;
-        }
-        if !source[start..].starts_with(field) {
-            continue;
-        }
-        let end = start + field.len();
-        let boundary = (start == 0 || !key_byte(source.as_bytes()[start - 1]))
-            && source
-                .as_bytes()
-                .get(end)
-                .is_none_or(|byte| !key_byte(*byte));
-        let after = &source[start + field.len()..];
-        if boundary
-            && let Some(value) = after.trim_start().strip_prefix('=')
-            && let Some(value) = value.trim_start().strip_prefix('"')
-            && let Some((value, _)) = value.split_once('"')
-        {
-            return Some(value);
-        }
+fn dependency_section_item<'a>(
+    manifest: &'a DocumentMut,
+    dependency_section: &str,
+) -> Option<&'a Item> {
+    let root = manifest.as_item();
+    match dependency_section {
+        DIRECT_DEPENDENCIES => root.get("dependencies"),
+        BUILD_DEPENDENCIES => root.get("build-dependencies"),
+        LINUX_TARGET_DEPENDENCIES => root
+            .get("target")?
+            .get(r#"cfg(target_os = "linux")"#)?
+            .get("dependencies"),
+        WINDOWS_TARGET_DEPENDENCIES => root
+            .get("target")?
+            .get(r#"cfg(target_os = "windows")"#)?
+            .get("dependencies"),
+        "[workspace.dependencies]" => root.get("workspace")?.get("dependencies"),
+        _ => None,
     }
-    None
 }
 
 fn locked_versions<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
@@ -268,10 +282,13 @@ fn locked_versions<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUILD_DEPENDENCIES, DIRECT_DEPENDENCIES, LINUX_TARGET_DEPENDENCIES,
-        WINDOWS_TARGET_DEPENDENCIES, dependency_version, direct_dependency, locked_versions,
-        quoted_field, verify_lock_contents,
+        BUILD_DEPENDENCIES, DIRECT_DEPENDENCIES, Dependency, LINUX_TARGET_DEPENDENCIES,
+        WINDOWS_TARGET_DEPENDENCIES, dependency, locked_versions, read_manifest, verify_dependency,
+        verify_lock_contents,
     };
+    use std::fs;
+    use tempfile::tempdir;
+    use toml_edit::DocumentMut;
 
     #[test]
     fn reads_exact_package_versions_from_a_lockfile() {
@@ -389,64 +406,166 @@ accesskit_unix = "=0.22.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit_windows = "=0.32.0"
-"#;
-        let runtime = direct_dependency(manifest, "ui-lang-runtime", DIRECT_DEPENDENCIES).unwrap();
-        let build = direct_dependency(manifest, "ui-lang-build", BUILD_DEPENDENCIES).unwrap();
-        let unix =
-            direct_dependency(manifest, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).unwrap();
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let runtime = dependency(&manifest, "ui-lang-runtime", DIRECT_DEPENDENCIES).unwrap();
+        let build = dependency(&manifest, "ui-lang-build", BUILD_DEPENDENCIES).unwrap();
+        let unix = dependency(&manifest, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).unwrap();
         let windows =
-            direct_dependency(manifest, "accesskit_windows", WINDOWS_TARGET_DEPENDENCIES).unwrap();
+            dependency(&manifest, "accesskit_windows", WINDOWS_TARGET_DEPENDENCIES).unwrap();
 
-        assert_eq!(quoted_field(runtime, "version"), Some("=0.1.0"));
-        assert_eq!(quoted_field(build, "version"), Some("=0.1.0"));
-        assert_eq!(
-            quoted_field(build, "path"),
-            Some("../../crates/ui-lang-build")
-        );
-        assert_eq!(
-            quoted_field(runtime, "path"),
-            Some("../../crates/ui-lang-runtime")
-        );
-        assert_eq!(dependency_version(unix), Some("=0.22.1"));
-        assert_eq!(dependency_version(windows), Some("=0.32.0"));
-        assert_eq!(
-            quoted_field(
-                r#"{ package-version = "wrong", note = "version = wrong", version = "right" }"#,
-                "version"
-            ),
-            Some("right")
-        );
-        assert_eq!(
-            quoted_field(
-                r#"{ package-version = "wrong" } # version = "wrong""#,
-                "version"
-            ),
-            None
-        );
-        assert!(direct_dependency(manifest, "accesskit_unix", DIRECT_DEPENDENCIES).is_none());
-        assert!(
-            direct_dependency(manifest, "accesskit_windows", LINUX_TARGET_DEPENDENCIES).is_none()
-        );
+        assert_eq!(runtime.version, Some("=0.1.0"));
+        assert_eq!(build.version, Some("=0.1.0"));
+        assert_eq!(build.path, Some("../../crates/ui-lang-build"));
+        assert_eq!(runtime.path, Some("../../crates/ui-lang-runtime"));
+        assert_eq!(unix.version, Some("=0.22.1"));
+        assert_eq!(windows.version, Some("=0.32.0"));
+        assert!(dependency(&manifest, "accesskit_unix", DIRECT_DEPENDENCIES).is_none());
+        assert!(dependency(&manifest, "accesskit_windows", LINUX_TARGET_DEPENDENCIES).is_none());
 
         let not_linux = r#"
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 accesskit_unix = "=0.22.1"
-"#;
-        assert!(
-            direct_dependency(not_linux, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).is_none()
-        );
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        assert!(dependency(&not_linux, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).is_none());
 
         let not_windows = r#"
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 accesskit_windows = "=0.32.0"
-"#;
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
         assert!(
-            direct_dependency(
-                not_windows,
+            dependency(
+                &not_windows,
                 "accesskit_windows",
                 WINDOWS_TARGET_DEPENDENCIES
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn reads_all_cargo_workspace_inheritance_forms() {
+        let manifest = r#"
+[dependencies]
+dotted.workspace = true
+inline = { workspace = true }
+
+[dependencies.table]
+workspace = true
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+
+        for name in ["dotted", "inline", "table"] {
+            assert_eq!(
+                dependency(&manifest, name, DIRECT_DEPENDENCIES),
+                Some(Dependency {
+                    version: None,
+                    path: None,
+                    workspace: true,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_inherited_version_and_path_from_the_workspace_root() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        let member_dir = root.join("members/app");
+        let dependency_dir = root.join("crates/example");
+        fs::create_dir_all(&member_dir).unwrap();
+        fs::create_dir_all(&dependency_dir).unwrap();
+        let workspace_path = root.join("Cargo.toml");
+        let member_path = member_dir.join("Cargo.toml");
+        fs::write(
+            &workspace_path,
+            r#"
+[workspace.dependencies]
+example = { path = "crates/example", version = "=1.2.3" }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &member_path,
+            r#"
+[dependencies]
+example.workspace = true
+"#,
+        )
+        .unwrap();
+        let workspace = read_manifest(&workspace_path).unwrap();
+
+        assert_eq!(
+            verify_dependency(
+                &workspace,
+                root,
+                &member_path,
+                "example",
+                "=1.2.3",
+                Some(&dependency_dir),
+                DIRECT_DEPENDENCIES,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_mismatched_workspace_dependencies() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        let member_dir = root.join("member");
+        fs::create_dir_all(&member_dir).unwrap();
+        let workspace_path = root.join("Cargo.toml");
+        let member_path = member_dir.join("Cargo.toml");
+        fs::write(
+            &workspace_path,
+            r#"
+[workspace.dependencies]
+example = "=1.2.2"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &member_path,
+            r#"
+[dependencies]
+example = { workspace = true }
+missing.workspace = true
+"#,
+        )
+        .unwrap();
+        let workspace = read_manifest(&workspace_path).unwrap();
+
+        let mismatch = verify_dependency(
+            &workspace,
+            root,
+            &member_path,
+            "example",
+            "=1.2.3",
+            None,
+            DIRECT_DEPENDENCIES,
+        )
+        .unwrap_err();
+        assert!(mismatch.contains("Some(\"=1.2.2\")"), "{mismatch}");
+        let missing = verify_dependency(
+            &workspace,
+            root,
+            &member_path,
+            "missing",
+            "=1.2.3",
+            None,
+            DIRECT_DEPENDENCIES,
+        )
+        .unwrap_err();
+        assert!(
+            missing.contains("workspace does not define it"),
+            "{missing}"
         );
     }
 }

@@ -838,6 +838,7 @@ dependencies = [
  "same-file",
  "serde_json",
  "tempfile",
+ "toml_edit",
  "ui-lang-core",
 ]
 
