@@ -65,11 +65,13 @@ ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui", features =
 iced = "=0.14.0"
 ```
 
-`ducktape-ui` does not silently choose an iced platform. Consumers that use it
-without a separate default-featured `iced` dependency opt into `x11` or
-`wayland`; either standalone native platform feature includes iced's minimal
-thread-pool executor. The executor is also available as a direct `thread-pool`
-passthrough, while wasm consumers leave all three native features disabled.
+`ducktape-ui` does not silently choose an iced renderer or platform. Consumers
+that use it without a separate default-featured `iced` dependency opt into
+`wgpu` or `tiny-skia` and then `x11` or `wayland`; either standalone native
+platform feature includes iced's minimal thread-pool executor. The executor is
+also available as a direct `thread-pool` passthrough, while wasm consumers
+leave the native platform features disabled and select the renderer appropriate
+to their target.
 
 ```rust
 use ducktape_ui::ui::{

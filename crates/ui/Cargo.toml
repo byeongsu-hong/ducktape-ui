@@ -5,11 +5,13 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "Composable iced components for Ducktape applications"
-repository = "https://github.com/byeongsu-hong/ducktape-ui"
-homepage = "https://github.com/byeongsu-hong/ducktape-ui"
+homepage.workspace = true
+repository.workspace = true
 
 [features]
 default = []
+wgpu = ["iced/wgpu"]
+tiny-skia = ["iced/tiny-skia"]
 x11 = ["iced/x11", "thread-pool"]
 wayland = ["iced/wayland", "thread-pool"]
 thread-pool = ["iced/thread-pool"]

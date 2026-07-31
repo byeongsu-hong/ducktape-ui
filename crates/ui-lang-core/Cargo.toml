@@ -2,7 +2,10 @@
 name = "ui-lang-core"
 version = "0.1.0"
 edition.workspace = true
+description = "Parser, checker, formatter, and Rust code generator for the Ice UI language"
+homepage.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [lints]

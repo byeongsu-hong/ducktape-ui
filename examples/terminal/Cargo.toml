@@ -8,12 +8,12 @@ publish = false
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "tokio", "wgpu", "x11"] }
 iced_term = "=0.8.0"
 shell-words = "=1.1.1"
-ui-lang = { path = "../../crates/ui-lang" }
-ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
 which = "=8.0.5"
 
 [build-dependencies]
-ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+ui-lang-build.workspace = true
 
 [lints]
 workspace = true

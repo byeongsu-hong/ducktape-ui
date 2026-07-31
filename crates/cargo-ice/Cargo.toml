@@ -2,7 +2,10 @@
 name = "cargo-ice"
 version = "0.1.0"
 edition.workspace = true
+description = "Cargo tooling and language server for the Ice UI language"
+homepage.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
@@ -11,7 +14,8 @@ notify = "8.2.0"
 png = "0.18"
 same-file = "1.0.6"
 serde_json = "1"
-ui-lang-core = { path = "../ui-lang-core" }
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
+ui-lang-core.workspace = true
 
 [dev-dependencies]
 tempfile = "3.27"

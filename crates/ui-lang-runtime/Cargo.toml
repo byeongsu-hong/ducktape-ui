@@ -2,7 +2,10 @@
 name = "ui-lang-runtime"
 version = "0.1.0"
 edition.workspace = true
+description = "Native iced runtime and test support for generated Ice applications"
+homepage.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]

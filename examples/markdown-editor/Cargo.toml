@@ -9,11 +9,11 @@ iced = { version = "=0.14.0", default-features = false, features = ["advanced", 
 iced_highlighter = "=0.14.0"
 pulldown-cmark = { version = "=0.12.2", default-features = false }
 rfd = "=0.15.4"
-ui-lang = { path = "../../crates/ui-lang" }
-ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
 
 [build-dependencies]
-ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+ui-lang-build.workspace = true
 
 [lints]
 workspace = true
