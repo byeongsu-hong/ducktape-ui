@@ -565,16 +565,20 @@ one native app or daemon, watches its complete Ice and Cargo input graph, and
 uses native filesystem notifications to trigger content verification. Idle
 polls do not reread every input; a complete content rescan runs every 30 seconds
 as a safety net for lost events and filesystems without reliable native
-notifications. A changed snapshot must remain identical across two reads before
-the background rebuild starts. Every accepted edit starts a shadow candidate
-through the ordinary generated Rust path. The current process remains open
-until the candidate reports that its first root widget draw completed. Parse,
-check, build, startup, or readiness failure leaves that last-known-good process
-running. A successful candidate replaces the old process, so application,
-window, and widget state intentionally restart instead of relying on a second
-runtime interpreter. A daemon reports readiness through its first drawn window;
-a windowless daemon candidate cannot satisfy this draw boundary and is rejected
-after the 30-second readiness timeout without replacing the current process.
+notifications. Ordinary edits to known files reuse the accepted input inventory
+and content stamps, then reread only the paths named by the notification.
+New untracked files, deletions, renames, and directory events refresh the
+metadata inventory before hashing new or affected files. A changed snapshot
+must remain identical across two reads before the background rebuild starts.
+Every accepted edit starts a shadow candidate through the ordinary generated
+Rust path. The current process remains open until the candidate reports that
+its first root widget draw completed. Parse, check, build, startup, or readiness
+failure leaves that last-known-good process running. A successful candidate
+replaces the old process, so application, window, and widget state intentionally
+restart instead of relying on a second runtime interpreter. A daemon reports
+readiness through its first drawn window; a windowless daemon candidate cannot
+satisfy this draw boundary and is rejected after the 30-second readiness timeout
+without replacing the current process.
 
 `cargo ice schema` prints a generative JSON description of each Core
 construct's context, syntax, child shape, typed properties, binding, and route,

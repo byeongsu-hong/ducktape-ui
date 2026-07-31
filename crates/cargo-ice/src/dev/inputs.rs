@@ -12,6 +12,11 @@ use std::time::Duration;
 
 pub(super) const BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
 
+#[cfg(test)]
+std::thread_local! {
+    static FILE_STAMP_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FileStamp {
     Missing,
@@ -170,6 +175,25 @@ pub(super) fn settled_dev_stamps_with_cargo_inputs(
     )
 }
 
+pub(super) fn settled_dev_stamps_for_paths_with_cargo_inputs(
+    dependencies: &[PathBuf],
+    asset_dependencies: &[PathBuf],
+    cargo_inputs: &CargoInputGraph,
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> Option<(SourceStamp, SourceStamp)> {
+    settled_dev_stamps_for_paths_after_with_cargo_inputs(
+        dependencies,
+        asset_dependencies,
+        cargo_inputs,
+        current_ice,
+        current_build,
+        changed_paths,
+        || thread::sleep(Duration::from_millis(50)),
+    )
+}
+
 #[cfg(test)]
 pub(super) fn settled_dev_stamps_after(
     root: &Path,
@@ -191,7 +215,7 @@ pub(super) fn settled_dev_stamps_after(
 }
 
 fn settled_dev_stamps_after_with_cargo_inputs(
-    root: &Path,
+    _root: &Path,
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
     cargo_inputs: &CargoInputGraph,
@@ -199,13 +223,92 @@ fn settled_dev_stamps_after_with_cargo_inputs(
     current_build: &SourceStamp,
     after_first_read: impl FnOnce(),
 ) -> Option<(SourceStamp, SourceStamp)> {
-    let first = dev_stamps_with_cargo_inputs(root, dependencies, asset_dependencies, cargo_inputs);
+    settled_dev_stamps_for_paths_after_with_cargo_inputs(
+        dependencies,
+        asset_dependencies,
+        cargo_inputs,
+        current_ice,
+        current_build,
+        &[],
+        after_first_read,
+    )
+}
+
+fn settled_dev_stamps_for_paths_after_with_cargo_inputs(
+    dependencies: &[PathBuf],
+    asset_dependencies: &[PathBuf],
+    cargo_inputs: &CargoInputGraph,
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+    after_first_read: impl FnOnce(),
+) -> Option<(SourceStamp, SourceStamp)> {
+    let read = || {
+        if changed_paths.is_empty() {
+            (
+                ice_source_stamp(dependencies),
+                build_input_stamp(cargo_inputs, asset_dependencies),
+            )
+        } else {
+            dev_stamps_reusing(
+                dependencies,
+                asset_dependencies,
+                cargo_inputs,
+                current_ice,
+                current_build,
+                changed_paths,
+            )
+        }
+    };
+    let first = read();
     if first.0 == *current_ice && first.1 == *current_build {
         return None;
     }
     after_first_read();
-    let second = dev_stamps_with_cargo_inputs(root, dependencies, asset_dependencies, cargo_inputs);
+    let second = read();
     (first == second).then_some(second)
+}
+
+fn dev_stamps_reusing(
+    dependencies: &[PathBuf],
+    asset_dependencies: &[PathBuf],
+    cargo_inputs: &CargoInputGraph,
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> (SourceStamp, SourceStamp) {
+    let build = if can_reuse_build_inventory(current_ice, current_build, changed_paths) {
+        stamp_current_files_reusing(current_build, changed_paths)
+    } else {
+        stamp_files_reusing(
+            &build_input_files(cargo_inputs, asset_dependencies),
+            current_build,
+            changed_paths,
+        )
+    };
+    (
+        stamp_files_reusing(dependencies, current_ice, changed_paths),
+        build,
+    )
+}
+
+fn can_reuse_build_inventory(
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> bool {
+    changed_paths.iter().all(|path| {
+        let build_input = current_build
+            .binary_search_by(|(candidate, _)| candidate.cmp(path))
+            .is_ok();
+        if build_input {
+            return path.is_file();
+        }
+        !path.is_dir()
+            && current_ice
+                .binary_search_by(|(candidate, _)| candidate.cmp(path))
+                .is_ok()
+    })
 }
 
 fn stamp_files(files: &[PathBuf]) -> SourceStamp {
@@ -218,7 +321,57 @@ fn stamp_files(files: &[PathBuf]) -> SourceStamp {
         .collect()
 }
 
+fn stamp_files_reusing(
+    files: &[PathBuf],
+    current: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> SourceStamp {
+    let mut files = files.to_vec();
+    files.sort();
+    files.dedup();
+    files
+        .into_iter()
+        .map(|path| {
+            let previous = current
+                .binary_search_by(|(candidate, _)| candidate.cmp(&path))
+                .ok()
+                .map(|index| current[index].1);
+            let affected = changed_paths
+                .iter()
+                .any(|changed| path == *changed || path.starts_with(changed));
+            let stamp = if affected {
+                stamp_file(&path)
+            } else {
+                previous.unwrap_or_else(|| stamp_file(&path))
+            };
+            (path, stamp)
+        })
+        .collect()
+}
+
+fn stamp_current_files_reusing(current: &SourceStamp, changed_paths: &[PathBuf]) -> SourceStamp {
+    current
+        .iter()
+        .map(|(path, previous)| {
+            let affected = changed_paths
+                .iter()
+                .any(|changed| path == changed || path.starts_with(changed));
+            (
+                path.clone(),
+                if affected {
+                    stamp_file(path)
+                } else {
+                    *previous
+                },
+            )
+        })
+        .collect()
+}
+
 fn stamp_file(path: &Path) -> FileStamp {
+    #[cfg(test)]
+    FILE_STAMP_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
+
     let identity = match path.canonicalize() {
         Ok(identity) => identity,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return FileStamp::Missing,
@@ -245,6 +398,16 @@ fn stamp_file(path: &Path) -> FileStamp {
         return FileStamp::Unreadable;
     }
     FileStamp::Content(stable_file_hash(&identity, &bytes))
+}
+
+#[cfg(test)]
+pub(super) fn reset_file_stamp_attempts() {
+    FILE_STAMP_ATTEMPTS.with(|attempts| attempts.set(0));
+}
+
+#[cfg(test)]
+pub(super) fn file_stamp_attempts() -> usize {
+    FILE_STAMP_ATTEMPTS.with(std::cell::Cell::get)
 }
 
 pub(super) fn first_unreadable_input(stamps: &(SourceStamp, SourceStamp)) -> Option<&Path> {
@@ -286,6 +449,13 @@ fn build_input_stamp(
     cargo_inputs: &CargoInputGraph,
     asset_dependencies: &[PathBuf],
 ) -> SourceStamp {
+    stamp_files(&build_input_files(cargo_inputs, asset_dependencies))
+}
+
+fn build_input_files(
+    cargo_inputs: &CargoInputGraph,
+    asset_dependencies: &[PathBuf],
+) -> Vec<PathBuf> {
     let mut files = asset_dependencies.to_vec();
     files.extend(cargo_inputs.workspace_files.iter().cloned());
     let mut visited = std::collections::HashSet::new();
@@ -306,7 +476,7 @@ fn build_input_stamp(
             &cargo_inputs.excluded_roots,
         );
     }
-    stamp_files(&files)
+    files
 }
 
 fn visit_declared_input(
