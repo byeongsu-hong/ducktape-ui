@@ -5199,10 +5199,15 @@ never parse, deserialize, or interpret Ice source at runtime.
 Native filesystem notifications over the complete input graph trigger snapshot
 verification. Access-only events and events below excluded build, vendor,
 fixture, or VCS directories do not trigger verification. The idle runner does
-not content-hash the graph on its 100-millisecond process-liveness cadence. It
-performs a complete content rescan every 30 seconds and after watcher errors or
-rescan requests, so missed notifications and filesystems without reliable
-native events remain recoverable. For notifications naming known files, the
+not content-hash the graph on its 100-millisecond process-liveness cadence. If
+the native watcher cannot be created or cannot install a required root, the
+runner emits `ice dev: native notifications unavailable; using polling safety
+mode` and switches to a 750-millisecond metadata-inventory poll. The same
+fallback is installed if the native notification channel disconnects. A
+fallback metadata change, watcher error, or rescan request triggers the existing
+complete content-snapshot verification. The runner also performs a complete
+content rescan every 30 seconds, so missed or metadata-invisible changes remain
+recoverable. For native notifications naming known files, the
 runner reuses the accepted inventory and unchanged content stamps, and hashes
 only affected paths. A path absent from the accepted inventories, a removed or
 renamed path, or a directory path refreshes the metadata inventory so added and

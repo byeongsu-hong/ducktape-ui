@@ -452,7 +452,7 @@ fn build_input_stamp(
     stamp_files(&build_input_files(cargo_inputs, asset_dependencies))
 }
 
-fn build_input_files(
+pub(super) fn build_input_files(
     cargo_inputs: &CargoInputGraph,
     asset_dependencies: &[PathBuf],
 ) -> Vec<PathBuf> {
