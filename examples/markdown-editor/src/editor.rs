@@ -9,6 +9,7 @@ use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use ui_lang_runtime::rich_text_editor::{Format, RichTextEditor};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub use ui_lang_runtime::rich_text_editor::Action as RichEditorAction;
 
@@ -1731,11 +1732,10 @@ fn removed_before(content: &Content, position: Position) -> Option<(Position, St
 fn removed_after(content: &Content, position: Position) -> Option<String> {
     let line = content.line(position.line)?;
     if position.column < line.text.len() {
-        let end = line.text[position.column..]
-            .char_indices()
-            .nth(1)
-            .map_or(line.text.len(), |(offset, _)| position.column + offset);
-        return Some(line.text[position.column..end].to_owned());
+        return line.text[position.column..]
+            .graphemes(true)
+            .next()
+            .map(str::to_owned);
     }
     (position.line + 1 < content.line_count()).then(|| normalized_ending(line.ending).to_owned())
 }
@@ -2578,6 +2578,162 @@ mod tests {
 
         assert_eq!(document.text(), "?hello");
         assert!(!can_redo());
+    }
+
+    #[test]
+    fn history_records_native_delete_units() {
+        use iced::widget::text_editor::{Cursor, Position};
+
+        let _lock = super::test_history_lock();
+        let original = ")\u{301}🙂";
+        let cases = [
+            (Position { line: 0, column: 0 }, Edit::Delete, "🙂"),
+            (
+                Position {
+                    line: 0,
+                    column: ")\u{301}".len(),
+                },
+                Edit::Backspace,
+                ")🙂",
+            ),
+        ];
+
+        for (position, edit, expected) in cases {
+            let mut document = reset_document(original.into());
+            document.move_to(Cursor {
+                position,
+                selection: None,
+            });
+            assert_eq!(document.cursor().position, position);
+            track_action(&mut document, Action::Edit(edit));
+            assert_eq!(document.text(), expected);
+
+            document = undo_document(document);
+            assert_eq!(document.text(), original);
+            document = redo_document(document);
+            assert_eq!(document.text(), expected);
+        }
+    }
+
+    #[test]
+    fn generated_unicode_edits_round_trip_through_history() {
+        use iced::widget::text_editor::{Content, Cursor, Position};
+        use std::sync::Arc;
+        use unicode_segmentation::UnicodeSegmentation;
+
+        fn next(state: &mut usize) -> usize {
+            *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *state
+        }
+
+        fn positions(content: &Content) -> Vec<Position> {
+            content
+                .lines()
+                .enumerate()
+                .flat_map(|(line, value)| {
+                    value
+                        .text
+                        .grapheme_indices(true)
+                        .map(|(column, _)| Position { line, column })
+                        .chain(std::iter::once(Position {
+                            line,
+                            column: value.text.len(),
+                        }))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+
+        fn assert_cursor_boundaries(content: &Content) {
+            for position in
+                std::iter::once(content.cursor().position).chain(content.cursor().selection)
+            {
+                let line = content
+                    .line(position.line)
+                    .unwrap_or_else(|| panic!("cursor line {} is absent", position.line));
+                assert!(position.column <= line.text.len());
+                assert!(line.text.is_char_boundary(position.column));
+                assert!(
+                    position.column == line.text.len()
+                        || line
+                            .text
+                            .grapheme_indices(true)
+                            .any(|(column, _)| column == position.column)
+                );
+            }
+        }
+
+        let _lock = super::test_history_lock();
+        let mut document = reset_document("초기🙂\nsecond e\u{301}\n- list\n```\n코드\n```".into());
+        let original = document.text();
+        let mut state = 0x4d59_5df4_usize;
+        let inserted = ['a', '한', '🙂', '\u{301}', '*', ' '];
+        let pasted = ["붙여넣기", "🙂e\u{301}", "\n둘", "a\r\nb", "**x**"];
+        let formats = ["bold", "italic", "code", "link"];
+
+        for _ in 0..256 {
+            let available = positions(&document);
+            let position = available[next(&mut state) % available.len()];
+            let selection = next(&mut state).is_multiple_of(3).then(|| {
+                let available = positions(&document);
+                available[next(&mut state) % available.len()]
+            });
+            document.move_to(Cursor {
+                position,
+                selection,
+            });
+
+            let operation = next(&mut state) % 9;
+            match operation {
+                0 => track_action(
+                    &mut document,
+                    Action::Edit(Edit::Insert(inserted[next(&mut state) % inserted.len()])),
+                ),
+                1 => track_action(
+                    &mut document,
+                    Action::Edit(Edit::Paste(Arc::new(
+                        pasted[next(&mut state) % pasted.len()].to_owned(),
+                    ))),
+                ),
+                2 => track_action(&mut document, Action::Edit(Edit::Enter)),
+                3 => track_action(&mut document, Action::Edit(Edit::Backspace)),
+                4 => track_action(&mut document, Action::Edit(Edit::Delete)),
+                5 => track_action(&mut document, Action::Edit(Edit::Indent)),
+                6 => track_action(&mut document, Action::Edit(Edit::Unindent)),
+                _ => {
+                    document =
+                        format_document(document, formats[next(&mut state) % formats.len()].into());
+                }
+            }
+            assert_cursor_boundaries(&document);
+            for line in document.lines() {
+                for (range, _) in inline_highlights(&line.text, None) {
+                    assert!(line.text.is_char_boundary(range.start));
+                    assert!(line.text.is_char_boundary(range.end));
+                    assert!(range.end <= line.text.len());
+                }
+            }
+        }
+
+        let final_text = document.text();
+        let mut undo_count = 0;
+        while can_undo() {
+            document = undo_document(document);
+            assert_cursor_boundaries(&document);
+            undo_count += 1;
+            assert!(undo_count <= 256);
+        }
+        assert_eq!(document.text(), original);
+
+        let mut redo_count = 0;
+        while can_redo() {
+            document = redo_document(document);
+            assert_cursor_boundaries(&document);
+            redo_count += 1;
+            assert!(redo_count <= undo_count);
+        }
+        assert_eq!(redo_count, undo_count);
+        assert_eq!(document.text(), final_text);
     }
 
     #[test]
