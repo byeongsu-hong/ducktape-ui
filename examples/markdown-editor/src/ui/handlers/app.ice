@@ -77,9 +77,11 @@ on request_close
   task window close
 
 on cancel_pending
+  return if busy
   pending = PendingAction.idle
 
 on discard_new
+  return if busy
   pending = PendingAction.idle
   find_open = false
   find_query = ""
@@ -89,22 +91,26 @@ on discard_new
   error = ""
 
 on discard_open
+  return if busy
   pending = PendingAction.idle
   error = ""
   busy = true
   run open_document() -> opened _ | failed _
 
 on discard_close
+  return if busy
   pending = PendingAction.idle
   task window close
 
 on save_then_new
+  return if busy || pending != PendingAction.new_document
   error = ""
   busy = true
   run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed_save_new _
 
 on saved_then_new(file)
   busy = false
+  return if pending != PendingAction.new_document
   return if empty(file.path)
   pending = PendingAction.idle
   find_open = false
@@ -115,12 +121,14 @@ on saved_then_new(file)
   error = ""
 
 on save_then_open
+  return if busy || pending != PendingAction.open_document
   error = ""
   busy = true
   run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed_save_open _
 
 on saved_then_open(file)
   busy = false
+  return if pending != PendingAction.open_document
   return if empty(file.path)
   pending = PendingAction.idle
   find_open = false
@@ -130,12 +138,14 @@ on saved_then_open(file)
   run open_document() -> opened _ | failed _
 
 on save_then_close
+  return if busy || pending != PendingAction.close_window
   error = ""
   busy = true
   run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed_save_close _
 
 on saved_then_close(file)
   busy = false
+  return if pending != PendingAction.close_window
   return if empty(file.path)
   pending = PendingAction.idle
   task window close
@@ -176,6 +186,7 @@ on find_previous
   document = find_document(document, find_query, true)
 
 on escape
+  return if busy
   pending = PendingAction.idle
   find_open = false
 

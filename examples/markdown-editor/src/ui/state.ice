@@ -37,3 +37,16 @@ preset error
 preset busy
   state
     busy = true
+
+preset busy_modal
+  state
+    busy = true
+    pending = PendingAction.new_document
+
+preset long_name
+  state
+    name = "a-document-name-that-is-long-enough-to-exercise-the-minimum-width-toolbar-layout.md"
+
+preset long_error
+  state
+    error = "Could not save /a/very/long/path/with/many/nested/directories/that/should/not/break/the/status/bar/when/permission/is/denied.md: permission denied"

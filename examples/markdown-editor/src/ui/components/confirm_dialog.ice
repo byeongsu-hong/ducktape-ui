@@ -26,7 +26,7 @@ component ConfirmDialog(action:PendingAction, name:str, busy:bool, error:str)
             font=body
             @font-bold
             @text-fg
-        text name
+        text compact_file_name(name)
           with
             size=13.0
             font=body

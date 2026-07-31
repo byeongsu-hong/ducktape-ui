@@ -44,15 +44,23 @@ component Toolbar(name:str, dirty:bool, blocked:bool, undo_available:bool, redo_
             button "Open" #open disabled=blocked @toolbar_action -> emit(open_document)
             button "Save" #save disabled=blocked @primary_action -> emit(save_document)
             button "Save As" #save-as disabled=blocked @toolbar_action -> emit(save_document_as)
-        space w=fill h=1.0
-        if dirty
-          text "Unsaved" size=10.0 @text-danger
-        text name #document-name
+        box #document-meta
           with
-            size=13.0
-            font=body
-            @font-semibold
-            @text-fg
+            w=fill
+            h=fill
+            clip=true
+            align-x=end
+            align-y=center
+          row gap=8.0 align=center
+            if dirty
+              text "Unsaved" size=10.0 @text-danger
+            text compact_file_name(name) #document-name
+              with
+                wrap=none
+                size=13.0
+                font=body
+                @font-semibold
+                @text-fg
       row #action-row
         with
           w=fill
