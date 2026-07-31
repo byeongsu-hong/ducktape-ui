@@ -807,6 +807,10 @@ SemVer `0.1.0`.
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.
 [`COVERAGE.md`](COVERAGE.md) inventories the existing iced 0.14 surface; it is
 not a roadmap for adding missing native syntax.
+[`docs/decisions`](docs/decisions) records the accepted compiler, layer,
+generation, runtime-widget, and release boundaries. The matching
+[`feature evidence contracts`](docs/feature-evidence-contracts.md) define what
+each layer must prove before an epic is complete.
 [`RELEASING.md`](RELEASING.md) defines lockstep package versions, packaged
 artifact verification, registry order, and the generated-code compatibility
 boundary.

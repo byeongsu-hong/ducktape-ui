@@ -1,0 +1,58 @@
+# Feature evidence contracts
+
+Every feature proposal names its owning layer under decision 0002 before
+implementation. A pull request is complete only when it supplies the evidence
+for that layer and updates `SPEC.md`, `README.md`, and `COVERAGE.md` for any
+public claim. Evidence may be split across stacked pull requests, but the epic
+cannot be declared complete while a required row is missing.
+
+## Ice Core
+
+| Evidence | Required result |
+| --- | --- |
+| Syntax | one canonical form |
+| Parser | accepted and malformed fixtures |
+| Formatter | idempotent canonical output |
+| Checker | type, scope, capability, lifecycle, and invalid cases |
+| Normalized HIR | all sugar and semantic choices resolved |
+| Backend | native lowering with no checker decision repeated |
+| Schema/LSP | completion, hover, actions, and signature behavior as applicable |
+| Source map | root and imported origins survive lowering and generated diagnostics |
+| Runtime | a real generated program executes the behavior |
+| Documentation | specification and readable application example |
+| Performance | new complexity stays inside an explicit measured budget |
+
+## Runtime widget
+
+| Evidence | Required result |
+| --- | --- |
+| Typed API | no unchecked dynamic payload or hidden capability |
+| Lifecycle | state ownership, reconciliation, stable identity, and removal rules |
+| Interaction | mouse, keyboard, focus, and scrolling behavior |
+| Unicode/IME | required for every text-editing surface |
+| Accessibility | native semantics or an explicit supported-limit statement |
+| Headless | inspectable geometry and semantics |
+| Native renderer | WGPU first draw or renderer-specific smoke |
+| Performance | realistic large fixture and budget |
+
+## `ducktape-ui` component
+
+| Evidence | Required result |
+| --- | --- |
+| Contract | typed props, events, slots, output, and lifetime |
+| Visual state | active, hover, pressed, disabled, and focus where applicable |
+| Accessibility | name, role, actions, and keyboard behavior |
+| Theme | application font and semantic token inheritance |
+| Conformance | comparison with the intended reference contract |
+| Responsive | wide and narrow evidence |
+| Example | showcase consumes the public interface, not private helpers |
+
+## Product-local Rust boundary
+
+Product-local work still requires a typed interface, lifecycle ownership,
+invalid/error cases, and product tests. It does not need Core parser, formatter,
+HIR, schema, or generic component evidence unless it changes those surfaces.
+
+Reviewers reject claims based only on generated Rust string snapshots, a
+workspace-internal build, or a visual screenshot when the relevant contract
+also requires semantics, source mapping, packaging, or performance evidence.
