@@ -90,14 +90,18 @@ fi
 generated_name="$(printf '%s' 'src/ui/app.ice' | sha256sum | cut -d ' ' -f 1).rs"
 for generated_manifest in "${generated_manifests[@]}"; do
   generated_directory=$(dirname "$generated_manifest")
-  if ! grep -Fq '"schemaVersion": 1' "$generated_manifest" ||
-    ! grep -Fq "\"$generated_name\": \"src/ui/app.ice\"" "$generated_manifest"; then
-    echo "downstream generated manifest does not contain the canonical SHA mapping" >&2
-    cat "$generated_manifest" >&2
+  generated_rust="$generated_directory/$generated_name"
+  if [[ ! -f "$generated_rust" ]]; then
+    echo "downstream generated Rust is missing at $generated_rust" >&2
     exit 1
   fi
-  if [[ ! -f "$generated_directory/$generated_name" ]]; then
-    echo "downstream generated Rust is missing at $generated_directory/$generated_name" >&2
+  generated_digest=$(sha256sum "$generated_rust" | cut -d ' ' -f 1)
+  if ! grep -Fq '"schemaVersion": 2' "$generated_manifest" ||
+    ! grep -Fq "\"$generated_name\": {" "$generated_manifest" ||
+    ! grep -Fq '"source": "src/ui/app.ice"' "$generated_manifest" ||
+    ! grep -Fq "\"contentSha256\": \"$generated_digest\"" "$generated_manifest"; then
+    echo "downstream generated manifest does not contain the canonical SHA mapping and content digest" >&2
+    cat "$generated_manifest" >&2
     exit 1
   fi
 done
