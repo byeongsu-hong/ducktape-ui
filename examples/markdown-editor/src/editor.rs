@@ -734,7 +734,8 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
     let mut cursor = 0;
     for range in covered {
         if cursor < range.start {
-            push_marker(
+            push_uncovered(
+                line,
                 cursor..range.start,
                 &scopes,
                 &visible_scopes,
@@ -744,7 +745,8 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
         cursor = cursor.max(range.end);
     }
     if cursor < line.len() {
-        push_marker(
+        push_uncovered(
+            line,
             cursor..line.len(),
             &scopes,
             &visible_scopes,
@@ -770,6 +772,27 @@ fn structural_marker(line: &str) -> Option<(Range<usize>, MarkdownHighlight)> {
     }
 
     list_item(line).map(|item| (item.marker, MarkdownHighlight::ListMarker))
+}
+
+fn push_uncovered(
+    line: &str,
+    range: Range<usize>,
+    scopes: &[(Range<usize>, SpanStyle)],
+    visible_scopes: &[Range<usize>],
+    highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
+) {
+    if line[range.clone()].chars().all(char::is_whitespace) {
+        let style = scopes
+            .iter()
+            .filter(|(scope, _)| scope.start <= range.start && range.end <= scope.end)
+            .fold(SpanStyle::default(), |style, (_, next)| style.merge(*next));
+        if style != SpanStyle::default() {
+            highlights.push((range, MarkdownHighlight::Span(style)));
+        }
+        return;
+    }
+
+    push_marker(range, scopes, visible_scopes, highlights);
 }
 
 fn push_marker(
@@ -2123,11 +2146,41 @@ fn position_at(content: &Content, mut offset: usize) -> Position {
 #[cfg(test)]
 mod tests {
     use super::{
-        MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, format_document, is_dirty,
-        mark_saved, redo_document, reset_document, revision, track_action, undo_document,
+        MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, format_document,
+        inline_highlights, is_dirty, mark_saved, redo_document, reset_document, revision,
+        track_action, undo_document,
     };
     use iced::advanced::text::Highlighter;
     use iced::widget::text_editor::{Action, Edit};
+
+    #[test]
+    fn keeps_unparsed_whitespace_at_body_metrics() {
+        for line in ["안녕하세요, ", "plain text ", "안녕하세요,\t"] {
+            let whitespace_start = line.trim_end_matches(char::is_whitespace).len();
+            for caret in [None, Some(whitespace_start), Some(line.len())] {
+                assert!(
+                    inline_highlights(line, caret)
+                        .iter()
+                        .all(|(_, highlight)| !matches!(
+                            highlight,
+                            MarkdownHighlight::Marker { .. }
+                        )),
+                    "{line:?} at {caret:?} must not turn trailing whitespace into a hidden marker"
+                );
+            }
+        }
+
+        let markdown = "**안녕** ";
+        let highlights = inline_highlights(markdown, Some(markdown.len()));
+        assert!(highlights.iter().any(|(range, highlight)| {
+            *range == (0..2) && matches!(highlight, MarkdownHighlight::Marker { hidden: true, .. })
+        }));
+        assert!(
+            highlights
+                .iter()
+                .all(|(range, _)| *range != (markdown.len() - 1..markdown.len()))
+        );
+    }
 
     #[test]
     fn bundled_body_font_keeps_korean_ime_stages_on_one_baseline() {
