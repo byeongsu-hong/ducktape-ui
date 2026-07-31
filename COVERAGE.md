@@ -48,9 +48,13 @@ output pruning.
 the selected Ice import graph, embedded fonts and icons, participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,
 and build-script `rerun-if-changed` inputs. Native notification tests prove that
-a source edit wakes the runner while an idle wait performs no snapshot poll,
-and configuration-change plus periodic-rescan tests cover the two
-complete-snapshot safety paths. Selective-snapshot tests prove that a known
+a source edit wakes the runner while an idle wait performs no snapshot poll.
+Injected NFS, unsupported-mount, and inotify-limit creation failures prove the
+runner selects its 750-millisecond polling safety mode; fallback tests cover
+changed, created, and deleted imports and Rust build inputs while proving that
+the metadata trigger performs no content reads before the existing two-pass
+stamp verification. Configuration-change plus periodic-rescan tests cover the
+other complete-snapshot safety paths. Selective-snapshot tests prove that a known
 Rust file or source-only Ice edit performs two content reads regardless of graph
 size, while new and removed files refresh the inventory. A changed snapshot is
 settled and built while the accepted process remains alive. The shadow

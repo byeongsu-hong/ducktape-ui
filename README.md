@@ -569,10 +569,13 @@ changed-pixel ratio exceeds explicit `--pixel-threshold`,
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
 one native app or daemon, watches its complete Ice and Cargo input graph, and
-uses native filesystem notifications to trigger content verification. Idle
-polls do not reread every input; a complete content rescan runs every 30 seconds
-as a safety net for lost events and filesystems without reliable native
-notifications. Ordinary edits to known files reuse the accepted input inventory
+uses native filesystem notifications to trigger content verification. If native
+notifications cannot be installed, it reports
+`ice dev: native notifications unavailable; using polling safety mode` and
+checks the relevant metadata inventory every 750 milliseconds instead. Idle
+native waits and fallback metadata polls do not reread file contents; a complete
+content rescan runs every 30 seconds as a safety net for lost or metadata-invisible
+events. Ordinary edits to known files reuse the accepted input inventory
 and content stamps, then reread only the paths named by the notification.
 New untracked files, deletions, renames, and directory events refresh the
 metadata inventory before hashing new or affected files. A changed snapshot

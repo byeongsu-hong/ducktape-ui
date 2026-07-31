@@ -1,13 +1,18 @@
-use super::inputs::{CargoInputGraph, normalize_watch_path};
+use super::inputs::{CargoInputGraph, build_input_files, normalize_watch_path};
 use crate::ignored_dir;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 const FULL_RESCAN_INTERVAL: Duration = Duration::from_secs(30);
+const POLLING_INTERVAL: Duration = Duration::from_millis(750);
+const POLLING_FALLBACK_MESSAGE: &str =
+    "ice dev: native notifications unavailable; using polling safety mode";
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum DevChange {
@@ -16,11 +21,39 @@ pub(super) enum DevChange {
 }
 
 pub(super) struct DevWatcher {
-    watcher: RecommendedWatcher,
-    events: Receiver<notify::Result<Event>>,
+    backend: WatchBackend,
     configuration: WatchConfiguration,
     pending_rescan: bool,
     last_full_rescan: Instant,
+}
+
+enum WatchBackend {
+    Native(NativeWatcher),
+    Polling(MetadataPoller),
+}
+
+struct NativeWatcher {
+    watcher: RecommendedWatcher,
+    events: Receiver<notify::Result<Event>>,
+}
+
+struct MetadataPoller {
+    observed: MetadataSnapshot,
+    next_poll: Instant,
+}
+
+type MetadataSnapshot = Vec<(PathBuf, MetadataState)>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MetadataState {
+    Missing,
+    Unreadable,
+    Present {
+        is_file: bool,
+        is_directory: bool,
+        len: u64,
+        modified: Option<SystemTime>,
+    },
 }
 
 impl DevWatcher {
@@ -28,17 +61,29 @@ impl DevWatcher {
         dependencies: &[PathBuf],
         asset_dependencies: &[PathBuf],
         cargo_inputs: &CargoInputGraph,
-    ) -> Result<Self, String> {
+    ) -> Self {
+        Self::new_with_native_factory(
+            dependencies,
+            asset_dependencies,
+            cargo_inputs,
+            create_native_watcher,
+        )
+    }
+
+    fn new_with_native_factory(
+        dependencies: &[PathBuf],
+        asset_dependencies: &[PathBuf],
+        cargo_inputs: &CargoInputGraph,
+        create_native: impl FnOnce(&[WatchRoot], &[PathBuf]) -> Result<NativeWatcher, String>,
+    ) -> Self {
         let configuration = WatchConfiguration::new(dependencies, asset_dependencies, cargo_inputs);
-        let (watcher, events) =
-            create_watcher(&configuration.roots, &configuration.excluded_roots)?;
-        Ok(Self {
-            watcher,
-            events,
+        let backend = native_or_polling(&configuration, create_native);
+        Self {
+            backend,
             configuration,
             pending_rescan: true,
             last_full_rescan: Instant::now(),
-        })
+        }
     }
 
     pub(super) fn update(
@@ -46,32 +91,31 @@ impl DevWatcher {
         dependencies: &[PathBuf],
         asset_dependencies: &[PathBuf],
         cargo_inputs: &CargoInputGraph,
-    ) -> Result<(), String> {
+    ) {
         let configuration = WatchConfiguration::new(dependencies, asset_dependencies, cargo_inputs);
         if configuration == self.configuration {
-            return Ok(());
+            return;
         }
         if configuration.roots != self.configuration.roots
             || configuration.excluded_roots != self.configuration.excluded_roots
         {
-            let (watcher, events) =
-                create_watcher(&configuration.roots, &configuration.excluded_roots)?;
-            self.watcher = watcher;
-            self.events = events;
+            self.backend = if matches!(&self.backend, WatchBackend::Native(_)) {
+                native_or_polling(&configuration, create_native_watcher)
+            } else {
+                WatchBackend::Polling(MetadataPoller::new(&configuration))
+            };
+        } else if let WatchBackend::Polling(poller) = &mut self.backend {
+            poller.refresh(&configuration);
         }
         self.configuration = configuration;
         self.pending_rescan = true;
-        Ok(())
     }
 
-    pub(super) fn wait_for_change(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<Option<DevChange>, String> {
+    pub(super) fn wait_for_change(&mut self, timeout: Duration) -> Option<DevChange> {
         if self.pending_rescan {
             self.pending_rescan = false;
             self.last_full_rescan = Instant::now();
-            return Ok(Some(DevChange::FullRescan));
+            return Some(DevChange::FullRescan);
         }
 
         let deadline = Instant::now() + timeout;
@@ -79,40 +123,72 @@ impl DevWatcher {
             let now = Instant::now();
             if now.duration_since(self.last_full_rescan) >= FULL_RESCAN_INTERVAL {
                 self.last_full_rescan = now;
-                return Ok(Some(DevChange::FullRescan));
-            }
-            if now >= deadline {
-                return Ok(None);
+                return Some(DevChange::FullRescan);
             }
             let rescan_deadline = self.last_full_rescan + FULL_RESCAN_INTERVAL;
-            let wait_until = deadline.min(rescan_deadline);
-            let wait = wait_until.saturating_duration_since(now);
-            match self.events.recv_timeout(wait) {
-                Ok(result) => {
-                    let mut paths = BTreeSet::new();
-                    let mut full_rescan = self.collect_change(result, &mut paths);
-                    while let Ok(result) = self.events.try_recv() {
-                        full_rescan |= self.collect_change(result, &mut paths);
+            match &mut self.backend {
+                WatchBackend::Native(native) => {
+                    if now >= deadline {
+                        return None;
                     }
-                    if full_rescan {
-                        self.last_full_rescan = Instant::now();
-                        return Ok(Some(DevChange::FullRescan));
-                    }
-                    if !paths.is_empty() {
-                        return Ok(Some(DevChange::Paths(paths.into_iter().collect())));
+                    let wait_until = deadline.min(rescan_deadline);
+                    let wait = wait_until.saturating_duration_since(now);
+                    match native.wait_for_change(wait, &self.configuration.excluded_roots) {
+                        Ok(Some(DevChange::FullRescan)) => {
+                            self.last_full_rescan = Instant::now();
+                            return Some(DevChange::FullRescan);
+                        }
+                        Ok(change @ Some(DevChange::Paths(_))) => return change,
+                        Ok(None) => {}
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => {
+                            switch_to_polling(&mut self.backend, &self.configuration);
+                            self.last_full_rescan = Instant::now();
+                            return Some(DevChange::FullRescan);
+                        }
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err("ice dev: filesystem notification channel closed".to_owned());
+                WatchBackend::Polling(poller) => {
+                    if poller.poll_if_due(now, &self.configuration) {
+                        self.last_full_rescan = now;
+                        return Some(DevChange::FullRescan);
+                    }
+                    if now >= deadline {
+                        return None;
+                    }
+                    let wait_until = deadline.min(rescan_deadline).min(poller.next_poll);
+                    thread::sleep(wait_until.saturating_duration_since(now));
                 }
             }
+        }
+    }
+}
+
+impl NativeWatcher {
+    fn wait_for_change(
+        &mut self,
+        wait: Duration,
+        excluded_roots: &[PathBuf],
+    ) -> Result<Option<DevChange>, RecvTimeoutError> {
+        let first = self.events.recv_timeout(wait)?;
+        let mut paths = BTreeSet::new();
+        let mut full_rescan = self.collect_change(first, excluded_roots, &mut paths);
+        while let Ok(result) = self.events.try_recv() {
+            full_rescan |= self.collect_change(result, excluded_roots, &mut paths);
+        }
+        if full_rescan {
+            Ok(Some(DevChange::FullRescan))
+        } else if paths.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(DevChange::Paths(paths.into_iter().collect())))
         }
     }
 
     fn collect_change(
         &mut self,
         result: notify::Result<Event>,
+        excluded_roots: &[PathBuf],
         paths: &mut BTreeSet<PathBuf>,
     ) -> bool {
         let event = match result {
@@ -124,7 +200,7 @@ impl DevWatcher {
                 return true;
             }
         };
-        self.suppress_excluded_tree(&event);
+        self.suppress_excluded_tree(&event, excluded_roots);
         if event.need_rescan() || event.paths.is_empty() {
             return true;
         }
@@ -135,22 +211,95 @@ impl DevWatcher {
             event
                 .paths
                 .into_iter()
-                .filter(|path| !ignored_event_path(path, &self.configuration.excluded_roots))
+                .filter(|path| !ignored_event_path(path, excluded_roots))
                 .map(|path| normalize_watch_path(&path)),
         );
         false
     }
 
-    fn suppress_excluded_tree(&mut self, event: &Event) {
+    fn suppress_excluded_tree(&mut self, event: &Event, excluded_roots: &[PathBuf]) {
         if !matches!(event.kind, EventKind::Create(_)) {
             return;
         }
-        for excluded in &self.configuration.excluded_roots {
+        for excluded in excluded_roots {
             if excluded.is_dir() && event.paths.iter().any(|path| path.starts_with(excluded)) {
                 let _ = self.watcher.unwatch(excluded);
             }
         }
     }
+}
+
+impl MetadataPoller {
+    fn new(configuration: &WatchConfiguration) -> Self {
+        Self {
+            observed: metadata_snapshot(configuration),
+            next_poll: Instant::now() + POLLING_INTERVAL,
+        }
+    }
+
+    fn refresh(&mut self, configuration: &WatchConfiguration) {
+        self.observed = metadata_snapshot(configuration);
+        self.next_poll = Instant::now() + POLLING_INTERVAL;
+    }
+
+    fn poll_if_due(&mut self, now: Instant, configuration: &WatchConfiguration) -> bool {
+        if now < self.next_poll {
+            return false;
+        }
+        self.next_poll = now + POLLING_INTERVAL;
+        let next = metadata_snapshot(configuration);
+        if next == self.observed {
+            return false;
+        }
+        self.observed = next;
+        true
+    }
+}
+
+fn native_or_polling(
+    configuration: &WatchConfiguration,
+    create_native: impl FnOnce(&[WatchRoot], &[PathBuf]) -> Result<NativeWatcher, String>,
+) -> WatchBackend {
+    match create_native(&configuration.roots, &configuration.excluded_roots) {
+        Ok(watcher) => WatchBackend::Native(watcher),
+        Err(_) => {
+            eprintln!("{POLLING_FALLBACK_MESSAGE}");
+            WatchBackend::Polling(MetadataPoller::new(configuration))
+        }
+    }
+}
+
+fn switch_to_polling(backend: &mut WatchBackend, configuration: &WatchConfiguration) {
+    eprintln!("{POLLING_FALLBACK_MESSAGE}");
+    *backend = WatchBackend::Polling(MetadataPoller::new(configuration));
+}
+
+fn metadata_snapshot(configuration: &WatchConfiguration) -> MetadataSnapshot {
+    let mut paths = configuration.dependencies.clone();
+    paths.extend(build_input_files(
+        &configuration.cargo_inputs,
+        &configuration.asset_dependencies,
+    ));
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let state = match fs::metadata(&path) {
+                Ok(metadata) => MetadataState::Present {
+                    is_file: metadata.is_file(),
+                    is_directory: metadata.is_dir(),
+                    len: metadata.len(),
+                    modified: metadata.modified().ok(),
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    MetadataState::Missing
+                }
+                Err(_) => MetadataState::Unreadable,
+            };
+            (path, state)
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -188,10 +337,10 @@ struct WatchRoot {
     recursive: bool,
 }
 
-fn create_watcher(
+fn create_native_watcher(
     roots: &[WatchRoot],
     excluded_roots: &[PathBuf],
-) -> Result<(RecommendedWatcher, Receiver<notify::Result<Event>>), String> {
+) -> Result<NativeWatcher, String> {
     let (sender, events) = mpsc::channel();
     let ignored = excluded_roots.to_vec();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
@@ -224,7 +373,7 @@ fn create_watcher(
     for excluded in excluded_roots.iter().filter(|path| path.is_dir()) {
         let _ = watcher.unwatch(excluded);
     }
-    Ok((watcher, events))
+    Ok(NativeWatcher { watcher, events })
 }
 
 fn event_may_change_inputs(event: &Event, excluded_roots: &[PathBuf]) -> bool {
@@ -376,8 +525,40 @@ fn watch_excluded_roots(cargo_inputs: &CargoInputGraph) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dev::inputs::{
+        dev_stamps_with_cargo_inputs, file_stamp_attempts, reset_file_stamp_attempts,
+        settled_dev_stamps_with_cargo_inputs,
+    };
     use notify::event::{AccessKind, CreateKind, ModifyKind};
     use std::fs;
+
+    fn fallback_watcher(
+        dependencies: &[PathBuf],
+        asset_dependencies: &[PathBuf],
+        cargo_inputs: &CargoInputGraph,
+        failure: &str,
+    ) -> DevWatcher {
+        DevWatcher::new_with_native_factory(
+            dependencies,
+            asset_dependencies,
+            cargo_inputs,
+            |_, _| Err(failure.to_owned()),
+        )
+    }
+
+    fn force_poll(watcher: &mut DevWatcher) {
+        let WatchBackend::Polling(poller) = &mut watcher.backend else {
+            panic!("expected polling fallback");
+        };
+        poller.next_poll = Instant::now();
+    }
+
+    fn expect_full_rescan(watcher: &mut DevWatcher) {
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO),
+            Some(DevChange::FullRescan)
+        );
+    }
 
     #[test]
     fn watch_roots_collapse_nested_inputs_and_cover_missing_paths() {
@@ -411,15 +592,19 @@ mod tests {
         fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\n").unwrap();
         fs::write(root.join("target/output"), "generated").unwrap();
         let graph = CargoInputGraph::workspace(root);
-        let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
         let mut paths = BTreeSet::new();
+        let excluded_roots = watcher.configuration.excluded_roots.clone();
+        let WatchBackend::Native(native) = &mut watcher.backend else {
+            panic!("native watcher unexpectedly unavailable in native-path test");
+        };
 
         let access = Event {
             kind: EventKind::Access(AccessKind::Any),
             paths: vec![root.join("Cargo.toml")],
             attrs: Default::default(),
         };
-        assert!(!watcher.collect_change(Ok(access), &mut paths));
+        assert!(!native.collect_change(Ok(access), &excluded_roots, &mut paths));
         assert!(paths.is_empty());
 
         let excluded = Event {
@@ -427,11 +612,8 @@ mod tests {
             paths: vec![root.join("target/output")],
             attrs: Default::default(),
         };
-        assert!(!event_may_change_inputs(
-            &excluded,
-            &watcher.configuration.excluded_roots
-        ));
-        assert!(!watcher.collect_change(Ok(excluded), &mut paths));
+        assert!(!event_may_change_inputs(&excluded, &excluded_roots));
+        assert!(!native.collect_change(Ok(excluded), &excluded_roots, &mut paths));
         assert!(paths.is_empty());
 
         let excluded_directory = Event {
@@ -441,9 +623,9 @@ mod tests {
         };
         assert!(event_may_change_inputs(
             &excluded_directory,
-            &watcher.configuration.excluded_roots
+            &excluded_roots
         ));
-        assert!(!watcher.collect_change(Ok(excluded_directory), &mut paths));
+        assert!(!native.collect_change(Ok(excluded_directory), &excluded_roots, &mut paths));
         assert!(paths.is_empty());
     }
 
@@ -455,27 +637,29 @@ mod tests {
         let source = root.join("src/main.rs");
         fs::write(&source, "fn main() {}\n").unwrap();
         let graph = CargoInputGraph::workspace(root);
-        let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
+
+        assert!(matches!(&watcher.backend, WatchBackend::Native(_)));
+        reset_file_stamp_attempts();
 
         assert_eq!(
-            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            watcher.wait_for_change(Duration::ZERO),
             Some(DevChange::FullRescan)
         );
-        assert_eq!(
-            watcher.wait_for_change(Duration::from_millis(50)).unwrap(),
-            None
-        );
+        assert_eq!(watcher.wait_for_change(Duration::from_millis(50)), None);
         let last_full_rescan = watcher.last_full_rescan;
         fs::write(&source, "fn main() { println!(\"changed\"); }\n").unwrap();
-        let change = watcher
-            .wait_for_change(Duration::from_secs(5))
-            .unwrap()
-            .unwrap();
+        let change = watcher.wait_for_change(Duration::from_secs(5)).unwrap();
         let DevChange::Paths(paths) = change else {
             panic!("source edit unexpectedly requested a complete rescan");
         };
         assert!(paths.contains(&source));
         assert_eq!(watcher.last_full_rescan, last_full_rescan);
+        assert_eq!(
+            file_stamp_attempts(),
+            0,
+            "native watcher waits must not perform content-stamp reads"
+        );
     }
 
     #[test]
@@ -485,25 +669,200 @@ mod tests {
         fs::create_dir(root.join("src")).unwrap();
         fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
         let graph = CargoInputGraph::workspace(root);
-        let mut watcher = DevWatcher::new(&[], &[], &graph).unwrap();
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
 
         assert_eq!(
-            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            watcher.wait_for_change(Duration::ZERO),
             Some(DevChange::FullRescan)
         );
-        watcher
-            .update(&[root.join("app.ice")], &[], &graph)
-            .unwrap();
+        watcher.update(&[root.join("app.ice")], &[], &graph);
         assert_eq!(
-            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            watcher.wait_for_change(Duration::ZERO),
             Some(DevChange::FullRescan)
         );
-        assert_eq!(watcher.wait_for_change(Duration::ZERO).unwrap(), None);
+        assert_eq!(watcher.wait_for_change(Duration::ZERO), None);
 
         watcher.last_full_rescan = Instant::now() - FULL_RESCAN_INTERVAL;
         assert_eq!(
-            watcher.wait_for_change(Duration::ZERO).unwrap(),
+            watcher.wait_for_change(Duration::ZERO),
             Some(DevChange::FullRescan)
         );
+    }
+
+    #[test]
+    fn native_creation_failures_select_polling_safety_mode() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let graph = CargoInputGraph::workspace(root);
+
+        assert_eq!(
+            POLLING_FALLBACK_MESSAGE,
+            "ice dev: native notifications unavailable; using polling safety mode"
+        );
+        assert!(POLLING_INTERVAL >= Duration::from_millis(500));
+        assert!(POLLING_INTERVAL <= Duration::from_secs(1));
+        for failure in [
+            "network filesystem notifications unavailable",
+            "Function not implemented (os error 38)",
+            "No space left on device (os error 28)",
+        ] {
+            let watcher = fallback_watcher(&[], &[], &graph, failure);
+            assert!(matches!(watcher.backend, WatchBackend::Polling(_)));
+        }
+    }
+
+    #[test]
+    fn disconnected_native_channel_switches_to_polling_and_rescans() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let graph = CargoInputGraph::workspace(root);
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
+        expect_full_rescan(&mut watcher);
+
+        let WatchBackend::Native(native) = &mut watcher.backend else {
+            panic!("native watcher unexpectedly unavailable in native-path test");
+        };
+        let (sender, disconnected) = mpsc::channel();
+        drop(sender);
+        native.events = disconnected;
+
+        assert_eq!(
+            watcher.wait_for_change(Duration::from_millis(50)),
+            Some(DevChange::FullRescan)
+        );
+        assert!(matches!(watcher.backend, WatchBackend::Polling(_)));
+    }
+
+    #[test]
+    fn polling_fallback_detects_import_and_build_input_lifecycle() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let source = root.join("app.ice");
+        let fragment = root.join("fragment.ice");
+        let missing_import = root.join("created-later.ice");
+        let rust_source = root.join("src/main.rs");
+        let added_rust = root.join("src/added.rs");
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(&source, "app Demo\nview\n  text \"ready\"\n").unwrap();
+        fs::write(&fragment, "component Part()\n  text \"first\"\n").unwrap();
+        fs::write(&rust_source, "fn main() {}\n").unwrap();
+        let graph = CargoInputGraph::workspace(root);
+        let mut dependencies = vec![source.clone(), fragment.clone()];
+        let mut current = dev_stamps_with_cargo_inputs(root, &dependencies, &[], &graph);
+        let mut watcher = fallback_watcher(
+            &dependencies,
+            &[],
+            &graph,
+            "No space left on device (os error 28)",
+        );
+        expect_full_rescan(&mut watcher);
+
+        reset_file_stamp_attempts();
+        fs::write(
+            &fragment,
+            "component Part()\n  text \"changed and longer\"\n",
+        )
+        .unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        assert_eq!(
+            file_stamp_attempts(),
+            0,
+            "metadata polling must leave content verification to the existing stamp path"
+        );
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("changed import should pass two content-stamp reads");
+        assert!(file_stamp_attempts() > 0);
+
+        dependencies.push(missing_import.clone());
+        watcher.update(&dependencies, &[], &graph);
+        expect_full_rescan(&mut watcher);
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("an import graph update should add the missing source to the snapshot");
+        fs::write(
+            &missing_import,
+            "component CreatedLater()\n  text \"created\"\n",
+        )
+        .unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("creation of a missing imported source should be detected");
+        fs::remove_file(&missing_import).unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("deletion of an imported source should be detected");
+
+        fs::write(&rust_source, "fn main() { println!(\"changed\"); }\n").unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("changed Rust input should be detected");
+        fs::write(&added_rust, "pub const ADDED: bool = true;\n").unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        current = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("new Rust input should refresh the build inventory");
+        assert!(current.1.iter().any(|(path, _)| path == &added_rust));
+        fs::remove_file(&added_rust).unwrap();
+        force_poll(&mut watcher);
+        expect_full_rescan(&mut watcher);
+        let removed = settled_dev_stamps_with_cargo_inputs(
+            root,
+            &dependencies,
+            &[],
+            &graph,
+            &current.0,
+            &current.1,
+        )
+        .expect("removed Rust input should refresh the build inventory");
+        assert!(removed.1.iter().all(|(path, _)| path != &added_rust));
     }
 }

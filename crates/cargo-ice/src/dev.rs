@@ -129,7 +129,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         "ice dev: watching {} Ice source input(s); rebuild-and-restart mode",
         observed_stamps.0.len()
     );
-    let mut changes = DevWatcher::new(&watched_dependencies, &watched_assets, &cargo_inputs)?;
+    let mut changes = DevWatcher::new(&watched_dependencies, &watched_assets, &cargo_inputs);
 
     loop {
         if stop_requested() {
@@ -143,8 +143,8 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 Err(format!("ice dev: app exited with {status}"))
             };
         }
-        changes.update(&watched_dependencies, &watched_assets, &cargo_inputs)?;
-        let Some(change) = changes.wait_for_change(Duration::from_millis(100))? else {
+        changes.update(&watched_dependencies, &watched_assets, &cargo_inputs);
+        let Some(change) = changes.wait_for_change(Duration::from_millis(100)) else {
             continue;
         };
         let next_stamps = match change {
