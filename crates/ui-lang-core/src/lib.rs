@@ -1,3 +1,4 @@
+mod analysis_db;
 mod ast;
 mod check;
 mod codegen;
@@ -9,6 +10,10 @@ mod source;
 #[cfg(test)]
 mod test_support;
 
+pub use analysis_db::{
+    AnalysisConfig, AnalysisDb, AnalysisInvalidation, AnalysisMetrics, AnalysisTimings,
+    CompilerFeatureSet, ContentHash, FileKey, LANGUAGE_REVISION,
+};
 pub use ast::*;
 pub use editor::{
     CursorContext, STYLE_STATUS_NAMES, SourcePosition, cursor_context, editor_ancestor_lines,
@@ -253,6 +258,10 @@ impl CheckedDocument {
         }
         self.source_origins = origins;
         self
+    }
+
+    pub(crate) fn source_origins(&self) -> &[(PathBuf, usize)] {
+        &self.source_origins
     }
 
     #[cfg(test)]

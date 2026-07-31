@@ -616,10 +616,9 @@ events, and expand long node metadata into a `with` block. They also add every
 missing explicit Option/Result/UI-enum match arm and qualify an unresolved
 component, recipe, extern, or type reference when exactly one import alias
 makes the complete source graph check. For an existing app file it overlays
-every open buffer in the
-import graph, reanalyzes
-all open app roots after buffer changes, and publishes imported errors at the
-imported URI. Checked component, app-handler, recipe, and test-target symbols
+every open buffer in the import graph, reanalyzes only reverse-dependent or
+previously failed app roots after buffer changes, and publishes imported errors
+at the imported URI. Checked component, app-handler, recipe, and test-target symbols
 support definition and collision-checked rename against those current buffers
 and every closed app root under the initialized workspace. Test-target aliases
 are scoped to one test, so the same alias may be reused elsewhere. Closing a
@@ -658,6 +657,31 @@ Warning-level Rust and Clippy findings from backend output are suppressed
 because they are not actionable Ice diagnostics; Ice's non-CLI-only semantic
 warnings (`W001-W009` and `W011-W015`) continue to appear directly from the
 language checker.
+
+All file-backed frontends share `ui_lang_core::AnalysisDb`, a process-local
+incremental analysis API. Its parsed-file key contains the canonical path,
+SHA-256 content hash, Ice language revision, and compiler feature set. The DB
+retains parsed files, direct and reverse import edges, and checked roots. A
+changed overlay or disk file invalidates only roots reachable through reverse
+imports; byte-identical updates keep checked roots reusable. Missing imports
+and failed roots remain tracked so creating or repairing a dependency retries
+the owning root. It also exposes per-session counters for files and bytes
+loaded and hashed, files scanned for imports, roots checked/reused, symbols
+indexed, codegen roots, and load/check/codegen elapsed time.
+
+The cache lifetime is explicit: the LSP owns one DB for its server lifetime,
+`cargo ice dev` owns one for its rebuild loop, `cargo ice check` owns one for a
+command, and `ui-lang-build` owns one for a build-script compilation batch.
+There is no global singleton, background daemon, Salsa dependency, or
+process-persistent cache. Library callers that need the same behavior create
+and retain their own DB:
+
+```rust
+let mut db = ui_lang_core::AnalysisDb::default();
+db.set_overlay("src/ui/part.ice", unsaved_source)?;
+let checked = db.analyze_root("src/ui/app.ice")?;
+let metrics = db.take_metrics();
+```
 
 The LSP is live and intended for editor use. Configure any custom LSP client
 with:

@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const LANGUAGE_REVISION: &str = "2.0";
+pub use ui_lang_core::LANGUAGE_REVISION;
 pub const ICED_VERSION: &str = "0.14.0";
 pub const ICED_WIDGET_VERSION: &str = "0.14.2";
 pub const UI_LANG_BUILD_VERSION: &str = "0.1.0";
@@ -2447,7 +2447,7 @@ pub fn document() -> Value {
             "transport": "stdio Content-Length framing",
             "diagnostics": {
                 "supported": true,
-                "source": "ui_lang_core::analyze_file_with_overlays for existing file URIs; ui_lang_core::analyze otherwise",
+                "source": "one process-local ui_lang_core::AnalysisDb for file URIs; ui_lang_core::analyze for non-file buffers",
                 "inMemory": true,
                 "rootBufferOverlay": true,
                 "diskImports": true,
@@ -2455,7 +2455,8 @@ pub fn document() -> Value {
                 "diskFallbackOnClose": true,
                 "ownership": "app roots own reports; reports are aggregated by diagnostic URI; fragments are not analyzed as standalone apps",
                 "scope": "all open app roots and their overlaid import graphs",
-                "reanalyze": "all open app roots after any open, change, or close",
+                "reanalyze": "reverse imports invalidate affected open roots; failed roots remain dirty for dependency recovery; unrelated reports are retained without loading their graphs",
+                "incrementalMetrics": ["filesLoaded", "bytesLoaded", "filesHashed", "bytesHashed", "filesScanned", "rootsChecked", "rootsReused", "symbolsIndexed", "loadElapsed", "checkElapsed", "codegenRoots", "codegenElapsed"],
                 "severities": ["error", "warning"],
                 "warnings": {
                     "W001": "component unreachable from every open app root and test mount",

@@ -167,8 +167,10 @@ fn root_for_command() -> Result<PathBuf, String> {
 fn analyze(files: &[PathBuf], all_files: &[PathBuf]) -> Result<(), String> {
     let mut documents = Vec::new();
     let mut dependencies = std::collections::BTreeSet::new();
+    let mut analysis_db = ui_lang_core::AnalysisDb::default();
     for path in files {
-        let analysis = ui_lang_core::analyze_file_graph(path)
+        let analysis = analysis_db
+            .analyze_root(path)
             .map_err(|error| error.render(&path.display().to_string()))?;
         dependencies.extend(analysis.dependencies);
         documents.push((path, analysis.document));
@@ -222,7 +224,19 @@ fn analyze(files: &[PathBuf], all_files: &[PathBuf]) -> Result<(), String> {
             path.display()
         );
     }
-    println!("checked {} .ice root graph(s)", files.len());
+    let metrics = analysis_db.metrics();
+    println!(
+        "checked {} .ice root graph(s): loaded {} file(s)/{} byte(s), scanned {}, checked {}, reused {}, indexed {} symbol(s) in {:?} load + {:?} check",
+        files.len(),
+        metrics.files_loaded,
+        metrics.bytes_loaded,
+        metrics.files_scanned,
+        metrics.roots_checked,
+        metrics.roots_reused,
+        metrics.symbols_indexed,
+        metrics.elapsed.load,
+        metrics.elapsed.check,
+    );
     Ok(())
 }
 

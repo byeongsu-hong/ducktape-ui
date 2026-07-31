@@ -21,6 +21,19 @@ counts toward the row below.
 
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
+The shared process-local `AnalysisDb` keys parsed files by canonical path,
+SHA-256 content hash, language revision, and compiler feature set. It records
+direct and reverse imports, invalidates only reverse-dependent checked roots,
+retains failed roots and unresolved import edges for recovery, and reports
+loaded/hashed byte, import-scan, checked/reused-root, indexed-symbol,
+codegen-root, and phase-timing counters. Focused fixtures prove an unrelated
+large root is not loaded after a leaf edit, a shared fragment invalidates every
+dependent root, missing/malformed/deleted/cyclic imports recover, add/rename/
+remove replaces reverse edges, symlinked missing overlays resolve to one key,
+an overlay close returns to disk, byte-identical content is reused, and
+transitive reverse edges are retained. LSP diagnostics, the dev
+preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
+own and reuse this same DB API without global or process-persistent state.
 Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw

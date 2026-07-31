@@ -5515,6 +5515,7 @@ name = "ui-lang-core"
 version = "0.1.0"
 dependencies = [
  "qrcode 0.14.1",
+ "sha2",
 ]
 
 [[package]]
