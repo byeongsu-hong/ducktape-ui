@@ -234,13 +234,9 @@ fn validate_canonical_document(document: &FingerprintDocument) -> Result<(), Str
             |variant| variant.name.as_str(),
         )?;
     }
-    if !api
-        .extern_functions
-        .windows(2)
-        .all(|pair| (pair[0].name.as_str(), pair[0].kind) < (pair[1].name.as_str(), pair[1].kind))
-    {
-        return Err("api.extern_functions must be strictly sorted and unique by name/kind".into());
-    }
+    require_sorted_unique("api.extern_functions", &api.extern_functions, |function| {
+        function.name.as_str()
+    })?;
     for function in &api.extern_functions {
         let mut params = BTreeSet::new();
         if function
@@ -950,7 +946,9 @@ mod tests {
     };
     use std::fs;
     use tempfile::TempDir;
-    use ui_lang_core::{ApiSurface, analyze, analyze_api_file, format_source};
+    use ui_lang_core::{
+        ApiExternFunction, ApiExternKind, ApiSurface, analyze, analyze_api_file, format_source,
+    };
 
     fn package() -> ApiPackage {
         ApiPackage {
@@ -1213,6 +1211,35 @@ view
             read_fingerprint(&path)
                 .unwrap_err()
                 .contains("inconsistent")
+        );
+
+        let mut duplicate_extern_name = document.clone();
+        duplicate_extern_name.api.extern_functions = vec![
+            ApiExternFunction {
+                name: "load".into(),
+                kind: ApiExternKind::Future,
+                rust_path: "crate::backend::load".into(),
+                params: Vec::new(),
+                progress: None,
+                output: "str".into(),
+                error: Some("str".into()),
+            },
+            ApiExternFunction {
+                name: "load".into(),
+                kind: ApiExternKind::Task,
+                rust_path: "crate::backend::load_task".into(),
+                params: Vec::new(),
+                progress: None,
+                output: "str".into(),
+                error: None,
+            },
+        ];
+        duplicate_extern_name.fingerprint = duplicate_extern_name.expected_fingerprint().unwrap();
+        fs::write(&path, serde_json::to_vec(&duplicate_extern_name).unwrap()).unwrap();
+        assert!(
+            read_fingerprint(&path)
+                .unwrap_err()
+                .contains("api.extern_functions must be strictly sorted and unique")
         );
 
         fs::write(&path, b"{ definitely not json").unwrap();
