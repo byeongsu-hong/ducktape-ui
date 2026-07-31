@@ -4277,20 +4277,24 @@ where
 fn normalize_target_matches(targets: &mut Vec<LayoutTarget>) {
     let mut normalized: Vec<LayoutTarget> = Vec::with_capacity(targets.len());
     for target in targets.drain(..) {
-        let duplicate = target.semantic_group.map_or_else(
-            || {
-                target.state_key.and_then(|state_key| {
-                    normalized.iter().position(|candidate| {
-                        candidate.semantic_group.is_none() && candidate.state_key == Some(state_key)
-                    })
+        let duplicate = if let Some(group) = target.semantic_group {
+            normalized.iter().position(|candidate| {
+                candidate.semantic_group == Some(group)
+                    || (!candidate.semantic
+                        && candidate.kind == "container"
+                        && candidate.bounds == target.bounds)
+            })
+        } else if target.kind == "container" {
+            normalized.iter().position(|candidate| {
+                candidate.semantic_group.is_some() && candidate.bounds == target.bounds
+            })
+        } else {
+            target.state_key.and_then(|state_key| {
+                normalized.iter().position(|candidate| {
+                    candidate.semantic_group.is_none() && candidate.state_key == Some(state_key)
                 })
-            },
-            |group| {
-                normalized
-                    .iter()
-                    .position(|candidate| candidate.semantic_group == Some(group))
-            },
-        );
+            })
+        };
         if let Some(index) = duplicate {
             merge_target_match(&mut normalized[index], target);
         } else {

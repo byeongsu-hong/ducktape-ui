@@ -20,11 +20,8 @@ mod tests {
         assert!(!showcase.dialog_open);
 
         let _ = showcase.__update(__ShowcaseMessage::Clicked);
-        let _ = showcase.__update(__ShowcaseMessage::DismissToast);
         assert_eq!(showcase.clicks, 1);
-        assert!(!showcase.toast_visible);
-
-        let _ = showcase.__update(__ShowcaseMessage::ShowToast);
-        assert!(showcase.toast_visible);
+        let _ = showcase.__update(__ShowcaseMessage::CancelDialog);
+        assert_eq!(showcase.dialog_result, "cancelled");
     }
 }

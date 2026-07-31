@@ -182,7 +182,8 @@ pub(in crate::codegen) fn expr_code(
                     | Type::WindowAttention
                     | Type::Unit
             ) || (binding.local && path.len() == 1)
-                || owned_projection;
+                || owned_projection
+                || (ty == Type::Str && code.starts_with('"') && code.ends_with('"'));
             if matches!(mode, ValueMode::Owned) && !clone_unnecessary {
                 if ty == Type::Str {
                     code.push_str(".to_owned()");

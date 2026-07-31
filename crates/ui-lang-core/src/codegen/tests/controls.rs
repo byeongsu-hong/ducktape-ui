@@ -297,7 +297,7 @@ view
     assert!(generated.contains("__style.rail.backgrounds.1 = ::iced::Background::from"));
     assert!(generated.contains("__style.handle.background = ::iced::Background::from"));
     assert!(generated.contains("::iced::widget::progress_bar"));
-    assert!(generated.contains("::ui_lang_runtime::progress_range(0.0, 100.0, self.amount)"));
+    assert!(generated.contains("::ui_lang_runtime::progress_range(0.0, 100.0, __progress_input)"));
     assert!(generated.contains(".vertical()"));
     assert!(generated.contains(".length(::iced::Length::FillPortion(2)).girth(20.0 as f32)"));
     assert!(generated.contains("crate::backend::dynamic_progress(__theme, self.enabled)"));
@@ -823,7 +823,7 @@ view
         "::iced::widget::container(__run).width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)"
     ));
     // Absent and zero tracking stay one plain text widget.
-    let plain = "let __text_value = (\"PLAIN\".to_owned()).to_string(); let __text = ::iced::widget::text(__text_value.clone()).size(";
+    let plain = "let __text_value = (\"PLAIN\").to_string(); let __text = ::iced::widget::text(__text_value.clone()).size(";
     let zero = plain.replace("PLAIN", "ZERO");
     assert!(generated.contains(plain));
     assert!(generated.contains(&zero));

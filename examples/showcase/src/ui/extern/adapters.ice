@@ -20,7 +20,6 @@ extern crate::adapters
   MenubarEvent()
   MessageScrollerState()
   MessageScrollerEvent()
-  MessageScrollerResult()
   DropdownMenuState()
   DropdownMenuEvent()
   PopoverEvent()
@@ -30,6 +29,7 @@ extern crate::adapters
   SidebarEvent()
   SonnerState()
   SonnerEvent()
+  CatalogItem(name:str, source:str)
   checkbox-style checkbox_style()
   progress-style progress_style()
   progress-style progress_success_style()
@@ -67,28 +67,31 @@ extern crate::adapters
   component sidebar(state:&SidebarState) -> SidebarEvent
   sync sonner_state() -> SonnerState
   sync sonner_apply(state:SonnerState, event:SonnerEvent) -> SonnerState
+  task sonner_tick(state:SonnerState) -> SonnerState
+  task sonner_set_reduced_motion(state:SonnerState, reduced_motion:bool) -> SonnerState
   component sonner(state:&SonnerState) -> SonnerEvent
   sync drawer_state() -> DrawerState
   task drawer_apply(state:DrawerState, event:DrawerEvent) -> DrawerState
-  component drawer(state:&DrawerState) -> DrawerEvent
+  component drawer(state:&DrawerState, reduced_motion:bool) -> DrawerEvent
   sync navigation_menu_state() -> NavigationMenuState
   sync navigation_menu_is_open(state:NavigationMenuState) -> bool
+  sync navigation_menu_route(state:NavigationMenuState) -> str
   task navigation_menu_apply(event:NavigationMenuEvent) -> NavigationMenuState
   component navigation_menu(state:&NavigationMenuState) -> NavigationMenuEvent
   sync menubar_state() -> MenubarState
   task menubar_apply(state:MenubarState, event:MenubarEvent) -> MenubarState
   component menubar(state:&MenubarState) -> MenubarEvent
-  component hover_card() -> unit
+  component hover_card() -> bool
   component slider(values:&[f64]) -> [f64]
   component radio_group(selected:&str) -> str
   task radio_apply(next:str) -> str
   sync message_scroller_state() -> MessageScrollerState
-  task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerResult
-  sync message_scroller_result() -> MessageScrollerResult
-  sync message_scroller_result_state(result:MessageScrollerResult) -> MessageScrollerState
-  task message_scroller_continue(state:MessageScrollerState, result:MessageScrollerResult) -> MessageScrollerResult
+  task message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerState
+  task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerState
   component message_scroller(state:&MessageScrollerState) -> MessageScrollerEvent
-  sync data_table_rows(query:str, sort:str, page:i64) -> [str]
+  component aspect_ratio_demo() -> unit
+  sync data_table_rows(query:str, sort:str, page:i64) -> [CatalogItem]
+  sync data_table_page(query:str, page:i64) -> i64
   sync data_table_next_sort(sort:str) -> str
   sync data_table_can_next(query:str, page:i64) -> bool
   sync data_table_page_count(query:str) -> i64

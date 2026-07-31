@@ -1,4 +1,4 @@
-component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:editor, bind catalog_query:str, clicks:i64, accepted:bool, notifications:bool, volume:f64, density:str, native_select_frameworks:[str], native_select_framework:str?, combobox_frameworks:combo[str], searched_framework:str?, catalog_sort:str, catalog_page:i64, catalog_at_start:bool, catalog_page_number:i64, demo_page:i64, otp:str, calendar:CalendarState, date_picker:DatePickerState, chart_hover:ChartHit?, command:CommandState, select:SelectState, dropdown:DropdownMenuState, context_menu:ContextMenuState, alert_dialog:AlertDialogState, sidebar:SidebarState, sonner:SonnerState, drawer:DrawerState, navigation_menu:NavigationMenuState, menubar:MenubarState, native_sizes:[f64], native_range:[f64], message_scroller:MessageScrollerState, native_popover:bool)
+component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:editor, bind catalog_query:str, clicks:i64, accepted:bool, notifications:bool, volume:f64, density:str, native_select_frameworks:[str], native_select_framework:str?, combobox_frameworks:combo[str], searched_framework:str?, catalog_sort:str, catalog_page:i64, catalog_at_start:bool, catalog_page_number:i64, demo_page:i64, demo_page_max:i64, reduced_motion:bool, otp:str, calendar:CalendarState, date_picker:DatePickerState, chart_hover:ChartHit?, command:CommandState, select:SelectState, dropdown:DropdownMenuState, context_menu:ContextMenuState, alert_dialog:AlertDialogState, hover_card_open:bool, navigation_route:str, card_action:str, sidebar:SidebarState, sonner:SonnerState, drawer:DrawerState, navigation_menu:NavigationMenuState, menubar:MenubarState, native_sizes:[f64], native_range:[f64], message_scroller:MessageScrollerState, native_popover:bool)
   emits
     clicked
     accepted_changed(bool)
@@ -11,6 +11,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     calendar_changed(CalendarEvent)
     date_picker_changed(DatePickerEvent)
     chart_hovered(ChartHit?)
+    hover_card_changed(bool)
     command_changed(CommandEvent)
     select_changed(SelectEvent)
     dropdown_changed(DropdownMenuEvent)
@@ -18,6 +19,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     alert_dialog_changed(AlertDialogEvent)
     sidebar_changed(SidebarEvent)
     sonner_changed(SonnerEvent)
+    reduced_motion_changed(bool)
     drawer_changed(DrawerEvent)
     navigation_menu_changed(NavigationMenuEvent)
     menubar_changed(MenubarEvent)
@@ -29,6 +31,10 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     catalog_page_changed(i64)
     demo_page_previous
     demo_page_next
+    card_cancel
+    card_apply
+    navigate_home
+    navigate_library
     message_scroller_changed(MessageScrollerEvent)
     native_popover_changed(PopoverEvent)
   grid #root
@@ -167,6 +173,17 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           row gap=10.0 align=center
             extern switch("showcase-notifications", notifications, false) -> emit(notifications_changed, _)
             text "Product notifications" size=13.0 @text-fg
+        Field
+          with
+            label="Reduced motion"
+            description="Animation preferences are forwarded to native widgets."
+          checkbox "Reduce motion" -> emit(reduced_motion_changed, _)
+            with
+              checked=reduced_motion
+              size=16.0
+              gap=8.0
+              text-size=14.0
+              style=checkbox_style()
         Field label="Interface density" description="Arrow keys move through a single-choice group."
           extern radio_group(density) -> emit(density_changed, _)
         Field label="Volume" description="The progress bar mirrors the slider value."
@@ -230,11 +247,11 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         title="Foundations"
         description="The small pieces compose into application-specific surfaces."
       col w=fill gap=14.0
-        Breadcrumb current="Components"
+        Breadcrumb current=navigation_route
           row gap=8.0
-            text "Home" size=12.0 @text-primary
+            button "Home" h=28.0 @ghost_action -> emit(navigate_home)
             text "/" size=12.0 @text-muted
-            text "Library" size=12.0 @text-primary
+            button "Library" h=28.0 @ghost_action -> emit(navigate_library)
         Card
           Card.Header
             col gap=3.0
@@ -259,16 +276,17 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
               space w=fill h=1.0
               ButtonGroup
                 row
-                  button "Cancel" -> emit(clicked)
+                  button "Cancel" -> emit(card_cancel)
                     with
                       h=36.0
                       @ghost_action
                       @py-8px
-                  button "Apply" -> emit(clicked)
+                  button "Apply" -> emit(card_apply)
                     with
                       h=36.0
                       @primary_action
                       @py-8px
+              text card_action size=12.0 @text-muted
         Separator
         Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
         Bubble copy="Caller state still owns the conversation." outgoing=true
@@ -321,7 +339,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         title="Pagination"
         description="Small local state, bounded at both ends."
       col w=fill gap=14.0
-        PaginationDemo page=demo_page #pagination
+        PaginationDemo page=demo_page max_page=demo_page_max #pagination
           events
             previous -> emit(demo_page_previous)
             next -> emit(demo_page_next)
@@ -389,9 +407,11 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         extern menubar(menubar) -> emit(menubar_changed, _)
         row gap=12.0 align=center
           extern select(select) -> emit(select_changed, _)
-          extern dropdown_menu(dropdown) -> emit(dropdown_changed, _)
+          extern dropdown_menu(dropdown) #dropdown-trigger -> emit(dropdown_changed, _)
         extern context_menu(context_menu) -> emit(context_menu_changed, _)
-        extern hover_card()
+        extern hover_card() -> emit(hover_card_changed, _)
+        if hover_card_open
+          text "Profile action activated" size=12.0 @text-muted
         Surface
           col w=fill
             Item
@@ -419,7 +439,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         description="Aspect ratio and constrained scrolling compile from Ice."
       col #layout-primitives-content w=fill gap=14.0
         box w=fill align-x=center
-          AspectRatioDemo
+          extern aspect_ratio_demo()
         ScrollAreaDemo
           col w=fill gap=4.0
             Item
@@ -462,7 +482,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
             w=fill
             gap=10.0
             align=center
-          extern spinner(clicks, false)
+          extern spinner(clicks, reduced_motion)
           text "Spinner frame follows the Ice click counter." size=12.0 @text-muted
         extern date_picker(date_picker) -> emit(date_picker_changed, _)
         extern calendar(calendar) -> emit(calendar_changed, _)
@@ -543,7 +563,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                   @font-bold
                   @text-fg
             cell
-              text item size=12.0 @text-fg
+              text item.name size=12.0 @text-fg
           col w=100.0 align-x=center align-y=center
             header
               text "Source"
@@ -552,7 +572,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                   @font-bold
                   @text-fg
             cell
-              text "Ice" size=12.0 @text-primary
+              text item.source size=12.0 @text-primary
         row wrap
           with
             w=fill
@@ -665,7 +685,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         title="Edge panels"
         description="Sheet geometry, drag dismissal, modal focus, and state stay composed."
       DemoStage height=190.0 #edge-stage
-        extern drawer(drawer) -> emit(drawer_changed, _)
+        extern drawer(drawer, reduced_motion) -> emit(drawer_changed, _)
 
     Panel #native-escape-hatches
       with
@@ -680,18 +700,11 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
       DemoStage height=154.0 padding=16.0
         SkeletonDemo
 
-    Panel title="Empty state" description="A useful default before application-specific actions."
-      box w=fill h=160.0
-        EmptyState
-          with
-            title="No components found"
-            description="Try a different filter or create the first component."
-
-    Panel
+    Panel #navigation-shell
       with
         title="Navigation shell"
         description="The full-width shell keeps collapse, active route, and workspace context controlled by Ice."
       col w=fill gap=16.0
-        extern navigation_menu(navigation_menu) -> emit(navigation_menu_changed, _)
+        extern navigation_menu(navigation_menu) #navigation-trigger -> emit(navigation_menu_changed, _)
         DemoStage height=424.0 padding=10.0
           extern sidebar(sidebar) -> emit(sidebar_changed, _)

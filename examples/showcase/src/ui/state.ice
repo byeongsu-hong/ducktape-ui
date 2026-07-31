@@ -15,7 +15,9 @@ state
   catalog_sort = "none"
   catalog_page = 0
   demo_page = 1
+  demo_page_max = 5
   otp = ""
+  reduced_motion = false
   calendar:CalendarState = calendar_state()
   date_picker:DatePickerState = date_picker_state()
   chart_hover:ChartHit? = none
@@ -32,9 +34,12 @@ state
   native_sizes = [0.25, 0.5, 0.25]
   native_range = [25.0, 75.0]
   message_scroller:MessageScrollerState = message_scroller_state()
-  message_scroller_update:MessageScrollerResult = message_scroller_result()
   native_popover = false
   dialog_open = false
+  dialog_result = "none"
+  hover_card_open = false
+  card_action = ""
+  navigation_route = "Components"
   toast_visible = true
 
 derived
@@ -54,5 +59,11 @@ preset test
     catalog_sort = "none"
     catalog_page = 0
     demo_page = 1
+    demo_page_max = 5
+    reduced_motion = false
     dialog_open = false
+    dialog_result = "none"
+    hover_card_open = false
+    card_action = ""
+    navigation_route = "Components"
     toast_visible = false

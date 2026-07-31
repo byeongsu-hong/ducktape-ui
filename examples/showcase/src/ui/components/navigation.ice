@@ -22,12 +22,13 @@ component CarouselDemo()
         border-w=1.0
         r=9.0
       col align=center gap=4.0
-        text "Slide" size=11.0 @text-muted
-        text slide
-          with
-            size=24.0
-            @font-bold
-            @text-primary
+        if slide == 1
+          text "Foundations" size=18.0 @font-bold
+        if slide == 2
+          text "Composition" size=18.0 @font-bold
+        if slide == 3
+          text "Interaction" size=18.0 @font-bold
+        text "Showcase section" size=11.0 @text-muted
     row
       with
         w=fill

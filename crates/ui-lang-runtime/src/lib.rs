@@ -154,7 +154,8 @@ impl<Message> Semantics<Message> {
             Role::TextInput
             | Role::MultilineTextInput
             | Role::SearchInput
-            | Role::PasswordInput => FocusBehavior::Descendant,
+            | Role::PasswordInput
+            | Role::Slider => FocusBehavior::Descendant,
             _ => FocusBehavior::None,
         };
 
@@ -964,6 +965,8 @@ fn atomic_role(role: Role) -> bool {
             | Role::MultilineTextInput
             | Role::SearchInput
             | Role::PasswordInput
+            | Role::Slider
+            | Role::ProgressIndicator
             | Role::Image
             | Role::Label
     )

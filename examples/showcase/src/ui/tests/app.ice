@@ -39,7 +39,7 @@ test language_feature_contracts
         events
           previous -> demo_page_previous
           next -> demo_page_next
-      AspectRatioDemo #aspect
+      extern aspect_ratio_demo() #aspect
   target show_code = #tabs/show-code
   target pagination_next = #pagination/next
   expect show_code.height ~= 32.0
@@ -248,8 +248,10 @@ test catalog_full_scroll_visuals
   viewport 1120 820
   target app = #app
   target scroller = app/catalog-scroll
+  target dropdown_trigger = app/catalog-scroll/page/catalog-grid/root/advanced-selection-panel/root/advanced-selection-content/dropdown-trigger
+  target navigation_trigger = app/catalog-scroll/page/catalog-grid/root/navigation-shell/root/navigation-trigger
   scroll-to scroller 0.0 2500.0
-  click-at 370.0 220.0
+  click dropdown_trigger
   idle
   capture dropdown_categories
   expect dropdown_menu_is_open(dropdown)
@@ -261,7 +263,7 @@ test catalog_full_scroll_visuals
   scroll-to scroller 0.0 4400.0
   capture messages_and_edge_panels
   scroll-to scroller 0.0 5320.0
-  click-at 160.0 266.0
+  click navigation_trigger
   idle
   expect navigation_menu_is_open(navigation_menu)
   capture navigation_menu_and_shell

@@ -1053,7 +1053,10 @@ view
 "#;
     let generated = compile(source, "defaults.ice").unwrap();
 
-    assert!(generated.contains("(\"Untitled\".to_owned()).to_string()"));
+    assert!(
+        generated.contains("(\"Untitled\").to_string()")
+            || generated.contains("(\"Untitled\".to_owned()).to_string()")
+    );
     assert!(!generated.contains("\"Untitled\".clone()"));
     assert!(generated.contains("Selected"));
     assert!(!generated.contains("if true"));

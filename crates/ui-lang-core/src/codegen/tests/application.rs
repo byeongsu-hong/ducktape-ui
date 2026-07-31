@@ -19,7 +19,10 @@ view
     let generated = compile(source, "ready.ice").unwrap();
 
     assert!(generated.contains("fn __view(&self) -> __IceElement"));
-    assert!(generated.contains("let __text_value = (\"ready\".to_owned()).to_string()"));
+    assert!(
+        generated.contains("let __text_value = (\"ready\").to_string()")
+            || generated.contains("let __text_value = (\"ready\".to_owned()).to_string()")
+    );
     assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
     assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
 
@@ -57,7 +60,10 @@ view
     let generated = compile(source, "ready_daemon.ice").unwrap();
 
     assert!(generated.contains("fn __view(&self, window: ::iced::window::Id) -> __IceElement"));
-    assert!(generated.contains("let __text_value = (\"ready\".to_owned()).to_string()"));
+    assert!(
+        generated.contains("let __text_value = (\"ready\").to_string()")
+            || generated.contains("let __text_value = (\"ready\".to_owned()).to_string()")
+    );
     assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
     assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
     assert!(!generated.contains("::ui_lang_runtime::live"));
