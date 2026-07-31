@@ -42,6 +42,18 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
     Ok(analyze_file_graph(path)?.document)
 }
 
+/// Analyzes a checked Ice public-interface graph.
+///
+/// Unlike an application root, an interface root may contain only declarations
+/// and imports. The parser supplies an internal, non-source app and empty view
+/// solely so the ordinary semantic checker remains the source of truth.
+pub(crate) fn analyze_interface_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
+    let loaded = load_interface(path.as_ref())?;
+    let document = analyze_interface_loaded(&loaded)?;
+    check_assets(&document, &loaded).map_err(|error| remap_error(error, &loaded))?;
+    Ok(document)
+}
+
 /// Analyzes one root and returns every source and asset input used by it.
 pub fn analyze_file_graph(path: impl AsRef<Path>) -> Result<FileAnalysis, Error> {
     AnalysisDb::default().analyze_root(path)
@@ -280,7 +292,11 @@ pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result
 // discovery onto its partial graph in a separate change before deleting this
 // duplicate traversal.
 fn load(path: &Path) -> Result<LoadedSource, Error> {
-    load_with_overlays(path, &HashMap::<PathBuf, String>::new())
+    load_with_overlays_mode(path, &HashMap::<PathBuf, String>::new(), true)
+}
+
+fn load_interface(path: &Path) -> Result<LoadedSource, Error> {
+    load_with_overlays_mode(path, &HashMap::<PathBuf, String>::new(), false)
 }
 
 #[cfg(test)]
@@ -288,9 +304,10 @@ pub(crate) fn load_test_source(path: &Path) -> Result<String, Error> {
     Ok(load(path)?.source)
 }
 
-fn load_with_overlays<S: AsRef<str>>(
+fn load_with_overlays_mode<S: AsRef<str>>(
     path: &Path,
     overlays: &HashMap<PathBuf, S>,
+    require_app: bool,
 ) -> Result<LoadedSource, Error> {
     let mut normalized_overlays = HashMap::new();
     for (overlay_path, source) in overlays {
@@ -318,7 +335,7 @@ fn load_with_overlays<S: AsRef<str>>(
         .copied()
         .or(disk_source.as_deref())
         .expect("a root source is loaded from an overlay or disk");
-    if !source_is_app(root_source) {
+    if require_app && !source_is_app(root_source) {
         return Err(file_error(
             "E183",
             &root,
