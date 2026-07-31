@@ -78,6 +78,18 @@ test toolbar_theme_and_find_interactions
   click close_find
   expect missing find_bar
 
+test shell_click_releases_editor_focus
+  preset test
+  viewport 1200 800
+  target document_editor = #app/editor-surface/root/page/document
+  target dark_theme = #app/toolbar/root/action-row/dark-theme
+  expect editor_focused
+  click document_editor
+  click dark_theme
+  expect !editor_focused
+  click document_editor
+  expect editor_focused
+
 test dirty_new_confirmation_interaction
   preset test
   viewport 1200 800

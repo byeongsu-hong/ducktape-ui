@@ -80,6 +80,7 @@ view
                 document=document
                 dark=dark
                 disabled=!editor_enabled
+                focused=editor_focused
           StatusBar #status-bar
             with
               cursor_label=cursor_status(caret_line, caret_column, line_count)

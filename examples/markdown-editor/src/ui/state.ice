@@ -14,6 +14,7 @@ state
   busy = false
   error = ""
   dark = false
+  editor_focused = true
   active_palette:palette[AppTheme] = AppTheme.light
 
 derived

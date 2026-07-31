@@ -119,6 +119,7 @@ where
     padding: Padding,
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    focus_enabled: bool,
     highlighter_settings: Highlighter::Settings,
     format: Box<FormatFn<'a, Highlighter>>,
     format_key: u64,
@@ -143,6 +144,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             padding: Padding::new(5.0),
             wrapping: text::Wrapping::default(),
             on_action: None,
+            focus_enabled: true,
             highlighter_settings: (),
             format: Box::new(|_| Format::default()),
             format_key: 0,
@@ -228,6 +230,13 @@ where
         self
     }
 
+    /// Keeps the editor's internal focus and drag state aligned with the
+    /// surrounding view focus.
+    pub fn focus_enabled(mut self, enabled: bool) -> Self {
+        self.focus_enabled = enabled;
+        self
+    }
+
     /// Uses a custom highlighter and rich formatting function.
     ///
     /// `format_key` must change whenever captured values that affect formatting
@@ -255,6 +264,7 @@ where
             padding: self.padding,
             wrapping: self.wrapping,
             on_action: self.on_action,
+            focus_enabled: self.focus_enabled,
             highlighter_settings: settings,
             format: Box::new(format),
             format_key,
@@ -619,6 +629,11 @@ where
     ) {
         let state = tree.state.downcast_mut::<State<Highlighter>>();
         let bounds = layout.bounds();
+
+        if !self.focus_enabled && state.focus.is_some() {
+            operation::Focusable::unfocus(state);
+            shell.request_redraw();
+        }
 
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && cursor.is_over(bounds)
@@ -3546,6 +3561,24 @@ mod tests {
         };
         assert!(release_was_captured);
         assert!(messages.is_empty());
+
+        editor = editor.focus_enabled(false);
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::Window(window::Event::RedrawRequested(Instant::now())),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        assert!(state.focus.is_none());
+        assert!(state.drag_anchor.is_none());
     }
 
     #[test]

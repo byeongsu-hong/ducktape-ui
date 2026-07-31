@@ -1,4 +1,4 @@
-component EditorSurface(document:editor, dark:bool, disabled:bool) -> RichEditorAction
+component EditorSurface(document:editor, dark:bool, disabled:bool, focused:bool) -> RichEditorAction
   box #root
     with
       w=fill
@@ -13,4 +13,4 @@ component EditorSurface(document:editor, dark:bool, disabled:bool) -> RichEditor
         px=40.0
         pt=28.0
         pb=120.0
-      extern markdown_editor(document, dark, disabled) #document -> emit(_)
+      extern markdown_editor(document, dark, disabled, focused) #document -> emit(_)
