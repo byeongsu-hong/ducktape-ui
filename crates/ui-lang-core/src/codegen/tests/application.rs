@@ -856,7 +856,7 @@ view
         ".title(Self::__title)",
         ".theme(Self::__theme).style(Self::__style)",
         "fn __title(&self) -> ::std::string::String",
-        "\"dark\" => ::iced::Theme::Dark",
+        "fn __theme(&self) -> ::iced::Theme {\n::iced::Theme::Dark",
         "fn __style(&self, __theme: &::iced::Theme)",
         "parse::<::iced::Color>()",
         ".executor::<iced::executor::Default>()",

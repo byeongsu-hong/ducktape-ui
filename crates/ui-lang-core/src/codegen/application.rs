@@ -17,8 +17,10 @@ fn handler_param_binding(param: &HandlerParam) -> Binding {
 
 pub(in crate::codegen) fn generate_theme(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<(), Error> {
+    let document = program.document();
+    let theme = program.theme();
     let state_env = state_env(document, "self");
     let mut callback_env = state_env.clone();
     if document.daemon {
@@ -37,21 +39,17 @@ pub(in crate::codegen) fn generate_theme(
     } else {
         ""
     };
-    let contract = document
-        .theme_contract
-        .as_ref()
-        .expect("checker requires a theme contract");
-    let palette_code = |palette: &Palette| {
-        let colors = contract
-            .tokens
+    let palette_code = |palette: &crate::lower::ResolvedPalette| {
+        let colors = palette
+            .colors
             .iter()
-            .map(|token| {
-                color_code(
-                    palette
-                        .colors
-                        .get(token)
-                        .expect("checker requires complete palettes"),
-                    None,
+            .map(|color| {
+                format!(
+                    "::iced::Color::from_rgba8({}, {}, {}, {:.6})",
+                    color.rgba[0],
+                    color.rgba[1],
+                    color.rgba[2],
+                    color.rgba[3] as f32 / 255.0
                 )
             })
             .collect::<Vec<_>>()
@@ -65,33 +63,30 @@ pub(in crate::codegen) fn generate_theme(
     if document.daemon {
         writeln!(out, "let _ = &window;").unwrap();
     }
-    if let Some(setting) = &document.settings.palette {
-        let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
-        let contract = generated_named_rust(&contract.name);
-        writeln!(out, "match {value} {{").unwrap();
-        for palette in &document.palettes {
-            writeln!(
-                out,
-                "{contract}::{} => {},",
-                pascal(&palette.name),
-                palette_code(palette)
-            )
-            .unwrap();
+    match &theme.active_palette {
+        ResolvedPaletteSelection::Static(id) => {
+            writeln!(out, "{}", palette_code(&theme.palettes[id.0 as usize])).unwrap();
         }
-        writeln!(out, "}}").unwrap();
-    } else {
-        writeln!(out, "{}", palette_code(&document.palettes[0])).unwrap();
+        ResolvedPaletteSelection::Dynamic(expression) => {
+            let value = expr_code(expression, &callback_env, document, ValueMode::Owned)?;
+            let contract = generated_named_rust(&theme.contract.name);
+            writeln!(out, "match {value} {{").unwrap();
+            for palette in &theme.palettes {
+                writeln!(
+                    out,
+                    "{contract}::{} => {},",
+                    pascal(&palette.name),
+                    palette_code(palette)
+                )
+                .unwrap();
+            }
+            writeln!(out, "}}").unwrap();
+        }
     }
     writeln!(out, "}}").unwrap();
 
-    let palette_field = |name: &str| {
-        let index = contract
-            .tokens
-            .iter()
-            .position(|token| token == name)
-            .expect("checker requires native palette tokens");
-        format!("__ice_palette.colors[{index}]")
-    };
+    let palette_field =
+        |token: crate::lower::ThemeTokenId| format!("__ice_palette.colors[{}]", token.index);
     let callback_value = if document.daemon { "window" } else { "" };
     writeln!(
         out,
@@ -104,29 +99,63 @@ pub(in crate::codegen) fn generate_theme(
         document.app,
     )
     .unwrap();
-    writeln!(out, "background: {},", palette_field("bg")).unwrap();
-    writeln!(out, "text: {},", palette_field("fg")).unwrap();
-    writeln!(out, "primary: {},", palette_field("primary")).unwrap();
-    writeln!(out, "success: {},", palette_field("primary")).unwrap();
-    writeln!(out, "warning: {},", palette_field("danger")).unwrap();
-    writeln!(out, "danger: {},", palette_field("danger")).unwrap();
+    writeln!(
+        out,
+        "background: {},",
+        palette_field(theme.native_tokens.background)
+    )
+    .unwrap();
+    writeln!(out, "text: {},", palette_field(theme.native_tokens.text)).unwrap();
+    writeln!(
+        out,
+        "primary: {},",
+        palette_field(theme.native_tokens.primary)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "success: {},",
+        palette_field(theme.native_tokens.primary)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "warning: {},",
+        palette_field(theme.native_tokens.danger)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "danger: {},",
+        palette_field(theme.native_tokens.danger)
+    )
+    .unwrap();
     writeln!(out, "}})\n}}").unwrap();
     writeln!(out, "fn __theme(&self{callback_arg}) -> ::iced::Theme {{").unwrap();
-    if let Some(setting) = &document.settings.theme {
-        if let Expr::Call { name, args } = &setting.value
-            && document
-                .functions
-                .iter()
-                .any(|function| function.name == *name && function.kind == ExternKind::Theme)
-        {
+    match &theme.app_theme {
+        ResolvedAppThemeSelection::App => {
+            writeln!(out, "Self::__app_theme(self.__palette({callback_value}))").unwrap();
+        }
+        ResolvedAppThemeSelection::Default => {
+            writeln!(
+                out,
+                "<::iced::Theme as ::iced::theme::Base>::default(::iced::theme::Mode::None)"
+            )
+            .unwrap();
+        }
+        ResolvedAppThemeSelection::BuiltIn(name) => {
+            writeln!(out, "::iced::Theme::{}", pascal(name)).unwrap();
+        }
+        ResolvedAppThemeSelection::Factory(factory) => {
             writeln!(
                 out,
                 "{}",
-                theme_factory_code(name, args, &callback_env, document)?
+                resolved_theme_factory_code(factory, &callback_env, program)?
             )
             .unwrap();
-        } else {
-            let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
+        }
+        ResolvedAppThemeSelection::Dynamic(expression) => {
+            let value = expr_code(expression, &callback_env, document, ValueMode::Owned)?;
             writeln!(out, "match ({value}).as_str() {{").unwrap();
             writeln!(
                 out,
@@ -143,8 +172,6 @@ pub(in crate::codegen) fn generate_theme(
             )
             .unwrap();
         }
-    } else {
-        writeln!(out, "Self::__app_theme(self.__palette({callback_value}))").unwrap();
     }
     writeln!(out, "}}").unwrap();
     if let Some(setting) = &document.settings.title {

@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::codegen) fn append_text_options(
     code: &mut String,
     options: &TextOptions,
-    style: &Style,
+    style: &ResolvedStyle,
     env: &HashMap<String, Binding>,
     document: &Document,
 ) -> Result<(), Error> {

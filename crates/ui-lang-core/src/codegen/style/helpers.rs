@@ -134,7 +134,7 @@ pub(in crate::codegen) fn app_default_font_code(document: &Document) -> String {
 
 pub(in crate::codegen) fn styled_font_code(
     font: Option<&FontPreset>,
-    style: &Style,
+    style: &ResolvedStyle,
     document: &Document,
 ) -> Result<Option<String>, Error> {
     let base = match font {

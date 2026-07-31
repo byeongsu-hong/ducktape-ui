@@ -13,20 +13,20 @@ pub(in crate::codegen) fn render_foundation(
             kind,
             options,
             id,
-            styles,
             children,
             span,
+            ..
         } => render_layout(
-            *kind, options, id, styles, children, span, document, message, env, scope, slot,
+            *kind, options, id, children, span, document, message, env, scope, slot,
         ),
         ViewNode::Container {
             options,
             id,
-            styles,
             content,
             span,
+            ..
         } => render_container(
-            options, id, styles, content, span, document, message, env, scope, slot,
+            options, id, content, span, document, message, env, scope, slot,
         ),
         ViewNode::Overlay {
             id,
@@ -50,14 +50,14 @@ pub(in crate::codegen) fn render_foundation(
             value,
             id,
             options,
-            styles,
             span,
+            ..
         } => {
-            let style = Style::parse(styles, document);
+            let style = &document.program().style_use(span)?.style;
             let value = expr_code(value, env, document, ValueMode::Borrowed)?;
             let accessibility_key =
                 accessibility_key_code(id.as_ref(), "text", span, scope, env, document)?;
-            let code = text_code(options, &style, message, env, document)?;
+            let code = text_code(options, style, message, env, document)?;
             let selection = options.tracking.filter(|tracking| *tracking > 0.0).map_or(
                 "let __text = ::ui_lang_runtime::selectable_text(__text);",
                 |_| "",
@@ -71,11 +71,11 @@ pub(in crate::codegen) fn render_foundation(
             options,
             color,
             spans,
-            styles,
             route,
+            span,
             ..
         } => render_rich_text(
-            id, options, color, spans, styles, route, document, message, env, scope,
+            id, options, color, spans, route, span, document, message, env, scope,
         ),
         ViewNode::Input {
             label,
@@ -84,10 +84,10 @@ pub(in crate::codegen) fn render_foundation(
             hint,
             disabled,
             options,
-            styles,
             span,
+            ..
         } => {
-            let style = Style::parse(styles, document);
+            let style = &document.program().style_use(span)?.style;
             let state = env.get(binding).ok_or_else(|| {
                 Error::new("E150", span, format!("unknown input state `{binding}`"))
             })?;
@@ -221,7 +221,7 @@ pub(in crate::codegen) fn render_foundation(
             input.push_str(&text_input_style_code(
                 &options.style,
                 options.custom_style.as_ref(),
-                Some(&style),
+                Some(style),
                 env,
                 document,
                 "style",
@@ -255,7 +255,7 @@ pub(in crate::codegen) fn render_foundation(
 /// whole (bounds and alignment) move to a container around that row.
 fn text_code(
     options: &TextOptions,
-    style: &Style,
+    style: &ResolvedStyle,
     message: &str,
     env: &HashMap<String, Binding>,
     document: &Document,
@@ -324,13 +324,13 @@ fn text_code(
 fn append_glyph_options(
     code: &mut String,
     options: &TextOptions,
-    style: &Style,
+    style: &ResolvedStyle,
     env: &HashMap<String, Binding>,
     document: &Document,
 ) -> Result<(), Error> {
     append_text_options(code, options, style, env, document)?;
     if let Some(color) = &style.text_color {
-        write!(code, ".color({})", theme_color(document, color)).unwrap();
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
     }
     Ok(())
 }

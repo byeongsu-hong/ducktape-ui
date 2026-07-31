@@ -1,40 +1,6 @@
 use super::*;
 
-#[derive(Default)]
-pub(in crate::codegen) struct Style {
-    pub(in crate::codegen) width_fill: bool,
-    pub(in crate::codegen) height_fill: bool,
-    pub(in crate::codegen) max_width: Option<u16>,
-    pub(in crate::codegen) padding: [u16; 4],
-    pub(in crate::codegen) gap: Option<u16>,
-    pub(in crate::codegen) items_center: bool,
-    pub(in crate::codegen) self_center: bool,
-    pub(in crate::codegen) clip: bool,
-    pub(in crate::codegen) text_size: Option<f32>,
-    pub(in crate::codegen) text_line_height: Option<f32>,
-    pub(in crate::codegen) font_monospace: bool,
-    pub(in crate::codegen) font_weight: Option<StyleFontWeight>,
-    pub(in crate::codegen) text_color: Option<String>,
-    pub(in crate::codegen) background: Option<String>,
-    pub(in crate::codegen) hover_background: Option<String>,
-    pub(in crate::codegen) pressed_background: Option<String>,
-    pub(in crate::codegen) disabled_background: Option<String>,
-    pub(in crate::codegen) disabled_text_color: Option<String>,
-    pub(in crate::codegen) border_color: Option<String>,
-    pub(in crate::codegen) focus_border_color: Option<String>,
-    pub(in crate::codegen) border_width: u16,
-    pub(in crate::codegen) radius: u16,
-    pub(in crate::codegen) disabled_opacity: Option<f32>,
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::codegen) enum StyleFontWeight {
-    Medium,
-    Semibold,
-    Bold,
-}
-
-impl StyleFontWeight {
+impl ResolvedStyleFontWeight {
     pub(in crate::codegen) fn code(self) -> &'static str {
         match self {
             Self::Medium => "Medium",
@@ -44,107 +10,7 @@ impl StyleFontWeight {
     }
 }
 
-impl Style {
-    pub(in crate::codegen) fn parse(tokens: &[String], document: &Document) -> Self {
-        let mut style = Self::default();
-        for token in document.expand_styles(tokens) {
-            let (variant, utility) = token
-                .split_once(':')
-                .map_or((None, token.as_str()), |(a, b)| (Some(a), b));
-            if variant == Some("hover") && utility.starts_with("bg-") {
-                style.hover_background = Some(utility[3..].into());
-                continue;
-            }
-            if variant == Some("pressed") && utility.starts_with("bg-") {
-                style.pressed_background = Some(utility[3..].into());
-                continue;
-            }
-            if variant == Some("focus") && utility.starts_with("border-") {
-                style.focus_border_color = Some(utility[7..].into());
-                continue;
-            }
-            if variant == Some("disabled") && utility.starts_with("opacity-") {
-                style.disabled_opacity =
-                    utility[8..].parse::<f32>().ok().map(|value| value / 100.0);
-                continue;
-            }
-            if variant == Some("disabled") && utility.starts_with("bg-") {
-                style.disabled_background = Some(utility[3..].into());
-                continue;
-            }
-            if variant == Some("disabled") && utility.starts_with("text-") {
-                style.disabled_text_color = Some(utility[5..].into());
-                continue;
-            }
-            if variant.is_some() {
-                continue;
-            }
-            match utility {
-                "w-full" => style.width_fill = true,
-                "h-full" => style.height_fill = true,
-                "max-w-sm" => style.max_width = Some(384),
-                "max-w-md" => style.max_width = Some(448),
-                "max-w-lg" => style.max_width = Some(512),
-                "max-w-xl" => style.max_width = Some(576),
-                "max-w-2xl" => style.max_width = Some(672),
-                "items-center" => style.items_center = true,
-                "self-center" => style.self_center = true,
-                "overflow-hidden" => style.clip = true,
-                "text-xs" => style.text_size = Some(12.0),
-                "text-sm" => style.text_size = Some(14.0),
-                "text-base" => style.text_size = Some(16.0),
-                "text-lg" => style.text_size = Some(18.0),
-                "text-xl" => style.text_size = Some(20.0),
-                "text-2xl" => style.text_size = Some(24.0),
-                "leading-tight" => style.text_line_height = Some(1.2),
-                "leading-snug" => style.text_line_height = Some(1.35),
-                "leading-normal" => style.text_line_height = Some(1.5),
-                "leading-relaxed" => style.text_line_height = Some(1.65),
-                "font-mono" => style.font_monospace = true,
-                "font-medium" => style.font_weight = Some(StyleFontWeight::Medium),
-                "font-semibold" => style.font_weight = Some(StyleFontWeight::Semibold),
-                "font-bold" => style.font_weight = Some(StyleFontWeight::Bold),
-                "border" => style.border_width = 1,
-                "border-2" => style.border_width = 2,
-                "rounded-sm" => style.radius = 2,
-                "rounded" | "rounded-md" => style.radius = 6,
-                "rounded-lg" => style.radius = 10,
-                "rounded-full" => style.radius = 999,
-                _ if utility.starts_with("text-") && exact_text_size(&utility[5..]).is_some() => {
-                    style.text_size = exact_text_size(&utility[5..]);
-                }
-                _ if utility.starts_with("rounded-") => {
-                    style.radius = exact_radius(&utility[8..]).unwrap_or_default()
-                }
-                _ if utility.starts_with("gap-") => style.gap = spacing(&utility[4..]),
-                _ if utility.starts_with("p-") => {
-                    if let Some(value) = spacing(&utility[2..]) {
-                        style.padding = [value; 4];
-                    }
-                }
-                _ if utility.starts_with("px-") => {
-                    if let Some(value) = spacing(&utility[3..]) {
-                        style.padding[1] = value;
-                        style.padding[3] = value;
-                    }
-                }
-                _ if utility.starts_with("py-") => {
-                    if let Some(value) = spacing(&utility[3..]) {
-                        style.padding[0] = value;
-                        style.padding[2] = value;
-                    }
-                }
-                _ if utility.starts_with("bg-") => style.background = Some(utility[3..].into()),
-                _ if utility.starts_with("text-") => style.text_color = Some(utility[5..].into()),
-                _ if utility.starts_with("border-") => {
-                    style.border_color = Some(utility[7..].into())
-                }
-                _ => {}
-            }
-        }
-        style
-    }
-
+impl ResolvedStyle {
     pub(in crate::codegen) fn padding_code(&self) -> Option<String> {
         (self.padding != [0; 4]).then(|| {
             format!(
@@ -155,7 +21,7 @@ impl Style {
     }
 }
 
-pub(in crate::codegen) fn append_size(code: &mut String, style: &Style) {
+pub(in crate::codegen) fn append_size(code: &mut String, style: &ResolvedStyle) {
     if style.width_fill {
         code.push_str(".width(::iced::Fill)");
     }
@@ -164,16 +30,13 @@ pub(in crate::codegen) fn append_size(code: &mut String, style: &Style) {
     }
 }
 
-pub(in crate::codegen) fn container_style_code(style: &Style, document: &Document) -> String {
-    container_style_value(style, document)
+pub(in crate::codegen) fn container_style_code(style: &ResolvedStyle) -> String {
+    container_style_value(style)
         .map(|style| format!(".style(move |_| {style})"))
         .unwrap_or_default()
 }
 
-pub(in crate::codegen) fn container_style_value(
-    style: &Style,
-    document: &Document,
-) -> Option<String> {
+pub(in crate::codegen) fn container_style_value(style: &ResolvedStyle) -> Option<String> {
     if style.background.is_none()
         && style.border_width == 0
         && style.border_color.is_none()
@@ -185,17 +48,17 @@ pub(in crate::codegen) fn container_style_value(
     let background = style
         .background
         .as_ref()
-        .map(|color| format!("Some({}.into())", theme_color(document, color)))
+        .map(|color| format!("Some({}.into())", resolved_theme_color(color)))
         .unwrap_or_else(|| "None".into());
     let text = style
         .text_color
         .as_ref()
-        .map(|color| format!("Some({})", theme_color(document, color)))
+        .map(|color| format!("Some({})", resolved_theme_color(color)))
         .unwrap_or_else(|| "None".into());
     let border = style
         .border_color
         .as_ref()
-        .map(|color| theme_color(document, color))
+        .map(resolved_theme_color)
         .unwrap_or_else(|| "::iced::Color::TRANSPARENT".into());
     Some(format!(
         "::iced::widget::container::Style {{ background: {background}, text_color: {text}, border: ::iced::Border {{ color: {border}, width: {}.0, radius: {}.0.into() }}, ..::iced::widget::container::Style::default() }}",
@@ -204,7 +67,7 @@ pub(in crate::codegen) fn container_style_value(
 }
 
 pub(in crate::codegen) fn button_style_code(
-    style: &Style,
+    style: &ResolvedStyle,
     typed: &ButtonStyleSet,
     env: &HashMap<String, Binding>,
     document: &Document,
@@ -260,19 +123,16 @@ pub(in crate::codegen) fn button_style_code(
         custom.unwrap_or_else(|| format!("::iced::widget::button::{preset}(__theme, __status)"));
     let mut code = format!(".style(move |__theme, __status| {{ let mut __style = {base};");
     if has_utilities {
-        let normal = style
-            .background
-            .as_ref()
-            .map(|color| theme_color(document, color));
+        let normal = style.background.as_ref().map(resolved_theme_color);
         let hover = style
             .hover_background
             .as_ref()
-            .map(|color| theme_color(document, color))
+            .map(resolved_theme_color)
             .or_else(|| normal.clone());
         let pressed = style
             .pressed_background
             .as_ref()
-            .map(|color| theme_color(document, color))
+            .map(resolved_theme_color)
             .or_else(|| hover.clone())
             .or_else(|| normal.clone());
         let option = |color: Option<String>| {
@@ -291,7 +151,7 @@ pub(in crate::codegen) fn button_style_code(
             write!(
                 code,
                 " __style.text_color = {};",
-                theme_color(document, text)
+                resolved_theme_color(text)
             )
             .unwrap();
         }
@@ -302,7 +162,7 @@ pub(in crate::codegen) fn button_style_code(
             write!(
                 code,
                 " __style.border.color = {};",
-                theme_color(document, border)
+                resolved_theme_color(border)
             )
             .unwrap();
         }
@@ -321,7 +181,7 @@ pub(in crate::codegen) fn button_style_code(
                 write!(
                     code,
                     " __style.background = Some({}.into());",
-                    theme_color(document, background)
+                    resolved_theme_color(background)
                 )
                 .unwrap();
             } else if style.background.is_some() || style.disabled_opacity.is_some() {
@@ -331,7 +191,7 @@ pub(in crate::codegen) fn button_style_code(
                 write!(
                     code,
                     " __style.text_color = {};",
-                    theme_color(document, text)
+                    resolved_theme_color(text)
                 )
                 .unwrap();
             } else if style.text_color.is_some() || style.disabled_opacity.is_some() {
@@ -409,35 +269,79 @@ pub(in crate::codegen) fn theme_color(document: &Document, token: &str) -> Strin
     })
 }
 
-pub(in crate::codegen) fn theme_preset_code(
-    preset: &ThemePreset,
+pub(in crate::codegen) fn resolved_theme_color(color: &ResolvedThemeColor) -> String {
+    let value = match color.base {
+        ResolvedThemeColorBase::White => color_code("#ffffff", None),
+        ResolvedThemeColorBase::Black => color_code("#000000", None),
+        ResolvedThemeColorBase::Transparent => color_code("#00000000", None),
+        ResolvedThemeColorBase::Token(token) => {
+            format!("__ice_palette.colors[{}]", token.index)
+        }
+    };
+    color.opacity.map_or(value.clone(), |opacity| {
+        format!(
+            "{{ let mut __color = {value}; __color.a = {:.6}; __color }}",
+            opacity as f32 / 100.0
+        )
+    })
+}
+
+pub(in crate::codegen) fn resolved_theme_preset_code(
+    preset: &ResolvedThemePreset,
     env: &HashMap<String, Binding>,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     Ok(match preset {
-        ThemePreset::Default => "::std::option::Option::None".into(),
-        ThemePreset::App => "::std::option::Option::Some(__ice_app_theme.clone())".into(),
-        ThemePreset::BuiltIn(name) => format!(
+        ResolvedThemePreset::Default => "::std::option::Option::None".into(),
+        ResolvedThemePreset::App => "::std::option::Option::Some(__ice_app_theme.clone())".into(),
+        ResolvedThemePreset::BuiltIn(name) => format!(
             "::std::option::Option::Some(::iced::Theme::{})",
             pascal(name)
         ),
-        ThemePreset::Factory(factory) => format!(
+        ResolvedThemePreset::Factory(factory) => format!(
             "::std::option::Option::Some({})",
-            theme_factory_code(&factory.function, &factory.args, env, document)?
+            resolved_theme_factory_code(factory, env, program)?
         ),
     })
 }
 
-pub(in crate::codegen) fn theme_factory_code(
-    name: &str,
-    args: &[Expr],
+pub(in crate::codegen) fn resolved_theme_factory_code(
+    factory: &ResolvedThemeFactory,
     env: &HashMap<String, Binding>,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let function = find_extern_function(document, name, ExternKind::Theme)
-        .expect("checker validates theme factories");
-    let args = expr_list_code(args, env, document)?;
+    let function = program.extern_function(factory.function);
+    let args = expr_list_code(&factory.arguments, env, program.document())?;
     Ok(format!("{}({args})", function.rust_path))
+}
+
+pub(in crate::codegen) fn resolved_background_code(
+    background: &ResolvedBackground,
+    env: &HashMap<String, Binding>,
+    document: &RenderDocument<'_>,
+) -> Result<String, Error> {
+    Ok(match background {
+        ResolvedBackground::Color(color) => {
+            format!("::iced::Background::Color({})", resolved_theme_color(color))
+        }
+        ResolvedBackground::Linear { angle, stops } => {
+            let mut code = format!(
+                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
+                expr_code(angle, env, document, ValueMode::Owned)?
+            );
+            for (color, offset) in stops {
+                write!(
+                    code,
+                    ".add_stop({} as f32, {})",
+                    expr_code(offset, env, document, ValueMode::Owned)?,
+                    resolved_theme_color(color)
+                )
+                .unwrap();
+            }
+            code.push(')');
+            code
+        }
+    })
 }
 
 /// Encodes a QR payload where it is rendered, never once in application state:
@@ -491,28 +395,6 @@ pub(in crate::codegen) fn color_code(value: &str, opacity: Option<u8>) -> String
         byte(2..4),
         byte(4..6)
     )
-}
-
-pub(in crate::codegen) fn spacing(value: &str) -> Option<u16> {
-    exact_pixels(value).or_else(|| {
-        value
-            .parse::<u16>()
-            .ok()
-            .and_then(|value| value.checked_mul(4))
-    })
-}
-
-fn exact_pixels(value: &str) -> Option<u16> {
-    value.strip_suffix("px")?.parse().ok()
-}
-
-fn exact_text_size(value: &str) -> Option<f32> {
-    let value = value.strip_suffix("px")?.parse::<f32>().ok()?;
-    (value.is_finite() && value > 0.0).then_some(value)
-}
-
-fn exact_radius(value: &str) -> Option<u16> {
-    exact_pixels(value).filter(|value| *value > 0)
 }
 
 pub(in crate::codegen) fn rust_string(value: &str) -> String {

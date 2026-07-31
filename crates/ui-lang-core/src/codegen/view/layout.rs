@@ -5,7 +5,6 @@ pub(in crate::codegen) fn render_layout(
     kind: Layout,
     options: &LayoutOptions,
     id: &Option<Id>,
-    styles: &[String],
     children: &[ViewNode],
     span: &Span,
     document: &RenderDocument<'_>,
@@ -14,7 +13,7 @@ pub(in crate::codegen) fn render_layout(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let style = Style::parse(styles, document);
+    let style = &document.program().style_use(span)?.style;
     if kind == Layout::Grid && options.min_cell.is_some() {
         let mut flex_options = options.clone();
         flex_options.width.get_or_insert(LengthValue::Fill);
@@ -26,7 +25,6 @@ pub(in crate::codegen) fn render_layout(
         return render_flexbox(
             &flex_options,
             id,
-            styles,
             children,
             span,
             document,
@@ -158,7 +156,7 @@ pub(in crate::codegen) fn render_layout(
             env,
             document,
         )?);
-        append_size(&mut code, &style);
+        append_size(&mut code, style);
         append_dimensions(&mut code, [&scroll.width, &scroll.height], env, document)?;
         return Ok(format!(
             "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
@@ -167,7 +165,7 @@ pub(in crate::codegen) fn render_layout(
 
     if options.flexbox.is_some() {
         return render_flexbox(
-            options, id, styles, children, span, document, message, env, scope, slot,
+            options, id, children, span, document, message, env, scope, slot,
         );
     }
 
@@ -394,7 +392,7 @@ pub(in crate::codegen) fn render_layout(
             body.push_str(".clip(true)");
         }
         append_dimensions(&mut body, [&options.width, &options.height], env, document)?;
-        append_size(&mut body, &style);
+        append_size(&mut body, style);
     }
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
@@ -406,11 +404,11 @@ pub(in crate::codegen) fn render_layout(
     {
         write!(body, ".padding({padding})").unwrap();
     }
-    append_size(&mut body, &style);
+    append_size(&mut body, style);
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
-    body.push_str(&container_style_code(&style, document));
+    body.push_str(&container_style_code(style));
     body.push(';');
     if style.self_center {
         write!(body, " let __layout_content: __IceElement<'_, {message}> = ::iced::widget::container(__content).width(::iced::Fill).center_x(::iced::Fill).into();").unwrap();
@@ -429,7 +427,6 @@ pub(in crate::codegen) fn render_layout(
 fn render_flexbox(
     options: &LayoutOptions,
     id: &Option<Id>,
-    styles: &[String],
     children: &[ViewNode],
     span: &Span,
     document: &RenderDocument<'_>,
@@ -439,7 +436,7 @@ fn render_flexbox(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let flexbox = options.flexbox.as_ref().expect("flexbox options");
-    let style = Style::parse(styles, document);
+    let style = &document.program().style_use(span)?.style;
     let accessibility_key =
         accessibility_key_code(id.as_ref(), "layout", span, scope, env, document)?;
     let child_scope = id.as_ref().map_or_else(
@@ -580,11 +577,11 @@ fn render_flexbox(
     }
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
-    append_size(&mut body, &style);
+    append_size(&mut body, style);
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
-    body.push_str(&container_style_code(&style, document));
+    body.push_str(&container_style_code(style));
     body.push_str("; let __layout_content: __IceElement<'_, ");
     write!(body, "{message}> = __content.into();").unwrap();
     write!(body, " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}").unwrap();

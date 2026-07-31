@@ -24,11 +24,11 @@ pub(in crate::codegen) fn render_controls(
             id,
             disabled,
             options,
-            styles,
             route,
             span,
+            ..
         } => {
-            let style = Style::parse(styles, document);
+            let style = &document.program().style_use(span)?.style;
             let message_code = route_code(route, "", env, document, message)?;
             let accessibility_key =
                 accessibility_key_code(id.as_ref(), "button", span, scope, env, document)?;
@@ -52,7 +52,7 @@ pub(in crate::codegen) fn render_controls(
             } else {
                 let label = rust_string(label.as_ref().expect("button label"));
                 let mut label = format!("::iced::widget::text({label})");
-                append_text_options(&mut label, &TextOptions::default(), &style, env, document)?;
+                append_text_options(&mut label, &TextOptions::default(), style, env, document)?;
                 format!("{label}.into()")
             };
             let center_x = matches!(options.width.as_ref(), Some(LengthValue::Fixed(_)));
@@ -99,7 +99,7 @@ pub(in crate::codegen) fn render_controls(
             code.push_str(
                 ".on_press_maybe(if __disabled { None } else { Some(__activate.clone()) })",
             );
-            code.push_str(&button_style_code(&style, &options.style, env, document)?);
+            code.push_str(&button_style_code(style, &options.style, env, document)?);
             Ok(format!(
                 "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
