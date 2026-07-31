@@ -123,17 +123,7 @@ fn named_component_emission_code(
     let [name] = path.as_slice() else {
         return None;
     };
-    if !document
-        .components
-        .iter()
-        .find(|item| item.name == component)?
-        .events
-        .iter()
-        .any(|event| event.name == *name)
-    {
-        return None;
-    }
-    let callback = component_event(env, component, name).expect("checker requires event route");
+    let callback = component_event(env, component, name)?;
     let mut payload_index = 0;
     let values = args
         .iter()

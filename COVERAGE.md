@@ -113,6 +113,17 @@ Components expose closed checked contracts: named events carry zero or more
 ordered typed payloads, every call site routes each event in caller scope, and
 direct app-handler references from component bodies are rejected. The single
 typed `->` output remains the default-event shorthand.
+The private HIR stores component definitions and calls by typed IDs. It orders
+props and applies defaults, resolves each bind to an app state, component state,
+or forwarded bind prop, converts every event entry to a direct or forwarded
+route, orders required/optional slots, fixes component scope and storage, and
+retains imported physical origins through a shared parented origin table before
+Rust generation starts. Structural tests cover direct and forwarded events,
+defaults, writable references, required/optional/provided slots, retained and
+mounted storage, explicit/implicit identity, nested namespaced imports, and
+root/import origin paths. A 10,000-call fixture has a two-second debug-build
+lowering budget; representative generated-Rust and source-map tests remain as
+backend evidence.
 Ordered widget payload routes, including sensor show/resize dimensions, may
 emit those named events directly from a component view.
 An explicit `forward` block accepts only outer events with the exact same name

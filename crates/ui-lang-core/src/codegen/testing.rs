@@ -2,10 +2,12 @@ use super::*;
 
 pub(in crate::codegen) fn generate_test_mounts(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
+    let document = program.document();
+    let render_document = RenderDocument::new(program);
     for (index, test) in document.tests.iter().enumerate() {
         let Some(mount) = &test.mount else {
             continue;
@@ -24,7 +26,7 @@ pub(in crate::codegen) fn generate_test_mounts(
         }
         let root = render_node_if_present(
             mount,
-            document,
+            &render_document,
             message,
             &env,
             &rust_string(&document.app),
@@ -70,10 +72,11 @@ pub(in crate::codegen) fn generate_test_mounts(
 
 pub(in crate::codegen) fn generate_tests(
     out: &mut String,
-    document: &CheckedDocument,
+    program: &LoweredProgram,
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
+    let document = program.document();
     writeln!(out, "#[cfg(test)]\nmod __ice_tests {{\nuse super::*;").unwrap();
     writeln!(
         out,
@@ -83,7 +86,7 @@ pub(in crate::codegen) fn generate_tests(
     )
     .unwrap();
     for (index, test) in document.tests.iter().enumerate() {
-        generate_test(out, document, message, source_path, index, test)?;
+        generate_test(out, program, message, source_path, index, test)?;
     }
     writeln!(out, "}}").unwrap();
     Ok(())
@@ -91,15 +94,16 @@ pub(in crate::codegen) fn generate_tests(
 
 fn generate_test(
     out: &mut String,
-    document: &CheckedDocument,
+    program: &LoweredProgram,
     message: &str,
     source_path: &str,
     index: usize,
     test: &TestDecl,
 ) -> Result<(), Error> {
+    let document = program.document();
     writeln!(out, "#[test]\nfn {}() {{", test.name).unwrap();
     let declaration = format!("test {}", test.name);
-    let source = location_code(document, source_path, &test.span, &declaration);
+    let source = location_code(program, source_path, &test.span, &declaration);
     let mut config = format!(
         "::ui_lang_runtime::testing::Config::new({}).source({source})",
         rust_string(&test.name),
@@ -154,20 +158,20 @@ fn generate_test(
         write!(config, ".preset({})", rust_string(preset)).unwrap();
     }
     writeln!(out, "let __config = {config};").unwrap();
-    let program = if test.mount.is_some() {
+    let test_program = if test.mount.is_some() {
         format!("{}::__ice_test_program_{index}()", document.app)
     } else {
         format!("{}::__program()", document.app)
     };
     writeln!(
         out,
-        "let mut __test = ::ui_lang_runtime::testing::Driver::new({program}, __config);"
+        "let mut __test = ::ui_lang_runtime::testing::Driver::new({test_program}, __config);"
     )
     .unwrap();
 
     for step in &test.steps {
         let statement = test_step_source(step);
-        let location = location_code(document, source_path, &step.span, &statement);
+        let location = location_code(program, source_path, &step.span, &statement);
         let env = test_env(test, document, &location)?;
         writeln!(
             out,
@@ -801,7 +805,7 @@ fn target_ref_path_code(
 }
 
 fn location_code(
-    document: &CheckedDocument,
+    document: &LoweredProgram,
     source_path: &str,
     span: &Span,
     statement: &str,

@@ -134,7 +134,8 @@ UTF-8 .ice source graph
   -> indentation-aware parser
   -> AST
   -> name resolution + type inference + semantic checks
-  -> checked AST
+  -> CheckedDocument
+  -> private normalized LoweredProgram
   -> iced Rust backend
   -> rustc
 ```
@@ -171,10 +172,23 @@ removed automatically. A hash collision remains a hard build error, and
 byte-identical output is not replaced so its mtime remains stable.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
-Only the checker can construct it, and backend generation accepts that checked
-form rather than an unchecked `Document`. The type is backend-neutral: it
-contains the same Ice AST after resolution and semantic checks, without Iced
-types or a speculative second backend.
+Only the checker can construct it. A private lowering pass then produces an
+owned `LoweredProgram`, and Rust generation accepts only that lowered program.
+Neither representation contains Iced types or Rust fragments.
+
+HIR migration is vertical rather than a second shadow pipeline. Component
+contracts and calls are normalized now: definitions, parameters, events,
+slots, writable state references, output routes, explicit or implicit scope,
+and retained, mounted, or stateless storage use typed IDs. Call arguments are
+stored once in declaration order with defaults selected; named event routes
+are stored once as direct or exact forwards; slot content is stored once in
+declaration order with required and optional presence resolved. Every HIR node
+has an `OriginId` into one shared table carrying physical root/import paths,
+line and column, and a parent link for future expansion stacks. Code generation
+does not repeat those component decisions or look up a component by source
+name. Unmigrated semantic families remain owned inside `LoweredProgram` during
+the incremental conversion; each later slice must remove its prior backend
+path when it adds normalized nodes.
 
 The Rust adapter is one manifest-relative include:
 

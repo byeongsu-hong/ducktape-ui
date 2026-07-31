@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_structure(
     node: &ViewNode,
-    document: &Document,
+    document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
     scope: &str,
