@@ -148,6 +148,18 @@ fi
 
 "$cargo_ice" ice check
 "$cargo_ice" ice test packaged_consumer_contract -- --nocapture
+review_dir="$downstream_scratch/review"
+"$cargo_ice" ice review src/ui/app.ice \
+  --test packaged_consumer_contract \
+  --output "$review_dir"
+if ! grep -Fq '"success": true' "$review_dir/report.json" ||
+  ! grep -Fq '"executions": 1' "$review_dir/report.json" ||
+  ! grep -Fq '"key": "packaged_consumer_contract/packaged_consumer.json"' "$review_dir/report.json" ||
+  [[ ! -f "$review_dir/report.html" ]]; then
+  echo "packaged cargo-ice did not publish complete downstream review evidence" >&2
+  cat "$review_dir/report.json" >&2
+  exit 1
+fi
 cargo test --locked packaged_runtime_is_a_direct_dependency
 
 mapfile -t generated_manifests < <(

@@ -523,14 +523,42 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
 }
 
-fn manifest_png(manifest_path: &Path, manifest: &Value) -> Result<PathBuf, String> {
+pub(super) fn manifest_png(manifest_path: &Path, manifest: &Value) -> Result<PathBuf, String> {
     let png = manifest["png"]
         .as_str()
         .ok_or_else(|| format!("{} omits string field `png`", manifest_path.display()))?;
-    Ok(manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(png))
+    let relative = Path::new(png);
+    if relative.components().count() != 1
+        || !matches!(
+            relative.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err(format!(
+            "{} field `png` must be a sibling basename",
+            manifest_path.display()
+        ));
+    }
+    let directory = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let directory = directory.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve capture directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    let png = directory.join(relative).canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve capture PNG {}: {error}",
+            directory.join(relative).display()
+        )
+    })?;
+    if !png.starts_with(&directory) || !png.is_file() {
+        return Err(format!(
+            "capture PNG must be a sibling file of {}",
+            manifest_path.display()
+        ));
+    }
+    Ok(png)
 }
 
 fn file_stem(path: &Path) -> String {
@@ -784,6 +812,26 @@ mod tests {
         compare_json("", &baseline, &current, 0.0, &mut differences);
         assert_eq!(differences[0]["path"], "/source");
         assert_eq!(differences[0]["current"]["$missing"], true);
+    }
+
+    #[test]
+    fn capture_png_must_be_a_sibling_basename() {
+        let fixture = tempfile::tempdir().unwrap();
+        let manifest = fixture.path().join("capture.json");
+        let png = fixture.path().join("capture.png");
+        fs::write(&manifest, "{}").unwrap();
+        fs::write(&png, []).unwrap();
+
+        assert_eq!(
+            manifest_png(&manifest, &json!({ "png": "capture.png" })).unwrap(),
+            png.canonicalize().unwrap()
+        );
+        for escaped in ["../capture.png", "nested/capture.png", "/capture.png"] {
+            assert!(
+                manifest_png(&manifest, &json!({ "png": escaped })).is_err(),
+                "accepted escaping PNG path {escaped:?}"
+            );
+        }
     }
 
     #[test]

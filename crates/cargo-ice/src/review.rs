@@ -1,5 +1,5 @@
 use crate::inspection::{
-    DiffThresholds, compare_capture_manifests, containing_package, source_output_name,
+    DiffThresholds, compare_capture_manifests, containing_package, manifest_png, source_output_name,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,6 +49,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         Err(error) => return analysis_failure(root, &source, &output, error),
     };
     let selected = selected_tests(&analysis.document.tests, &options.tests)?;
+    let expected_captures = expected_capture_keys(&analysis.document.tests, &selected)?;
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let package = options
         .package
@@ -81,6 +82,21 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             .output()
             .map_err(|error| format!("cannot run Ice test `{test}`: {error}"))?;
         let elapsed_ms = started.elapsed().as_millis();
+        let executions =
+            exact_test_executions(&output_result.stdout, &format!("__ice_tests::{test}"));
+        let execution_error = if output_result.status.success() {
+            match executions {
+                1 => None,
+                0 => Some(format!(
+                    "cargo reported success without executing exact Ice test `{test}`; ensure the root is included with `ui_lang::include_app!`"
+                )),
+                count => Some(format!(
+                    "cargo executed exact Ice test `{test}` {count} times; select a package target with one generated test"
+                )),
+            }
+        } else {
+            None
+        };
         let stem = safe_component(test);
         let stdout_path = log_dir.join(format!("{stem}.stdout.log"));
         let stderr_path = log_dir.join(format!("{stem}.stderr.log"));
@@ -88,7 +104,9 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         fs::write(&stderr_path, &output_result.stderr).map_err(|error| error.to_string())?;
         test_results.push(json!({
             "name": test,
-            "passed": output_result.status.success(),
+            "passed": output_result.status.success() && execution_error.is_none(),
+            "executions": executions,
+            "error": execution_error,
             "status_code": output_result.status.code(),
             "elapsed_ms": elapsed_ms,
             "stdout": relative_path(&output, &stdout_path),
@@ -123,17 +141,43 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     )?;
 
     let current = capture_index(&artifact_dir)?;
-    let baseline = options
+    let (baseline, baseline_error) = match options
         .baseline
         .as_ref()
         .map(|path| baseline_index(&root.join(path)))
-        .transpose()?;
+        .transpose()
+    {
+        Ok(baseline) => (baseline, None),
+        Err(error) => (None, Some(error)),
+    };
     let mut captures = Vec::new();
     let mut source_changes = Vec::new();
     let mut compared_baselines = BTreeSet::new();
+    let mut valid_manifests = Vec::new();
     for (key, current_path) in &current {
-        let manifest = read_json(current_path)?;
-        let png = manifest_png(current_path, &manifest)?;
+        let manifest = match read_json(current_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                captures.push(json!({
+                    "key": key,
+                    "manifest": relative_path(&output, current_path),
+                    "comparison": { "status": "error", "error": error },
+                }));
+                continue;
+            }
+        };
+        let png = match validate_capture_manifest(current_path, &manifest) {
+            Ok(png) => png,
+            Err(error) => {
+                captures.push(json!({
+                    "key": key,
+                    "name": manifest["name"],
+                    "manifest": relative_path(&output, current_path),
+                    "comparison": { "status": "error", "error": error },
+                }));
+                continue;
+            }
+        };
         let mut capture = json!({
             "key": key,
             "name": manifest["name"],
@@ -141,7 +185,14 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             "png": relative_path(&output, &png),
             "comparison": { "status": "not_requested" },
         });
-        if let Some(baseline) = &baseline {
+        if !expected_captures.contains(key) {
+            capture["comparison"] = json!({
+                "status": "unexpected_current",
+                "error": "capture was not declared by a selected Ice test",
+            });
+        } else if let Some(error) = &baseline_error {
+            capture["comparison"] = json!({ "status": "error", "error": error });
+        } else if let Some(baseline) = &baseline {
             if let Some(baseline_path) = baseline.get(key) {
                 compared_baselines.insert(key.clone());
                 let destination = diff_dir.join(key.trim_end_matches(".json"));
@@ -152,12 +203,18 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
                     options.thresholds,
                 ) {
                     Ok(report) => {
+                        let baseline_manifest = read_json(baseline_path).ok();
                         for difference in report["manifest"]["differences"]
                             .as_array()
                             .into_iter()
                             .flatten()
                         {
-                            source_changes.push(source_change(key, difference, &manifest));
+                            source_changes.push(source_change(
+                                key,
+                                difference,
+                                baseline_manifest.as_ref(),
+                                &manifest,
+                            ));
                         }
                         capture["comparison"] = json!({
                             "status": if report["matches"] == true { "match" } else { "changed" },
@@ -182,6 +239,30 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             }
         }
         captures.push(capture);
+        valid_manifests.push(manifest);
+    }
+    for key in &expected_captures {
+        if !current.contains_key(key) {
+            if let Some(baseline_path) = baseline.as_ref().and_then(|baseline| baseline.get(key)) {
+                compared_baselines.insert(key.clone());
+                captures.push(json!({
+                    "key": key,
+                    "comparison": {
+                        "status": "removed",
+                        "baseline_manifest": baseline_path,
+                        "error": "selected Ice test did not publish its declared capture",
+                    },
+                }));
+            } else {
+                captures.push(json!({
+                    "key": key,
+                    "comparison": {
+                        "status": "missing_current",
+                        "error": "selected Ice test did not publish its declared capture",
+                    },
+                }));
+            }
+        }
     }
     if let Some(baseline) = &baseline {
         for key in baseline.keys() {
@@ -198,7 +279,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     }
     captures.sort_by(|left, right| left["key"].as_str().cmp(&right["key"].as_str()));
 
-    let accessibility = accessibility_summary(current.values())?;
+    let accessibility = accessibility_summary(valid_manifests.iter());
     let tests_passed = test_results.iter().all(|test| test["passed"] == true);
     let comparisons_passed = captures.iter().all(|capture| {
         matches!(
@@ -206,7 +287,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             Some("not_requested" | "match")
         )
     });
-    let success = tests_passed && comparisons_passed;
+    let success = tests_passed && comparisons_passed && baseline_error.is_none();
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
@@ -231,6 +312,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         "source_mapped_changes": source_changes,
         "accessibility": accessibility,
         "baseline": options.baseline,
+        "baseline_error": baseline_error,
         "thresholds": {
             "pixel": options.thresholds.pixel,
             "max_changed_ratio": options.thresholds.max_changed_ratio,
@@ -405,6 +487,39 @@ fn selected_tests(
     Ok(selected)
 }
 
+fn expected_capture_keys(
+    tests: &[ui_lang_core::TestDecl],
+    selected: &[String],
+) -> Result<BTreeSet<String>, String> {
+    let selected = selected.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut captures = BTreeSet::new();
+    for test in tests
+        .iter()
+        .filter(|test| selected.contains(test.name.as_str()))
+    {
+        for step in &test.steps {
+            if let ui_lang_core::TestStepKind::Capture(name) = &step.kind {
+                let key = format!("{}/{}.json", safe_component(&test.name), name);
+                if !captures.insert(key.clone()) {
+                    return Err(format!(
+                        "selected Ice tests declare duplicate capture key `{key}`"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(captures)
+}
+
+fn exact_test_executions(stdout: &[u8], test: &str) -> usize {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("test "))
+        .filter_map(|line| line.split_once(" ... "))
+        .filter(|(name, _)| *name == test)
+        .count()
+}
+
 fn capture_index(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut paths = Vec::new();
     collect_json(root, &mut paths)?;
@@ -439,11 +554,50 @@ fn baseline_index(path: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
             let Some(manifest) = capture["manifest"].as_str() else {
                 continue;
             };
-            index.insert(key.to_owned(), directory.join(manifest));
+            let manifest = resolve_report_path(directory, manifest)?;
+            if index.insert(key.to_owned(), manifest).is_some() {
+                return Err(format!(
+                    "{} contains duplicate capture key `{key}`",
+                    report_path.display()
+                ));
+            }
         }
         return Ok(index);
     }
     capture_index(path)
+}
+
+fn resolve_report_path(directory: &Path, value: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(value);
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!(
+            "review report path {value:?} must stay below {}",
+            directory.display()
+        ));
+    }
+    let directory = directory.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve review directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    let path = directory.join(relative).canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve review evidence {}: {error}",
+            directory.join(relative).display()
+        )
+    })?;
+    if !path.starts_with(&directory) || !path.is_file() {
+        return Err(format!(
+            "review report path {value:?} escapes {}",
+            directory.display()
+        ));
+    }
+    Ok(path)
 }
 
 fn collect_json(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -464,17 +618,14 @@ fn collect_json(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-fn accessibility_summary<'a>(
-    manifests: impl Iterator<Item = &'a PathBuf>,
-) -> Result<Value, String> {
+fn accessibility_summary<'a>(manifests: impl Iterator<Item = &'a Value>) -> Value {
     let mut targets = 0_u64;
     let mut semantic = 0_u64;
     let mut named = 0_u64;
     let mut actionable = 0_u64;
     let mut actionable_without_name = Vec::new();
     let mut roles = BTreeMap::<String, u64>::new();
-    for path in manifests {
-        let manifest = read_json(path)?;
+    for manifest in manifests {
         for target in manifest["targets"].as_array().into_iter().flatten() {
             targets += 1;
             let Some(accessibility) = target["accessibility"].as_object() else {
@@ -500,7 +651,7 @@ fn accessibility_summary<'a>(
             }
         }
     }
-    Ok(json!({
+    json!({
         "target_count": targets,
         "semantic_target_count": semantic,
         "named_semantic_target_count": named,
@@ -508,26 +659,88 @@ fn accessibility_summary<'a>(
         "actionable_without_name_count": actionable_without_name.len(),
         "actionable_without_name": actionable_without_name,
         "roles": roles,
-    }))
+    })
 }
 
-fn source_change(capture: &str, difference: &Value, manifest: &Value) -> Value {
+fn source_change(
+    capture: &str,
+    difference: &Value,
+    baseline_manifest: Option<&Value>,
+    current_manifest: &Value,
+) -> Value {
     let path = difference["path"].as_str().unwrap_or_default();
-    let source = path
-        .strip_prefix("/targets/")
+    let baseline_source = baseline_manifest.and_then(|manifest| change_source(path, manifest));
+    let current_source = change_source(path, current_manifest);
+    let source = if difference["current"]["$missing"] == true {
+        baseline_source.or(current_source)
+    } else {
+        current_source.or(baseline_source)
+    }
+    .cloned()
+    .unwrap_or(Value::Null);
+    json!({
+        "capture": capture,
+        "json_path": path,
+        "source": source,
+        "baseline_source": baseline_source,
+        "current_source": current_source,
+        "baseline": difference["baseline"],
+        "current": difference["current"],
+    })
+}
+
+fn validate_capture_manifest(path: &Path, manifest: &Value) -> Result<PathBuf, String> {
+    let object = manifest
+        .as_object()
+        .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("{} omits non-empty string field `name`", path.display()))?;
+    if path.file_stem().and_then(|stem| stem.to_str()) != Some(name) {
+        return Err(format!(
+            "{} capture name {name:?} does not match its filename",
+            path.display()
+        ));
+    }
+    if object
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        return Err(format!(
+            "{} omits integer field `schema_version`",
+            path.display()
+        ));
+    }
+    for field in [
+        "capture_source",
+        "viewport",
+        "physical_size",
+        "resolved_theme",
+        "window",
+        "clock",
+    ] {
+        if !object.get(field).is_some_and(Value::is_object) {
+            return Err(format!("{} omits object field `{field}`", path.display()));
+        }
+    }
+    if !object.get("targets").is_some_and(Value::is_array) {
+        return Err(format!("{} omits array field `targets`", path.display()));
+    }
+    manifest_png(path, manifest)
+}
+
+fn change_source<'a>(path: &str, manifest: &'a Value) -> Option<&'a Value> {
+    path.strip_prefix("/targets/")
         .and_then(|path| path.split('/').next())
         .and_then(|index| index.parse::<usize>().ok())
         .and_then(|index| manifest["targets"].get(index))
         .and_then(|target| target.get("source"))
         .filter(|source| !source.is_null())
-        .unwrap_or(&manifest["capture_source"]);
-    json!({
-        "capture": capture,
-        "json_path": path,
-        "source": source,
-        "baseline": difference["baseline"],
-        "current": difference["current"],
-    })
+        .or_else(|| manifest.get("capture_source"))
+        .filter(|source| !source.is_null())
 }
 
 fn render_html(report: &Value) -> String {
@@ -542,22 +755,26 @@ fn render_html(report: &Value) -> String {
         html_escape(report["source"].as_str().unwrap_or("<source>"))
     );
     html.push_str(
-        "<h2>Tests</h2><table><tr><th>Name</th><th>Result</th><th>Time</th><th>Logs</th></tr>",
+        "<h2>Tests</h2><table><tr><th>Name</th><th>Result</th><th>Time</th><th>Logs</th><th>Error</th></tr>",
     );
     for test in report["tests"]["results"].as_array().into_iter().flatten() {
         let passed = test["passed"] == true;
         let _ = write!(
             html,
-            "<tr><td><code>{}</code></td><td class=\"{}\">{}</td><td>{} ms</td><td><a href=\"{}\">stdout</a> · <a href=\"{}\">stderr</a></td></tr>",
+            "<tr><td><code>{}</code></td><td class=\"{}\">{}</td><td>{} ms</td><td><a href=\"{}\">stdout</a> · <a href=\"{}\">stderr</a></td><td>{}</td></tr>",
             html_escape(test["name"].as_str().unwrap_or_default()),
             if passed { "ok" } else { "bad" },
             if passed { "pass" } else { "fail" },
             test["elapsed_ms"],
             html_escape(test["stdout"].as_str().unwrap_or_default()),
             html_escape(test["stderr"].as_str().unwrap_or_default()),
+            html_escape(test["error"].as_str().unwrap_or_default()),
         );
     }
     html.push_str("</table><h2>Captures</h2><div class=\"captures\">");
+    if let Some(error) = report["baseline_error"].as_str() {
+        let _ = write!(html, "<pre class=\"bad\">{}</pre>", html_escape(error));
+    }
     for capture in report["captures"].as_array().into_iter().flatten() {
         let key = html_escape(capture["key"].as_str().unwrap_or_default());
         let comparison = html_escape(
@@ -569,6 +786,9 @@ fn render_html(report: &Value) -> String {
             html,
             "<section class=\"card\"><h3>{key}</h3><p>comparison: <code>{comparison}</code></p>"
         );
+        if let Some(error) = capture["comparison"]["error"].as_str() {
+            let _ = write!(html, "<pre class=\"bad\">{}</pre>", html_escape(error));
+        }
         if let Some(png) = capture["png"].as_str() {
             let png = html_escape(png);
             let _ = write!(
@@ -621,18 +841,6 @@ fn render_html(report: &Value) -> String {
     }
     html.push_str("</pre></main>");
     html
-}
-
-fn manifest_png(path: &Path, manifest: &Value) -> Result<PathBuf, String> {
-    let png = manifest["png"]
-        .as_str()
-        .ok_or_else(|| format!("{} omits string field `png`", path.display()))?;
-    let png = path.parent().unwrap_or_else(|| Path::new(".")).join(png);
-    if png.is_file() {
-        Ok(png)
-    } else {
-        Err(format!("capture PNG is missing at {}", png.display()))
-    }
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
@@ -797,17 +1005,37 @@ mod tests {
             }]
         });
         write_json(&manifest_path, &manifest).unwrap();
-        let paths = [manifest_path.clone()];
-        let summary = accessibility_summary(paths.iter()).unwrap();
+        let summary = accessibility_summary(std::iter::once(&manifest));
         assert_eq!(summary["semantic_target_count"], 1);
         assert_eq!(summary["actionable_without_name_count"], 1);
         assert_eq!(summary["roles"]["button"], 1);
         let change = source_change(
             "test/capture.json",
             &json!({ "path": "/targets/0/geometry/x", "baseline": 1, "current": 2 }),
+            None,
             &manifest,
         );
         assert_eq!(change["source"]["line"], 8);
+
+        let baseline = json!({
+            "capture_source": { "path": "app.ice", "line": 20, "column": 3 },
+            "targets": [{
+                "source": { "path": "old.ice", "line": 4, "column": 2 }
+            }]
+        });
+        let removed = source_change(
+            "test/capture.json",
+            &json!({
+                "path": "/targets/0",
+                "baseline": { "id": "gone" },
+                "current": { "$missing": true }
+            }),
+            Some(&baseline),
+            &json!({ "capture_source": null, "targets": [] }),
+        );
+        assert_eq!(removed["source"]["path"], "old.ice");
+        assert_eq!(removed["baseline_source"]["line"], 4);
+        assert!(removed["current_source"].is_null());
         fs::remove_dir_all(fixture).unwrap();
     }
 
@@ -832,6 +1060,100 @@ mod tests {
             fixture.join("artifacts/run/test/wide.json")
         );
         fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn previous_review_reports_reject_escaping_and_duplicate_evidence() {
+        let fixture = fixture("unsafe-baseline");
+        fs::create_dir_all(&fixture).unwrap();
+        write_json(
+            &fixture.join("report.json"),
+            &json!({
+                "captures": [{
+                    "key": "test/wide.json",
+                    "manifest": "../outside.json"
+                }]
+            }),
+        )
+        .unwrap();
+        assert!(baseline_index(&fixture).is_err());
+
+        fs::create_dir_all(fixture.join("artifacts")).unwrap();
+        fs::write(fixture.join("artifacts/wide.json"), "{}").unwrap();
+        write_json(
+            &fixture.join("report.json"),
+            &json!({
+                "captures": [
+                    { "key": "test/wide.json", "manifest": "artifacts/wide.json" },
+                    { "key": "test/wide.json", "manifest": "artifacts/wide.json" }
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(baseline_index(&fixture).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn current_capture_manifest_requires_complete_named_evidence() {
+        let fixture = fixture("capture-contract");
+        fs::create_dir_all(&fixture).unwrap();
+        let path = fixture.join("ready.json");
+        let png = fixture.join("ready.png");
+        fs::write(&path, "{}").unwrap();
+        fs::write(&png, []).unwrap();
+        let manifest = json!({
+            "schema_version": 2,
+            "name": "ready",
+            "png": "ready.png",
+            "capture_source": {},
+            "viewport": {},
+            "physical_size": {},
+            "resolved_theme": {},
+            "window": {},
+            "clock": {},
+            "targets": [],
+        });
+        assert_eq!(
+            validate_capture_manifest(&path, &manifest).unwrap(),
+            png.canonicalize().unwrap()
+        );
+
+        let mut incomplete = manifest.clone();
+        incomplete.as_object_mut().unwrap().remove("targets");
+        assert!(validate_capture_manifest(&path, &incomplete).is_err());
+        incomplete["targets"] = json!([]);
+        incomplete["name"] = json!("renamed");
+        assert!(validate_capture_manifest(&path, &incomplete).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn exact_test_execution_count_rejects_zero_or_ambiguous_matches() {
+        let output = b"running 1 test\ntest __ice_tests::wide ... ok\n";
+        assert_eq!(exact_test_executions(output, "__ice_tests::wide"), 1);
+        assert_eq!(exact_test_executions(output, "__ice_tests::narrow"), 0);
+
+        let duplicated = b"test __ice_tests::wide ... ok\ntest __ice_tests::wide ... ok\n";
+        assert_eq!(exact_test_executions(duplicated, "__ice_tests::wide"), 2);
+    }
+
+    #[test]
+    fn declared_capture_keys_are_stable_and_duplicates_fail() {
+        let mut wide = test_decl("wide");
+        wide.steps.push(ui_lang_core::TestStep {
+            kind: ui_lang_core::TestStepKind::Capture("ready".into()),
+            span: Span::line(2),
+        });
+        assert_eq!(
+            expected_capture_keys(&[wide.clone()], &["wide".into()]).unwrap(),
+            BTreeSet::from(["wide/ready.json".into()])
+        );
+        wide.steps.push(ui_lang_core::TestStep {
+            kind: ui_lang_core::TestStepKind::Capture("ready".into()),
+            span: Span::line(3),
+        });
+        assert!(expected_capture_keys(&[wide], &["wide".into()]).is_err());
     }
 
     #[test]
@@ -864,8 +1186,22 @@ mod tests {
         let report = json!({
             "success": false,
             "source": "<app>",
-            "tests": { "results": [] },
-            "captures": [],
+            "tests": { "results": [{
+                "name": "bad<test>",
+                "passed": false,
+                "elapsed_ms": 0,
+                "stdout": "stdout.log",
+                "stderr": "stderr.log",
+                "error": "<script>test()</script>"
+            }] },
+            "baseline_error": "<script>baseline()</script>",
+            "captures": [{
+                "key": "bad<capture>",
+                "comparison": {
+                    "status": "error",
+                    "error": "<script>capture()</script>"
+                }
+            }],
             "accessibility": {
                 "semantic_target_count": 0,
                 "named_semantic_target_count": 0,
@@ -878,5 +1214,7 @@ mod tests {
         assert!(html.contains("&lt;app&gt;"));
         assert!(html.contains("a &lt; b &amp; c"));
         assert!(!html.contains("a < b"));
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;capture()&lt;/script&gt;"));
     }
 }
