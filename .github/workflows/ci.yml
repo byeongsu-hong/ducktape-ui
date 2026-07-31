@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,9 @@ jobs:
       - run: cargo ice clippy
       - name: Check public Ice API baseline
         env:
-          ICE_API_ACCEPT_BREAKING: ${{ contains(github.event.pull_request.labels.*.name, 'api-breaking-approved') }}
+          # A label authorizes only the head that triggered its `labeled` event.
+          # A later synchronize run must fail until a maintainer reapplies it.
+          ICE_API_ACCEPT_BREAKING: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'api-breaking-approved' }}
           ICE_API_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           committed=api/baselines/ducktape-ui.json
@@ -63,10 +65,10 @@ jobs:
             exit 0
           fi
           if [[ "$ICE_API_ACCEPT_BREAKING" != "true" ]]; then
-            echo "::error::breaking Ice API changes require maintainer review and the api-breaking-approved label"
+            echo "::error::breaking Ice API changes require a maintainer to apply or reapply the api-breaking-approved label after the latest commit"
             exit 1
           fi
-          echo "::notice::breaking Ice API change accepted by the api-breaking-approved label"
+          echo "::notice::breaking Ice API change accepted for this head by the api-breaking-approved label event"
       - name: Check standalone UI feature on native and wasm
         run: |
           cargo check --locked -p ducktape-ui --no-default-features --features button,x11

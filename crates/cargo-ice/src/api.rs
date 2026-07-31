@@ -165,6 +165,12 @@ fn read_fingerprint(path: &Path) -> Result<FingerprintDocument, String> {
     }
     let document = serde_json::from_value::<FingerprintDocument>(value)
         .map_err(|error| format!("malformed API fingerprint `{}`: {error}", path.display()))?;
+    validate_canonical_document(&document).map_err(|error| {
+        format!(
+            "non-canonical API fingerprint `{}`: {error}",
+            path.display()
+        )
+    })?;
     let expected = document.expected_fingerprint()?;
     if document.fingerprint != expected {
         return Err(format!(
@@ -175,11 +181,111 @@ fn read_fingerprint(path: &Path) -> Result<FingerprintDocument, String> {
     Ok(document)
 }
 
+fn validate_canonical_document(document: &FingerprintDocument) -> Result<(), String> {
+    if document.language_revision.is_empty() {
+        return Err("language revision must not be empty".into());
+    }
+    if document.package.name.is_empty() || document.package.version.is_empty() {
+        return Err("package name and version must not be empty".into());
+    }
+
+    let api = &document.api;
+    require_sorted_unique("api.components", &api.components, |item| item.name.as_str())?;
+    for component in &api.components {
+        let root = format!("api.components.{}", component.name);
+        require_sorted_unique(&format!("{root}.props"), &component.props, |item| {
+            item.name.as_str()
+        })?;
+        require_sorted_unique(&format!("{root}.events"), &component.events, |item| {
+            item.name.as_str()
+        })?;
+        require_sorted_unique(&format!("{root}.slots"), &component.slots, |item| {
+            item.name.as_str()
+        })?;
+        for prop in &component.props {
+            if prop.required != prop.default.is_none() {
+                return Err(format!(
+                    "{root}.props.{} has inconsistent `required` and `default` facts",
+                    prop.name
+                ));
+            }
+        }
+    }
+
+    require_sorted_unique("api.recipes", &api.recipes, |item| item.name.as_str())?;
+    if let Some(theme) = &api.theme {
+        require_sorted_unique("api.theme.tokens", &theme.tokens, String::as_str)?;
+    }
+    require_sorted_unique("api.extern_types", &api.extern_types, |item| {
+        item.name.as_str()
+    })?;
+    for item in &api.extern_types {
+        require_sorted_unique(
+            &format!("api.extern_types.{}.fields", item.name),
+            &item.fields,
+            |field| field.name.as_str(),
+        )?;
+    }
+    require_sorted_unique("api.enums", &api.enums, |item| item.name.as_str())?;
+    for item in &api.enums {
+        require_sorted_unique(
+            &format!("api.enums.{}.variants", item.name),
+            &item.variants,
+            |variant| variant.name.as_str(),
+        )?;
+    }
+    if !api
+        .extern_functions
+        .windows(2)
+        .all(|pair| (pair[0].name.as_str(), pair[0].kind) < (pair[1].name.as_str(), pair[1].kind))
+    {
+        return Err("api.extern_functions must be strictly sorted and unique by name/kind".into());
+    }
+    for function in &api.extern_functions {
+        let mut params = BTreeSet::new();
+        if function
+            .params
+            .iter()
+            .any(|param| !params.insert(param.name.as_str()))
+        {
+            return Err(format!(
+                "api.extern_functions.{}.params contains a duplicate name",
+                function.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_sorted_unique<T>(
+    path: &str,
+    values: &[T],
+    name: impl Fn(&T) -> &str,
+) -> Result<(), String> {
+    if values
+        .windows(2)
+        .all(|pair| name(&pair[0]) < name(&pair[1]))
+    {
+        Ok(())
+    } else {
+        Err(format!("{path} must be strictly sorted and unique"))
+    }
+}
+
 fn package_for_source(source: &Path) -> Result<ApiPackage, String> {
-    let source = source
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve API source `{}`: {error}", source.display()))?;
-    for directory in source.parent().into_iter().flat_map(Path::ancestors) {
+    let directory = source.parent().ok_or_else(|| {
+        format!(
+            "cannot resolve containing directory for API source `{}`",
+            source.display()
+        )
+    })?;
+    let directory = directory.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve API source directory `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    for directory in directory.ancestors() {
         let manifest = directory.join("Cargo.toml");
         if !manifest.is_file() {
             continue;
@@ -1086,7 +1192,55 @@ view
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(read_fingerprint(&path).unwrap_err().contains("malformed"));
 
+        let mut duplicate = document.clone();
+        duplicate
+            .api
+            .components
+            .push(duplicate.api.components[0].clone());
+        duplicate.fingerprint = duplicate.expected_fingerprint().unwrap();
+        fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
+        assert!(
+            read_fingerprint(&path)
+                .unwrap_err()
+                .contains("non-canonical")
+        );
+
+        let mut inconsistent = document.clone();
+        inconsistent.api.components[0].props[0].required = true;
+        inconsistent.fingerprint = inconsistent.expected_fingerprint().unwrap();
+        fs::write(&path, serde_json::to_vec(&inconsistent).unwrap()).unwrap();
+        assert!(
+            read_fingerprint(&path)
+                .unwrap_err()
+                .contains("inconsistent")
+        );
+
         fs::write(&path, b"{ definitely not json").unwrap();
         assert!(read_fingerprint(&path).unwrap_err().contains("malformed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_identity_uses_the_symlink_location_not_its_external_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let package = temp.path().join("package");
+        let external = temp.path().join("external");
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"linked-api\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+        let target = external.join("api.ice");
+        fs::write(&target, "component External()\n  space\n").unwrap();
+        let source = package.join("src/api.ice");
+        symlink(&target, &source).unwrap();
+
+        let identity = super::package_for_source(&source).unwrap();
+        assert_eq!(identity.name, "linked-api");
+        assert_eq!(identity.version, "1.2.3");
     }
 }

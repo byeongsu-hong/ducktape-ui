@@ -60,8 +60,11 @@ the baseline in the same change cannot hide a breaking diff. The committed
 baseline must also match the command above byte-for-byte. After reviewing both
 the semantic diff and regenerated baseline, a maintainer explicitly accepts an
 intentional breaking change by applying the `api-breaking-approved` label. Label
-addition and removal rerun the gate; ordinary contributors and fork pull
-requests receive no write token or baseline override.
+addition and removal rerun the gate. The approval applies only to the current
+head: any later push makes the synchronize run fail until a maintainer removes
+and reapplies the label. Ordinary contributors and fork pull requests receive
+no write token or baseline override. Retargeting a pull request also reruns the
+gate against the new target commit and requires a fresh breaking approval.
 
 ## Registry order
 

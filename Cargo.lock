@@ -5519,6 +5519,7 @@ dependencies = [
  "qrcode 0.14.1",
  "sha2",
  "serde",
+ "tempfile",
 ]
 
 [[package]]

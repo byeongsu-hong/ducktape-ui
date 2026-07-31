@@ -537,8 +537,10 @@ impl From<BinaryOp> for ApiBinaryOperator {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiComponentLifetime, ApiExternKind, ApiPropAccess, ApiSurface};
-    use crate::analyze;
+    use super::{ApiComponentLifetime, ApiExpression, ApiExternKind, ApiPropAccess, ApiSurface};
+    use crate::{analyze, analyze_api_file};
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn projects_the_complete_checked_public_contract() {
@@ -606,5 +608,107 @@ view
         assert!(api.extern_functions[0].params[0].borrowed);
         assert_eq!(api.extern_functions[1].kind, ApiExternKind::Task);
         assert_eq!(api.extern_functions[1].error.as_deref(), Some("str"));
+    }
+
+    #[test]
+    fn qualifies_every_imported_public_contract_and_preserves_type_references() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("contracts.ice"),
+            r#"enum Status
+  idle
+  ready(str)
+extern crate::backend
+  Record(id:i64)
+  component native(record:&Record) -> Status
+  task fetch(record:Record) -> Status ! str
+  stream watch(record:Record) -> Status
+recipe label for text
+  text-fg
+component Card(record:Record, status:Status=Status.idle) -> Status
+  text "Card" @label
+"#,
+        )
+        .unwrap();
+        let root = temp.path().join("api.ice");
+        fs::write(
+            &root,
+            r#"use "contracts.ice" as kit
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #336699
+  danger #cc0000
+"#,
+        )
+        .unwrap();
+
+        let api = analyze_api_file(&root).unwrap();
+        assert_eq!(api.components[0].name, "kit::Card");
+        assert_eq!(api.components[0].props[0].ty, "kit::Record");
+        assert_eq!(api.components[0].props[1].ty, "kit::Status");
+        assert_eq!(
+            api.components[0].props[1].default,
+            Some(ApiExpression::Path {
+                segments: vec!["kit::Status".into(), "idle".into()],
+            })
+        );
+        assert_eq!(api.components[0].default_output, "kit::Status");
+        assert_eq!(api.recipes[0].name, "kit::label");
+        assert_eq!(api.enums[0].name, "kit::Status");
+        assert_eq!(api.extern_types[0].name, "kit::Record");
+        assert_eq!(
+            api.extern_functions
+                .iter()
+                .map(|function| (
+                    function.name.as_str(),
+                    function.kind,
+                    function.params[0].ty.as_str(),
+                    function.output.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "kit::fetch",
+                    ApiExternKind::Task,
+                    "kit::Record",
+                    "kit::Status",
+                ),
+                (
+                    "kit::native",
+                    ApiExternKind::Component,
+                    "kit::Record",
+                    "kit::Status",
+                ),
+                (
+                    "kit::watch",
+                    ApiExternKind::Stream,
+                    "kit::Record",
+                    "kit::Status",
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_imported_interface_failures_at_the_physical_source() {
+        let temp = TempDir::new().unwrap();
+        let imported = temp.path().join("broken.ice");
+        fs::write(&imported, "component Broken(\n").unwrap();
+        let root = temp.path().join("api.ice");
+        fs::write(
+            &root,
+            "use \"broken.ice\" as kit\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #336699\n  danger #cc0000\n",
+        )
+        .unwrap();
+
+        let error = analyze_api_file(&root).unwrap_err();
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 1);
     }
 }

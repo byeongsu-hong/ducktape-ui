@@ -94,11 +94,13 @@ The checked public package contract is separately executable through
 `cargo ice api`: a declaration-only or application root produces a sorted,
 versioned SHA-256 JSON fingerprint over component, recipe, theme, type, and
 extern surfaces, retaining imported namespace identity without source paths or
-backend/HIR details. `cargo ice api diff` validates artifact schema and hash,
-emits human or machine-readable breaking/behavioral/additive classifications,
-and fails on breaking changes. Pull-request CI requires an exactly regenerated
-`ducktape-ui` artifact, compares it with the target commit's reviewed baseline,
-and accepts a breaking result only through a maintainer-controlled label. This
+backend/HIR details. `cargo ice api diff` validates artifact schema, hash,
+canonical ordering, unique names, and required/default consistency, emits human
+or machine-readable breaking/behavioral/additive classifications, and fails on
+breaking changes. Pull-request CI requires an exactly regenerated `ducktape-ui`
+artifact, compares it with the target commit's reviewed baseline, and accepts a
+breaking result only through a maintainer-controlled label event for the latest
+head. This
 is tooling evidence over the existing Core contract, not a new syntax or LSP
 capability.
 

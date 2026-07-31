@@ -5323,10 +5323,15 @@ and component lifetime changes require behavioral review. Named events form a
 closed routing contract, so adding one is breaking. Package version changes are
 metadata; a package name or language revision change is breaking. Malformed,
 unknown-schema, or hash-inconsistent inputs are rejected before comparison.
-Unknown fields are malformed at every nested schema node. Pull-request CI
+Unknown fields are malformed at every nested schema node, and correctly
+rehashed artifacts are still rejected when named contracts are duplicated,
+unsorted, or internally inconsistent. Pull-request CI
 compares against the target commit's baseline and requires the committed
 baseline to exactly match fresh output; an intentional breaking update needs
-the explicit maintainer-controlled `api-breaking-approved` label.
+the explicit maintainer-controlled `api-breaking-approved` label applied after
+the latest commit. A later push invalidates that event and requires the label
+to be removed and reapplied. Retargeting a pull request reruns the comparison
+against the new target commit.
 This batch release gate adds no Ice syntax and no LSP method; diagnostics,
 completion, hover, signature help, and code actions continue to consume the
 ordinary checked document.
