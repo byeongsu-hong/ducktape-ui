@@ -5,13 +5,13 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-ducktape-ui = { path = "../../crates/ui", features = ["full"] }
+ducktape-ui = { workspace = true, features = ["full"] }
 iced = { version = "=0.14.0", features = ["smol"] }
-ui-lang = { path = "../../crates/ui-lang" }
-ui-lang-runtime = { path = "../../crates/ui-lang-runtime", version = "=0.1.0" }
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
 
 [build-dependencies]
-ui-lang-build = { path = "../../crates/ui-lang-build", version = "=0.1.0" }
+ui-lang-build.workspace = true
 
 [lints]
 workspace = true

@@ -37,6 +37,7 @@ jobs:
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
       - run: cargo ice compat
+      - run: scripts/package-smoke.sh
 
   msrv:
     name: MSRV (1.88)

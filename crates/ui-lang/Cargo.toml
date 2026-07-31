@@ -2,14 +2,17 @@
 name = "ui-lang"
 version = "0.1.0"
 edition.workspace = true
+description = "Build-output include macro for ahead-of-time compiled Ice UI applications"
+homepage.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [lib]
 proc-macro = true
 
 [dependencies]
-ui-lang-build = { path = "../ui-lang-build" }
+ui-lang-build.workspace = true
 
 [lints]
 workspace = true
