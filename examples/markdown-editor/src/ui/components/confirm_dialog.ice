@@ -43,7 +43,17 @@ component ConfirmDialog(action:PendingAction, name:str, busy:bool, error:str)
               @font-semibold
               @text-primary
         if !empty(error)
-          text error size=12.0 @text-danger
+          box #error-slot
+            with
+              w=fill
+              h=18.0
+              clip=true
+              align-y=center
+            text error #error-message
+              with
+                wrap=none
+                size=12.0
+                @text-danger
       match action
         PendingAction.new_document
           row w=fill gap=8.0

@@ -301,3 +301,27 @@ test confirmation_dialog_busy_error_contract
   expect text "Saving…"
   expect text "Disk full"
   expect a11y cancel disabled true
+
+test confirmation_dialog_long_error_stays_compact
+  viewport 560 320
+  mount
+    ConfirmDialog #dialog
+      with
+        action=PendingAction.new_document
+        name="Untitled.md"
+        busy=false
+        error="Could not save /a/very/long/path/with/many/nested/directories/that/should/not/break/the/dialog/layout/when/permission/is/denied.md: permission denied"
+      events
+        save_new -> save_then_new
+        discard_new -> discard_new
+        save_open -> save_then_open
+        discard_open -> discard_open
+        save_close -> save_then_close
+        discard_close -> discard_close
+        cancel -> cancel_pending
+  target dialog = #dialog/root
+  target error_slot = #dialog/root/error-slot
+  target error_message = #dialog/root/error-slot/error-message
+  expect dialog.height < 260.0
+  expect error_slot.width <= dialog.width
+  expect error_message.height <= 18.0
