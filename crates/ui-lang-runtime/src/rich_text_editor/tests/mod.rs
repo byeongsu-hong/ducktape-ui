@@ -130,6 +130,20 @@ fn content_lines(content: &Content) -> Vec<String> {
     content.lines().map(|line| line.text.into_owned()).collect()
 }
 
+fn test_change(
+    first_changed_line: usize,
+    removed_lines: usize,
+    inserted_lines: usize,
+) -> EditorChange {
+    EditorChange::new(
+        ContentVersion::new(1, 0),
+        ContentVersion::new(1, 1),
+        first_changed_line,
+        removed_lines,
+        inserted_lines,
+    )
+}
+
 fn headless_renderer() -> iced::Renderer {
     use iced::advanced::renderer::Headless;
 

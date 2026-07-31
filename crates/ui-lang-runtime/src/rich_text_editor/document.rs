@@ -98,6 +98,14 @@ pub(super) struct StyledLine {
     pub(super) line_padding: Padding,
 }
 
+#[derive(Debug, PartialEq)]
+struct StyledLineFormat {
+    segments: Vec<Segment>,
+    empty_format: Format,
+    line_highlight: Option<text::Highlight>,
+    line_padding: Padding,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LineLayoutStyle {
     pub(super) width: f32,
@@ -109,7 +117,11 @@ pub(super) struct LineLayoutStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct LayoutUpdate {
-    pub(super) compared_lines: usize,
+    pub(super) mapping_line_comparisons: usize,
+    pub(super) styled_signature_comparisons: usize,
+    pub(super) newly_owned_styled_texts: usize,
+    pub(super) newly_owned_styled_text_bytes: usize,
+    pub(super) line_vector_slots_prepared: usize,
     pub(super) rebuilt_lines: usize,
     pub(super) shaped_paragraphs: usize,
     pub(super) highlighted_lines: usize,
@@ -122,7 +134,7 @@ struct LineMapping {
     common_prefix: usize,
     common_suffix: usize,
     changed_overlap: usize,
-    compared_lines: usize,
+    mapping_line_comparisons: usize,
     change_hint_used: bool,
     change_hint_rejected: bool,
 }
@@ -183,7 +195,7 @@ impl DocumentLayout {
             common_prefix,
             common_suffix,
             changed_overlap,
-            compared_lines,
+            mapping_line_comparisons,
             change_hint_used,
             change_hint_rejected,
         } = match change {
@@ -191,7 +203,7 @@ impl DocumentLayout {
                 common_prefix: old_len.min(new_len),
                 common_suffix: 0,
                 changed_overlap: 0,
-                compared_lines: 0,
+                mapping_line_comparisons: 0,
                 change_hint_used: false,
                 change_hint_rejected: false,
             },
@@ -225,6 +237,9 @@ impl DocumentLayout {
         let mut lines = Vec::with_capacity(new_len);
         let mut rebuilt = 0;
         let mut highlighted = 0;
+        let mut styled_signature_comparisons = 0;
+        let mut newly_owned_styled_texts = 0;
+        let mut newly_owned_styled_text_bytes = 0;
 
         for (index, text) in texts.iter().enumerate() {
             let candidate = if index < common_prefix {
@@ -245,7 +260,7 @@ impl DocumentLayout {
                     .and_then(Option::take)
                     .expect("unchanged rich line");
                 if geometry_changed {
-                    line = DocumentLine::new(line.signature.clone(), style);
+                    line = DocumentLine::new(line.into_signature(), style);
                     rebuilt += 1;
                 }
                 lines.push(line);
@@ -253,13 +268,15 @@ impl DocumentLayout {
             }
 
             highlighted += 1;
-            let signature = styled_line(text.clone(), highlighter, format);
+            let styled_format = styled_line_format(text, highlighter, format);
             let reusable = candidate
                 .and_then(|candidate| old.get_mut(candidate))
                 .and_then(|line| {
-                    if line
-                        .as_ref()
-                        .is_some_and(|line| !geometry_changed && line.signature == signature)
+                    if !geometry_changed
+                        && line.as_ref().is_some_and(|line| {
+                            styled_signature_comparisons += 1;
+                            line.signature.matches(text, &styled_format)
+                        })
                     {
                         line.take()
                     } else {
@@ -268,7 +285,24 @@ impl DocumentLayout {
                 });
             let line = reusable.unwrap_or_else(|| {
                 rebuilt += 1;
-                DocumentLine::new(signature, style)
+                let reused_text = candidate
+                    .and_then(|candidate| old.get_mut(candidate))
+                    .and_then(|line| {
+                        if line
+                            .as_ref()
+                            .is_some_and(|line| line.signature.text == text.as_str())
+                        {
+                            line.take().map(DocumentLine::into_text)
+                        } else {
+                            None
+                        }
+                    });
+                let text = reused_text.unwrap_or_else(|| {
+                    newly_owned_styled_texts += 1;
+                    newly_owned_styled_text_bytes += text.len();
+                    text.to_owned()
+                });
+                DocumentLine::new(styled_format.with_text(text), style)
             });
             lines.push(line);
         }
@@ -281,7 +315,11 @@ impl DocumentLayout {
         self.lines = lines;
         self.height = top.max(style.line_height.to_absolute(style.text_size).0);
         LayoutUpdate {
-            compared_lines,
+            mapping_line_comparisons,
+            styled_signature_comparisons,
+            newly_owned_styled_texts,
+            newly_owned_styled_text_bytes,
+            line_vector_slots_prepared: old_len.saturating_add(new_len),
             rebuilt_lines: rebuilt,
             shaped_paragraphs: rebuilt,
             highlighted_lines: highlighted,
@@ -416,7 +454,7 @@ fn hinted_mapping(change: EditorChange, old_len: usize, new_len: usize) -> Optio
         common_prefix: change.first_changed_line,
         common_suffix: old_len - old_suffix_start,
         changed_overlap: change.removed_lines.min(change.inserted_lines),
-        compared_lines: 0,
+        mapping_line_comparisons: 0,
         change_hint_used: true,
         change_hint_rejected: false,
     })
@@ -426,11 +464,11 @@ fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
     let old_len = lines.len();
     let new_len = texts.len();
     let shared_len = old_len.min(new_len);
-    let mut compared_lines = 0;
+    let mut mapping_line_comparisons = 0;
     let mut common_prefix = 0;
 
     while common_prefix < shared_len {
-        compared_lines += 1;
+        mapping_line_comparisons += 1;
         if lines[common_prefix].signature.text != texts[common_prefix] {
             break;
         }
@@ -439,7 +477,7 @@ fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
 
     let mut common_suffix = 0;
     while common_suffix < shared_len.saturating_sub(common_prefix) {
-        compared_lines += 1;
+        mapping_line_comparisons += 1;
         if lines[old_len - common_suffix - 1].signature.text != texts[new_len - common_suffix - 1] {
             break;
         }
@@ -450,7 +488,7 @@ fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
         common_prefix,
         common_suffix,
         changed_overlap: 0,
-        compared_lines,
+        mapping_line_comparisons,
         change_hint_used: false,
         change_hint_rejected: false,
     }
@@ -506,6 +544,36 @@ impl DocumentLine {
             height,
             #[cfg(test)]
             identity: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    fn into_text(self) -> String {
+        self.signature.text
+    }
+
+    fn into_signature(self) -> StyledLine {
+        self.signature
+    }
+}
+
+impl StyledLine {
+    fn matches(&self, text: &str, format: &StyledLineFormat) -> bool {
+        self.text == text
+            && self.segments == format.segments
+            && self.empty_format == format.empty_format
+            && self.line_highlight == format.line_highlight
+            && self.line_padding == format.line_padding
+    }
+}
+
+impl StyledLineFormat {
+    fn with_text(self, text: String) -> StyledLine {
+        StyledLine {
+            text,
+            segments: self.segments,
+            empty_format: self.empty_format,
+            line_highlight: self.line_highlight,
+            line_padding: self.line_padding,
         }
     }
 }
@@ -578,19 +646,19 @@ impl TextLines {
     }
 }
 
-fn styled_line<H>(
-    source: String,
+fn styled_line_format<H>(
+    source: &str,
     highlighter: &mut H,
     format: &dyn Fn(&H::Highlight) -> Format,
-) -> StyledLine
+) -> StyledLineFormat
 where
     H: text::Highlighter,
 {
     let highlights = highlighter
-        .highlight_line(&source)
+        .highlight_line(source)
         .map(|(range, highlight)| (range, format(&highlight)))
         .collect::<Vec<_>>();
-    let segments = compose_segments(&source, &highlights);
+    let segments = compose_segments(source, &highlights);
     let empty_format = highlights
         .iter()
         .fold(Format::default(), |base, (_, next)| base.overlay(*next));
@@ -607,8 +675,7 @@ where
             (Some(highlight), padding)
         });
 
-    StyledLine {
-        text: source,
+    StyledLineFormat {
         segments,
         empty_format,
         line_highlight,

@@ -33,15 +33,16 @@ example's bounded history supplies a document ID and text revision through
 `ContentVersion`, so caret and selection layouts reuse the cached source
 without materializing the complete native buffer.
 
-Callers that already record edit deltas can also pass an `EditorChange` to
-`RichTextEditor::change_hint`. The hint is a logical-line replacement span:
-an edit within a line is `1 -> 1`, splitting a line is `1 -> 2`, and joining
-lines is `2 -> 1`. A valid hint maps the unchanged prefix and shifted suffix
-directly instead of comparing every cached line. Bounds and the old/new line
-count equation are checked; an invalid span falls back to exact diffing. The
-hint is optional because it must describe the transition from the widget's
-previous rendered `ContentVersion`, not merely the most recent edit known to
-an application.
+The editor history also passes an `EditorChange` to
+`RichTextEditor::change_hint`. The hint binds one logical-line replacement span
+to exact `from` and `to` content versions: an edit within a line is `1 -> 1`,
+splitting a line is `1 -> 2`, and joining two lines is `2 -> 1`. The fast path
+requires the versions to match the widget's cached and current layout, the
+document identity to stay equal, and the line-count equation and bounds to be
+valid. A skipped frame therefore rejects the latest single-edit transition and
+uses exact diffing instead of trusting a stale prefix. Ordinary edits,
+selection replacement, IME commit, undo, and redo all use the same history
+delta; multi-replacement batches and full snapshots deliberately omit a hint.
 
 During composition, the widget splices the preedit into a lightweight
 display-line view without constructing or shaping a second native `Content`.
@@ -74,7 +75,7 @@ hold:
 | --- | --- | --- |
 | Unicode and IME | Every Hangul assembly stage appears in its own event cycle, uses the document font and baseline, participates in live wrapping, replaces a selection, and commits without moving the visual line | `hangul_ime_stages_relayout_before_the_next_key` drives `ㅇ → 으 → 응 → empty preedit → commit` as distinct IME events; `bundled_body_font_keeps_korean_ime_stages_on_one_baseline`, `preedit_uses_the_same_wrapped_layout_as_committed_text`, and `line_paragraphs_preserve_whole_document_caret_geometry` verify the font and geometry |
 | IME boundaries | A printable ASCII key that ends built-in macOS Korean composition is inserted on the first stroke, while an IME commit that already includes the key is never duplicated | `macos_ime_boundary_survives_the_trailing_empty_preedit` and `ime_close_preserves_release_only_punctuation` follow empty-preedit, IME-close, characterless-event, and release-only comma/period streams; `macos_ime_boundary_deduplicates_committed_keys_and_recovers_ascii` covers digits, shifted symbols, Space, shortcuts, and a new composition |
-| Incremental layout | Caret and selection events must not snapshot unchanged text; a composition stage or ordinary single-line edit must not shape every paragraph in a long document | `performance_contract_content_version_skips_large_caret_snapshots` drives 1,000 caret/selection layouts over 100,000 lines with zero full-text materializations or rebuilt paragraphs, then proves a hinted insertion materializes once, performs zero prefix/suffix line comparisons, and rebuilds one paragraph; `change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing` covers shifted suffix reuse in both history directions; `invalid_change_hints_fall_back_to_exact_diffing` covers structural validation; `change_hint_restarts_stateful_highlighting_at_the_changed_line` covers downstream syntax-state propagation; `ime_stages_rebuild_only_the_changed_line_in_a_long_document` proves that each `ㅇ → 으 → 응` stage rebuilds exactly one paragraph in 1,000 lines; `lightweight_composition_parser_matches_iced_line_boundaries` covers every supported line ending without a second native buffer |
+| Incremental layout | Caret and selection events must not snapshot unchanged text; a composition stage or ordinary single-line edit must not shape every paragraph in a long document | Four explicit `performance_contract_100k_*` tests separately budget 1,000 caret layouts plus one-character insertion, 1,000 real pointer drag events, `ㅇ → 으 → 응`, and viewport resize while recording deterministic source, parsed-line, styled-text, line-slot, mapping, highlighting, and shaping costs; accepted hints perform zero mapping-discovery comparisons while signature comparisons remain visible; `stale_batched_and_cross_document_hints_fall_back_before_reusing_a_prefix` covers exact transition identity; `change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing` covers shifted suffix reuse; `invalid_change_hints_fall_back_to_exact_diffing` covers structural validation; `change_hint_restarts_stateful_highlighting_at_the_changed_line` covers downstream syntax-state propagation; `lightweight_composition_parser_matches_iced_line_boundaries` covers every supported line ending |
 | Inline whitespace | Parser-uncovered spaces and tabs retain body metrics; only actual Markdown syntax markers may collapse | `keeps_unparsed_whitespace_at_body_metrics` covers Korean and Latin trailing spaces, a trailing tab, and a real paired strong delimiter |
 | Text editing | Enter, Backspace, Delete, Tab, Shift+Tab, word deletion, and macOS line-boundary deletion edit the native buffer; Markdown lists and fences keep their atomic behaviors | runtime key-binding tests and the list, indentation, and fence tests in `editor.rs` |
 | Navigation and selection | Mouse hit testing, padding clicks, in/out-of-bounds drags, post-drag clicks, double/triple selection, arrows, word/line/page movement, and Select All use the same wrapped rich geometry shown on screen | shared paragraph geometry tests plus `clicks_in_editor_padding_focus_and_clear_selection` and `a_selection_drag_does_not_turn_the_next_click_into_a_double_click` in `rich_text_editor.rs` |

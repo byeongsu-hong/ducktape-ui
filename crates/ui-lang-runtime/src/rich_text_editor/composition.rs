@@ -34,6 +34,8 @@ impl CompositionLayout {
 pub(super) struct CompositionDocument {
     pub(super) lines: Vec<String>,
     pub(super) layout: CompositionLayout,
+    #[cfg(test)]
+    pub(super) display_bytes: usize,
 }
 
 impl CompositionDocument {
@@ -85,7 +87,12 @@ impl CompositionDocument {
             cursor_visible: preedit.selection.is_some(),
         };
 
-        Some(Self { lines, layout })
+        Some(Self {
+            lines,
+            layout,
+            #[cfg(test)]
+            display_bytes: display.len(),
+        })
     }
 }
 

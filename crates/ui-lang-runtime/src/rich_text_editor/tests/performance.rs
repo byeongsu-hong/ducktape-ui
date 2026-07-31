@@ -114,9 +114,9 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &mut highlighter,
         &|_| Format::default(),
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 1, 1))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 1))),
     );
-    assert_eq!(update.compared_lines, 0);
+    assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
     assert_eq!(update.shaped_paragraphs, 1);
     assert_eq!(update.highlighted_lines, 2);
@@ -140,9 +140,9 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &mut highlighter,
         &|_| Format::default(),
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 0, 1))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
     );
-    assert_eq!(update.compared_lines, 0);
+    assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
     assert!(update.change_hint_used);
     assert_eq!(document.lines[2].identity, replaced_ids[1]);
@@ -153,9 +153,9 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &mut highlighter,
         &|_| Format::default(),
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 1, 0))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 0))),
     );
-    assert_eq!(update.compared_lines, 0);
+    assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 0);
     assert_eq!(document.lines[1].identity, replaced_ids[1]);
     assert_eq!(document.lines[2].identity, replaced_ids[2]);
@@ -165,9 +165,9 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &mut highlighter,
         &|_| Format::default(),
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 0, 1))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
     );
-    assert_eq!(update.compared_lines, 0);
+    assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
     assert_eq!(document.lines[2].identity, replaced_ids[1]);
     assert_eq!(document.lines[3].identity, replaced_ids[2]);
@@ -177,9 +177,9 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
 fn invalid_change_hints_fall_back_to_exact_diffing() {
     let style = test_layout_style(700.0);
     for invalid in [
-        EditorChange::new(4, 0, 0),
-        EditorChange::new(1, 0, 1),
-        EditorChange::new(usize::MAX, 1, 1),
+        test_change(4, 0, 0),
+        test_change(1, 0, 1),
+        test_change(usize::MAX, 1, 1),
     ] {
         let mut highlighter = WholeLine::default();
         let mut document = DocumentLayout::default();
@@ -201,7 +201,7 @@ fn invalid_change_hints_fall_back_to_exact_diffing() {
 
         assert!(update.change_hint_rejected, "{invalid:?}");
         assert!(!update.change_hint_used, "{invalid:?}");
-        assert!(update.compared_lines > 0, "{invalid:?}");
+        assert!(update.mapping_line_comparisons > 0, "{invalid:?}");
         assert_eq!(update.rebuilt_lines, 1, "{invalid:?}");
         assert_eq!(document.lines[1].signature.text, "SECOND");
     }
@@ -237,7 +237,7 @@ fn insertion_hint_keeps_an_identical_shifted_suffix_line_identity() {
         &mut highlighter,
         &|_| Format::default(),
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 0, 1))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
     );
 
     assert_eq!(update.rebuilt_lines, 1);
@@ -270,10 +270,10 @@ fn change_hint_restarts_stateful_highlighting_at_the_changed_line() {
             ..Format::default()
         },
         style,
-        DocumentUpdate::text(DocumentChange::Hint(EditorChange::new(1, 1, 1))),
+        DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 1))),
     );
 
-    assert_eq!(update.compared_lines, 0);
+    assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.highlighted_lines, 2);
     assert_eq!(update.rebuilt_lines, 2);
     assert_eq!(
@@ -299,7 +299,13 @@ fn widget_change_hint_separates_materialization_diff_and_shaping_metrics() {
 
     let content = Content::with_text("first\nseXcond\nthird");
     let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(9, 1))
-        .change_hint(EditorChange::new(1, 1, 1))
+        .change_hint(EditorChange::new(
+            ContentVersion::new(9, 0),
+            ContentVersion::new(9, 1),
+            1,
+            1,
+            1,
+        ))
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(120.0));
     editor.layout(&mut tree, &renderer, &limits);
@@ -308,13 +314,95 @@ fn widget_change_hint_separates_materialization_diff_and_shaping_metrics() {
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.metrics.full_text_materializations, 1);
-    assert_eq!(state.metrics.compared_lines, 0);
+    assert_eq!(
+        state.metrics.materialized_source_bytes,
+        "first\nseXcond\nthird".len()
+    );
+    assert_eq!(state.metrics.parsed_line_strings, 3);
+    assert_eq!(state.metrics.parsed_line_bytes, "firstseXcondthird".len());
+    assert_eq!(state.metrics.mapping_line_comparisons, 0);
+    assert_eq!(state.metrics.styled_signature_comparisons, 2);
+    assert_eq!(state.metrics.newly_owned_styled_texts, 1);
+    assert_eq!(state.metrics.newly_owned_styled_text_bytes, "seXcond".len());
+    assert_eq!(state.metrics.line_vector_slots_prepared, 6);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
     assert_eq!(state.metrics.highlighted_lines, 2);
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.metrics.rejected_change_hints, 0);
     assert_eq!(state.document.lines[1].signature.text, "seXcond");
+}
+
+#[test]
+fn stale_batched_and_cross_document_hints_fall_back_before_reusing_a_prefix() {
+    let renderer = headless_renderer();
+    let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 120.0));
+    let initial = Content::with_text("old first\nold second\nthird");
+    let initial_version = ContentVersion::new(40, 0);
+    let mut editor = RichTextEditor::<_, ()>::new(&initial, initial_version)
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(120.0));
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    editor.layout(&mut tree, &renderer, &limits);
+    drop(editor);
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .metrics = LayoutMetrics::default();
+
+    // Revision 1 changed line 0, but no layout happened before revision 2
+    // changed line 1. The latest edit alone must not be applied to the layout
+    // produced by revision 0.
+    let batched = Content::with_text("new first\nnew second\nthird");
+    let revision_1 = ContentVersion::new(40, 1);
+    let revision_2 = ContentVersion::new(40, 2);
+    let stale_latest_edit = EditorChange::new(revision_1, revision_2, 1, 1, 1);
+    let mut editor = RichTextEditor::<_, ()>::new(&batched, revision_2)
+        .change_hint(stale_latest_edit)
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(120.0));
+    editor.layout(&mut tree, &renderer, &limits);
+
+    let state = tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>();
+    assert_eq!(state.document.lines[0].signature.text, "new first");
+    assert_eq!(state.document.lines[1].signature.text, "new second");
+    assert!(state.metrics.mapping_line_comparisons > 0);
+    assert_eq!(state.metrics.accepted_change_hints, 0);
+    assert_eq!(state.metrics.rejected_change_hints, 1);
+    drop(editor);
+
+    // Reusing the same builder hint at an unchanged version is inert.
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .metrics = LayoutMetrics::default();
+    let mut editor = RichTextEditor::<_, ()>::new(&batched, revision_2)
+        .change_hint(stale_latest_edit)
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(120.0));
+    editor.layout(&mut tree, &renderer, &limits);
+    assert_eq!(
+        tree.state
+            .downcast_ref::<State<text::highlighter::PlainText>>()
+            .metrics,
+        LayoutMetrics::default()
+    );
+    drop(editor);
+
+    // Even an exact pair cannot authorize mapping across document identity.
+    let replacement = Content::with_text("replacement");
+    let replacement_version = ContentVersion::new(41, 0);
+    let mut editor = RichTextEditor::<_, ()>::new(&replacement, replacement_version)
+        .change_hint(EditorChange::new(revision_2, replacement_version, 0, 3, 1))
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(120.0));
+    editor.layout(&mut tree, &renderer, &limits);
+    let state = tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>();
+    assert_eq!(state.document.lines[0].signature.text, "replacement");
+    assert_eq!(state.metrics.accepted_change_hints, 0);
+    assert_eq!(state.metrics.rejected_change_hints, 1);
 }
 
 #[test]
@@ -359,7 +447,7 @@ fn caret_selection_and_viewport_resize_do_not_rediscover_line_changes() {
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.metrics.full_text_materializations, 0);
-    assert_eq!(state.metrics.compared_lines, 0);
+    assert_eq!(state.metrics.mapping_line_comparisons, 0);
     assert_eq!(state.metrics.rebuilt_lines, 3);
     assert_eq!(state.metrics.shaped_paragraphs, 3);
 }
@@ -397,10 +485,8 @@ fn content_version_distinguishes_document_replacement_from_text_revision() {
 
 #[test]
 #[ignore = "large-document performance contract run explicitly in CI"]
-fn performance_contract_content_version_skips_large_caret_snapshots() {
-    let source = (0..100_000)
-        .map(|index| format!("line {index}\n"))
-        .collect::<String>();
+fn performance_contract_100k_caret_and_one_char_insertion() {
+    let source = large_source();
     let mut content = Content::with_text(&source);
     let renderer = headless_renderer();
     let limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
@@ -417,6 +503,7 @@ fn performance_contract_content_version_skips_large_caret_snapshots() {
         .downcast_mut::<State<text::highlighter::PlainText>>()
         .metrics = LayoutMetrics::default();
 
+    let caret_started = Instant::now();
     for event in 0..1_000 {
         let line = event * 97 % 100_000;
         content.move_to(Cursor {
@@ -424,10 +511,7 @@ fn performance_contract_content_version_skips_large_caret_snapshots() {
                 line,
                 column: event % 8,
             },
-            selection: (event % 2 == 0).then_some(Position {
-                line: line.saturating_sub(1),
-                column: 0,
-            }),
+            selection: None,
         });
         let mut editor = RichTextEditor::<_, ()>::new(&content, version)
             .width(Length::Fixed(800.0))
@@ -435,16 +519,14 @@ fn performance_contract_content_version_skips_large_caret_snapshots() {
             .wrapping(text::Wrapping::None);
         editor.layout(&mut tree, &renderer, &limits);
     }
+    let caret_elapsed = caret_started.elapsed();
 
     let state = tree
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.document.lines.len(), 100_001);
-    assert_eq!(state.metrics.full_text_materializations, 0);
-    assert_eq!(state.metrics.compared_lines, 0);
-    assert_eq!(state.metrics.rebuilt_lines, 0);
-    assert_eq!(state.metrics.shaped_paragraphs, 0);
-    assert_eq!(state.metrics.highlighted_lines, 0);
+    assert_eq!(state.metrics, LayoutMetrics::default());
+    assert_performance_budget("1,000 caret layouts", caret_elapsed, 5);
 
     tree.state
         .downcast_mut::<State<text::highlighter::PlainText>>()
@@ -478,7 +560,13 @@ fn performance_contract_content_version_skips_large_caret_snapshots() {
     );
     let started = Instant::now();
     let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(11, 1))
-        .change_hint(EditorChange::new(50_000, 1, 1))
+        .change_hint(EditorChange::new(
+            ContentVersion::new(11, 0),
+            ContentVersion::new(11, 1),
+            50_000,
+            1,
+            1,
+        ))
         .width(Length::Fixed(800.0))
         .height(Length::Fixed(600.0))
         .wrapping(text::Wrapping::None);
@@ -489,15 +577,273 @@ fn performance_contract_content_version_skips_large_caret_snapshots() {
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.metrics.full_text_materializations, 1);
-    assert_eq!(state.metrics.compared_lines, 0);
+    assert_eq!(state.metrics.materialized_source_bytes, source.len() + 1);
+    assert_eq!(state.metrics.parsed_line_strings, 100_001);
+    assert_eq!(state.metrics.mapping_line_comparisons, 0);
+    assert_eq!(state.metrics.styled_signature_comparisons, 50_001);
+    assert_eq!(state.metrics.newly_owned_styled_texts, 1);
+    assert_eq!(
+        state.metrics.newly_owned_styled_text_bytes,
+        "linex 50000".len()
+    );
+    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
     assert_eq!(state.metrics.highlighted_lines, 50_001);
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "hinted 100k-line edit took {elapsed:?}"
+    assert_performance_budget("hinted 100k-line edit", elapsed, 5);
+    eprintln!(
+        "100k caret={caret_elapsed:?}, insertion={elapsed:?}, metrics={:?}",
+        state.metrics
     );
-    eprintln!("hinted 100k-line edit: {elapsed:?}");
+}
+
+#[test]
+#[ignore = "large-document performance contract run explicitly in CI"]
+fn performance_contract_100k_selection_drag_pointer_events() {
+    use iced::advanced::clipboard;
+
+    let source = large_source();
+    let mut content = Content::with_text(&source);
+    let renderer = headless_renderer();
+    let limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
+    let viewport = Rectangle::with_size(Size::new(800.0, 600.0));
+    let version = ContentVersion::new(12, 0);
+    let mut editor = RichTextEditor::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None)
+        .on_action(|action| action);
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    let mut node = editor.layout(&mut tree, &renderer, &limits);
+    let anchor = {
+        let caret = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>()
+            .document
+            .caret(Position { line: 0, column: 0 });
+        Point::new(5.0 + caret.x, 5.0 + caret.y + caret.height / 2.0)
+    };
+    let mut clipboard = clipboard::Null;
+    let mut messages = Vec::new();
+    {
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            mouse::Cursor::Available(anchor),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    }
+    let [Action::MoveTo(cursor)] = messages.as_slice() else {
+        panic!("drag press must publish one caret: {messages:?}");
+    };
+    let cursor = *cursor;
+    messages.clear();
+    drop(editor);
+    content.move_to(cursor);
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .metrics = LayoutMetrics::default();
+
+    let started = Instant::now();
+    for event in 0..1_000 {
+        let point = Point::new(
+            20.0 + (event % 40) as f32 * 9.0,
+            10.0 + (event % 20) as f32 * 25.0,
+        );
+        let mut editor = RichTextEditor::new(&content, version)
+            .width(Length::Fixed(800.0))
+            .height(Length::Fixed(600.0))
+            .wrapping(text::Wrapping::None)
+            .on_action(|action| action);
+        node = editor.layout(&mut tree, &renderer, &limits);
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        let [Action::MoveTo(cursor)] = messages.as_slice() else {
+            panic!("drag event {event} must publish one selection: {messages:?}");
+        };
+        let cursor = *cursor;
+        assert!(cursor.selection.is_some());
+        messages.clear();
+        drop(editor);
+        content.move_to(cursor);
+    }
+    let elapsed = started.elapsed();
+
+    let mut editor = RichTextEditor::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None)
+        .on_action(|action| action);
+    node = editor.layout(&mut tree, &renderer, &limits);
+    let mut shell = Shell::new(&mut messages);
+    editor.update(
+        &mut tree,
+        &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        Layout::new(&node),
+        mouse::Cursor::Available(anchor),
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+    assert!(shell.is_event_captured());
+    assert!(messages.is_empty());
+
+    let state = tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>();
+    assert_eq!(state.document.lines.len(), 100_001);
+    assert_eq!(state.metrics, LayoutMetrics::default());
+    assert_performance_budget("1,000 selection drag events", elapsed, 10);
+    eprintln!(
+        "100k selection drag={elapsed:?}, metrics={:?}",
+        state.metrics
+    );
+}
+
+#[test]
+#[ignore = "large-document performance contract run explicitly in CI"]
+fn performance_contract_100k_hangul_ime_sequence() {
+    use iced::advanced::clipboard;
+
+    let source = large_source();
+    let mut content = Content::with_text(&source);
+    content.move_to(Cursor {
+        position: Position {
+            line: 50_000,
+            column: 4,
+        },
+        selection: None,
+    });
+    let renderer = headless_renderer();
+    let limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
+    let viewport = Rectangle::with_size(Size::new(800.0, 600.0));
+    let version = ContentVersion::new(13, 0);
+    let mut editor = RichTextEditor::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None)
+        .on_action(|action| action);
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .focus = Some(Focus::now());
+    let mut node = editor.layout(&mut tree, &renderer, &limits);
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .metrics = LayoutMetrics::default();
+    let mut clipboard = clipboard::Null;
+
+    let started = Instant::now();
+    for stage in ["ㅇ", "으", "응"] {
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::InputMethod(input_method::Event::Preedit(stage.into(), Some(3..3))),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        assert!(shell.is_layout_invalid());
+        shell.revalidate_layout(|| {
+            node = editor.layout(&mut tree, &renderer, &limits);
+        });
+        assert!(messages.is_empty());
+    }
+    let elapsed = started.elapsed();
+
+    let state = tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>();
+    assert_eq!(state.metrics.full_text_materializations, 0);
+    assert_eq!(state.metrics.composition_display_strings, 3);
+    assert_eq!(state.metrics.composition_line_strings, 300_003);
+    assert!(state.metrics.mapping_line_comparisons > 0);
+    assert_eq!(state.metrics.styled_signature_comparisons, 150_003);
+    assert_eq!(state.metrics.newly_owned_styled_texts, 3);
+    assert_eq!(state.metrics.line_vector_slots_prepared, 600_006);
+    assert_eq!(state.metrics.rebuilt_lines, 3);
+    assert_eq!(state.metrics.shaped_paragraphs, 3);
+    assert_eq!(state.metrics.highlighted_lines, 150_003);
+    assert_eq!(state.metrics.accepted_change_hints, 0);
+    assert_performance_budget("100k-line Hangul IME sequence", elapsed, 15);
+    eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
+}
+
+#[test]
+#[ignore = "large-document performance contract run explicitly in CI"]
+fn performance_contract_100k_viewport_resize() {
+    let source = large_source();
+    let content = Content::with_text(&source);
+    let renderer = headless_renderer();
+    let initial_limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
+    let version = ContentVersion::new(14, 0);
+    let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None);
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    editor.layout(&mut tree, &renderer, &initial_limits);
+    drop(editor);
+    tree.state
+        .downcast_mut::<State<text::highlighter::PlainText>>()
+        .metrics = LayoutMetrics::default();
+
+    let resized_limits = layout::Limits::new(Size::ZERO, Size::new(640.0, 600.0));
+    let started = Instant::now();
+    let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+        .width(Length::Fixed(640.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None);
+    editor.layout(&mut tree, &renderer, &resized_limits);
+    let elapsed = started.elapsed();
+
+    let state = tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>();
+    assert_eq!(state.metrics.full_text_materializations, 0);
+    assert_eq!(state.metrics.mapping_line_comparisons, 0);
+    assert_eq!(state.metrics.styled_signature_comparisons, 0);
+    assert_eq!(state.metrics.newly_owned_styled_texts, 0);
+    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
+    assert_eq!(state.metrics.rebuilt_lines, 100_001);
+    assert_eq!(state.metrics.shaped_paragraphs, 100_001);
+    assert_eq!(state.metrics.highlighted_lines, 0);
+    assert_performance_budget("100k-line viewport resize", elapsed, 30);
+    eprintln!("100k resize={elapsed:?}, metrics={:?}", state.metrics);
+}
+
+fn large_source() -> String {
+    (0..100_000)
+        .map(|index| format!("line {index}\n"))
+        .collect()
+}
+
+fn assert_performance_budget(label: &str, elapsed: Duration, seconds: u64) {
+    assert!(
+        elapsed < Duration::from_secs(seconds),
+        "{label} took {elapsed:?}; budget is {seconds}s"
+    );
 }
