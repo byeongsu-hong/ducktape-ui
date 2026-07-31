@@ -86,6 +86,7 @@ full = [
     "toggle-group",
     "tooltip",
     "typography",
+    "virtual-list",
 ]
 theme = ["dep:iced"]
 surface = ["theme"]
@@ -110,6 +111,7 @@ label = ["theme"]
 pagination = ["button"]
 skeleton = ["theme"]
 typography = ["theme"]
+virtual-list = ["theme", "dep:ui-lang-runtime"]
 attachment = ["theme"]
 bubble = ["theme"]
 button-group = ["theme"]
@@ -160,6 +162,7 @@ drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
+ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true }
 
 [dev-dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }

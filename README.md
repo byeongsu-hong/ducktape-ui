@@ -401,6 +401,12 @@ neighboring cell. `cargo test -p showcase` discovers the first-class Ice test
 in that same source graph as an ordinary generated Rust test. `cargo ice test`
 checks every Ice app graph before running `cargo test --workspace`.
 
+The showcase also renders 100,000 logical rows through the fixed-height
+[`VirtualList`](crates/ui/docs/virtual-list.md). Only visible plus overscan rows
+are materialized; the Ice view owns a typed extern state/event route and uses
+the shared `VirtualList.Frame` composition. No `virtual-for` or other Core
+syntax is involved.
+
 ```ice
 test counter_contract
   preset test

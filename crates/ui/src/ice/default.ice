@@ -1,5 +1,6 @@
 use "recipes.ice"
 use "components.ice"
+use "virtual-list.ice"
 
 theme contract AppTheme
   bg

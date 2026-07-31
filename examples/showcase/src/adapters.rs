@@ -55,11 +55,16 @@ use ducktape_ui::ui::{
     surface::{SurfaceVariant, surface},
     switch::switch as ui_switch,
     theme::LIGHT,
+    virtual_list::{
+        VirtualListConfig, VirtualListEvent as UiVirtualListEvent,
+        VirtualListState as UiVirtualListState, virtual_list as ui_virtual_list,
+    },
 };
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::{Style as FontStyle, Weight};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
+use std::sync::Arc;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 const ACTION_HEIGHT: f32 = 36.0;
@@ -82,6 +87,13 @@ pub use ducktape_ui::ui::{
 
 pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
+pub type VirtualListEvent = UiVirtualListEvent<u64>;
+
+#[derive(Debug, Clone)]
+pub struct VirtualListState {
+    list: UiVirtualListState<u64>,
+    items: Arc<[u64]>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogItem {
@@ -1606,6 +1618,87 @@ pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScro
     )
     .height(DEMO_STAGE_HEIGHT - 16.0);
     semantic(view, "ice-default-transcript", Role::Log)
+}
+
+fn virtual_list_config() -> VirtualListConfig {
+    VirtualListConfig::new(32.0, 208.0)
+        .expect("showcase virtual-list geometry is valid")
+        .overscan(3)
+}
+
+pub fn virtual_list_state() -> VirtualListState {
+    let items: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
+    let mut list = UiVirtualListState::new("showcase-virtual-list");
+    list.reconcile(&items, |item| *item, virtual_list_config())
+        .expect("showcase virtual-list keys are unique");
+    VirtualListState { list, items }
+}
+
+pub fn virtual_list_apply(
+    mut state: VirtualListState,
+    event: VirtualListEvent,
+) -> iced::Task<VirtualListState> {
+    let native_scroll = !matches!(event, UiVirtualListEvent::Scrolled { .. });
+    state
+        .list
+        .apply(event, &state.items, |item| *item, virtual_list_config());
+    if native_scroll {
+        state
+            .list
+            .sync_scroll::<VirtualListState>()
+            .chain(iced::Task::done(state))
+    } else {
+        iced::Task::done(state)
+    }
+}
+
+pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
+    let theme = theme();
+    let range = state.list.visible_range();
+    let selected = state.list.selected().map_or_else(
+        || "No row selected".to_owned(),
+        |key| format!("Selected #{key}"),
+    );
+    let summary = row![
+        text("100,000 keyed rows")
+            .size(11)
+            .font(ui_font(Weight::Semibold)),
+        iced::widget::Space::new().width(Length::Fill),
+        text(format!(
+            "mounted {}..{} · {selected}",
+            range.start, range.end
+        ))
+        .size(10)
+        .color(theme.palette.muted_foreground),
+    ]
+    .align_y(iced::Alignment::Center);
+    let list = ui_virtual_list(
+        &state.list,
+        &state.items,
+        virtual_list_config(),
+        |item| *item,
+        |item| format!("Repository result {item}"),
+        |index, item, selected| {
+            row![
+                text(format!("#{item:05}"))
+                    .size(11)
+                    .font(ui_font(Weight::Semibold)),
+                text(format!("Repository result row {index}"))
+                    .size(11)
+                    .color(theme.palette.muted_foreground),
+                iced::widget::Space::new().width(Length::Fill),
+                text(if selected { "selected" } else { "" })
+                    .size(10)
+                    .color(theme.palette.primary),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .into()
+        },
+        |event| event,
+        &theme,
+    );
+    column![summary, list].spacing(8).width(Length::Fill).into()
 }
 
 pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<CatalogItem> {

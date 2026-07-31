@@ -11,6 +11,7 @@ pub mod rich_text_editor;
 mod selectable_text;
 #[doc(hidden)]
 pub mod testing;
+mod virtual_list;
 mod zstack;
 
 pub use dashed_border::*;
@@ -20,6 +21,7 @@ pub use qr::*;
 pub use resize_handle::*;
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use selectable_text::*;
+pub use virtual_list::*;
 pub use zstack::*;
 
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
@@ -139,6 +141,9 @@ struct Semantics<Message> {
     description: Option<String>,
     value: Option<String>,
     checked: Option<bool>,
+    selected: Option<bool>,
+    position_in_set: Option<usize>,
+    size_of_set: Option<usize>,
     disabled: bool,
     focus: FocusBehavior,
     focus_id: widget::Id,
@@ -169,6 +174,9 @@ impl<Message> Semantics<Message> {
             description: None,
             value: None,
             checked: None,
+            selected: None,
+            position_in_set: None,
+            size_of_set: None,
             disabled: false,
             focus,
             focus_id: id.widget_id(),
@@ -318,6 +326,24 @@ where
 
     pub fn checked(mut self, checked: bool) -> Self {
         self.semantics.checked = Some(checked);
+        self
+    }
+
+    /// Marks whether this semantic item is selected.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.semantics.selected = Some(selected);
+        self
+    }
+
+    /// Sets this item's one-based position in its logical collection.
+    pub fn position_in_set(mut self, position: usize) -> Self {
+        self.semantics.position_in_set = Some(position);
+        self
+    }
+
+    /// Sets the total number of items in this semantic collection.
+    pub fn size_of_set(mut self, size: usize) -> Self {
+        self.semantics.size_of_set = Some(size);
         self
     }
 
@@ -1070,6 +1096,15 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(checked) = semantics.checked {
             node.set_toggled(Toggled::from(checked));
+        }
+        if let Some(selected) = semantics.selected {
+            node.set_selected(selected);
+        }
+        if let Some(position) = semantics.position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = semantics.size_of_set {
+            node.set_size_of_set(size);
         }
         if semantics.disabled {
             node.set_disabled();
