@@ -16,13 +16,22 @@ component StatusBar(cursor_label:str, busy:bool, has_error:bool, error:str)
         gap=8.0
         align=center
       if busy
-        text "Working…" size=11.0 @text-primary
+        text "Working…"
+          with
+            size=11.0
+            @font-semibold
+            @text-primary
       if !busy && !has_error
         text "Markdown" size=11.0 @text-muted
       if has_error
+        text "!"
+          with
+            size=11.0
+            @font-bold
+            @text-danger
         text error size=11.0 @text-danger
       if has_error
-        button "Dismiss" @toolbar_action -> emit(dismiss_error)
+        button "Dismiss" #dismiss @toolbar_action -> emit(dismiss_error)
       space w=fill h=1.0
       text cursor_label
         with

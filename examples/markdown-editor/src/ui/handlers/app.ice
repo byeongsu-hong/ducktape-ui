@@ -8,12 +8,15 @@ on system_theme_changed(next)
   active_palette = AppTheme.dark
 
 on toggle_theme
+  return if busy || confirming
   dark = !dark
   active_palette = AppTheme.light
   return if !dark
   active_palette = AppTheme.dark
 
 on request_new
+  find_open = false
+  find_query = ""
   pending = PendingAction.new_document
   return if is_dirty()
   document = reset_document("")
@@ -23,6 +26,8 @@ on request_new
   error = ""
 
 on request_open
+  find_open = false
+  find_query = ""
   pending = PendingAction.open_document
   return if is_dirty()
   pending = PendingAction.idle
@@ -40,6 +45,8 @@ on request_save_as
 on opened(file)
   busy = false
   return if empty(file.path)
+  find_open = false
+  find_query = ""
   document = reset_document(file.source)
   path = file.path
   name = file.name
@@ -63,6 +70,8 @@ on cancel_pending
 
 on discard_new
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   document = reset_document("")
   path = ""
   name = "Untitled.md"
@@ -78,33 +87,40 @@ on discard_close
   task window close
 
 on save_then_new
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed_save_new _
 
 on saved_then_new(file)
   busy = false
   return if empty(file.path)
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   document = reset_document("")
   path = ""
   name = "Untitled.md"
   error = ""
 
 on save_then_open
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed_save_open _
 
 on saved_then_open(file)
   busy = false
   return if empty(file.path)
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   path = file.path
   name = file.name
   run open_document() -> opened _ | failed _
 
 on save_then_close
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed_save_close _
 
 on saved_then_close(file)
   busy = false
@@ -134,16 +150,17 @@ on link
   document = format_document(document, "link")
 
 on toggle_find
+  return if busy || confirming
   find_open = !find_open
   return if !find_open
   task widget focus #app/find_bar/root/find_query
 
 on find_next
-  return if empty(find_query)
+  return if busy || confirming || empty(find_query)
   document = find_document(document, find_query, false)
 
 on find_previous
-  return if empty(find_query)
+  return if busy || confirming || empty(find_query)
   document = find_document(document, find_query, true)
 
 on escape
@@ -164,6 +181,18 @@ on dismiss_error
 on failed(cause)
   busy = false
   pending = PendingAction.idle
+  error = cause.message
+
+on failed_save_new(cause)
+  busy = false
+  error = cause.message
+
+on failed_save_open(cause)
+  busy = false
+  error = cause.message
+
+on failed_save_close(cause)
+  busy = false
   error = cause.message
 
 subscribe

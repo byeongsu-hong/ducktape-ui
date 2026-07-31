@@ -89,7 +89,12 @@ view
             events
               dismiss_error -> dismiss_error
     layer
-      ConfirmDialog #confirm action=pending name=name
+      ConfirmDialog #confirm
+        with
+          action=pending
+          name=name
+          busy=busy
+          error=error
         events
           save_new -> save_then_new
           discard_new -> discard_new

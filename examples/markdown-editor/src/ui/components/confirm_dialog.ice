@@ -1,4 +1,4 @@
-component ConfirmDialog(action:PendingAction, name:str)
+component ConfirmDialog(action:PendingAction, name:str, busy:bool, error:str)
   emits
     save_new
     discard_new
@@ -9,7 +9,7 @@ component ConfirmDialog(action:PendingAction, name:str)
     cancel
   box #root
     with
-      w=420.0
+      w=440.0
       p=24.0
       bg=surface
       border=border
@@ -20,7 +20,7 @@ component ConfirmDialog(action:PendingAction, name:str)
       shadow-blur=28.0
     col w=fill gap=18.0
       col gap=6.0
-        text "Save changes?"
+        text "Unsaved changes"
           with
             size=20.0
             font=body
@@ -31,31 +31,39 @@ component ConfirmDialog(action:PendingAction, name:str)
             size=13.0
             font=body
             @text-muted
-        text "Your unsaved changes will be lost."
+        text "Save your changes before continuing?"
           with
             size=13.0
             font=body
             @text-muted
+        if busy
+          text "Saving…"
+            with
+              size=12.0
+              @font-semibold
+              @text-primary
+        if !empty(error)
+          text error size=12.0 @text-danger
       match action
         PendingAction.new_document
           row w=fill gap=8.0
             space w=fill h=1.0
-            button "Cancel" @secondary_action -> emit(cancel)
-            button "Discard" @danger_action -> emit(discard_new)
-            button "Save" @primary_action -> emit(save_new)
+            button "Cancel" #cancel-new disabled=busy @secondary_action -> emit(cancel)
+            button "Discard" #discard-new disabled=busy @danger_action -> emit(discard_new)
+            button "Save" #save-new disabled=busy @primary_action -> emit(save_new)
         PendingAction.open_document
           row w=fill gap=8.0
             space w=fill h=1.0
-            button "Cancel" @secondary_action -> emit(cancel)
-            button "Discard" @danger_action -> emit(discard_open)
-            button "Save" @primary_action -> emit(save_open)
+            button "Cancel" #cancel-open disabled=busy @secondary_action -> emit(cancel)
+            button "Discard" #discard-open disabled=busy @danger_action -> emit(discard_open)
+            button "Save" #save-open disabled=busy @primary_action -> emit(save_open)
         PendingAction.close_window
           row w=fill gap=8.0
             space w=fill h=1.0
-            button "Cancel" @secondary_action -> emit(cancel)
-            button "Discard" @danger_action -> emit(discard_close)
-            button "Save" @primary_action -> emit(save_close)
+            button "Cancel" #cancel-close disabled=busy @secondary_action -> emit(cancel)
+            button "Discard" #discard-close disabled=busy @danger_action -> emit(discard_close)
+            button "Save" #save-close disabled=busy @primary_action -> emit(save_close)
         _
           row w=fill
             space w=fill h=1.0
-            button "Cancel" @secondary_action -> emit(cancel)
+            button "Cancel" #cancel-idle disabled=busy @secondary_action -> emit(cancel)

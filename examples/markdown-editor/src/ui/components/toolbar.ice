@@ -15,7 +15,7 @@ component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_ava
   box #root
     with
       w=fill
-      h=54.0
+      h=58.0
       px=16.0
       bg=toolbar
       border=border
@@ -24,60 +24,78 @@ component Toolbar(name:str, dirty:bool, busy:bool, undo_available:bool, redo_ava
       with
         w=fill
         h=fill
-        gap=3.0
+        gap=8.0
         align=center
-      button "New" disabled=busy @toolbar_action -> emit(new_document)
-      button "Open" disabled=busy @toolbar_action -> emit(open_document)
-      button "Save" disabled=busy @toolbar_action -> emit(save_document)
-      button "Save As" disabled=busy @toolbar_action -> emit(save_document_as)
-      box
+      box #file-actions
         with
-          w=1.0
-          h=22.0
-          mx=6.0
-          bg=border
-        text ""
-      button "Undo" disabled=!undo_available @toolbar_action -> emit(undo)
-      button "Redo" disabled=!redo_available @toolbar_action -> emit(redo)
-      box
+          p=3.0
+          bg=surface
+          border=border
+          border-w=1.0
+          r=9.0
+        row gap=1.0 align=center
+          button "New" #new disabled=busy @toolbar_action -> emit(new_document)
+          button "Open" #open disabled=busy @toolbar_action -> emit(open_document)
+          button "Save" #save disabled=busy @primary_action -> emit(save_document)
+          button "Save As" #save-as disabled=busy @toolbar_action -> emit(save_document_as)
+      box #edit-actions
         with
-          w=1.0
-          h=22.0
-          mx=6.0
-          bg=border
-        text ""
-      button "B" -> emit(bold)
+          p=3.0
+          bg=surface
+          border=border
+          border-w=1.0
+          r=9.0
+        row gap=1.0 align=center
+          button "Undo" #undo disabled=!undo_available @toolbar_action -> emit(undo)
+          button "Redo" #redo disabled=!redo_available @toolbar_action -> emit(redo)
+      box #format-actions
         with
-          label="Bold · Command or Ctrl+B"
+          p=3.0
+          bg=surface
+          border=border
+          border-w=1.0
+          r=9.0
+        row gap=1.0 align=center
+          button "B" #bold -> emit(bold)
+            with
+              label="Bold · Command or Ctrl+B"
+              disabled=busy
+              @toolbar_action
+          button "I" #italic -> emit(italic)
+            with
+              label="Italic · Command or Ctrl+I"
+              disabled=busy
+              @toolbar_action
+          button "<>" #inline-code -> emit(inline_code)
+            with
+              label="Inline code · Command or Ctrl+`"
+              disabled=busy
+              @toolbar_action
+      button "Link" #link -> emit(link)
+        with
           disabled=busy
-          @toolbar_action
-      button "I" -> emit(italic)
-        with
-          label="Italic · Command or Ctrl+I"
-          disabled=busy
-          @toolbar_action
-      button "<>" -> emit(inline_code)
-        with
-          label="Inline code · Command or Ctrl+`"
-          disabled=busy
-          @toolbar_action
-      button "Link" -> emit(link)
-        with
           label="Link · Command or Ctrl+K"
-          disabled=busy
           @toolbar_action
-      button "Find" -> emit(find)
+      button "Find" #find -> emit(find)
         with
-          label="Find · Command or Ctrl+F"
           disabled=busy
+          label="Find · Command or Ctrl+F"
           @toolbar_action
       if dark
-        button "Light" label="Use light appearance" @toolbar_action -> emit(toggle_theme)
+        button "Light" #light-theme -> emit(toggle_theme)
+          with
+            disabled=busy
+            label="Use light appearance"
+            @toolbar_action
       if !dark
-        button "Dark" label="Use dark appearance" @toolbar_action -> emit(toggle_theme)
+        button "Dark" #dark-theme -> emit(toggle_theme)
+          with
+            disabled=busy
+            label="Use dark appearance"
+            @toolbar_action
       space w=fill h=1.0
       if dirty
-        text "●" size=8.0 @text-primary
+        text "Unsaved" size=10.0 @text-danger
       text name
         with
           size=13.0
