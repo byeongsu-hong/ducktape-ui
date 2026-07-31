@@ -5,8 +5,15 @@ on:
     paths:
       - .github/workflows/release.yml
       - Cargo.lock
+      - scripts/package-smoke.sh
+      - scripts/downstream-package-smoke.sh
+      - tests/downstream-app/**
       - crates/cargo-ice/**
+      - crates/ui/**
+      - crates/ui-lang/**
+      - crates/ui-lang-build/**
       - crates/ui-lang-core/**
+      - crates/ui-lang-runtime/**
   push:
     tags: ["v*"]
 
@@ -17,6 +24,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  packages:
+    name: Packaged downstream consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/package-smoke.sh
+      - run: scripts/downstream-package-smoke.sh
+
   build:
     name: cargo-ice (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -80,7 +96,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push'
-    needs: build
+    needs: [build, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
