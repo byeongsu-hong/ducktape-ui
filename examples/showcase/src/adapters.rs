@@ -1645,7 +1645,7 @@ pub fn virtual_list_apply(
     if native_scroll {
         state
             .list
-            .sync_scroll::<VirtualListState>()
+            .sync_scroll::<VirtualListState>(state.items.len(), virtual_list_config())
             .chain(iced::Task::done(state))
     } else {
         iced::Task::done(state)
@@ -1654,7 +1654,9 @@ pub fn virtual_list_apply(
 
 pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
     let theme = theme();
-    let range = state.list.visible_range();
+    let range = state
+        .list
+        .mounted_range(state.items.len(), virtual_list_config());
     let selected = state.list.selected().map_or_else(
         || "No row selected".to_owned(),
         |key| format!("Selected #{key}"),
@@ -1676,6 +1678,7 @@ pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
         &state.list,
         &state.items,
         virtual_list_config(),
+        "Repository results",
         |item| *item,
         |item| format!("Repository result {item}"),
         |index, item, selected| {

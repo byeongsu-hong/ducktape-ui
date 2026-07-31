@@ -269,20 +269,24 @@ jobs:
             executable: target/debug/iced-app
             helper: target/native-wgpu-smoke
             backend: vulkan
+            required_draw: ""
           - label: macOS
             runner: macos-latest
             package: markdown-example
             executable: target/debug/markdown-example
             helper: target/native-wgpu-smoke
             backend: metal
+            required_draw: ""
           - label: Windows
             runner: windows-latest
             package: showcase
             executable: target/debug/showcase.exe
             helper: target/native-wgpu-smoke.exe
             backend: dx12
+            required_draw: virtual-list
     env:
       WGPU_BACKEND: ${{ matrix.backend }}
+      ICE_DEV_REQUIRED_DRAW: ${{ matrix.required_draw }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Linux display and Vulkan dependencies

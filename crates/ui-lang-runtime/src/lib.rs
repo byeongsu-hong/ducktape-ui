@@ -357,6 +357,12 @@ where
         self
     }
 
+    /// Maps focus from a native focusable descendant onto this semantic node.
+    pub fn focus_descendant(mut self) -> Self {
+        self.semantics.focus = FocusBehavior::Descendant;
+        self
+    }
+
     pub fn on_activate(mut self, message: Message) -> Self {
         self.semantics.activate = Some(message);
         self

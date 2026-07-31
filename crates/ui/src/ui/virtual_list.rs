@@ -3,12 +3,11 @@
 use super::theme::Theme;
 use iced::widget::container;
 use iced::{Background, Border, Element, Length};
-use std::fmt;
 use std::hash::Hash;
 
 pub use ui_lang_runtime::{
-    VirtualListConfig, VirtualListConfigError, VirtualListEvent, VirtualListNavigation,
-    VirtualListOutcome, VirtualListState,
+    VirtualListConfig, VirtualListConfigError, VirtualListEvent, VirtualListInspection,
+    VirtualListNavigation, VirtualListOutcome, VirtualListReconcileError, VirtualListState,
 };
 
 /// Builds a fixed-height list with Ducktape row colors and geometry.
@@ -20,6 +19,7 @@ pub fn virtual_list<'a, T, Key, Message>(
     state: &VirtualListState<Key>,
     items: &'a [T],
     config: VirtualListConfig,
+    collection_label: impl Into<String>,
     key: impl Fn(&T) -> Key,
     label: impl Fn(&T) -> String,
     view: impl Fn(usize, &'a T, bool) -> Element<'a, Message>,
@@ -27,7 +27,7 @@ pub fn virtual_list<'a, T, Key, Message>(
     theme: &Theme,
 ) -> Element<'a, Message>
 where
-    Key: Copy + Eq + Hash + fmt::Display + 'static,
+    Key: Copy + Eq + Hash + 'static,
     Message: Clone + 'static,
 {
     let theme = *theme;
@@ -35,6 +35,7 @@ where
         state,
         items,
         config,
+        collection_label,
         key,
         label,
         move |index, item, selected| {

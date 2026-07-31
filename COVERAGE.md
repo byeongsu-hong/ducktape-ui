@@ -313,15 +313,18 @@ optional-slot and theme-contract context.
 
 Fixed-height `VirtualList` is an explicit typed-runtime boundary, not a Core
 coverage claim. Runtime tests cover unique-key reconciliation, reorder/delete,
-empty and out-of-range behavior, mouse focus/selection, all six keyboard
-movements, programmatic scroll, and AccessKit collection count plus mounted-item
-position/size/selected state. A 100,000-item contract performs 1,000 view builds
-with at most visible+overscan row callbacks and an exact mounted child-slot
-budget. The `ducktape-ui` feature reuses those public state/event types, the
-showcase consumes them through a typed Ice extern and first-class tiny-skia
-capture, and the existing showcase native WGPU job draws the visible list on
-its first frame. V1 explicitly excludes variable-height measurement and new
-Ice syntax.
+empty and out-of-range behavior, mouse focus/selection, focus transfer to sibling
+lists and inputs, child and native-scrollbar event precedence, all six keyboard
+movements, programmatic scroll, and AccessKit collection name/focus/count plus
+mounted-item position/size/selected state. Typed-key semantic identity stays
+stable across reorder even when distinct keys have identical display text. A
+100,000-item CI contract performs 1,000 view builds with at most
+visible+overscan row callbacks and an exact mounted child-slot budget. The
+`ducktape-ui` feature reuses those public state/event types, the showcase consumes
+them through a typed Ice extern and first-class tiny-skia capture, and the
+showcase native WGPU job requires the `virtual-list` draw probe before accepting
+the first frame. V1 explicitly excludes variable-height measurement and new Ice
+syntax.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component

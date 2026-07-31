@@ -2040,10 +2040,14 @@ Large fixed-height collections use `ui_lang_runtime::VirtualListState` and the
 feature-gated `ducktape_ui::ui::virtual_list` typed boundary. Stable unique keys
 reconcile selection across reorder/delete, while native focus, mouse selection,
 Up/Down/Home/End/PageUp/PageDown, scroll-to-item, visible-range inspection, and
-AccessKit list/item metadata remain runtime behavior. Only visible plus
-overscan rows become Elements. `VirtualList.Frame` is an Ice composition around
-an app-owned extern component; there is deliberately no `virtual-for` syntax
-or variable-height measurement in v1.
+named AccessKit list/item metadata remain runtime behavior. Visible and mounted
+range queries derive from the current item count, geometry, and scroll offset;
+only mounted visible-plus-overscan rows become Elements. Native scrollbar and
+interactive-child events take precedence over row selection. `VirtualList.Frame`
+is an Ice composition around an app-owned extern component; there is deliberately
+no `virtual-for` syntax or variable-height measurement in v1. Accessibility v1
+focuses and navigates the collection but does not create offscreen item nodes or
+per-item accessibility actions.
 
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
