@@ -309,7 +309,7 @@ view
               size=14.0
               @text-muted
             span "This dialog is a structured overlay written entirely in "
-            span ".ice" link="https://github.com/byeongsu-hong/ducktape-ui-lang" bg=linear(1.57, primary/20@0.0, surface@1.0) p=2.0 r=2.0 underline @font-bold text-primary
+            span ".ice" link="https://github.com/byeongsu-hong/ducktape-ui" bg=linear(1.57, primary/20@0.0, surface@1.0) p=2.0 r=2.0 underline @font-bold text-primary
             span "."
         modal::Dialog.Actions
           button "Close" style=primary @task_primary_action -> close_about

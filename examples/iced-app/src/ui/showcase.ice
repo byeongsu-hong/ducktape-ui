@@ -645,7 +645,7 @@ view
             r=8.0
           text "Nothing final here yet" size=12.0 @text-muted
         theme tokyo-night fg=white bg=linear(1.57, bg@0.0, surface@1.0)
-          qr "https://github.com/byeongsu-hong/ducktape-ui-lang"
+          qr "https://github.com/byeongsu-hong/ducktape-ui"
             with
               correction=high
               version=normal(8)

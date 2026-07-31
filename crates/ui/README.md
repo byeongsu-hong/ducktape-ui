@@ -1,6 +1,6 @@
 # ducktape-ui
 
-Default, composable UI components for [Ice](https://github.com/byeongsu-hong/ducktape-ui-lang) and [iced](https://github.com/iced-rs/iced).
+Default, composable UI components for [Ice](https://github.com/byeongsu-hong/ducktape-ui) and [iced](https://github.com/iced-rs/iced).
 
 Ice is the canonical application authoring surface: `.ice` owns layout, state, routes, styles, and accessibility. The feature-gated Rust modules remain the typed native boundary for retained widgets whose behavior is intentionally lower-level than Ice.
 
@@ -61,7 +61,7 @@ Each component remains individually feature-gated, and enabling one also enables
 
 ```toml
 [dependencies]
-ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui-lang", features = ["button", "input", "card"] }
+ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui", features = ["button", "input", "card"] }
 iced = "=0.14.0"
 ```
 
