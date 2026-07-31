@@ -4,7 +4,6 @@ use super::*;
 pub(in crate::codegen) fn render_container(
     options: &ContainerOptions,
     id: &Option<Id>,
-    styles: &[String],
     content: &ViewNode,
     span: &Span,
     document: &RenderDocument<'_>,
@@ -20,7 +19,7 @@ pub(in crate::codegen) fn render_container(
         |id| id_code(id, scope, env, document),
     )?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
-    let mut style = Style::parse(styles, document);
+    let mut style = document.program().style_use(span)?.style.clone();
     let mut surface = options.style.clone();
     // A dashed border replaces the solid one rather than adding to it: iced
     // can only draw a solid quad border, so both style lanes drop theirs and
@@ -129,7 +128,7 @@ pub(in crate::codegen) fn render_container(
 /// so the stroke traces the surface it replaces, per corner.
 fn border_dash_code(
     options: &ContainerOptions,
-    style: &Style,
+    style: &ResolvedStyle,
     env: &HashMap<String, Binding>,
     document: &Document,
 ) -> Result<String, Error> {
@@ -214,8 +213,8 @@ pub(in crate::codegen) fn render_rich_text(
     options: &TextOptions,
     color: &Option<String>,
     spans: &[RichSpan],
-    styles: &[String],
     route: &Option<Route>,
+    node_span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
     env: &HashMap<String, Binding>,
@@ -226,11 +225,13 @@ pub(in crate::codegen) fn render_rich_text(
         .map(|item| render_rich_span(item, document, env))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
-    let style = Style::parse(styles, document);
+    let style = &document.program().style_use(node_span)?.style;
     let mut code = String::from("::iced::widget::rich_text(__rich_spans)");
-    append_text_options(&mut code, options, &style, env, document)?;
-    if let Some(color) = color.as_ref().or(style.text_color.as_ref()) {
+    append_text_options(&mut code, options, style, env, document)?;
+    if let Some(color) = color {
         write!(code, ".color({})", theme_color(document, color)).unwrap();
+    } else if let Some(color) = &style.text_color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
     }
     if let Some(route) = route {
         let callback = route_callback_code(route, "__link", "__link", env, document, message)?;

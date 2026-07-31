@@ -333,7 +333,7 @@ pub(in crate::codegen) fn text_input_icon_code(
 pub(in crate::codegen) fn text_input_style_code(
     styles: &TextInputStyleSet,
     custom: Option<&ExternCall>,
-    utilities: Option<&Style>,
+    utilities: Option<&ResolvedStyle>,
     env: &HashMap<String, Binding>,
     document: &Document,
     method: &str,
@@ -375,7 +375,7 @@ pub(in crate::codegen) fn text_input_style_code(
             write!(
                 code,
                 " __style.background = {}.into();",
-                theme_color(document, background)
+                resolved_theme_color(background)
             )
             .unwrap();
         }
@@ -383,7 +383,7 @@ pub(in crate::codegen) fn text_input_style_code(
             write!(
                 code,
                 " __style.border.color = {};",
-                theme_color(document, border)
+                resolved_theme_color(border)
             )
             .unwrap();
         }
@@ -397,7 +397,7 @@ pub(in crate::codegen) fn text_input_style_code(
             write!(
                 code,
                 " if matches!(__status, ::iced::widget::text_input::Status::Focused {{ .. }}) {{ __style.border.color = {}; }}",
-                theme_color(document, focus)
+                resolved_theme_color(focus)
             )
             .unwrap();
         }

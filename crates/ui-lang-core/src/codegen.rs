@@ -1,8 +1,10 @@
 use crate::ast::*;
 use crate::check::{controlled_editor_bindings, controlled_state_bindings, expr_type};
 use crate::lower::{
-    ComponentOutputRoute, ComponentScope, ComponentStorage, LoweredProgram, ResolvedEventRoute,
-    ResolvedSlot,
+    ComponentOutputRoute, ComponentScope, ComponentStorage, LoweredProgram,
+    ResolvedAppThemeSelection, ResolvedBackground, ResolvedEventRoute, ResolvedPaletteSelection,
+    ResolvedSlot, ResolvedStyle, ResolvedStyleFontWeight, ResolvedThemeColor,
+    ResolvedThemeColorBase, ResolvedThemeFactory, ResolvedThemePreset,
 };
 use crate::{Error, canonical_snake};
 use std::collections::HashMap;
@@ -302,22 +304,18 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_widget_selector_types(&mut out, document);
     generate_canvas_types(&mut out, document);
     generate_pane_types(&mut out, document)?;
-    let token_count = document
-        .theme_contract
-        .as_ref()
-        .map_or(0, |contract| contract.tokens.len());
-    if let Some(contract) = &document.theme_contract {
-        writeln!(
-            out,
-            "#[allow(dead_code)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum {} {{",
-            generated_named_rust(&contract.name)
-        )
-        .unwrap();
-        for palette in &document.palettes {
-            writeln!(out, "{},", pascal(&palette.name)).unwrap();
-        }
-        writeln!(out, "}}").unwrap();
+    let theme = program.theme();
+    let token_count = theme.contract.tokens.len();
+    writeln!(
+        out,
+        "#[allow(dead_code)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum {} {{",
+        generated_named_rust(&theme.contract.name)
+    )
+    .unwrap();
+    for palette in &theme.palettes {
+        writeln!(out, "{},", pascal(&palette.name)).unwrap();
     }
+    writeln!(out, "}}").unwrap();
     writeln!(
         out,
         "#[derive(Clone, Copy)]\nstruct __IcePalette {{ name: &'static str, colors: [::iced::Color; {token_count}] }}"
@@ -689,7 +687,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     )
     .unwrap();
 
-    generate_theme(&mut out, document)?;
+    generate_theme(&mut out, program)?;
     generate_boot(&mut out, program, &message)?;
     generate_presets(&mut out, document, &message)?;
     generate_update(&mut out, program, &message)?;

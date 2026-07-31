@@ -293,7 +293,7 @@ pub(in crate::codegen) fn render_pane_content(
     let mut declarations = format!("let __pane_content: __IceElement<'_, {message}> = {body};");
     let mut content = String::from("::iced::widget::pane_grid::Content::new(__pane_content)");
     if let Some(style) = container_surface_style_value(
-        &Style::parse(&pane.styles, document),
+        &document.program().style_use(&pane.span)?.style,
         &pane.style,
         None,
         env,
@@ -337,7 +337,7 @@ pub(in crate::codegen) fn render_pane_content(
             title_bar.push_str(".always_show_controls()");
         }
         if let Some(style) = container_surface_style_value(
-            &Style::parse(&title.styles, document),
+            &document.program().style_use(&title.span)?.style,
             &title.style,
             None,
             env,
@@ -352,10 +352,10 @@ pub(in crate::codegen) fn render_pane_content(
 
 pub(in crate::codegen) fn render_rich_span(
     item: &RichSpan,
-    document: &Document,
+    document: &RenderDocument<'_>,
     env: &HashMap<String, Binding>,
 ) -> Result<String, Error> {
-    let style = Style::parse(&item.styles, document);
+    let style = &document.program().style_use(&item.span)?.style;
     let value = expr_code(&item.value, env, document, ValueMode::Owned)?;
     let mut code = format!("::iced::widget::span({value})");
     if let Some(size) = &item.options.size {
@@ -378,11 +378,13 @@ pub(in crate::codegen) fn render_rich_span(
         )
         .unwrap();
     }
-    if let Some(font) = styled_font_code(item.options.font.as_ref(), &style, document)? {
+    if let Some(font) = styled_font_code(item.options.font.as_ref(), style, document)? {
         write!(code, ".font({font})").unwrap();
     }
-    if let Some(color) = item.options.color.as_ref().or(style.text_color.as_ref()) {
+    if let Some(color) = &item.options.color {
         write!(code, ".color({})", theme_color(document, color)).unwrap();
+    } else if let Some(color) = &style.text_color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
     }
     if let Some(link) = &item.options.link {
         write!(

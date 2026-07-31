@@ -204,6 +204,17 @@ overrides. Recipe definitions and references also
 participate in cross-file LSP definition and safe rename. The workspace-local
 `ducktape-ui` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
+The private HIR assigns recipe, style-use, target, and variant IDs and stores
+each recipe as a cycle-free, base-first semantic patch. A style use merges that
+fixed-size patch and its direct utilities once during lowering; Rust generation
+does not call `expand_styles`, search recipe names, walk inheritance, or parse
+utility strings. Structured lowering tests cover three-level inheritance,
+later recipe and direct-utility precedence, every supported interaction
+variant, exact pixels, typography, token opacity, invalid checked-state
+invariants, and namespaced imported origins. The explicit performance fixture
+normalizes 128 theme tokens, 256 deeply inherited recipes, and 10,000 uses in
+under the two-second debug-build lowering budget while retaining zero inherited
+utility copies per use.
 
 The LSP contract uses the core error-tolerant cursor-context model and is covered by focused protocol tests for cursor-scoped
 completion, checked component and extern signatures, base-first recipe hover,
@@ -229,6 +240,17 @@ type. Generated exhaustive code selects one complete color table per view with
 no string fallback and uses it for both the custom Iced theme and all
 semantic-token style callbacks. Parser, checker, codegen, schema/LSP, formatter,
 example, and workspace compilation tests provide the executable evidence.
+The private HIR fixes theme-contract and token IDs in declaration order,
+palette IDs and token-ordered RGBA tables, the default/static/dynamic active
+palette choice, and app or nested built-in/native-factory selections before
+emission. Theme factories use resolved extern-function IDs; nested semantic
+text/background colors and gradient stops carry token IDs and optional opacity.
+Structured tests cover dynamic palettes, app and nested factories, ordered
+alpha palettes, token opacity, gradients, invalid post-check mutations, and
+namespaced factory/recipe physical origins. Direct expression-bearing native
+widget style blocks and other view/canvas color fields remain in the later
+expression/view HIR slice; their presence is not counted as a completed
+AST-free style migration.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

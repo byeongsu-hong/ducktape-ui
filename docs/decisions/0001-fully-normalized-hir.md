@@ -89,10 +89,33 @@ The table's parent links are scaffolding for future expansion stacks: current
 lowering errors and generated source markers do not traverse them and continue
 to use source spans and the existing physical line-origin map.
 
+The recipe/utility and theme-declaration slice is also implemented. Typed
+recipe, style-use, target, variant, theme-contract, theme-token, palette, and
+extern-function IDs preserve the checked relationships. Recipe inheritance is
+flattened once into a fixed-size backend-neutral semantic style, and direct
+utilities are applied once at each source site. The ten render paths that use
+Core utilities consume only the resolved style and no longer inspect recipe
+names, inheritance, or utility strings. Theme contracts and palettes carry
+token declaration order and complete RGBA tables; app and nested theme
+selection, static or dynamic active palettes, native theme factory calls,
+nested gradients, token references, and opacity are resolved before their
+migrated emitters run.
+
+This is deliberately not a claim that every style-shaped AST node has been
+migrated. Expression-bearing native widget status blocks and direct
+view/canvas color fields remain AST-backed with the expression/view family.
+Palette enum paths inside the general expression emitter also remain in that
+family. Their backend helpers are removed only when those expressions and view
+options gain normalized nodes; no compatibility fallback is added.
+
 The program still owns AST-backed nodes for semantic families not yet migrated.
-Styles/themes, expressions/matches, asynchronous call sites, application
-settings, tests, and the remaining views therefore remain open implementation
-slices; this status does not satisfy the migration-complete criteria below.
+The remaining expression-backed native styles/colors, expressions/matches,
+asynchronous call sites, other application settings, tests, and remaining views
+therefore remain open implementation slices; this status does not satisfy the
+migration-complete criteria below. `OriginId` parent links remain scaffolding:
+the new style/theme nodes retain physical root/import locations, but current
+diagnostics and generated source markers still do not traverse expansion
+stacks.
 
 The migration is complete when:
 

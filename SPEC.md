@@ -191,9 +191,19 @@ future expansion stacks; current diagnostics and generated source markers still
 use the existing line-origin map and do not traverse those links. Component call
 rendering selects its classified call and contract by source site and typed ID,
 so it does not repeat prop, event, slot, binding, identity, or storage decisions.
-Lowering still resolves source component names, and unmigrated code-generation
-paths still consume AST names and nodes. Each later slice must remove its prior
-backend path when it adds normalized nodes.
+The style/theme slice also assigns typed IDs to recipes, style uses, targets,
+variants, theme contracts, tokens, palettes, and native theme factories.
+Recipe inheritance and utility variants become a fixed-size semantic style
+before rendering; the ten utility-consuming render sites select that style by
+source identity and never inspect source recipes or utility spellings. Theme
+contracts retain declaration order, palettes retain complete token-ordered RGBA
+tables, and app or nested theme selections retain resolved built-in/factory and
+static/dynamic palette choices. Lowering still resolves source component and
+recipe names. Expression-bearing native widget status blocks and other direct
+view/canvas color fields remain AST-backed as part of the expression/view
+migration, so this slice does not claim that all style-related AST has gone.
+Each later slice must remove its prior backend path when it adds normalized
+nodes.
 
 The Rust adapter is one manifest-relative include:
 

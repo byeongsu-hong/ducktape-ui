@@ -3,6 +3,10 @@ use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+mod style;
+
+pub(crate) use style::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentId(u32);
 
@@ -267,6 +271,7 @@ pub(crate) struct LoweredProgram {
     components: Vec<ComponentContract>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
+    styles: StyleProgram,
     origins: Vec<Origin>,
     source_origins: Vec<(PathBuf, usize)>,
 }
@@ -305,6 +310,22 @@ impl LoweredProgram {
         })
     }
 
+    pub(crate) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
+        self.styles.style_use(span)
+    }
+
+    pub(crate) fn theme(&self) -> &ResolvedThemeProgram {
+        &self.styles.theme
+    }
+
+    pub(crate) fn nested_theme(&self, span: &Span) -> Result<&ResolvedNestedTheme, Error> {
+        self.styles.nested_theme(span)
+    }
+
+    pub(crate) fn extern_function(&self, id: ExternFnId) -> &ExternFn {
+        &self.document.functions[id.0 as usize]
+    }
+
     #[cfg(test)]
     fn origin(&self, id: OriginId) -> &Origin {
         &self.origins[id.0 as usize]
@@ -329,6 +350,7 @@ struct Lowerer {
     component_ids: HashMap<String, ComponentId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
+    styles: StyleProgramBuilder,
     origins: Vec<Origin>,
     app_states: HashMap<String, AppStateId>,
 }
@@ -354,12 +376,14 @@ impl Lowerer {
             component_ids: HashMap::new(),
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
+            styles: StyleProgramBuilder::default(),
             origins: Vec::new(),
             app_states,
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        self.lower_style_program()?;
         self.index_components()?;
         let component_roots = self
             .components
@@ -380,11 +404,19 @@ impl Lowerer {
         for mount in mounts {
             self.lower_view(&mount, None)?;
         }
+        let styles = self.styles.finish().ok_or_else(|| {
+            Error::new(
+                "E196",
+                &Span::line(1),
+                "style lowering completed without a normalized theme program",
+            )
+        })?;
         Ok(LoweredProgram {
             document: self.document,
             components: self.components,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
+            styles,
             origins: self.origins,
             source_origins: self.source_origins,
         })
@@ -526,6 +558,7 @@ impl Lowerer {
         node: &ViewNode,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
+        self.lower_view_style(node)?;
         match node {
             ViewNode::Component {
                 name,
@@ -1256,5 +1289,457 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_recipe_inheritance_precedence_and_every_utility_variant() {
+        let source = r#"app Styles
+recipe action for button
+  px-16px py-11px bg-surface/75 hover:bg-primary pressed:bg-danger disabled:bg-border disabled:text-fg disabled:opacity-25 border border-border rounded-9px text-12.5px leading-snug font-semibold
+recipe emphasized for button extends action
+  bg-primary hover:bg-danger
+recipe destructive for button extends emphasized
+  pressed:bg-primary disabled:bg-surface text-fg
+recipe field for input
+  w-full border border-border focus:border-primary rounded-md
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+  surface
+  border
+palette app for AppTheme
+  bg #101010
+  fg #f0f0f0
+  primary #336699
+  danger #cc0000
+  surface #202020
+  border #404040
+state
+  value = ""
+on pressed
+view
+  col
+    button "Delete" @destructive bg-danger -> pressed
+    input "Name" <-> value @field
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        assert_eq!(program.styles.recipes.len(), 4);
+        assert!(matches!(
+            program.theme().active_palette,
+            ResolvedPaletteSelection::Static(PaletteId(0))
+        ));
+        let destructive = &program.styles.recipes[2];
+        assert_eq!(destructive.base, Some(RecipeId(1)));
+        assert_eq!(destructive.declared_utilities.len(), 3);
+        assert!(matches!(
+            destructive.style.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                opacity: None,
+            })
+        ));
+        assert!(matches!(
+            destructive.style.hover_background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 3, .. }),
+                ..
+            })
+        ));
+        assert!(matches!(
+            destructive.style.pressed_background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+        assert_eq!(destructive.style.disabled_opacity, Some(0.25));
+        assert_eq!(destructive.style.padding, [11, 16, 11, 16]);
+        assert_eq!(destructive.style.radius, 9);
+        assert_eq!(destructive.style.text_size, Some(12.5));
+        assert_eq!(destructive.style.text_line_height, Some(1.35));
+        assert_eq!(
+            destructive.style.font_weight,
+            Some(ResolvedStyleFontWeight::Semibold)
+        );
+
+        let ViewNode::Layout { children, .. } = &program.document.view else {
+            panic!("fixture view must be a layout");
+        };
+        let button = program.style_use(children[0].span()).unwrap();
+        assert_eq!(button.recipes, [RecipeId(2)]);
+        assert_eq!(button.utilities.len(), 1);
+        assert!(matches!(
+            button.style.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 3, .. }),
+                ..
+            })
+        ));
+        let input = program.style_use(children[1].span()).unwrap();
+        assert!(matches!(
+            input.style.focus_border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn preserves_maximum_exact_padding_without_sentinel_values() {
+        let source = format!(
+            r#"app Padding
+recipe all for box
+  p-65535px
+recipe axes for box
+  px-65535px py-65534px
+{THEME}view
+  col
+    box @all
+      text "all"
+    box @axes
+      text "axes"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        assert_eq!(program.styles.recipes[0].style.padding, [u16::MAX; 4]);
+        assert_eq!(
+            program.styles.recipes[1].style.padding,
+            [u16::MAX - 1, u16::MAX, u16::MAX - 1, u16::MAX]
+        );
+    }
+
+    #[test]
+    fn resolves_theme_contract_palettes_and_native_factories() {
+        let source = r#"extern crate::backend
+  theme native_theme(dark:bool)
+app Themes
+  theme native_theme(dark)
+  palette active_palette
+theme contract Ducktape
+  bg
+  fg
+  primary
+  danger
+  surface
+palette light for Ducktape
+  bg #ffffff
+  fg #111111
+  primary #3366ff
+  danger #cc3344
+  surface #f4f4f480
+palette dark for Ducktape
+  bg #111111
+  fg #ffffff
+  primary #88aaff
+  danger #ff6677
+  surface #222222
+state
+  dark = false
+  active_palette:palette[Ducktape] = Ducktape.light
+view
+  theme native_theme(!dark) fg=fg bg=linear(1.57, surface@0.0, bg@1.0)
+    text "Theme" @text-surface/60
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let theme = program.theme();
+        assert_eq!(theme.contract.name, "Ducktape");
+        assert_eq!(
+            theme
+                .contract
+                .tokens
+                .iter()
+                .map(|token| token.name.as_str())
+                .collect::<Vec<_>>(),
+            ["bg", "fg", "primary", "danger", "surface"]
+        );
+        assert_eq!(theme.palettes.len(), 2);
+        assert_eq!(theme.palettes[0].colors[4].rgba, [244, 244, 244, 128]);
+        assert!(matches!(
+            theme.active_palette,
+            ResolvedPaletteSelection::Dynamic(Expr::Path(_))
+        ));
+        let ResolvedAppThemeSelection::Factory(factory) = &theme.app_theme else {
+            panic!("app theme factory must be resolved");
+        };
+        assert_eq!(
+            program.extern_function(factory.function).name,
+            "native_theme"
+        );
+        let nested = program
+            .nested_theme(&program.document.view.span().clone())
+            .unwrap();
+        let ResolvedThemePreset::Factory(factory) = &nested.preset else {
+            panic!("nested theme factory must be resolved");
+        };
+        assert_eq!(
+            program.extern_function(factory.function).name,
+            "native_theme"
+        );
+        assert!(matches!(
+            nested.text,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 1, .. }),
+                ..
+            })
+        ));
+        let ResolvedBackground::Linear { stops, .. } = &nested.background.as_ref().unwrap() else {
+            panic!("nested gradient must be normalized");
+        };
+        assert_eq!(stops.len(), 2);
+        let ViewNode::Theme { content, .. } = &program.document.view else {
+            panic!("fixture root must be a theme");
+        };
+        let style = program.style_use(content.span()).unwrap();
+        assert!(matches!(
+            style.style.text_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 4, .. }),
+                opacity: Some(60),
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_checked_style_and_palette_states_that_cannot_be_normalized() {
+        let source = format!(
+            "app Demo\nrecipe label for text\n  text-fg\n{THEME}view\n  text \"ok\" @label\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.document.recipes[0].base = Some("missing".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("unknown checked recipe base `missing`")
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.palettes[0].colors.remove("fg");
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("missing checked token `fg`"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.recipes[0].utilities[0] = "rounded-nope".into();
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked radius utility"));
+
+        let inheritance = format!(
+            "app Demo\nrecipe base for text\n  text-fg\nrecipe child for text extends base\n  font-bold\n{THEME}view\n  text \"ok\" @child\n"
+        );
+        let mut checked = analyze(&inheritance).unwrap();
+        checked.document.recipes[1].target = StyleRecipeTarget::Container;
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains(
+                "recipe `child` targets `box` but its checked base `base` targets `text`"
+            )
+        );
+
+        let mut checked = analyze(&inheritance).unwrap();
+        checked.document.recipes[0].base = Some("child".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked recipe cycle includes"));
+    }
+
+    #[test]
+    fn classifies_static_app_and_nested_builtin_theme_choices() {
+        let source = r#"app StaticThemes
+  theme "dark"
+  palette AppTheme.second
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette first for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #336699
+  danger #cc0000
+palette second for AppTheme
+  bg #ffffff
+  fg #000000
+  primary #6688cc
+  danger #dd3344
+view
+  theme light
+    text "built in"
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        assert!(matches!(
+            program.theme().active_palette,
+            ResolvedPaletteSelection::Static(PaletteId(1))
+        ));
+        assert!(matches!(
+            &program.theme().app_theme,
+            ResolvedAppThemeSelection::BuiltIn(name) if name == "dark"
+        ));
+        let nested = program.nested_theme(program.document.view.span()).unwrap();
+        assert!(matches!(
+            &nested.preset,
+            ResolvedThemePreset::BuiltIn(name) if name == "light"
+        ));
+
+        let explicit_default = source.replace("theme \"dark\"", "theme \"default\"");
+        let program = lower(analyze(&explicit_default).unwrap()).unwrap();
+        assert!(matches!(
+            program.theme().app_theme,
+            ResolvedAppThemeSelection::Default
+        ));
+    }
+
+    #[test]
+    fn resolves_namespaced_recipe_origins_without_losing_the_physical_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-style-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("styles.ice");
+        fs::write(
+            &root,
+            format!(
+                "app Demo\n  theme ui::native_theme(dark)\nuse \"styles.ice\" as ui\n{THEME}state\n  dark = false\nview\n  theme ui::native_theme(!dark)\n    text \"Imported\" @ui::emphasis\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  theme native_theme(dark:bool)\nrecipe label for text\n  text-fg\nrecipe emphasis for text extends label\n  font-bold\ncomponent Decorated()\n  box @bg-primary\n    text \"decorated\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let recipe = program
+            .styles
+            .recipes
+            .iter()
+            .find(|recipe| recipe.name == "ui::emphasis")
+            .unwrap();
+        let origin = program.origin(recipe.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+        let ResolvedAppThemeSelection::Factory(factory) = &program.theme().app_theme else {
+            panic!("namespaced app theme factory must be resolved");
+        };
+        assert_eq!(
+            program.extern_function(factory.function).name,
+            "ui::native_theme"
+        );
+        let contract_origin = program.origin(program.theme().contract.origin);
+        assert_eq!(contract_origin.path.as_deref(), Some(root.as_path()));
+        let ViewNode::Theme { content, span, .. } = &program.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        let nested = program.nested_theme(span).unwrap();
+        let ResolvedThemePreset::Factory(factory) = &nested.preset else {
+            panic!("namespaced nested theme factory must be resolved");
+        };
+        assert_eq!(
+            program.extern_function(factory.function).name,
+            "ui::native_theme"
+        );
+        assert_eq!(
+            program.origin(nested.origin).path.as_deref(),
+            Some(root.as_path())
+        );
+        let style = program.style_use(content.span()).unwrap();
+        assert_eq!(style.recipes, [recipe.id]);
+        let imported_style = program
+            .styles
+            .style_uses
+            .iter()
+            .find(|style| {
+                style.style.background
+                    == Some(ResolvedThemeColor {
+                        base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
+                        opacity: None,
+                    })
+            })
+            .expect("imported component style must be lowered");
+        assert_eq!(
+            program.origin(imported_style.origin).path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(imported_style.origin).line, 8);
+        assert_eq!(
+            imported_style.style.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
+                opacity: None,
+            })
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "explicit large style lowering performance contract"]
+    fn performance_contract_lowering_many_deep_recipes_and_uses_has_constant_per_use_recipe_work() {
+        const TOKENS: usize = 128;
+        const RECIPES: usize = 256;
+        const USES: usize = 10_000;
+        let mut source = String::from(
+            "app StylePerf\ntheme contract PerfTheme\n  bg\n  fg\n  primary\n  danger\n",
+        );
+        for index in 0..TOKENS {
+            writeln!(source, "  token_{index}").unwrap();
+        }
+        source.push_str(
+            "palette app for PerfTheme\n  bg #000000\n  fg #ffffff\n  primary #336699\n  danger #cc0000\n",
+        );
+        for index in 0..TOKENS {
+            writeln!(source, "  token_{index} #{:06x}", index + 1).unwrap();
+        }
+        source.push_str("recipe recipe_0 for text\n  text-token_0\n");
+        for index in 1..RECIPES {
+            writeln!(
+                source,
+                "recipe recipe_{index} for text extends recipe_{}\n  text-token_{}",
+                index - 1,
+                index % TOKENS
+            )
+            .unwrap();
+        }
+        source.push_str("view\n  col\n");
+        for index in 0..USES {
+            writeln!(source, "    text \"row-{index}\" @recipe_{}", RECIPES - 1).unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        eprintln!("normalized {TOKENS} tokens, {RECIPES} recipes, and {USES} uses in {elapsed:?}");
+        assert_eq!(program.theme().contract.tokens.len(), TOKENS + 4);
+        assert_eq!(program.styles.recipes.len(), RECIPES);
+        assert_eq!(program.styles.style_uses.len(), USES + 1);
+        assert_eq!(
+            program
+                .styles
+                .style_uses
+                .iter()
+                .map(|style| style.utilities.len())
+                .sum::<usize>(),
+            0,
+            "recipe uses retain IDs and fixed-size styles, never inherited utility copies"
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "128 tokens, 256 recipes, and 10k recipe uses lowered in {elapsed:?}"
+        );
     }
 }

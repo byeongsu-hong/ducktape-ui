@@ -178,7 +178,7 @@ pub(in crate::codegen) fn background_code(
 }
 
 pub(in crate::codegen) fn container_surface_style_value(
-    utilities: &Style,
+    utilities: &ResolvedStyle,
     options: &ContainerStyleOptions,
     custom: Option<&ExternCall>,
     env: &HashMap<String, Binding>,
@@ -198,7 +198,7 @@ pub(in crate::codegen) fn container_surface_style_value(
         || options.shadow_y.is_some()
         || options.shadow_blur.is_some()
         || options.pixel_snap.is_some();
-    let utility_style = container_style_value(utilities, document);
+    let utility_style = container_style_value(utilities);
     let custom_style = custom
         .map(|style| {
             custom_style_call_code(style, ExternKind::ContainerStyle, "__theme", env, document)
@@ -217,7 +217,7 @@ pub(in crate::codegen) fn container_surface_style_value(
         .unwrap_or_else(|| "::iced::widget::container::Style::default()".into());
     let mut code = format!("{{ let mut __style = {base};");
     if has_custom_style {
-        append_container_utility_overrides(&mut code, utilities, document);
+        append_container_utility_overrides(&mut code, utilities);
     }
     append_surface_style_overrides(&mut code, options, env, document)?;
     if let Some(color) = &options.text_color {
@@ -234,14 +234,13 @@ pub(in crate::codegen) fn container_surface_style_value(
 
 pub(in crate::codegen) fn append_container_utility_overrides(
     code: &mut String,
-    style: &Style,
-    document: &Document,
+    style: &ResolvedStyle,
 ) {
     if let Some(background) = &style.background {
         write!(
             code,
             " __style.background = ::std::option::Option::Some({}.into());",
-            theme_color(document, background)
+            resolved_theme_color(background)
         )
         .unwrap();
     }
@@ -249,7 +248,7 @@ pub(in crate::codegen) fn append_container_utility_overrides(
         write!(
             code,
             " __style.text_color = ::std::option::Option::Some({});",
-            theme_color(document, text)
+            resolved_theme_color(text)
         )
         .unwrap();
     }
@@ -257,7 +256,7 @@ pub(in crate::codegen) fn append_container_utility_overrides(
         write!(
             code,
             " __style.border.color = {};",
-            theme_color(document, border)
+            resolved_theme_color(border)
         )
         .unwrap();
     }
