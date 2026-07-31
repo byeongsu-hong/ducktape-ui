@@ -55,6 +55,7 @@ struct ComponentParamContract {
     name: String,
     ty: Type,
     capability: ParamCapability,
+    default: Option<Expr>,
     origin: OriginId,
 }
 
@@ -98,7 +99,7 @@ pub(crate) enum ComponentStorage {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct ComponentContract {
     pub(crate) id: ComponentId,
     pub(crate) name: String,
@@ -111,6 +112,20 @@ pub(crate) struct ComponentContract {
     pub(crate) root: ViewNode,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ComponentWritable {
+    Param(ComponentParamId),
+    State(ComponentStateId),
+}
+
+#[derive(Debug)]
+struct ComponentIndex {
+    params_by_name: HashMap<String, usize>,
+    events_by_name: HashMap<String, usize>,
+    slots_by_name: HashMap<String, usize>,
+    writable_by_name: HashMap<String, ComponentWritable>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,7 +261,7 @@ struct CallSite {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
     components: Vec<ComponentContract>,
@@ -310,6 +325,7 @@ struct Lowerer {
     document: Document,
     source_origins: Vec<(PathBuf, usize)>,
     components: Vec<ComponentContract>,
+    component_indexes: Vec<ComponentIndex>,
     component_ids: HashMap<String, ComponentId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
@@ -334,6 +350,7 @@ impl Lowerer {
             document,
             source_origins,
             components: Vec::new(),
+            component_indexes: Vec::new(),
             component_ids: HashMap::new(),
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
@@ -405,10 +422,11 @@ impl Lowerer {
                     } else {
                         ParamCapability::Read
                     },
+                    default: param.default.clone(),
                     origin: self.push_origin(&component.span, Some(origin)),
                 });
             }
-            let events = component
+            let events: Vec<ComponentEventContract> = component
                 .events
                 .iter()
                 .enumerate()
@@ -422,7 +440,7 @@ impl Lowerer {
                     origin: self.push_origin(&event.span, Some(origin)),
                 })
                 .collect();
-            let slots = declared_slots(&component.root)
+            let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
                 .into_iter()
                 .enumerate()
                 .map(|(index, (name, optional, span))| ComponentSlotContract {
@@ -454,6 +472,32 @@ impl Lowerer {
                 (true, ComponentLifetime::Retained) => ComponentStorage::Retained,
                 (true, ComponentLifetime::Mounted) => ComponentStorage::Mounted,
             };
+            let params_by_name = params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| (param.name.clone(), index))
+                .collect();
+            let events_by_name = events
+                .iter()
+                .enumerate()
+                .map(|(index, event)| (event.name.clone(), index))
+                .collect();
+            let slots_by_name = slots
+                .iter()
+                .enumerate()
+                .map(|(index, slot)| (slot.name.clone(), index))
+                .collect();
+            let writable_by_name = params
+                .iter()
+                .filter(|param| param.capability == ParamCapability::Bind)
+                .map(|param| (param.name.clone(), ComponentWritable::Param(param.id)))
+                .chain(states.iter().map(|state| {
+                    (
+                        state.source.name.clone(),
+                        ComponentWritable::State(state.id),
+                    )
+                }))
+                .collect();
             self.components.push(ComponentContract {
                 id,
                 name: component.name,
@@ -466,6 +510,12 @@ impl Lowerer {
                 root: component.root,
                 storage,
                 origin,
+            });
+            self.component_indexes.push(ComponentIndex {
+                params_by_name,
+                events_by_name,
+                slots_by_name,
+                writable_by_name,
             });
         }
         Ok(())
@@ -582,23 +632,84 @@ impl Lowerer {
             self.component_ids.get(name).copied().ok_or_else(|| {
                 self.invariant(span, format!("unknown checked component `{name}`"))
             })?;
-        let contract = self.components[component_id.0 as usize].clone();
+        let component_index = component_id.0 as usize;
+        let supplied_args = {
+            let contract = &self.components[component_index];
+            let index = &self.component_indexes[component_index];
+            let mut ordered = vec![None; contract.params.len()];
+            for supplied in supplied_args {
+                let position = index.params_by_name.get(&supplied.name).ok_or_else(|| {
+                    self.invariant(span, format!("unknown checked prop `{}`", supplied.name))
+                })?;
+                if ordered[*position].replace(supplied).is_some() {
+                    return Err(
+                        self.invariant(span, format!("duplicate checked prop `{}`", supplied.name))
+                    );
+                }
+            }
+            ordered
+        };
+        let supplied_events = {
+            let contract = &self.components[component_index];
+            let index = &self.component_indexes[component_index];
+            let mut ordered = vec![None; contract.events.len()];
+            for supplied in supplied_events {
+                let position = index.events_by_name.get(&supplied.name).ok_or_else(|| {
+                    self.invariant(
+                        &supplied.span,
+                        format!("unknown checked event `{}`", supplied.name),
+                    )
+                })?;
+                if ordered[*position].replace(supplied).is_some() {
+                    return Err(self.invariant(
+                        &supplied.span,
+                        format!("duplicate checked event `{}`", supplied.name),
+                    ));
+                }
+            }
+            ordered
+        };
+        let supplied_slots = {
+            let contract = &self.components[component_index];
+            let index = &self.component_indexes[component_index];
+            let mut ordered = vec![None; contract.slots.len()];
+            for supplied in supplied_slots {
+                let position = index.slots_by_name.get(&supplied.name).ok_or_else(|| {
+                    self.invariant(
+                        &supplied.span,
+                        format!("unknown checked slot `{}`", supplied.name),
+                    )
+                })?;
+                if ordered[*position].replace(supplied).is_some() {
+                    return Err(self.invariant(
+                        &supplied.span,
+                        format!("duplicate checked slot `{}`", supplied.name),
+                    ));
+                }
+            }
+            ordered
+        };
+        // Calls need the compact semantic shape below, never the component body,
+        // states, or handlers. ComponentContract intentionally is not Clone so a
+        // future call-site change cannot accidentally restore whole-contract copies.
+        let (params, events, slots, output_ty, storage) = {
+            let contract = &self.components[component_index];
+            (
+                contract.params.clone(),
+                contract.events.clone(),
+                contract.slots.clone(),
+                contract.output.clone(),
+                contract.storage,
+            )
+        };
         let origin = self.push_origin(span, None);
-        let default_source = self
-            .document
-            .components
-            .get(component_id.0 as usize)
-            .ok_or_else(|| self.invariant(span, "component definition ID is out of range"))?
-            .params
-            .clone();
-        let mut arguments = Vec::with_capacity(contract.params.len());
-        for (param, source_param) in contract.params.iter().zip(default_source) {
-            let supplied = supplied_args.iter().find(|arg| arg.name == param.name);
+        let mut arguments = Vec::with_capacity(params.len());
+        for (param, supplied) in params.iter().zip(supplied_args) {
             let (expression, scope) = if let Some(arg) = supplied {
                 (arg.value.clone(), ArgumentScope::Caller)
             } else {
                 (
-                    source_param.default.ok_or_else(|| {
+                    param.default.clone().ok_or_else(|| {
                         self.invariant(
                             span,
                             format!("required prop `{}` has no checked argument", param.name),
@@ -624,14 +735,11 @@ impl Lowerer {
             });
         }
 
-        let mut resolved_events = Vec::with_capacity(contract.events.len());
-        for event in &contract.events {
-            let supplied = supplied_events
-                .iter()
-                .find(|supplied| supplied.name == event.name)
-                .ok_or_else(|| {
-                    self.invariant(span, format!("event `{}` has no checked route", event.name))
-                })?;
+        let mut resolved_events = Vec::with_capacity(events.len());
+        for (event, supplied) in events.iter().zip(supplied_events) {
+            let supplied = supplied.ok_or_else(|| {
+                self.invariant(span, format!("event `{}` has no checked route", event.name))
+            })?;
             let event_origin = self.push_origin(&supplied.span, Some(origin));
             if let Some(route) = &supplied.route {
                 resolved_events.push(ResolvedEventRoute::Direct {
@@ -645,10 +753,11 @@ impl Lowerer {
                 let outer = outer_component.ok_or_else(|| {
                     self.invariant(&supplied.span, "forwarded event has no outer component")
                 })?;
-                let outer_event = self.components[outer.0 as usize]
-                    .events
-                    .iter()
-                    .find(|candidate| candidate.name == event.name)
+                let outer_index = outer.0 as usize;
+                let outer_event = self.component_indexes[outer_index]
+                    .events_by_name
+                    .get(&event.name)
+                    .and_then(|position| self.components[outer_index].events.get(*position))
                     .ok_or_else(|| {
                         self.invariant(
                             &supplied.span,
@@ -667,11 +776,8 @@ impl Lowerer {
             }
         }
 
-        let mut resolved_slots = Vec::with_capacity(contract.slots.len());
-        for declared in &contract.slots {
-            let supplied = supplied_slots
-                .iter()
-                .find(|supplied| supplied.name == declared.name);
+        let mut resolved_slots = Vec::with_capacity(slots.len());
+        for (declared, supplied) in slots.iter().zip(supplied_slots) {
             if supplied.is_none() && !declared.optional {
                 return Err(self.invariant(
                     span,
@@ -689,7 +795,7 @@ impl Lowerer {
             });
         }
 
-        let output = match (&contract.output, route) {
+        let output = match (&output_ty, route) {
             (Type::Unit, None) => ComponentOutputRoute::None,
             (output, Some(route)) => ComponentOutputRoute::Direct {
                 output: output.clone(),
@@ -730,7 +836,7 @@ impl Lowerer {
             slots: resolved_slots,
             output,
             scope,
-            storage: contract.storage,
+            storage,
             binding_site: span.line,
         });
         Ok(())
@@ -748,28 +854,21 @@ impl Lowerer {
         let [name] = path.as_slice() else {
             return Err(self.invariant(span, "bind argument is not a direct state path"));
         };
-        if let Some(component) = outer_component {
-            let contract = &self.components[component.0 as usize];
-            if let Some(param) = contract
-                .params
-                .iter()
-                .find(|param| param.name == *name && param.capability == ParamCapability::Bind)
-            {
-                return Ok(WritableStateRef::ComponentParam {
-                    id: param.id,
+        if let Some(component) = outer_component
+            && let Some(writable) = self.component_indexes[component.0 as usize]
+                .writable_by_name
+                .get(name)
+        {
+            return Ok(match writable {
+                ComponentWritable::Param(id) => WritableStateRef::ComponentParam {
+                    id: *id,
                     name: name.clone(),
-                });
-            }
-            if let Some(state) = contract
-                .states
-                .iter()
-                .find(|state| state.source.name == *name)
-            {
-                return Ok(WritableStateRef::ComponentState {
-                    id: state.id,
+                },
+                ComponentWritable::State(id) => WritableStateRef::ComponentState {
+                    id: *id,
                     name: name.clone(),
-                });
-            }
+                },
+            });
         }
         if let Some(id) = self.app_states.get(name) {
             return Ok(WritableStateRef::App {
@@ -891,6 +990,7 @@ fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
 mod tests {
     use super::*;
     use crate::{analyze, analyze_file};
+    use std::fmt::Write as _;
     use std::fs;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -1016,6 +1116,87 @@ mod tests {
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "10k component calls lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn lowering_wide_component_calls_scales_with_call_surface_not_contract_body() {
+        const CALLS: usize = 2_000;
+        const DEFAULT_PARAMS: usize = 32;
+        const EVENTS: usize = 32;
+        const SLOTS: usize = 32;
+        const STATES: usize = 128;
+        const HANDLERS: usize = 128;
+        const BODY_NODES: usize = 256;
+
+        let mut source = format!(
+            "app Demo\n{THEME}state\n  draft = \"Draft\"\non changed\n  draft = \"Changed\"\ncomponent Wide(bind value:str"
+        );
+        for index in 0..DEFAULT_PARAMS {
+            write!(source, ", prop_{index}:str=\"value-{index}\"").unwrap();
+        }
+        source.push_str(")\n  emits\n");
+        for index in 0..EVENTS {
+            writeln!(source, "    event_{index}").unwrap();
+        }
+        source.push_str("  lifetime mounted\n  state\n");
+        for index in 0..STATES {
+            writeln!(source, "    local_{index} = \"state-{index}\"").unwrap();
+        }
+        for index in 0..HANDLERS {
+            writeln!(
+                source,
+                "  on reset_{index}\n    local_{index} = \"reset-{index}\""
+            )
+            .unwrap();
+        }
+        source.push_str("  col\n    text value\n");
+        for index in 0..BODY_NODES {
+            writeln!(source, "    text \"body-{index}\"").unwrap();
+        }
+        for index in 0..SLOTS {
+            writeln!(source, "    slot Slot{index}?").unwrap();
+        }
+        source.push_str("view\n  col\n    Wide value<->draft\n      events\n");
+        for index in 0..EVENTS {
+            writeln!(source, "        event_{index} -> changed").unwrap();
+        }
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture view must be a layout");
+        };
+        let prototype = children.pop().expect("fixture has one component call");
+        let first_synthetic_line = source.lines().count() + 1;
+        children.extend((0..CALLS).map(|index| {
+            let mut call = prototype.clone();
+            let ViewNode::Component { span, .. } = &mut call else {
+                panic!("fixture child must be a component call");
+            };
+            *span = Span::line(first_synthetic_line + index);
+            call
+        }));
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.calls.len(), CALLS);
+        assert_eq!(
+            program
+                .calls
+                .iter()
+                .map(|call| call.arguments.len() + call.events.len() + call.slots.len())
+                .sum::<usize>(),
+            CALLS * (1 + DEFAULT_PARAMS + EVENTS + SLOTS)
+        );
+        let ViewNode::Layout { children, .. } = &program.components[0].root else {
+            panic!("wide component root must remain a layout");
+        };
+        assert_eq!(children.len(), BODY_NODES + SLOTS + 1);
+        assert_eq!(program.components[0].states.len(), STATES);
+        assert_eq!(program.components[0].handlers.len(), HANDLERS);
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "2k calls to a wide component lowered in {elapsed:?}"
         );
     }
 

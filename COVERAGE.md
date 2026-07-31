@@ -117,13 +117,19 @@ The private HIR stores component definitions and calls by typed IDs. It orders
 props and applies defaults, resolves each bind to an app state, component state,
 or forwarded bind prop, converts every event entry to a direct or forwarded
 route, orders required/optional slots, fixes component scope and storage, and
-retains imported physical origins through a shared parented origin table before
-Rust generation starts. Structural tests cover direct and forwarded events,
-defaults, writable references, required/optional/provided slots, retained and
-mounted storage, explicit/implicit identity, nested namespaced imports, and
-root/import origin paths. A 10,000-call fixture has a two-second debug-build
-lowering budget; representative generated-Rust and source-map tests remain as
-backend evidence.
+records imported physical origins in a shared origin table before Rust
+generation starts. Parent links are currently representation scaffolding;
+diagnostics and generated source markers continue to use the line-origin map
+until expansion stacks are consumed. Structural tests cover direct and
+forwarded events, defaults, writable references, required/optional/provided
+slots, retained and mounted storage, explicit/implicit identity, nested
+namespaced imports, and root/import origin paths. A 10,000-call fixture and a
+2,000-call fixture whose component has wide params, events, slots, states,
+handlers, and body both have a two-second debug-build lowering budget. The
+latter guards the indexed
+`O(P + E + S)` work per call and the compile-time non-cloneable component
+contract; representative generated-Rust and source-map tests remain as backend
+evidence.
 Ordered widget payload routes, including sensor show/resize dimensions, may
 emit those named events directly from a component view.
 An explicit `forward` block accepts only outer events with the exact same name

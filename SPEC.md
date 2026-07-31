@@ -173,8 +173,10 @@ byte-identical output is not replaced so its mtime remains stable.
 
 Successful semantic analysis returns the nominal `CheckedDocument` boundary.
 Only the checker can construct it. A private lowering pass then produces an
-owned `LoweredProgram`, and Rust generation accepts only that lowered program.
-Neither representation contains Iced types or Rust fragments.
+owned `LoweredProgram`, and the top-level Rust generation entry point accepts
+only that lowered program. During the incremental migration `LoweredProgram`
+still owns the checked source `Document`, and AST-backed generation helpers
+still consume it. Neither representation contains Iced types or Rust fragments.
 
 HIR migration is vertical rather than a second shadow pipeline. Component
 contracts and calls are normalized now: definitions, parameters, events,
@@ -183,12 +185,15 @@ and retained, mounted, or stateless storage use typed IDs. Call arguments are
 stored once in declaration order with defaults selected; named event routes
 are stored once as direct or exact forwards; slot content is stored once in
 declaration order with required and optional presence resolved. Every HIR node
-has an `OriginId` into one shared table carrying physical root/import paths,
-line and column, and a parent link for future expansion stacks. Code generation
-does not repeat those component decisions or look up a component by source
-name. Unmigrated semantic families remain owned inside `LoweredProgram` during
-the incremental conversion; each later slice must remove its prior backend
-path when it adds normalized nodes.
+in this slice has an `OriginId` into one shared table carrying physical
+root/import paths, line and column. Parent links reserve the shape required for
+future expansion stacks; current diagnostics and generated source markers still
+use the existing line-origin map and do not traverse those links. Component call
+rendering selects its classified call and contract by source site and typed ID,
+so it does not repeat prop, event, slot, binding, identity, or storage decisions.
+Lowering still resolves source component names, and unmigrated code-generation
+paths still consume AST names and nodes. Each later slice must remove its prior
+backend path when it adds normalized nodes.
 
 The Rust adapter is one manifest-relative include:
 
