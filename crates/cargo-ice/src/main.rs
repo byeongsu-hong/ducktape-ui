@@ -6,6 +6,7 @@ mod compat;
 mod dev;
 mod inspection;
 mod lsp;
+mod review;
 mod schema;
 
 use std::env;
@@ -51,9 +52,10 @@ fn run() -> Result<(), String> {
         "inspect" => return inspection::inspect(&root_for_command()?, trailing),
         "diff" => return inspection::diff(&root_for_command()?, trailing),
         "api" => return api::run(&root_for_command()?, trailing),
+        "review" => return review::review(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
             );
             return Ok(());
         }
@@ -154,7 +156,7 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
             trailing.len() == 1
                 || trailing.len() >= 2 && trailing.get(1).is_some_and(|arg| arg == "--")
         }
-        "test" | "inspect" | "diff" => true,
+        "test" | "inspect" | "diff" | "review" => true,
         "api" => api::valid_args(trailing),
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
@@ -547,6 +549,10 @@ mod tests {
         assert!(!valid_command_args("check", &["extra".into()]));
         assert!(valid_command_args("test", &[]));
         assert!(valid_command_args("test", &["render_contract".into()]));
+        assert!(valid_command_args(
+            "review",
+            &["app.ice".into(), "--test".into(), "wide".into()]
+        ));
         assert!(valid_command_args(
             "test",
             &["render_contract".into(), "--".into(), "--nocapture".into()]

@@ -223,7 +223,11 @@ fn parse_inspect(args: &[String]) -> Result<InspectOptions, String> {
     Ok(options)
 }
 
-fn containing_package(root: &Path, source: &Path, cargo: &str) -> Result<String, String> {
+pub(super) fn containing_package(
+    root: &Path,
+    source: &Path,
+    cargo: &str,
+) -> Result<String, String> {
     let output = Command::new(cargo)
         .current_dir(root)
         .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -299,7 +303,7 @@ fn validate_capture_name(name: &str) -> Result<(), String> {
     }
 }
 
-fn source_output_name(root: &Path, source: &Path) -> String {
+pub(super) fn source_output_name(root: &Path, source: &Path) -> String {
     let source = source.strip_prefix(root).unwrap_or(source);
     let mut name = source
         .with_extension("")
@@ -329,17 +333,17 @@ struct DiffOptions {
     value_tolerance: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct DiffThresholds {
+    pub(super) pixel: u8,
+    pub(super) max_changed_ratio: f64,
+    pub(super) value: f64,
+}
+
 pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_diff(args)?;
     let baseline_path = root.join(&options.baseline);
     let current_path = root.join(&options.current);
-    let baseline = read_json(&baseline_path)?;
-    let current = read_json(&current_path)?;
-    let baseline_png = manifest_png(&baseline_path, &baseline)?;
-    let current_png = manifest_png(&current_path, &current)?;
-    let baseline_image = read_png(&baseline_png)?;
-    let current_image = read_png(&current_png)?;
-
     let output = options.output.as_ref().map_or_else(
         || {
             root.join("target/ice-diff").join(format!(
@@ -350,20 +354,59 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         },
         |path| root.join(path),
     );
-    fs::create_dir_all(&output).map_err(|error| error.to_string())?;
-    let output = output.canonicalize().unwrap_or(output);
+    let report = compare_capture_manifests(
+        &baseline_path,
+        &current_path,
+        &output,
+        DiffThresholds {
+            pixel: options.pixel_threshold,
+            max_changed_ratio: options.max_changed_ratio,
+            value: options.value_tolerance,
+        },
+    )?;
+    let matches = report["matches"]
+        .as_bool()
+        .expect("capture diff report has a boolean result");
+    let report_path = output.join("report.json");
     let diff_png = output.join("diff.png");
-    let pixels = compare_pixels(&baseline_image, &current_image, options.pixel_threshold)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "matches": matches,
+            "report": report_path,
+            "diff_png": diff_png,
+            "manifest_differences": report["manifest"]["difference_count"],
+            "changed_ratio": report["pixels"]["changed_ratio"],
+        }))
+        .expect("diff output is serializable")
+    );
+    if matches {
+        Ok(())
+    } else {
+        Err(format!("inspection differs; see {}", report_path.display()))
+    }
+}
+
+pub(super) fn compare_capture_manifests(
+    baseline_path: &Path,
+    current_path: &Path,
+    output: &Path,
+    thresholds: DiffThresholds,
+) -> Result<Value, String> {
+    let baseline = read_json(baseline_path)?;
+    let current = read_json(current_path)?;
+    let baseline_png = manifest_png(baseline_path, &baseline)?;
+    let current_png = manifest_png(current_path, &current)?;
+    let baseline_image = read_png(&baseline_png)?;
+    let current_image = read_png(&current_png)?;
+    fs::create_dir_all(output).map_err(|error| error.to_string())?;
+    let output = output.canonicalize().unwrap_or_else(|_| output.to_owned());
+    let diff_png = output.join("diff.png");
+    let pixels = compare_pixels(&baseline_image, &current_image, thresholds.pixel)?;
     write_png(&diff_png, pixels.width, pixels.height, &pixels.rgba)?;
 
     let mut differences = Vec::new();
-    compare_json(
-        "",
-        &baseline,
-        &current,
-        options.value_tolerance,
-        &mut differences,
-    );
+    compare_json("", &baseline, &current, thresholds.value, &mut differences);
     differences.retain(|difference| {
         difference["path"]
             .as_str()
@@ -374,7 +417,7 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
     } else {
         pixels.changed as f64 / pixels.total as f64
     };
-    let matches = differences.is_empty() && changed_ratio <= options.max_changed_ratio;
+    let matches = differences.is_empty() && changed_ratio <= thresholds.max_changed_ratio;
     let report_path = output.join("report.json");
     let report = json!({
         "schema_version": 1,
@@ -382,14 +425,14 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         "baseline": { "manifest": baseline_path, "png": baseline_png },
         "current": { "manifest": current_path, "png": current_png },
         "manifest": {
-            "value_tolerance": options.value_tolerance,
+            "value_tolerance": thresholds.value,
             "ignored_paths": IGNORED_MANIFEST_PATHS,
             "difference_count": differences.len(),
             "differences": differences,
         },
         "pixels": {
-            "threshold": options.pixel_threshold,
-            "max_changed_ratio": options.max_changed_ratio,
+            "threshold": thresholds.pixel,
+            "max_changed_ratio": thresholds.max_changed_ratio,
             "changed": pixels.changed,
             "total": pixels.total,
             "changed_ratio": changed_ratio,
@@ -404,22 +447,7 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         serde_json::to_vec_pretty(&report).expect("diff report is serializable"),
     )
     .map_err(|error| error.to_string())?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "matches": matches,
-            "report": report_path,
-            "diff_png": diff_png,
-            "manifest_differences": report["manifest"]["difference_count"],
-            "changed_ratio": changed_ratio,
-        }))
-        .expect("diff output is serializable")
-    );
-    if matches {
-        Ok(())
-    } else {
-        Err(format!("inspection differs; see {}", report_path.display()))
-    }
+    Ok(report)
 }
 
 fn parse_diff(args: &[String]) -> Result<DiffOptions, String> {

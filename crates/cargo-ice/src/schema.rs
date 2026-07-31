@@ -2373,6 +2373,14 @@ fn test_contract() -> Value {
             "pixelGoldenComparison": false,
             "ambiguousMatch": "runtime failure; never guessed",
             "customRendererPaint": false,
+            "reviewBundle": {
+                "command": "cargo ice review ROOT.ice [options]",
+                "formats": ["report.json", "report.html", "diagnostics.json", "test logs", "capture PNG/JSON", "diff PNG/JSON"],
+                "testSelection": "all declared first-class Ice tests or repeated --test NAME",
+                "baselineIdentity": "stable test-name/capture-name manifest key",
+                "failurePolicy": ["test failure", "changed capture", "new capture", "removed capture", "unreadable evidence"],
+                "summaries": ["semantic diagnostics", "AccessKit role/name/action inventory", "source-mapped structured changes"],
+            },
         },
         "legacyIcedTestIceSyntax": false,
         "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "general virtual clock", "built-in pixel-golden comparison", "multi-window orchestration"],
@@ -3386,6 +3394,14 @@ mod tests {
             "text-line-height"
         );
         assert_eq!(contract["inspection"]["pixelGoldenComparison"], false);
+        assert_eq!(
+            contract["inspection"]["reviewBundle"]["command"],
+            "cargo ice review ROOT.ice [options]"
+        );
+        assert_eq!(
+            contract["inspection"]["reviewBundle"]["baselineIdentity"],
+            "stable test-name/capture-name manifest key"
+        );
     }
 
     #[test]

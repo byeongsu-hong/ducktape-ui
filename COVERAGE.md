@@ -294,7 +294,13 @@ observation-only. Generated identified targets retain their originating
 imported `.ice` path, line, and column. `cargo ice inspect` activates an
 otherwise inert generated entry for one real app `Program`, fixed environment,
 and preset; `cargo ice diff` externally compares structured values and RGBA
-pixels and writes JSON/PNG reports. Screenshot output is checked as RGBA8 and
+pixels and writes JSON/PNG reports. `cargo ice review` selects declared Ice
+tests, records their exact process results and captures, reuses the same diff
+engine, summarizes live AccessKit metadata, and maps structured changes back to
+the target or capture statement source. Unit contracts cover option/test
+selection, HTML escaping, accessibility aggregation, source mapping, and the
+shared pixel/manifest comparison; a real showcase capture exercises the full
+command path. Screenshot output is checked as RGBA8 and
 capped at
 16,777,216 physical pixels before renderer allocation.
 The artifact root defaults to `target/ice-test-artifacts`, is replaceable with
