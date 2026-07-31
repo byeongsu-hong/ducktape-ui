@@ -66,6 +66,17 @@ and interrupted output replacement cause full cache regeneration, stale
 transaction artifacts are removed, concurrent publishers retain both roots,
 and an unchanged pass preserves output and manifest mtimes.
 
+The runtime `RichTextEditor` uses caller-owned `ContentVersion` identity to
+skip full native-buffer materialization for caret and selection layouts.
+`EditorChange` optionally supplies the exact logical-line replacement span for
+a text revision. Valid spans map the unchanged prefix and shifted suffix
+without line comparison; out-of-bounds, overflowing, or line-count-inconsistent
+spans fall back to exact diffing. Stateful highlighting still resumes at the
+first changed line, active IME preedit continues through the exact diff path,
+and geometry-only layout changes reuse the known line mapping. The explicit
+100,000-line contract records full materializations, compared lines, rebuilt
+lines, shaped paragraphs, highlighted lines, and wall time separately.
+
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,

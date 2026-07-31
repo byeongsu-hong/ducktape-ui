@@ -35,6 +35,53 @@ struct CaretSizedMarker {
     expanded: bool,
 }
 
+#[derive(Default)]
+struct ToggleHighlighter {
+    current_line: usize,
+    inside: bool,
+    states: Vec<bool>,
+}
+
+impl text::Highlighter for ToggleHighlighter {
+    type Settings = ();
+    type Highlight = bool;
+    type Iterator<'a> = std::option::IntoIter<(Range<usize>, bool)>;
+
+    fn new(_settings: &Self::Settings) -> Self {
+        Self {
+            states: vec![false],
+            ..Self::default()
+        }
+    }
+
+    fn update(&mut self, _new_settings: &Self::Settings) {}
+
+    fn change_line(&mut self, line: usize) {
+        self.current_line = line;
+        self.inside = self.states.get(line).copied().unwrap_or(false);
+        self.states.truncate(line.saturating_add(1));
+    }
+
+    fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
+        if line == "toggle" {
+            self.inside = !self.inside;
+        }
+        self.current_line += 1;
+        if self.states.len() == self.current_line {
+            self.states.push(self.inside);
+        } else if let Some(state) = self.states.get_mut(self.current_line) {
+            *state = self.inside;
+        }
+        (!line.is_empty())
+            .then_some((0..line.len(), self.inside))
+            .into_iter()
+    }
+
+    fn current_line(&self) -> usize {
+        self.current_line
+    }
+}
+
 impl text::Highlighter for CaretSizedMarker {
     type Settings = bool;
     type Highlight = bool;

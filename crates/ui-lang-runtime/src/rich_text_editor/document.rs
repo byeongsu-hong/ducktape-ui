@@ -4,6 +4,10 @@ use iced::alignment;
 use iced::widget::text_editor::Position;
 use iced::{Color, Font, Padding, Pixels, Point, Rectangle, Size, Vector};
 use std::ops::Range;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::EditorChange;
 
 /// Visual formatting for a highlighted source range.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +85,8 @@ pub(super) struct DocumentLine {
     pub(super) strikethroughs: Vec<Option<Color>>,
     pub(super) top: f32,
     pub(super) height: f32,
+    #[cfg(test)]
+    pub(super) identity: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +107,51 @@ pub(super) struct LineLayoutStyle {
     pub(super) wrapping: text::Wrapping,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LayoutUpdate {
+    pub(super) compared_lines: usize,
+    pub(super) rebuilt_lines: usize,
+    pub(super) shaped_paragraphs: usize,
+    pub(super) highlighted_lines: usize,
+    pub(super) change_hint_used: bool,
+    pub(super) change_hint_rejected: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineMapping {
+    common_prefix: usize,
+    common_suffix: usize,
+    changed_overlap: usize,
+    compared_lines: usize,
+    change_hint_used: bool,
+    change_hint_rejected: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DocumentChange {
+    Unchanged,
+    Discover,
+    Hint(EditorChange),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct DocumentUpdate {
+    pub(super) change: DocumentChange,
+    pub(super) geometry_changed: bool,
+    pub(super) format_changed: bool,
+}
+
+impl DocumentUpdate {
+    #[cfg(test)]
+    pub(super) const fn text(change: DocumentChange) -> Self {
+        Self {
+            change,
+            geometry_changed: false,
+            format_changed: false,
+        }
+    }
+}
+
 pub(super) fn ordered_positions(left: Position, right: Position) -> (Position, Position) {
     if (left.line, left.column) <= (right.line, right.column) {
         (left, right)
@@ -116,28 +167,42 @@ impl DocumentLayout {
         highlighter: &mut H,
         format: &dyn Fn(&H::Highlight) -> Format,
         style: LineLayoutStyle,
-        geometry_changed: bool,
-        format_changed: bool,
-    ) -> usize
+        update: DocumentUpdate,
+    ) -> LayoutUpdate
     where
         H: text::Highlighter,
     {
         let old_len = self.lines.len();
         let new_len = texts.len();
-        let common_prefix = self
-            .lines
-            .iter()
-            .zip(texts)
-            .take_while(|(line, text)| line.signature.text == text.as_str())
-            .count();
-        let common_suffix = self
-            .lines
-            .iter()
-            .rev()
-            .zip(texts.iter().rev())
-            .take(old_len.min(new_len).saturating_sub(common_prefix))
-            .take_while(|(line, text)| line.signature.text == text.as_str())
-            .count();
+        let DocumentUpdate {
+            change,
+            geometry_changed,
+            format_changed,
+        } = update;
+        let LineMapping {
+            common_prefix,
+            common_suffix,
+            changed_overlap,
+            compared_lines,
+            change_hint_used,
+            change_hint_rejected,
+        } = match change {
+            DocumentChange::Unchanged => LineMapping {
+                common_prefix: old_len.min(new_len),
+                common_suffix: 0,
+                changed_overlap: 0,
+                compared_lines: 0,
+                change_hint_used: false,
+                change_hint_rejected: false,
+            },
+            DocumentChange::Discover => discover_mapping(&self.lines, texts),
+            DocumentChange::Hint(change) => hinted_mapping(change, old_len, new_len)
+                .unwrap_or_else(|| {
+                    let mut mapping = discover_mapping(&self.lines, texts);
+                    mapping.change_hint_rejected = true;
+                    mapping
+                }),
+        };
         let text_changed = common_prefix < old_len || common_prefix < new_len;
 
         let mut scan_start = highlighter.current_line().min(new_len);
@@ -159,13 +224,16 @@ impl DocumentLayout {
         let old_suffix_start = old_len.saturating_sub(common_suffix);
         let mut lines = Vec::with_capacity(new_len);
         let mut rebuilt = 0;
+        let mut highlighted = 0;
 
         for (index, text) in texts.iter().enumerate() {
             let candidate = if index < common_prefix {
                 Some(index)
             } else if index >= new_suffix_start {
                 Some(old_suffix_start + index - new_suffix_start)
-            } else if index < old_len {
+            } else if index < old_len
+                && (!change_hint_used || index < common_prefix + changed_overlap)
+            {
                 Some(index)
             } else {
                 None
@@ -184,6 +252,7 @@ impl DocumentLayout {
                 continue;
             }
 
+            highlighted += 1;
             let signature = styled_line(text.clone(), highlighter, format);
             let reusable = candidate
                 .and_then(|candidate| old.get_mut(candidate))
@@ -211,7 +280,14 @@ impl DocumentLayout {
         }
         self.lines = lines;
         self.height = top.max(style.line_height.to_absolute(style.text_size).0);
-        rebuilt
+        LayoutUpdate {
+            compared_lines,
+            rebuilt_lines: rebuilt,
+            shaped_paragraphs: rebuilt,
+            highlighted_lines: highlighted,
+            change_hint_used,
+            change_hint_rejected,
+        }
     }
 
     pub(super) fn caret(&self, position: Position) -> Rectangle {
@@ -322,8 +398,68 @@ impl DocumentLayout {
     }
 }
 
+fn hinted_mapping(change: EditorChange, old_len: usize, new_len: usize) -> Option<LineMapping> {
+    let old_suffix_start = change
+        .first_changed_line
+        .checked_add(change.removed_lines)?;
+    let new_suffix_start = change
+        .first_changed_line
+        .checked_add(change.inserted_lines)?;
+    if old_suffix_start > old_len
+        || new_suffix_start > new_len
+        || old_len - old_suffix_start != new_len - new_suffix_start
+    {
+        return None;
+    }
+
+    Some(LineMapping {
+        common_prefix: change.first_changed_line,
+        common_suffix: old_len - old_suffix_start,
+        changed_overlap: change.removed_lines.min(change.inserted_lines),
+        compared_lines: 0,
+        change_hint_used: true,
+        change_hint_rejected: false,
+    })
+}
+
+fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
+    let old_len = lines.len();
+    let new_len = texts.len();
+    let shared_len = old_len.min(new_len);
+    let mut compared_lines = 0;
+    let mut common_prefix = 0;
+
+    while common_prefix < shared_len {
+        compared_lines += 1;
+        if lines[common_prefix].signature.text != texts[common_prefix] {
+            break;
+        }
+        common_prefix += 1;
+    }
+
+    let mut common_suffix = 0;
+    while common_suffix < shared_len.saturating_sub(common_prefix) {
+        compared_lines += 1;
+        if lines[old_len - common_suffix - 1].signature.text != texts[new_len - common_suffix - 1] {
+            break;
+        }
+        common_suffix += 1;
+    }
+
+    LineMapping {
+        common_prefix,
+        common_suffix,
+        changed_overlap: 0,
+        compared_lines,
+        change_hint_used: false,
+        change_hint_rejected: false,
+    }
+}
+
 impl DocumentLine {
     pub(super) fn new(signature: StyledLine, style: LineLayoutStyle) -> Self {
+        #[cfg(test)]
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let mut spans = Vec::new();
         let mut strikethroughs = Vec::new();
         if signature.segments.is_empty() {
@@ -368,6 +504,8 @@ impl DocumentLine {
             strikethroughs,
             top: 0.0,
             height,
+            #[cfg(test)]
+            identity: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 }

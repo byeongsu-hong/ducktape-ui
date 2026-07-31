@@ -9,8 +9,7 @@ fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
             &mut WholeLine::default(),
             &|_| Format::default(),
             test_layout_style(70.0),
-            false,
-            false,
+            DocumentUpdate::text(DocumentChange::Discover),
         );
         document
             .lines
@@ -115,6 +114,7 @@ fn hangul_ime_stages_relayout_before_the_next_key() {
         selection: None,
     });
     let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
+        .change_hint(EditorChange::new(0, 1, 1))
         .width(Length::Fixed(120.0))
         .height(Length::Fixed(80.0))
         .on_action(|action| action);
@@ -167,13 +167,15 @@ fn hangul_ime_stages_relayout_before_the_next_key() {
             Some(stage)
         );
     }
-    assert_eq!(
-        tree.state
-            .downcast_ref::<State<text::highlighter::PlainText>>()
-            .metrics
-            .full_text_materializations,
-        0
-    );
+    let metrics = &tree
+        .state
+        .downcast_ref::<State<text::highlighter::PlainText>>()
+        .metrics;
+    assert_eq!(metrics.full_text_materializations, 0);
+    assert_eq!(metrics.compared_lines, 6);
+    assert_eq!(metrics.rebuilt_lines, 3);
+    assert_eq!(metrics.shaped_paragraphs, 3);
+    assert_eq!(metrics.accepted_change_hints, 0);
 
     // winit clears preedit immediately before the assembled commit. These
     // two events belong to the same OS event cycle; no full string was

@@ -63,6 +63,43 @@ pub struct ContentVersion {
     revision: u64,
 }
 
+/// The logical-line span replaced by one content revision.
+///
+/// The span describes the transition from the layout's previous
+/// [`ContentVersion`] to the version passed to [`RichTextEditor::new`]. A
+/// character edit within one line replaces one line with one line; splitting
+/// one line replaces one line with two; joining two lines replaces two lines
+/// with one.
+///
+/// The editor validates line bounds and the resulting line count before using
+/// the hint. Structurally invalid hints fall back to exact line diffing. The
+/// caller must still ensure that unchanged lines outside the span really are
+/// unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EditorChange {
+    /// The first logical line affected by the edit.
+    pub first_changed_line: usize,
+    /// The number of lines replaced in the previous revision.
+    pub removed_lines: usize,
+    /// The number of lines present in the new revision at the same position.
+    pub inserted_lines: usize,
+}
+
+impl EditorChange {
+    /// Creates a logical-line replacement hint.
+    pub const fn new(
+        first_changed_line: usize,
+        removed_lines: usize,
+        inserted_lines: usize,
+    ) -> Self {
+        Self {
+            first_changed_line,
+            removed_lines,
+            inserted_lines,
+        }
+    }
+}
+
 impl ContentVersion {
     /// Creates a document-scoped content version.
     pub const fn new(document: u64, revision: u64) -> Self {
@@ -101,6 +138,7 @@ where
     id: Option<widget::Id>,
     content: &'a Content,
     content_version: ContentVersion,
+    change_hint: Option<EditorChange>,
     placeholder: Option<String>,
     font: Option<Font>,
     text_size: Option<Pixels>,
@@ -127,6 +165,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             id: None,
             content,
             content_version,
+            change_hint: None,
             placeholder: None,
             font: None,
             text_size: None,
@@ -231,6 +270,18 @@ where
         self
     }
 
+    /// Describes the logical lines replaced since the previous content
+    /// version rendered by this widget.
+    ///
+    /// This optional optimization avoids discovering the unchanged line
+    /// prefix and suffix after a text mutation. It is ignored for initial
+    /// layout, document replacement, unchanged content versions, and active
+    /// IME composition. Structurally invalid hints use exact diffing instead.
+    pub fn change_hint(mut self, change: EditorChange) -> Self {
+        self.change_hint = Some(change);
+        self
+    }
+
     /// Uses a custom highlighter and rich formatting function.
     ///
     /// `format_key` must change whenever captured values that affect formatting
@@ -248,6 +299,7 @@ where
             id: self.id,
             content: self.content,
             content_version: self.content_version,
+            change_hint: self.change_hint,
             placeholder: self.placeholder,
             font: self.font,
             text_size: self.text_size,
@@ -376,10 +428,15 @@ where
 }
 
 #[cfg(test)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct LayoutMetrics {
     full_text_materializations: usize,
+    compared_lines: usize,
     rebuilt_lines: usize,
+    shaped_paragraphs: usize,
+    highlighted_lines: usize,
+    accepted_change_hints: usize,
+    rejected_change_hints: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -493,7 +550,8 @@ where
         let cursor = self.content.cursor();
         let state = tree.state.downcast_mut::<State<Highlighter>>();
 
-        let version_matches = state.content_version == Some(self.content_version);
+        let previous_content_version = state.content_version;
+        let version_matches = previous_content_version == Some(self.content_version);
         let materialized_source = if version_matches {
             None
         } else {
@@ -556,7 +614,22 @@ where
                 || state.wrapping != self.wrapping;
             let format_changed = state.format_key != self.format_key;
 
-            let rebuilt = state.document.update(
+            let document_change = if let Some(change) = source_changed
+                .then_some(self.change_hint)
+                .flatten()
+                .filter(|_| {
+                    previous_content_version.is_some_and(|previous| {
+                        previous.document() == self.content_version.document()
+                    }) && state.shaped_preedit.is_none()
+                        && state.preedit.is_none()
+                }) {
+                DocumentChange::Hint(change)
+            } else if source_changed || preedit_changed {
+                DocumentChange::Discover
+            } else {
+                DocumentChange::Unchanged
+            };
+            let update = state.document.update(
                 shaped_lines,
                 &mut state.highlighter,
                 self.format.as_ref(),
@@ -567,15 +640,23 @@ where
                     line_height: self.line_height,
                     wrapping: self.wrapping,
                 },
-                geometry_changed,
-                format_changed,
+                DocumentUpdate {
+                    change: document_change,
+                    geometry_changed,
+                    format_changed,
+                },
             );
             #[cfg(test)]
             {
-                state.metrics.rebuilt_lines += rebuilt;
+                state.metrics.compared_lines += update.compared_lines;
+                state.metrics.rebuilt_lines += update.rebuilt_lines;
+                state.metrics.shaped_paragraphs += update.shaped_paragraphs;
+                state.metrics.highlighted_lines += update.highlighted_lines;
+                state.metrics.accepted_change_hints += usize::from(update.change_hint_used);
+                state.metrics.rejected_change_hints += usize::from(update.change_hint_rejected);
             }
             #[cfg(not(test))]
-            let _ = rebuilt;
+            let _ = update;
             state.content_height = state.document.height;
             state.composition = composition.map(|composition| composition.layout);
             state.shaped_preedit = state.preedit.clone();

@@ -49,8 +49,7 @@ fn line_padding_changes_wrapping_caret_and_hit_geometry() {
             ..Format::default()
         },
         test_layout_style(100.0),
-        false,
-        false,
+        DocumentUpdate::text(DocumentChange::Discover),
     );
 
     let line = &document.lines[0];
@@ -286,11 +285,10 @@ fn empty_formatted_lines_keep_their_rich_metrics() {
         &mut WholeLine::default(),
         &|_| format,
         test_layout_style(500.0),
-        false,
-        false,
+        DocumentUpdate::text(DocumentChange::Discover),
     );
 
-    assert_eq!(rebuilt, content.line_count());
+    assert_eq!(rebuilt.rebuilt_lines, content.line_count());
     assert_eq!(document.lines.len(), content.line_count());
     assert!(
         document
