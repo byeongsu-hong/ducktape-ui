@@ -31,6 +31,10 @@ jobs:
           cargo check --locked -p ducktape-ui --no-default-features --features button,x11
           rustup target add wasm32-unknown-unknown
           cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button
+      - name: Test native WGPU smoke harness
+        run: |
+          rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
+          target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
       - run: cargo ice compat
 
@@ -73,3 +77,51 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
+
+  native-wgpu:
+    name: Native WGPU (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            runner: ubuntu-24.04
+            package: iced-app
+            executable: target/debug/iced-app
+            helper: target/native-wgpu-smoke
+            backend: vulkan
+          - label: macOS
+            runner: macos-latest
+            package: markdown-example
+            executable: target/debug/markdown-example
+            helper: target/native-wgpu-smoke
+            backend: metal
+          - label: Windows
+            runner: windows-latest
+            package: showcase
+            executable: target/debug/showcase.exe
+            helper: target/native-wgpu-smoke.exe
+            backend: dx12
+    env:
+      WGPU_BACKEND: ${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux display and Vulkan dependencies
+        if: matrix.label == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libvulkan1 libxkbcommon-x11-0 mesa-vulkan-drivers xauth xvfb
+      - name: Build application and smoke harness
+        shell: bash
+        run: |
+          cargo build --locked -p "${{ matrix.package }}"
+          rustc --edition=2024 -D warnings scripts/native-wgpu-smoke.rs -o "${{ matrix.helper }}"
+      - name: Draw first frame through Vulkan
+        if: matrix.label == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" "${{ matrix.helper }}" "${{ matrix.executable }}"
+      - name: Draw first frame through native GPU backend
+        if: matrix.label != 'Linux'
+        shell: bash
+        run: '"${{ matrix.helper }}" "${{ matrix.executable }}"'
