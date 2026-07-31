@@ -328,7 +328,7 @@ where
     preedit: Option<input_method::Preedit>,
     shaped_preedit: Option<input_method::Preedit>,
     composition: Option<CompositionLayout>,
-    pending_ime_commit: Option<String>,
+    pending_ime_commit: PendingImeCommit,
     last_click: Option<mouse::Click>,
     drag_anchor: Option<Position>,
     paragraph: GraphicsParagraph,
@@ -392,7 +392,7 @@ where
     fn unfocus(&mut self) {
         self.focus = None;
         self.preedit = None;
-        self.pending_ime_commit = None;
+        self.pending_ime_commit.clear();
         self.drag_anchor = None;
     }
 }
@@ -414,7 +414,7 @@ where
             preedit: None,
             shaped_preedit: None,
             composition: None,
-            pending_ime_commit: None,
+            pending_ime_commit: PendingImeCommit::default(),
             last_click: None,
             drag_anchor: None,
             paragraph: GraphicsParagraph::default(),
@@ -630,7 +630,7 @@ where
                 } else if state.focus.is_some() {
                     state.focus = None;
                     state.preedit = None;
-                    state.pending_ime_commit = None;
+                    state.pending_ime_commit.clear();
                     state.drag_anchor = None;
                     shell.request_redraw();
                 }
@@ -655,12 +655,12 @@ where
             }
             Event::InputMethod(input_method::Event::Opened) => {
                 state.preedit = Some(input_method::Preedit::new());
-                state.pending_ime_commit = None;
+                state.pending_ime_commit.clear();
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Closed) => {
                 state.preedit = None;
-                state.pending_ime_commit = None;
+                state.pending_ime_commit.clear();
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Preedit(content, selection))
@@ -671,7 +671,7 @@ where
                     selection: selection.clone(),
                     text_size: None,
                 });
-                state.pending_ime_commit = None;
+                state.pending_ime_commit.on_preedit(content);
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Commit(content)) if state.focus.is_some() => {
@@ -679,7 +679,11 @@ where
                     Edit::Paste(Arc::new(content.clone())),
                 ))));
                 state.preedit = None;
-                state.pending_ime_commit = cfg!(target_os = "macos").then(|| content.clone());
+                if cfg!(target_os = "macos") {
+                    state.pending_ime_commit.on_commit(content);
+                } else {
+                    state.pending_ime_commit.clear();
+                }
                 state.preferred_x = None;
                 shell.capture_event();
             }
@@ -689,16 +693,12 @@ where
                 physical_key,
                 modifiers,
                 ..
-            }) if state.focus.is_some() && state.pending_ime_commit.is_some() => {
-                // After a macOS IME commit, winit suppresses the key press that
-                // produced it but still reports the release. Recover only the
-                // boundary punctuation that was absent from the commit.
-                if let Some(character) = take_missing_ime_boundary_punctuation(
-                    &mut state.pending_ime_commit,
-                    key,
-                    modified_key,
-                    *physical_key,
-                    *modifiers,
+            }) if state.focus.is_some() && state.pending_ime_commit.is_pending() => {
+                // The built-in macOS Korean IME can commit the composition,
+                // clear preedit again, and report only the released ASCII
+                // boundary key. Recover that key when the commit omitted it.
+                if let ImeBoundary::Missing(character) = state.pending_ime_commit.resolve(
+                    ime_boundary_character(key, modified_key, *physical_key, *modifiers),
                 ) {
                     shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
                         Edit::Insert(character),
@@ -721,7 +721,7 @@ where
                     .as_ref()
                     .is_some_and(|preedit| !preedit.content.is_empty())
                 {
-                    state.pending_ime_commit = None;
+                    state.pending_ime_commit.clear();
                     if modifiers.command() {
                         state.preedit = None;
                         shell.request_redraw();
@@ -731,22 +731,31 @@ where
                     }
                 }
 
-                if let Some(committed) = state.pending_ime_commit.take()
-                    && let Some(punctuation) =
-                        key_punctuation(key, modified_key, *physical_key, *modifiers)
-                {
-                    if committed.ends_with(punctuation) {
-                        shell.capture_event();
-                        return;
-                    }
-                    if text.is_none() {
-                        shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
-                            Edit::Insert(punctuation),
-                        ))));
-                        state.preferred_x = None;
-                        shell.capture_event();
-                        shell.request_redraw();
-                        return;
+                if state.pending_ime_commit.is_pending() {
+                    let text_character = text.as_deref().and_then(single_printable_ascii);
+                    let event_character = text_character.or_else(|| {
+                        ime_boundary_character(key, modified_key, *physical_key, *modifiers)
+                    });
+
+                    match state.pending_ime_commit.resolve(event_character) {
+                        ImeBoundary::Duplicate => {
+                            // Some IME paths report both a commit and the
+                            // printable key press (notably Space). Keep one.
+                            shell.capture_event();
+                            return;
+                        }
+                        ImeBoundary::Missing(character) if text_character.is_none() => {
+                            // The press survived without usable ASCII text.
+                            // Insert the same boundary recovered on release.
+                            shell.publish(on_action(Action::Edit(text_editor::Action::Edit(
+                                Edit::Insert(character),
+                            ))));
+                            state.preferred_x = None;
+                            shell.capture_event();
+                            shell.request_redraw();
+                            return;
+                        }
+                        ImeBoundary::Missing(_) | ImeBoundary::Unrelated => {}
                     }
                 }
 
@@ -1660,56 +1669,106 @@ fn command_shortcut_bubbles(press: &text_editor::KeyPress) -> bool {
     }
 }
 
-fn logical_key_punctuation(key: &keyboard::Key) -> Option<char> {
-    let keyboard::Key::Character(text) = key.as_ref() else {
-        return None;
-    };
-    match text {
-        "," => Some(','),
-        "." => Some('.'),
+#[derive(Debug, Default)]
+struct PendingImeCommit {
+    content: Option<String>,
+}
+
+impl PendingImeCommit {
+    fn clear(&mut self) {
+        self.content = None;
+    }
+
+    fn is_pending(&self) -> bool {
+        self.content.is_some()
+    }
+
+    fn on_preedit(&mut self, content: &str) {
+        // The built-in macOS Korean IME emits an additional empty preedit
+        // after Commit. It is still part of the same key event, so only a new
+        // non-empty composition supersedes the pending boundary.
+        if !content.is_empty() {
+            self.clear();
+        }
+    }
+
+    fn on_commit(&mut self, content: &str) {
+        self.content = Some(content.to_owned());
+    }
+
+    fn resolve(&mut self, character: Option<char>) -> ImeBoundary {
+        let Some(committed) = self.content.take() else {
+            return ImeBoundary::Unrelated;
+        };
+        let Some(character) = character else {
+            return ImeBoundary::Unrelated;
+        };
+
+        if committed.ends_with(character) {
+            ImeBoundary::Duplicate
+        } else {
+            ImeBoundary::Missing(character)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImeBoundary {
+    Missing(char),
+    Duplicate,
+    Unrelated,
+}
+
+fn single_printable_ascii(text: &str) -> Option<char> {
+    let mut characters = text.chars();
+    let character = characters.next()?;
+    (characters.next().is_none() && character.is_ascii() && !character.is_ascii_control())
+        .then_some(character)
+}
+
+fn logical_ascii_character(key: &keyboard::Key) -> Option<char> {
+    match key.as_ref() {
+        keyboard::Key::Character(text) => single_printable_ascii(text),
+        keyboard::Key::Named(key::Named::Space) => Some(' '),
         _ => None,
     }
 }
 
-fn key_punctuation(
+fn physical_ime_boundary_fallback(code: key::Code, shift: bool) -> Option<char> {
+    Some(match (code, shift) {
+        (key::Code::Comma, false) => ',',
+        (key::Code::Comma, true) => '<',
+        (key::Code::Period, false) => '.',
+        (key::Code::Period, true) => '>',
+        (key::Code::Space, _) => ' ',
+        _ => return None,
+    })
+}
+
+fn ime_boundary_character(
     key: &keyboard::Key,
     modified_key: &keyboard::Key,
     physical_key: key::Physical,
     modifiers: keyboard::Modifiers,
 ) -> Option<char> {
-    if !modifiers.is_empty() {
+    if modifiers.control() || modifiers.alt() || modifiers.logo() {
         return None;
     }
 
-    logical_key_punctuation(modified_key)
-        .or_else(|| logical_key_punctuation(key))
-        .or(match physical_key {
-            key::Physical::Code(key::Code::Comma) => Some(','),
-            key::Physical::Code(key::Code::Period) => Some('.'),
-            _ => None,
+    logical_ascii_character(modified_key)
+        .or_else(|| {
+            if modifiers.shift() {
+                None
+            } else {
+                logical_ascii_character(key)
+            }
         })
-}
-
-fn missing_ime_boundary_punctuation(
-    committed: &str,
-    key: &keyboard::Key,
-    modified_key: &keyboard::Key,
-    physical_key: key::Physical,
-    modifiers: keyboard::Modifiers,
-) -> Option<char> {
-    let punctuation = key_punctuation(key, modified_key, physical_key, modifiers)?;
-    (!committed.ends_with(punctuation)).then_some(punctuation)
-}
-
-fn take_missing_ime_boundary_punctuation(
-    pending_commit: &mut Option<String>,
-    key: &keyboard::Key,
-    modified_key: &keyboard::Key,
-    physical_key: key::Physical,
-    modifiers: keyboard::Modifiers,
-) -> Option<char> {
-    let committed = pending_commit.take()?;
-    missing_ime_boundary_punctuation(&committed, key, modified_key, physical_key, modifiers)
+        .or_else(|| {
+            let key::Physical::Code(code) = physical_key else {
+                return None;
+            };
+            physical_ime_boundary_fallback(code, modifiers.shift())
+        })
 }
 
 fn apply_binding<H, Message>(
@@ -2214,51 +2273,90 @@ mod tests {
     }
 
     #[test]
-    fn ime_boundary_punctuation_uses_the_physical_key_and_is_recovered_once() {
+    fn macos_ime_boundary_survives_the_trailing_empty_preedit() {
         use iced::keyboard::key::{Code, Physical};
 
-        let comma = keyboard::Key::Character(",".into());
+        let period = keyboard::Key::Character(".".into());
+        let no_modifiers = keyboard::Modifiers::empty();
+
+        let mut pending = PendingImeCommit::default();
+        pending.on_preedit("강");
+        pending.on_preedit("");
+        pending.on_commit("강");
+        pending.on_preedit("");
+
+        let character =
+            ime_boundary_character(&period, &period, Physical::Code(Code::Period), no_modifiers);
+        assert_eq!(pending.resolve(character), ImeBoundary::Missing('.'));
+        assert_eq!(pending.resolve(character), ImeBoundary::Unrelated);
+    }
+
+    #[test]
+    fn macos_ime_boundary_deduplicates_committed_keys_and_recovers_ascii() {
+        use iced::keyboard::key::{Code, Physical};
+
         let hangul = keyboard::Key::Character("ㄹ".into());
         let no_modifiers = keyboard::Modifiers::empty();
-        let take_physical = |pending: &mut Option<String>, code| {
-            take_missing_ime_boundary_punctuation(
-                pending,
-                &hangul,
-                &hangul,
-                Physical::Code(code),
-                no_modifiers,
-            )
+        let shifted = keyboard::Modifiers::SHIFT;
+        let boundary = |key: &keyboard::Key, code, modifiers| {
+            ime_boundary_character(key, key, Physical::Code(code), modifiers)
         };
-        let physical = |committed, code, modifiers| {
-            missing_ime_boundary_punctuation(
-                committed,
-                &hangul,
-                &hangul,
-                Physical::Code(code),
-                modifiers,
-            )
+        let resolve = |committed: &str, character| {
+            let mut pending = PendingImeCommit::default();
+            pending.on_commit(committed);
+            pending.on_preedit("");
+            pending.resolve(character)
         };
-        let mut pending = Some("ㄹ".to_owned());
 
-        assert_eq!(take_physical(&mut pending, Code::Comma), Some(','));
-        assert_eq!(take_physical(&mut pending, Code::Comma), None);
-        assert_eq!(physical("ㄹ", Code::Period, no_modifiers), Some('.'));
-        assert_eq!(physical("단어,", Code::Comma, no_modifiers), None);
-        assert_eq!(physical("단어.", Code::Period, no_modifiers), None);
-        assert_eq!(physical("단어", Code::Space, no_modifiers), None);
         assert_eq!(
-            physical("단어", Code::Comma, keyboard::Modifiers::SHIFT),
+            resolve("ㄹ", boundary(&hangul, Code::Comma, no_modifiers)),
+            ImeBoundary::Missing(',')
+        );
+        let one = keyboard::Key::Character("1".into());
+        assert_eq!(
+            resolve("강", boundary(&one, Code::Digit1, no_modifiers)),
+            ImeBoundary::Missing('1')
+        );
+        let bang = keyboard::Key::Character("!".into());
+        assert_eq!(
+            resolve("강", boundary(&bang, Code::Digit1, shifted)),
+            ImeBoundary::Missing('!')
+        );
+        let question = keyboard::Key::Character("?".into());
+        assert_eq!(
+            resolve("강", boundary(&question, Code::Slash, shifted)),
+            ImeBoundary::Missing('?')
+        );
+        let space = keyboard::Key::Named(key::Named::Space);
+        assert_eq!(
+            resolve("강 ", boundary(&space, Code::Space, no_modifiers)),
+            ImeBoundary::Duplicate
+        );
+
+        let mut duplicate_space = PendingImeCommit::default();
+        duplicate_space.on_preedit(" ");
+        duplicate_space.on_preedit("");
+        duplicate_space.on_commit(" ");
+        duplicate_space.on_preedit("");
+        assert_eq!(
+            duplicate_space.resolve(boundary(&space, Code::Space, no_modifiers)),
+            ImeBoundary::Duplicate
+        );
+        assert_eq!(
+            boundary(&hangul, Code::Comma, keyboard::Modifiers::CTRL),
             None
         );
         assert_eq!(
-            missing_ime_boundary_punctuation(
-                "단어",
-                &comma,
-                &comma,
-                Physical::Code(Code::KeyA),
-                no_modifiers,
-            ),
-            Some(',')
+            boundary(&hangul, Code::Comma, keyboard::Modifiers::ALT),
+            None
+        );
+
+        let mut pending = PendingImeCommit::default();
+        pending.on_commit("강");
+        pending.on_preedit("ㄴ");
+        assert_eq!(
+            pending.resolve(boundary(&hangul, Code::Period, no_modifiers)),
+            ImeBoundary::Unrelated
         );
     }
 
@@ -2308,6 +2406,21 @@ mod tests {
                     highlight: quote,
                 },
             ]
+        );
+
+        let highlights = vec![Some(code); 256];
+        let runs = (0..highlights.len()).map(|line| (line, line as f32 * 12.0, 12.0));
+        groups.clear();
+
+        visit_line_highlight_groups(runs, &highlights, |group| groups.push(group));
+
+        assert_eq!(
+            groups,
+            vec![LineHighlightGroup {
+                top: 0.0,
+                height: highlights.len() as f32 * 12.0,
+                highlight: code,
+            }]
         );
     }
 
