@@ -680,10 +680,10 @@ fn diff_events(
             ),
             (None, Some(_)) => push_change(
                 changes,
-                ChangeClassification::Breaking,
+                ChangeClassification::Additive,
                 "event_added",
                 path,
-                "named event was added to a closed component contract",
+                "named event was added",
             ),
             (Some(left), Some(right)) if left.payload != right.payload => push_change(
                 changes,
@@ -1017,7 +1017,7 @@ view
             "extra",
         );
         let after = source(
-            "component Card(bind title:str, count:i64=0)\n  col\n    slot Body\n    slot Footer?\ncomponent NewThing()\n  space",
+            "component Card(bind title:str, count:i64=0)\n  emits\n    opened()\n  col\n    slot Body\n    slot Footer?\ncomponent NewThing()\n  space",
             "bg-primary",
             "new_token",
         );
@@ -1051,6 +1051,10 @@ view
         );
         assert_eq!(
             code("component_added").classification,
+            ChangeClassification::Additive
+        );
+        assert_eq!(
+            code("event_added").classification,
             ChangeClassification::Additive
         );
         assert_eq!(
