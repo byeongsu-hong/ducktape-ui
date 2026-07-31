@@ -5187,6 +5187,15 @@ and checker, then builds exactly one selected Cargo binary through the same
 ahead-of-time code generator used by production builds. Generated applications
 never parse, deserialize, or interpret Ice source at runtime.
 
+Native filesystem notifications over the complete input graph trigger snapshot
+verification. Access-only events and events below excluded build, vendor,
+fixture, or VCS directories do not trigger verification. The idle runner does
+not content-hash the graph on its 100-millisecond process-liveness cadence. It
+performs a complete content rescan every 30 seconds and after watcher errors or
+rescan requests, so missed notifications and filesystems without reliable
+native events remain recoverable. A change is settled only when two complete
+content snapshots 50 milliseconds apart are identical.
+
 After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
 change, the runner builds a new executable while the accepted process remains
 open. It stages the executable under a revision-specific path and launches it

@@ -68,6 +68,34 @@ fn only_accepts_a_settled_input_snapshot() {
 }
 
 #[test]
+#[ignore = "manual full-snapshot scaling benchmark"]
+fn benchmark_full_dev_snapshot_at_1k_and_10k_files() {
+    for file_count in [1_000, 10_000] {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let source = root.join("app.ice");
+        std::fs::write(&source, valid_app()).unwrap();
+        for index in 0..file_count {
+            let directory = root.join("src").join(format!("{:02}", index / 100));
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join(format!("input-{index:05}.rs")),
+                format!("pub const INPUT_{index}: usize = {index};\n"),
+            )
+            .unwrap();
+        }
+
+        let started = std::time::Instant::now();
+        let snapshot = dev_stamps(root, std::slice::from_ref(&source), &[]);
+        let elapsed = started.elapsed();
+
+        assert_eq!(snapshot.0.len(), 1);
+        assert!(snapshot.1.len() >= file_count);
+        eprintln!("{file_count} files: one complete content snapshot in {elapsed:?}");
+    }
+}
+
+#[test]
 fn compile_dev_uses_aot_codegen_and_keeps_the_requested_root_in_the_watch_set() {
     let fixture = tempfile::tempdir().unwrap();
     let source = fixture.path().join("app.ice");

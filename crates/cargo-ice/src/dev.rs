@@ -1,5 +1,6 @@
 mod inputs;
 mod process;
+mod watcher;
 
 #[cfg(test)]
 use self::inputs::{
@@ -18,6 +19,7 @@ use self::process::{
 };
 #[cfg(test)]
 use self::process::{READY_PATH_ENV, READY_TOKEN_ENV};
+use self::watcher::DevWatcher;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -126,6 +128,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         "ice dev: watching {} Ice source input(s); rebuild-and-restart mode",
         observed_stamps.0.len()
     );
+    let mut changes = DevWatcher::new(&watched_dependencies, &watched_assets, &cargo_inputs)?;
 
     loop {
         if stop_requested() {
@@ -139,7 +142,10 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 Err(format!("ice dev: app exited with {status}"))
             };
         }
-        thread::sleep(Duration::from_millis(100));
+        changes.update(&watched_dependencies, &watched_assets, &cargo_inputs)?;
+        if !changes.wait_for_change(Duration::from_millis(100))? {
+            continue;
+        }
         let Some(next_stamps) = settled_dev_stamps_with_cargo_inputs(
             root,
             &watched_dependencies,
