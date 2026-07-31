@@ -899,8 +899,10 @@ view
     assert!(generated.contains("text_editor::Status::Focused { is_hovered: true }"));
     assert!(generated.contains("__style.placeholder ="));
     assert!(generated.contains("__style.selection ="));
-    assert!(generated.contains("if self.locked"));
+    assert!(generated.contains("let __disabled = self.locked"));
+    assert!(generated.contains("if __disabled"));
     assert!(generated.contains(".on_action(__NotesMessage::__EditBody"));
+    assert!(generated.contains(".value(__editor_value).disabled(__disabled)"));
 }
 
 #[test]
@@ -1053,13 +1055,35 @@ view
 "#;
     let generated = compile(source, "defaults.ice").unwrap();
 
-    assert!(
-        generated.contains("(\"Untitled\").to_string()")
-            || generated.contains("(\"Untitled\".to_owned()).to_string()")
-    );
+    assert!(generated.contains("(\"Untitled\").to_string()"));
     assert!(!generated.contains("\"Untitled\".clone()"));
     assert!(generated.contains("Selected"));
     assert!(!generated.contains("if true"));
+}
+
+#[test]
+fn owns_default_component_strings_passed_to_extern_functions() {
+    let source = r#"app Defaults
+extern crate::backend
+  sync normalize(value:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Badge(label:str="Untitled")
+  text normalize(label)
+view
+  Badge
+"#;
+    let generated = compile(source, "defaults.ice").unwrap();
+
+    assert!(generated.contains("crate::backend::normalize(\"Untitled\".to_owned())"));
 }
 
 #[test]

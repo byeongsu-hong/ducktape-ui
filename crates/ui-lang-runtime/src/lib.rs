@@ -155,7 +155,8 @@ impl<Message> Semantics<Message> {
             | Role::MultilineTextInput
             | Role::SearchInput
             | Role::PasswordInput
-            | Role::Slider => FocusBehavior::Descendant,
+            | Role::Slider
+            | Role::ComboBox => FocusBehavior::Descendant,
             _ => FocusBehavior::None,
         };
 

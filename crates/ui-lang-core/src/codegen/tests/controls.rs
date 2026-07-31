@@ -285,9 +285,12 @@ view
         2
     );
     assert!(generated.contains(
-            "::iced::widget::slider((crate::backend::slider_number(0.0))..=(crate::backend::slider_number(100.0)), self.precise, move |__value| __ControlsMessage::PreciseChanged(__value)).step(crate::backend::slider_number(5.0))"
-        ));
+        "let __slider_value = self.precise; let __slider = ::iced::widget::slider((crate::backend::slider_number(0.0))..=(crate::backend::slider_number(100.0)), __slider_value, move |__value| __ControlsMessage::PreciseChanged(__value)).step(crate::backend::slider_number(5.0))"
+    ));
     assert!(!generated.contains("self.precise.clone()"));
+    assert!(generated.contains("::ui_lang_runtime::Role::Switch"));
+    assert!(generated.contains("::ui_lang_runtime::Role::Slider"));
+    assert!(generated.contains("::ui_lang_runtime::Role::ProgressIndicator"));
     assert!(generated.contains("slider::Status::Hovered"));
     assert!(generated.contains("slider::Status::Dragged"));
     assert!(generated.contains("slider::HandleShape::Circle"));

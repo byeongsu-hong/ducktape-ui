@@ -304,26 +304,34 @@ Ice lowers a small Core surface into a deterministic AccessKit tree:
 | `input` | `TextInput`, or `PasswordInput` when `secure=true` | current value for non-secure input; passwords never export their value |
 | `button` | `Button` | name, description, disabled state, focus/click actions |
 | `checkbox` | `CheckBox` | name, description, checked/disabled state, focus/click actions |
+| `toggler` | `Switch` | name, description, checked/disabled state, focus/click actions |
+| `slider` | `Slider` | default name, current value, focus action |
+| `progress` | `ProgressIndicator` | default name and current value |
+| `pick`, `combo` | `ComboBox` | placeholder name, selected value, focus action |
+| `editor` | `MultilineTextInput` | placeholder/default name, current value, disabled state, focus action |
 | labeled `image` | `Image` | name and description |
 
 `label=` and `description=` accept checked `str` expressions. An input's first
-string, a compact button's string, and a checkbox's visible label are their
-default accessible names; explicit `label=` overrides that default. A button
-with child content must declare `label=`, and an image enters the semantic tree
-only when it has `label=`. Unlabeled images are decorative, and
-`description=` without `label=` is rejected for media.
+string, a compact button's string, and a checkbox or toggler's visible label are
+their default accessible names; explicit `label=` overrides that default.
+Pick, combo, and editor controls use their placeholder, while sliders and
+progress indicators use stable default names. A button with child content must
+declare `label=`, and an image enters the semantic tree only when it has
+`label=`. Unlabeled images are decorative, and `description=` without `label=`
+is rejected for media.
 
 ```ice
 input "Name" label="Full name" description="Profile name" <-> name
 button #help label="Open help" description="Keyboard help" -> show_help
   text "?"
+toggler "Online" label="Online state" checked=online -> online_changed _
 image "help.ppm" label="Help diagram" description="The keyboard flow"
 ```
 
 Enabled controls use source/view-tree order for Tab and Shift+Tab; disabled
 controls are skipped. Enter or Space activates a focused button, Space
-activates a focused checkbox, and wrapper-focused controls draw a visible
-two-pixel outline. There is no numeric focus-order syntax.
+activates a focused checkbox or toggler, and wrapper-focused controls draw a
+visible two-pixel outline. There is no numeric focus-order syntax.
 
 The tree, focus, and action mapping are deterministic on every target. Native
 screen-reader export covers single-window Linux and Windows applications
@@ -333,10 +341,9 @@ non-maximized. The bootstrap resolves its ID with `window::oldest()`, waits for
 the UI Automation subclass, then restores its configured mode and releases the
 selected boot or preset task alongside queued messages, preserving queue order.
 Named windows retain their configured settings and remain outside native
-export. Other targets, daemon and multi-window adapters, and exact desktop
-screen-coordinate bounds are not available through stock Iced 0.14.0. Rich
-text and advanced widgets do not gain accessibility claims from this Core
-contract.
+export. Other targets, daemon and multi-window adapters, exact desktop
+screen-coordinate bounds, rich text, and widgets not listed above are not
+covered by this Core accessibility contract.
 
 ## Run the examples
 

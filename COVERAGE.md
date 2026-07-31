@@ -253,14 +253,22 @@ targets do not yet export to native screen readers.
 | `input` | `TextInput` with value, or `PasswordInput` with no exported value; leading text is the default name and checked `label=`/`description=` may override/extend it |
 | `button` | `Button` with focus/click actions; compact text is the default name, child content requires `label=`, and `description=` is optional |
 | `checkbox` | `CheckBox` with toggled state and focus/click actions; visible text is the default name and checked `label=`/`description=` may override/extend it |
+| `toggler` | `Switch` with toggled/disabled state and focus/click actions; visible text is the default name and checked `label=`/`description=` may override/extend it |
+| `slider` | `Slider` with a stable default name, current value, and descendant focus action |
+| `progress` | `ProgressIndicator` with a stable default name and current value |
+| `pick`, `combo` | `ComboBox` with a placeholder name, selected value, and descendant focus action |
+| `editor` | `MultilineTextInput` with a placeholder/default name, current value, disabled state, and descendant focus action |
 | `image` | a labeled image is an `Image`; an unlabeled image is decorative and omitted, and `description=` requires `label=` |
-| focus | source/view-tree read and Tab/Shift+Tab order, disabled-target skip, button Enter/Space, checkbox Space, and a visible wrapper focus outline; no numeric focus order |
+| focus | source/view-tree read and Tab/Shift+Tab order, disabled-target skip, button Enter/Space, checkbox/toggler Space, and a visible wrapper focus outline; no numeric focus order |
 
 AccessKit tree construction and action dispatch are deterministic on every
 target. Native export is single-window on Linux and Windows. Daemon and
 multi-window adapters, native export on other targets, and exact desktop
 screen-coordinate bounds are unsupported on stock Iced 0.14.0. Rich text and
-advanced widget semantics are not claimed. `scripts/a11y-smoke.sh` proves that
+widgets outside the table above have no Core semantics claim. First-class
+showcase tests exercise every newly mapped control role, exported state, and
+action.
+`scripts/a11y-smoke.sh` proves that
 the Linux AT-SPI tree is discoverable and an invoked action reaches the Iced
 bridge; `scripts/a11y-windows-check.sh` cross-compiles the Windows adapter and
 the generated reference app's production and test forms. Headless tests cover

@@ -79,22 +79,31 @@ produce a deterministic AccessKit tree with these mappings:
 | secure `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
 | `button` | `Button` | label, optional description, disabled/focus state, click action |
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
+| `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
+| `slider` | `Slider` | default `Slider` label, current value, focus state |
+| `progress` | `ProgressIndicator` | default `Progress` label and current value |
+| `pick` | `ComboBox` | placeholder/default label, selected value, focus state |
+| `combo` | `ComboBox` | search placeholder label, selected value, focus state |
+| `editor` | `MultilineTextInput` | placeholder/default label, current value, disabled/focus state |
 | labeled `image` | `Image` | label and optional description |
 
 `label=` and `description=` are checked `str` expressions. The positional input
-label, compact button string, and visible checkbox label are default accessible
-names; an explicit `label=` overrides them. A button whose content is a child
-node requires `label=` (`E105`). An image without `label=` is decorative and is
-omitted from the semantic tree; media `description=` without `label=` is also
-`E105`. Secure inputs use `PasswordInput` and never copy their state value into
-the accessibility tree.
+label, compact button string, and visible checkbox or toggler label are default
+accessible names; an explicit `label=` overrides them. Pick and combo controls
+use their placeholder, while editors use their placeholder or `Editor` when it
+is absent. Slider and progress use the stable defaults `Slider` and `Progress`.
+A button whose content is a child node requires `label=` (`E105`). An image
+without `label=` is decorative and is omitted from the semantic tree; media
+`description=` without `label=` is also `E105`. Secure inputs use
+`PasswordInput` and never copy their state value into the accessibility tree.
 
 Semantic read order and keyboard focus order follow source/view-tree order.
-Tab and Shift+Tab traverse enabled inputs, buttons, and checkboxes; disabled
-controls expose disabled state but no focus/click action and are skipped.
-Enter and Space activate a focused button, while Space activates a focused
-checkbox. Wrapper-focused controls draw a two-pixel outline; text inputs retain
-their native focused rendering. There is no numeric focus-order syntax.
+Tab and Shift+Tab traverse enabled interactive controls; disabled controls
+expose disabled state but no focus/click action and are skipped. Enter and Space
+activate a focused button, while Space activates a focused checkbox or toggler.
+Wrapper-focused controls draw a two-pixel outline; inputs, editors, sliders,
+pick lists, and combo boxes retain their native focused rendering. There is no
+numeric focus-order syntax.
 
 Tree construction, focus updates, duplicate-ID disambiguation, and action
 routing are deterministic across platforms. Native screen-reader export is a
@@ -962,7 +971,7 @@ checkbox       = "checkbox" expr id? accessibility_property* "checked=" expr
                  bool_property*
                  checkbox_icon_property* checkbox_style? styles? "->" route
                  (INDENT checkbox_status_style*)?
-toggler        = "toggler" expr id? "checked=" expr bool_property*
+toggler        = "toggler" expr id? accessibility_property* "checked=" expr bool_property*
                  ("align=" text_alignment)? ("style=" call)? styles? "->" route
                  (INDENT toggler_status_style*)?
 bool_property  = "disabled=" expr | "size=" expr | "w=" length
