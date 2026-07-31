@@ -12,5 +12,17 @@ cargo ice check
 ```
 
 Copy the package when starting an application, then replace the workspace
-dependencies with the released `ui-lang`, `ui-lang-runtime`, and
-`ui-lang-build` versions.
+dependencies with released versions:
+
+```toml
+[dependencies]
+ui-lang = "=0.1.0"
+ui-lang-runtime = "=0.1.0"
+
+[build-dependencies]
+ui-lang-build = "=0.1.0"
+```
+
+The starter has no `ducktape-ui` or showcase dependency, and its Ice graph has
+no repository-relative import. Its local `theme.ice` import is compiled through
+the same `ui-lang-build` graph as a downstream multi-file application.
