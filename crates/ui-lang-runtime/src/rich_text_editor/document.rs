@@ -1,10 +1,72 @@
-use super::Format;
 use iced::advanced::graphics::text::{Paragraph as GraphicsParagraph, cosmic_text};
 use iced::advanced::text::{self, Paragraph as _, Renderer as _, Span, Text};
 use iced::alignment;
 use iced::widget::text_editor::Position;
 use iced::{Color, Font, Padding, Pixels, Point, Rectangle, Size, Vector};
 use std::ops::Range;
+
+/// Visual formatting for a highlighted source range.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Format {
+    /// Text color override.
+    pub color: Option<Color>,
+    /// Font override.
+    pub font: Option<Font>,
+    /// Font size override.
+    pub size: Option<Pixels>,
+    /// Line height override.
+    pub line_height: Option<text::LineHeight>,
+    /// Background drawn around the formatted span.
+    pub highlight: Option<text::Highlight>,
+    /// Background drawn across every visual line containing the range.
+    pub line_highlight: Option<text::Highlight>,
+    /// Layout padding inside [`Self::line_highlight`].
+    pub line_padding: Padding,
+    /// Strikethrough color.
+    pub strikethrough: Option<Color>,
+    /// Extra paint-only padding around [`Self::highlight`].
+    pub padding: Padding,
+}
+
+impl Default for Format {
+    fn default() -> Self {
+        Self {
+            color: None,
+            font: None,
+            size: None,
+            line_height: None,
+            highlight: None,
+            line_highlight: None,
+            line_padding: Padding::ZERO,
+            strikethrough: None,
+            padding: Padding::ZERO,
+        }
+    }
+}
+
+impl Format {
+    fn overlay(self, overlay: Self) -> Self {
+        Self {
+            color: overlay.color.or(self.color),
+            font: overlay.font.or(self.font),
+            size: overlay.size.or(self.size),
+            line_height: overlay.line_height.or(self.line_height),
+            highlight: overlay.highlight.or(self.highlight),
+            line_highlight: overlay.line_highlight.or(self.line_highlight),
+            line_padding: if overlay.line_padding == Padding::ZERO {
+                self.line_padding
+            } else {
+                overlay.line_padding
+            },
+            strikethrough: overlay.strikethrough.or(self.strikethrough),
+            padding: if overlay.padding == Padding::ZERO {
+                self.padding
+            } else {
+                overlay.padding
+            },
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct DocumentLayout {
@@ -37,6 +99,14 @@ pub(super) struct LineLayoutStyle {
     pub(super) text_size: Pixels,
     pub(super) line_height: text::LineHeight,
     pub(super) wrapping: text::Wrapping,
+}
+
+pub(super) fn ordered_positions(left: Position, right: Position) -> (Position, Position) {
+    if (left.line, left.column) <= (right.line, right.column) {
+        (left, right)
+    } else {
+        (right, left)
+    }
 }
 
 impl DocumentLayout {

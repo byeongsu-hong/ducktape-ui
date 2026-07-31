@@ -1,4 +1,4 @@
-use super::{TextLines, ordered_positions};
+use super::document::{TextLines, ordered_positions};
 use iced::advanced::input_method;
 use iced::widget::text_editor::{Cursor, Position};
 use std::ops::Range;
