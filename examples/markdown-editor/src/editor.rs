@@ -22,6 +22,9 @@ const HEADING_LINE_HEIGHT: f32 = 1.4;
 const CODE_BLOCK_SCALE: f32 = 0.9;
 const INLINE_CODE_SCALE: f32 = 1.0;
 const CODE_BLOCK_PADDING: f32 = BODY_SIZE;
+const INLINE_CODE_PADDING_X: f32 = BODY_SIZE * 0.4;
+// Advance of the bundled Monoplex KR backtick, verified by the shaping test.
+const MONOPLEX_MARKER_EM: f32 = 0.528;
 const CODE_BACKGROUND_ALPHA: f32 = 0.08;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +64,7 @@ pub enum MarkdownHighlight {
     Marker {
         hidden: bool,
         style: SpanStyle,
+        marker_count: usize,
     },
     HiddenFence,
     Fence,
@@ -209,14 +213,26 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
         },
     };
     match *highlight {
-        MarkdownHighlight::Marker { hidden, style } => {
+        MarkdownHighlight::Marker {
+            hidden,
+            style,
+            marker_count,
+        } => {
             let mut format = span_format(style, theme);
             format.color = Some(if hidden { Color::TRANSPARENT } else { subdued });
             format.highlight = None;
             format.padding = Padding::ZERO;
             if hidden {
-                format.size = Some(Pixels(0.01));
-                format.line_height = None;
+                if style.code {
+                    format.size = Some(Pixels(
+                        INLINE_CODE_PADDING_X / (MONOPLEX_MARKER_EM * marker_count.max(1) as f32),
+                    ));
+                    format.line_height =
+                        Some(LineHeight::Absolute(Pixels(BODY_SIZE * BODY_LINE_HEIGHT)));
+                } else {
+                    format.size = Some(Pixels(0.01));
+                    format.line_height = None;
+                }
             }
             format
         }
@@ -226,7 +242,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
             size: Some(Pixels(0.01)),
             line_height: Some(LineHeight::Absolute(Pixels(BODY_SIZE))),
             line_highlight: Some(code_background),
-            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            line_padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
         MarkdownHighlight::Fence => Format {
@@ -237,7 +253,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
                 BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
             ))),
             line_highlight: Some(code_background),
-            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            line_padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
         MarkdownHighlight::Span(style) => span_format(style, theme),
@@ -249,7 +265,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
                 BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
             ))),
             line_highlight: Some(code_background),
-            padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
+            line_padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
         MarkdownHighlight::CodeToken { color, font } => Format {
@@ -324,10 +340,10 @@ fn span_format(style: SpanStyle, theme: &Theme) -> Format {
             border: Border::default().rounded(3.0),
         });
         format.padding = Padding {
-            top: size * 0.2,
-            right: size * 0.4,
-            bottom: size * 0.2,
-            left: size * 0.4,
+            top: 0.0,
+            right: INLINE_CODE_PADDING_X,
+            bottom: 0.0,
+            left: INLINE_CODE_PADDING_X,
         };
     }
 
@@ -672,7 +688,7 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
             ),
             Event::Code(_) => {
                 let content = delimited_content(line, range.clone(), b'`');
-                if caret.is_some_and(|caret| content.start <= caret && caret <= content.end) {
+                if caret.is_some_and(|caret| range.start <= caret && caret <= range.end) {
                     visible_scopes.push(range.clone());
                 }
                 let style = SpanStyle {
@@ -684,7 +700,7 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
             }
             Event::InlineMath(_) | Event::DisplayMath(_) => {
                 let content = delimited_content(line, range.clone(), b'$');
-                if caret.is_some_and(|caret| content.start <= caret && caret <= content.end) {
+                if caret.is_some_and(|caret| range.start <= caret && caret <= range.end) {
                     visible_scopes.push(range.clone());
                 }
                 let style = SpanStyle {
@@ -717,12 +733,14 @@ fn inline_highlights(line: &str, caret: Option<usize>) -> Vec<(Range<usize>, Mar
                 highlights.push((range, MarkdownHighlight::ListMarker));
             }
             Event::Rule => {
+                let marker_count = range.len();
                 covered.push(range.clone());
                 highlights.push((
                     range,
                     MarkdownHighlight::Marker {
                         hidden: false,
                         style: SpanStyle::default(),
+                        marker_count,
                     },
                 ));
             }
@@ -801,6 +819,7 @@ fn push_marker(
     visible_scopes: &[Range<usize>],
     highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
 ) {
+    let marker_count = range.len();
     let hidden = !visible_scopes
         .iter()
         .any(|scope| scope.start <= range.start && range.end <= scope.end);
@@ -808,7 +827,14 @@ fn push_marker(
         .iter()
         .filter(|(scope, _)| scope.start <= range.start && range.end <= scope.end)
         .fold(SpanStyle::default(), |style, (_, next)| style.merge(*next));
-    highlights.push((range, MarkdownHighlight::Marker { hidden, style }));
+    highlights.push((
+        range,
+        MarkdownHighlight::Marker {
+            hidden,
+            style,
+            marker_count,
+        },
+    ));
 }
 
 fn tag_style(tag: &Tag<'_>) -> Option<SpanStyle> {
@@ -2252,7 +2278,8 @@ mod tests {
                     style,
                     MarkdownHighlight::Marker {
                         hidden: true,
-                        style
+                        style,
+                        ..
                     } if style.strong
                 )
         }));
@@ -2264,6 +2291,19 @@ mod tests {
         }));
         assert!(marker.iter().any(|(range, style)| {
             *range == (2..4) && matches!(style, MarkdownHighlight::Marker { hidden: false, .. })
+        }));
+
+        let code = "x `code` y";
+        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let outside = outside.highlight_line(code).collect::<Vec<_>>();
+        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false));
+        let marker = marker.highlight_line(code).collect::<Vec<_>>();
+
+        assert!(outside.iter().any(|(range, style)| {
+            *range == (2..3) && matches!(style, MarkdownHighlight::Marker { hidden: true, .. })
+        }));
+        assert!(marker.iter().any(|(range, style)| {
+            *range == (2..3) && matches!(style, MarkdownHighlight::Marker { hidden: false, .. })
         }));
     }
 
@@ -2334,6 +2374,11 @@ mod tests {
         };
         assert!((code_line_height.0 - 23.04).abs() < 0.01);
         assert_eq!(code.line_highlight.unwrap().border.width, 1.0);
+        assert_eq!(
+            code.line_padding,
+            iced::Padding::from([0.0, super::CODE_BLOCK_PADDING])
+        );
+        assert_eq!(code.padding, iced::Padding::ZERO);
 
         let inline = super::markdown_format(
             &MarkdownHighlight::Span(super::SpanStyle {
@@ -2343,7 +2388,7 @@ mod tests {
             &iced::Theme::Light,
         );
         assert!((inline.size.unwrap().0 - 16.0).abs() < 0.01);
-        assert!((inline.padding.top - 3.2).abs() < 0.01);
+        assert_eq!(inline.padding.top, 0.0);
         assert!((inline.padding.left - 6.4).abs() < 0.01);
         assert_eq!(
             inline.highlight.unwrap().background,
@@ -2352,6 +2397,77 @@ mod tests {
                 ..iced::Theme::Light.palette().text
             })
         );
+    }
+
+    #[test]
+    fn hidden_inline_code_delimiters_reserve_the_highlight_margin() {
+        use iced::advanced::graphics::text::{Paragraph, font_system};
+        use iced::advanced::text::{Alignment, Paragraph as _, Shaping, Span, Text, Wrapping};
+        use iced::{Pixels, Size, alignment};
+        use std::borrow::Cow;
+
+        font_system()
+            .write()
+            .expect("font system")
+            .load_font(Cow::Borrowed(include_bytes!(
+                "../assets/fonts/MonoplexKR-Regular.ttf"
+            )));
+        let markers = ["before `code` after", "before ``code`` after"]
+            .into_iter()
+            .flat_map(|line| inline_highlights(line, None))
+            .filter_map(|(_, highlight)| match highlight {
+                MarkdownHighlight::Marker {
+                    hidden: true,
+                    style,
+                    marker_count,
+                } if style.code => Some((
+                    marker_count,
+                    super::markdown_format(
+                        &MarkdownHighlight::Marker {
+                            hidden: true,
+                            style,
+                            marker_count,
+                        },
+                        &iced::Theme::Light,
+                    ),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(markers.len(), 4);
+        for (marker_count, format) in markers {
+            let source = "`".repeat(marker_count);
+            let mut span: Span<'_, (), iced::Font> = Span::new(source.as_str());
+            span.font = format.font;
+            span.size = format.size;
+            span.line_height = format.line_height;
+            span.color = format.color;
+            let spans = [span];
+            let paragraph = Paragraph::with_spans(Text {
+                content: spans.as_slice(),
+                bounds: Size::new(100.0, 100.0),
+                size: Pixels(super::BODY_SIZE),
+                line_height: iced::advanced::text::LineHeight::Relative(super::BODY_LINE_HEIGHT),
+                font: super::body_font(iced::font::Weight::Normal, iced::font::Style::Normal),
+                align_x: Alignment::Default,
+                align_y: alignment::Vertical::Top,
+                shaping: Shaping::Advanced,
+                wrapping: Wrapping::None,
+            });
+            let width = paragraph
+                .buffer()
+                .layout_runs()
+                .next()
+                .expect("one marker run")
+                .line_w;
+
+            assert!(
+                (width - super::INLINE_CODE_PADDING_X).abs() < 0.1,
+                "marker width {width} != {}",
+                super::INLINE_CODE_PADDING_X
+            );
+        }
     }
 
     #[test]

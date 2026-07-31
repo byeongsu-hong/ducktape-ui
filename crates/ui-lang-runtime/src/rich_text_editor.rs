@@ -49,6 +49,8 @@ pub struct Format {
     pub highlight: Option<text::Highlight>,
     /// Background drawn across every visual line containing the range.
     pub line_highlight: Option<text::Highlight>,
+    /// Layout padding inside [`Self::line_highlight`].
+    pub line_padding: Padding,
     /// Strikethrough color.
     pub strikethrough: Option<Color>,
     /// Extra paint-only padding around [`Self::highlight`].
@@ -64,6 +66,7 @@ impl Default for Format {
             line_height: None,
             highlight: None,
             line_highlight: None,
+            line_padding: Padding::ZERO,
             strikethrough: None,
             padding: Padding::ZERO,
         }
@@ -79,6 +82,11 @@ impl Format {
             line_height: overlay.line_height.or(self.line_height),
             highlight: overlay.highlight.or(self.highlight),
             line_highlight: overlay.line_highlight.or(self.line_highlight),
+            line_padding: if overlay.line_padding == Padding::ZERO {
+                self.line_padding
+            } else {
+                overlay.line_padding
+            },
             strikethrough: overlay.strikethrough.or(self.strikethrough),
             padding: if overlay.padding == Padding::ZERO {
                 self.padding
@@ -285,6 +293,22 @@ where
         }
     }
 
+    fn interaction_at(&self, state: &State<Highlighter>, point: Point) -> mouse::Interaction {
+        let Some(position) = state.document.hit_test(point) else {
+            return mouse::Interaction::Text;
+        };
+        let position = state.source_position(position);
+        let Some(line) = self.content.line(position.line) else {
+            return mouse::Interaction::Text;
+        };
+
+        self.mouse_interaction
+            .as_ref()
+            .map_or(mouse::Interaction::Text, |interaction| {
+                interaction(&line.text, position)
+            })
+    }
+
     fn input_method<'b>(
         &self,
         state: &'b State<Highlighter>,
@@ -332,6 +356,8 @@ where
     pending_ime_commit: PendingImeCommit,
     last_click: Option<mouse::Click>,
     drag_anchor: Option<Position>,
+    drag_moved: bool,
+    release_bubbles: Option<bool>,
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
@@ -369,6 +395,7 @@ struct StyledLine {
     segments: Vec<Segment>,
     empty_format: Format,
     line_highlight: Option<text::Highlight>,
+    line_padding: Padding,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -423,6 +450,8 @@ where
         self.preedit = None;
         self.pending_ime_commit.clear();
         self.drag_anchor = None;
+        self.drag_moved = false;
+        self.release_bubbles = None;
     }
 }
 
@@ -447,6 +476,8 @@ where
             pending_ime_commit: PendingImeCommit::default(),
             last_click: None,
             drag_anchor: None,
+            drag_moved: false,
+            release_bubbles: None,
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
@@ -583,7 +614,6 @@ where
     ) {
         let state = tree.state.downcast_mut::<State<Highlighter>>();
         let bounds = layout.bounds();
-        let text_bounds = bounds.shrink(self.padding);
 
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && cursor.is_over(bounds)
@@ -630,9 +660,13 @@ where
                 shell.request_input_method(&self.input_method(state, layout));
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if let Some(point) = cursor.position_in(text_bounds) {
-                    let local = point + Vector::new(0.0, state.scroll);
+                state.pending_ime_commit.clear();
+                if let Some(point) = cursor.position_in(bounds) {
+                    let local = point - Vector::new(self.padding.left, self.padding.top)
+                        + Vector::new(0.0, state.scroll);
                     let click = mouse::Click::new(local, mouse::Button::Left, state.last_click);
+                    let release_bubbles = click.kind() == mouse::click::Kind::Single
+                        && self.interaction_at(state, local) == mouse::Interaction::Pointer;
                     let position = state.source_position(state.document.hit(local));
                     let next = match click.kind() {
                         mouse::click::Kind::Single => {
@@ -653,6 +687,8 @@ where
                     };
 
                     state.focus = Some(Focus::now());
+                    state.drag_moved = false;
+                    state.release_bubbles = Some(release_bubbles);
                     state.last_click = Some(click);
                     state.preferred_x = None;
                     shell.publish(on_action(Action::MoveTo(next)));
@@ -665,16 +701,29 @@ where
                     }
                     state.pending_ime_commit.clear();
                     state.drag_anchor = None;
+                    state.drag_moved = false;
+                    state.last_click = None;
+                    state.release_bubbles = None;
                     shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(anchor) = state.drag_anchor
-                    && let Some(point) = cursor.position_in(text_bounds)
+                    && let Some(point) = cursor.position()
                 {
-                    let position = state.source_position(
-                        state.document.hit(point + Vector::new(0.0, state.scroll)),
+                    let relative = point - Vector::new(bounds.x, bounds.y);
+                    let point = Point::new(
+                        relative.x.clamp(0.0, bounds.width),
+                        relative.y.clamp(0.0, bounds.height),
                     );
+                    let local = point - Vector::new(self.padding.left, self.padding.top)
+                        + Vector::new(0.0, state.scroll);
+                    let position = state.source_position(state.document.hit(local));
+                    if position != anchor {
+                        state.drag_moved = true;
+                        // A drag is not the first click of a later double-click.
+                        state.last_click = None;
+                    }
                     shell.publish(on_action(Action::MoveTo(Cursor {
                         position,
                         selection: (position != anchor).then_some(anchor),
@@ -683,7 +732,20 @@ where
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                state.drag_anchor = None;
+                let dragged = state.drag_anchor.take().is_some() && state.drag_moved;
+                state.drag_moved = false;
+                let release_over_pointer = cursor.position_in(bounds).is_some_and(|point| {
+                    let local = point - Vector::new(self.padding.left, self.padding.top)
+                        + Vector::new(0.0, state.scroll);
+                    self.interaction_at(state, local) == mouse::Interaction::Pointer
+                });
+                if state.release_bubbles.take().is_some_and(|release_bubbles| {
+                    dragged || !release_bubbles || !release_over_pointer
+                }) {
+                    // Only an actual rendered link click may reach an outer
+                    // release handler.
+                    shell.capture_event();
+                }
             }
             Event::InputMethod(input_method::Event::Opened) => {
                 if state.replace_preedit(Some(input_method::Preedit::new())) {
@@ -696,7 +758,9 @@ where
                 if state.replace_preedit(None) {
                     shell.invalidate_layout();
                 }
-                state.pending_ime_commit.clear();
+                // AppKit may close the composition before winit reports the
+                // release-only ASCII key that ended it. Keep the boundary
+                // commit until a printable keyboard event resolves it.
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Preedit(content, selection))
@@ -776,6 +840,9 @@ where
                 }
 
                 if state.pending_ime_commit.is_pending() {
+                    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+                        state.pending_ime_commit.clear();
+                    }
                     let text_character = text.as_deref().and_then(single_printable_ascii);
                     let event_character = text_character.or_else(|| {
                         ime_boundary_character(key, modified_key, *physical_key, *modifiers)
@@ -815,6 +882,7 @@ where
                 let binding = editor_binding(&key_press);
 
                 if let Some(binding) = binding {
+                    state.pending_ime_commit.clear();
                     let capture = !matches!(binding, Binding::Unfocus);
                     apply_binding(
                         binding,
@@ -948,17 +1016,11 @@ where
             return mouse::Interaction::NotAllowed;
         }
 
-        let text_bounds = bounds.shrink(self.padding);
-        if let Some(point) = cursor.position_in(text_bounds) {
+        if let Some(point) = cursor.position_in(bounds) {
             let state = tree.state.downcast_ref::<State<Highlighter>>();
-            let position =
-                state.source_position(state.document.hit(point + Vector::new(0.0, state.scroll)));
-            if let Some(line) = self.content.line(position.line)
-                && let Some(interaction) = self.mouse_interaction.as_ref()
-            {
-                return interaction(&line.text, position);
-            }
-            return mouse::Interaction::Text;
+            let point = point - Vector::new(self.padding.left, self.padding.top)
+                + Vector::new(0.0, state.scroll);
+            return self.interaction_at(state, point);
         }
 
         mouse::Interaction::default()
@@ -1106,7 +1168,11 @@ impl DocumentLayout {
                 column: position.column.min(line.signature.text.len()),
             },
         );
-        caret + Vector::new(0.0, line.top)
+        caret
+            + Vector::new(
+                line.signature.line_padding.left,
+                line.top + line.signature.line_padding.top,
+            )
     }
 
     fn hit(&self, point: Point) -> Position {
@@ -1120,12 +1186,52 @@ impl DocumentLayout {
         let line = &self.lines[line_index];
         let local = hit_position(
             line.paragraph.buffer(),
-            Point::new(point.x, (point.y - line.top).max(0.0)),
+            Point::new(
+                point.x - line.signature.line_padding.left,
+                point.y - line.top - line.signature.line_padding.top,
+            ),
         );
         Position {
             line: line_index,
             column: local.column.min(line.signature.text.len()),
         }
+    }
+
+    fn hit_test(&self, point: Point) -> Option<Position> {
+        if point.y < 0.0 || point.y >= self.height {
+            return None;
+        }
+        let line_index = self
+            .lines
+            .partition_point(|line| line.top + line.height <= point.y);
+        let line = self.lines.get(line_index)?;
+        let local = Point::new(
+            point.x - line.signature.line_padding.left,
+            point.y - line.top - line.signature.line_padding.top,
+        );
+        if local.x < 0.0 || local.y < 0.0 {
+            return None;
+        }
+
+        let run = line
+            .paragraph
+            .buffer()
+            .layout_runs()
+            .find(|run| run.line_top <= local.y && local.y < run.line_top + run.line_height)?;
+        let mut glyphs = run.glyphs.iter();
+        let first = glyphs.next()?;
+        let (left, right) = glyphs.fold((first.x, first.x + first.w), |(left, right), glyph| {
+            (left.min(glyph.x), right.max(glyph.x + glyph.w))
+        });
+        if local.x < left || local.x > right {
+            return None;
+        }
+
+        let position = hit_position(line.paragraph.buffer(), local);
+        Some(Position {
+            line: line_index,
+            column: position.column.min(line.signature.text.len()),
+        })
     }
 
     fn draw_text(
@@ -1142,7 +1248,11 @@ impl DocumentLayout {
             }
             renderer.fill_paragraph(
                 &line.paragraph,
-                origin + Vector::new(0.0, line.top),
+                origin
+                    + Vector::new(
+                        line.signature.line_padding.left,
+                        line.top + line.signature.line_padding.top,
+                    ),
                 color,
                 clip,
             );
@@ -1179,7 +1289,10 @@ impl DocumentLine {
 
         let paragraph = GraphicsParagraph::with_spans(Text {
             content: spans.as_slice(),
-            bounds: Size::new(style.width, i32::MAX as f32),
+            bounds: Size::new(
+                (style.width - signature.line_padding.x()).max(1.0),
+                i32::MAX as f32,
+            ),
             size: style.text_size,
             line_height: style.line_height,
             font: style.font,
@@ -1188,7 +1301,8 @@ impl DocumentLine {
             shaping: text::Shaping::Advanced,
             wrapping: style.wrapping,
         });
-        let height = paragraph_height(&paragraph, style.text_size, style.line_height);
+        let height = paragraph_height(&paragraph, style.text_size, style.line_height)
+            + signature.line_padding.y();
 
         Self {
             signature,
@@ -1406,16 +1520,25 @@ where
     let empty_format = highlights
         .iter()
         .fold(Format::default(), |base, (_, next)| base.overlay(*next));
-    let line_highlight = highlights
+    let line = highlights
         .iter()
-        .filter_map(|(_, format)| format.line_highlight)
+        .filter_map(|(_, format)| {
+            format
+                .line_highlight
+                .map(|highlight| (highlight, format.line_padding))
+        })
         .next_back();
+    let (line_highlight, line_padding) = line
+        .map_or((None, Padding::ZERO), |(highlight, padding)| {
+            (Some(highlight), padding)
+        });
 
     StyledLine {
         text: source,
         segments,
         empty_format,
         line_highlight,
+        line_padding,
     }
 }
 
@@ -1669,18 +1792,25 @@ fn draw_span_highlights<H>(
         if top + line.height < clip.y || top > clip.y + clip.height {
             continue;
         }
-        let translation = origin - Point::ORIGIN + Vector::new(0.0, line.top);
+        let Some(line_clip) = clip.intersection(&Rectangle::new(
+            Point::new(clip.x, top),
+            Size::new(clip.width, line.height),
+        )) else {
+            continue;
+        };
+        let translation = origin - Point::ORIGIN
+            + Vector::new(
+                line.signature.line_padding.left,
+                line.top + line.signature.line_padding.top,
+            );
         for (index, span) in line.spans.iter().enumerate() {
             let Some(highlight) = span.highlight else {
                 continue;
             };
             for bounds in line.paragraph.span_bounds(index) {
-                let bounds = Rectangle::new(
-                    bounds.position() + translation
-                        - Vector::new(span.padding.left, span.padding.top),
-                    bounds.size() + Size::new(span.padding.x(), span.padding.y()),
-                );
-                if let Some(bounds) = clip.intersection(&bounds) {
+                if let Some(bounds) =
+                    span_highlight_bounds(bounds + translation, span.padding, line_clip)
+                {
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds,
@@ -1693,6 +1823,17 @@ fn draw_span_highlights<H>(
             }
         }
     }
+}
+
+fn span_highlight_bounds(
+    bounds: Rectangle,
+    padding: Padding,
+    line_clip: Rectangle,
+) -> Option<Rectangle> {
+    line_clip.intersection(&Rectangle::new(
+        bounds.position() - Vector::new(padding.left, padding.top),
+        bounds.size() + Size::new(padding.x(), padding.y()),
+    ))
 }
 
 fn draw_selection<H>(
@@ -1732,7 +1873,10 @@ fn draw_selection<H>(
                 continue;
             };
             let bounds = Rectangle::new(
-                Point::new(origin.x + x, origin.y + line.top + run.line_top),
+                Point::new(
+                    origin.x + line.signature.line_padding.left + x,
+                    origin.y + line.top + line.signature.line_padding.top + run.line_top,
+                ),
                 Size::new(width.max(1.0), run.line_height),
             );
             if let Some(bounds) = clip.intersection(&bounds) {
@@ -1761,7 +1905,11 @@ fn draw_strikethroughs<H>(
         if top + document_line.height < clip.y || top > clip.y + clip.height {
             continue;
         }
-        let translation = origin - Point::ORIGIN + Vector::new(0.0, document_line.top);
+        let translation = origin - Point::ORIGIN
+            + Vector::new(
+                document_line.signature.line_padding.left,
+                document_line.top + document_line.signature.line_padding.top,
+            );
         for (index, color) in document_line
             .strikethroughs
             .iter()
@@ -1868,8 +2016,13 @@ fn draw_range_underline(
             };
             let underline = Rectangle::new(
                 Point::new(
-                    origin.x + x,
-                    origin.y + line.top + run.line_top + run.line_height - thickness,
+                    origin.x + line.signature.line_padding.left + x,
+                    origin.y
+                        + line.top
+                        + line.signature.line_padding.top
+                        + run.line_top
+                        + run.line_height
+                        - thickness,
                 ),
                 Size::new(width.max(1.0), thickness),
             );
@@ -1975,10 +2128,10 @@ impl PendingImeCommit {
     }
 
     fn resolve(&mut self, character: Option<char>) -> ImeBoundary {
-        let Some(committed) = self.content.take() else {
+        let Some(character) = character else {
             return ImeBoundary::Unrelated;
         };
-        let Some(character) = character else {
+        let Some(committed) = self.content.take() else {
             return ImeBoundary::Unrelated;
         };
 
@@ -2067,6 +2220,8 @@ fn apply_binding<H, Message>(
         Binding::Unfocus => {
             state.focus = None;
             state.drag_anchor = None;
+            state.drag_moved = false;
+            state.release_bubbles = None;
         }
         Binding::Copy => {
             if let Some(selection) = content.selection() {
@@ -2211,7 +2366,7 @@ where
                 .layout_runs()
                 .map(move |run| VisualRun {
                     line: line_index,
-                    top: line.top + run.line_top,
+                    top: line.top + line.signature.line_padding.top + run.line_top,
                     height: run.line_height,
                     start: run.glyphs.first().map_or(0, |glyph| glyph.start),
                     end: run
@@ -2389,6 +2544,7 @@ mod tests {
         let block = Format {
             size: Some(Pixels(14.0)),
             line_height: Some(text::LineHeight::Absolute(Pixels(24.0))),
+            line_padding: Padding::from([0.0, 12.0]),
             line_highlight: Some(text::Highlight {
                 background: iced::Background::Color(Color::BLACK),
                 border: iced::Border::default(),
@@ -2407,6 +2563,86 @@ mod tests {
         assert_eq!(segments[1].format.line_height, block.line_height);
         assert_eq!(segments[1].format.color, token.color);
         assert_eq!(segments[1].format.line_highlight, block.line_highlight);
+        assert_eq!(segments[1].format.line_padding, block.line_padding);
+    }
+
+    #[test]
+    fn line_padding_changes_wrapping_caret_and_hit_geometry() {
+        let source = Content::with_text("code that wraps");
+        let padding = Padding {
+            top: 4.0,
+            right: 12.0,
+            bottom: 6.0,
+            left: 12.0,
+        };
+        let mut document = DocumentLayout::default();
+        document.update(
+            &content_lines(&source),
+            &mut WholeLine::default(),
+            &|_| Format {
+                line_highlight: Some(text::Highlight {
+                    background: iced::Background::Color(Color::BLACK),
+                    border: iced::Border::default(),
+                }),
+                line_padding: padding,
+                ..Format::default()
+            },
+            test_layout_style(100.0),
+            false,
+            false,
+        );
+
+        let line = &document.lines[0];
+        assert!((line.paragraph.bounds().width - 76.0).abs() < 0.01);
+        assert!(
+            (line.height
+                - paragraph_height(
+                    &line.paragraph,
+                    Pixels(16.0),
+                    text::LineHeight::Relative(1.6),
+                )
+                - padding.y())
+            .abs()
+                < 0.01
+        );
+
+        let start = document.caret(Position { line: 0, column: 0 });
+        assert!((start.x - padding.left).abs() < 0.01);
+        assert!((start.y - padding.top).abs() < 0.01);
+        assert_eq!(
+            document.hit(Point::new(start.x, start.y + start.height / 2.0)),
+            Position { line: 0, column: 0 }
+        );
+        assert_eq!(
+            document.hit_test(Point::new(start.x, start.y + start.height / 2.0)),
+            Some(Position { line: 0, column: 0 })
+        );
+        assert_eq!(
+            document.hit_test(Point::new(99.0, start.y + start.height / 2.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn inline_highlight_padding_cannot_bleed_into_adjacent_lines() {
+        let bounds = Rectangle::new(Point::new(20.0, 10.0), Size::new(30.0, 20.0));
+        let line = Rectangle::new(Point::new(0.0, 10.0), Size::new(100.0, 20.0));
+        let padded = span_highlight_bounds(
+            bounds,
+            Padding {
+                top: 5.0,
+                right: 6.0,
+                bottom: 5.0,
+                left: 6.0,
+            },
+            line,
+        )
+        .expect("visible highlight");
+
+        assert_eq!(
+            padded,
+            Rectangle::new(Point::new(14.0, 10.0), Size::new(42.0, 20.0))
+        );
     }
 
     #[test]
@@ -2481,6 +2717,7 @@ mod tests {
                 ],
                 empty_format: Format::default(),
                 line_highlight: None,
+                line_padding: Padding::ZERO,
             },
             StyledLine {
                 text: "a body line long enough to wrap".to_owned(),
@@ -2490,12 +2727,14 @@ mod tests {
                 }],
                 empty_format: Format::default(),
                 line_highlight: None,
+                line_padding: Padding::ZERO,
             },
             StyledLine {
                 text: String::new(),
                 segments: Vec::new(),
                 empty_format: code,
                 line_highlight: None,
+                line_padding: Padding::ZERO,
             },
             StyledLine {
                 text: "let value = 1;".to_owned(),
@@ -2505,6 +2744,7 @@ mod tests {
                 }],
                 empty_format: Format::default(),
                 line_highlight: None,
+                line_padding: Padding::ZERO,
             },
         ];
         let style = test_layout_style(120.0);
@@ -2968,8 +3208,511 @@ mod tests {
 
         let character =
             ime_boundary_character(&period, &period, Physical::Code(Code::Period), no_modifiers);
+        assert_eq!(pending.resolve(None), ImeBoundary::Unrelated);
         assert_eq!(pending.resolve(character), ImeBoundary::Missing('.'));
         assert_eq!(pending.resolve(character), ImeBoundary::Unrelated);
+    }
+
+    #[test]
+    fn ime_close_preserves_release_only_punctuation() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+        use iced::keyboard::key::{Code, Physical};
+        use iced::keyboard::{Key, Location, Modifiers};
+
+        let content = Content::with_text("ㄹ");
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0))
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let state = tree
+            .state
+            .downcast_mut::<State<text::highlighter::PlainText>>();
+        state.focus = Some(Focus::now());
+        let limits = layout::Limits::new(Size::ZERO, Size::new(120.0, 80.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(120.0, 80.0));
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+
+        for (character, code) in [(',', Code::Comma), ('.', Code::Period)] {
+            tree.state
+                .downcast_mut::<State<text::highlighter::PlainText>>()
+                .pending_ime_commit
+                .on_commit("ㄹ");
+            let key = Key::Character(character.to_string().into());
+            for event in [
+                Event::InputMethod(input_method::Event::Closed),
+                Event::Keyboard(keyboard::Event::KeyReleased {
+                    key: key.clone(),
+                    modified_key: key,
+                    physical_key: Physical::Code(code),
+                    location: Location::Standard,
+                    modifiers: Modifiers::empty(),
+                }),
+            ] {
+                let mut shell = Shell::new(&mut messages);
+                editor.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+            }
+        }
+
+        assert_eq!(
+            messages,
+            [
+                Action::Edit(text_editor::Action::Edit(Edit::Insert(','))),
+                Action::Edit(text_editor::Action::Edit(Edit::Insert('.'))),
+            ]
+        );
+    }
+
+    #[test]
+    fn ime_boundary_press_and_release_produce_exactly_one_ascii_edit() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+        use iced::keyboard::key::{Code, Physical};
+        use iced::keyboard::{Key, Location, Modifiers};
+
+        let content = Content::with_text("ㄹ");
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0))
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .focus = Some(Focus::now());
+        let limits = layout::Limits::new(Size::ZERO, Size::new(120.0, 80.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(120.0, 80.0));
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let comma = Key::Character(",".into());
+
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .pending_ime_commit
+            .on_commit("ㄹ");
+        for event in [
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: comma.clone(),
+                modified_key: comma.clone(),
+                physical_key: Physical::Code(Code::Comma),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: Some(",".into()),
+                repeat: false,
+            }),
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key: comma.clone(),
+                modified_key: comma,
+                physical_key: Physical::Code(Code::Comma),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+            }),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        assert_eq!(
+            messages,
+            [Action::Edit(text_editor::Action::Edit(Edit::Insert(',')))]
+        );
+        messages.clear();
+
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .pending_ime_commit
+            .on_commit("ㄹ ");
+        let space = Key::Named(key::Named::Space);
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::Keyboard(keyboard::Event::KeyPressed {
+                key: space.clone(),
+                modified_key: space,
+                physical_key: Physical::Code(Code::Space),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: Some(" ".into()),
+                repeat: false,
+            }),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        assert!(shell.is_event_captured());
+        assert!(messages.is_empty());
+
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .pending_ime_commit
+            .on_commit("ㄹ ");
+        let command = if cfg!(target_os = "macos") {
+            Modifiers::LOGO
+        } else {
+            Modifiers::CTRL
+        };
+        let select_all = Key::Character("a".into());
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::Keyboard(keyboard::Event::KeyPressed {
+                key: select_all.clone(),
+                modified_key: select_all,
+                physical_key: Physical::Code(Code::KeyA),
+                location: Location::Standard,
+                modifiers: command,
+                text: Some("a".into()),
+                repeat: false,
+            }),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        assert!(
+            !tree
+                .state
+                .downcast_ref::<State<text::highlighter::PlainText>>()
+                .pending_ime_commit
+                .is_pending()
+        );
+    }
+
+    #[test]
+    fn clicks_in_editor_padding_focus_and_clear_selection() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+
+        let mut content = Content::with_text("alpha beta");
+        content.move_to(Cursor {
+            position: Position { line: 0, column: 5 },
+            selection: Some(Position { line: 0, column: 0 }),
+        });
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(160.0))
+            .height(Length::Fixed(80.0))
+            .padding(16.0)
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .focus = Some(Focus::now());
+        let limits = layout::Limits::new(Size::ZERO, Size::new(160.0, 80.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(160.0, 80.0));
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        tree.state
+            .downcast_mut::<State<text::highlighter::PlainText>>()
+            .pending_ime_commit
+            .on_commit("ㄹ ");
+
+        editor.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            mouse::Cursor::Available(Point::new(4.0, 20.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert!(shell.is_event_captured());
+        assert_eq!(
+            messages,
+            [Action::MoveTo(Cursor {
+                position: Position { line: 0, column: 0 },
+                selection: None,
+            })]
+        );
+        assert!(
+            tree.state
+                .downcast_ref::<State<text::highlighter::PlainText>>()
+                .focus
+                .is_some()
+        );
+        assert!(
+            !tree
+                .state
+                .downcast_ref::<State<text::highlighter::PlainText>>()
+                .pending_ime_commit
+                .is_pending()
+        );
+        messages.clear();
+
+        let release_was_captured = {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(Point::new(4.0, 20.0)),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            shell.is_event_captured()
+        };
+        assert!(release_was_captured);
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn a_selection_drag_does_not_turn_the_next_click_into_a_double_click() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+
+        let content = Content::with_text("alpha beta gamma");
+        let padding = 8.0;
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(220.0))
+            .height(Length::Fixed(80.0))
+            .padding(padding)
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(220.0, 80.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(220.0, 80.0));
+        let (start_position, start, outside) = {
+            let state = tree
+                .state
+                .downcast_ref::<State<text::highlighter::PlainText>>();
+            let start_position = Position { line: 0, column: 1 };
+            let start = state.document.caret(start_position);
+            let end = state.document.caret(Position {
+                line: 0,
+                column: 10,
+            });
+            (
+                start_position,
+                Point::new(padding + start.x, padding + start.y + start.height / 2.0),
+                Point::new(260.0, padding + end.y + end.height / 2.0),
+            )
+        };
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(start),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        assert_eq!(
+            messages,
+            [Action::MoveTo(Cursor {
+                position: start_position,
+                selection: None,
+            })]
+        );
+        messages.clear();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::CursorMoved { position: outside }),
+                Layout::new(&node),
+                mouse::Cursor::Available(outside),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        let [Action::MoveTo(dragged)] = messages.as_slice() else {
+            panic!("drag must publish one rich selection: {messages:?}");
+        };
+        assert_eq!(dragged.selection, Some(start_position));
+        assert_eq!(dragged.position.column, "alpha beta gamma".len());
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        assert!(state.drag_moved);
+        assert!(state.last_click.is_none());
+        messages.clear();
+
+        let release_was_captured = {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(outside),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            shell.is_event_captured()
+        };
+        assert!(release_was_captured);
+        assert!(messages.is_empty());
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(start),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        let [Action::MoveTo(clicked)] = messages.as_slice() else {
+            panic!("post-drag click must publish one caret move: {messages:?}");
+        };
+        assert_eq!(clicked.position, start_position);
+        assert_eq!(clicked.selection, None);
+    }
+
+    #[test]
+    fn only_a_rendered_link_hit_can_reach_an_outer_release_handler() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+
+        let content = Content::with_text("link text");
+        let padding = 8.0;
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(220.0))
+            .height(Length::Fixed(100.0))
+            .padding(padding)
+            .mouse_interaction(|_, position| {
+                if position.column < 4 {
+                    mouse::Interaction::Pointer
+                } else {
+                    mouse::Interaction::Text
+                }
+            })
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(220.0, 100.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(220.0, 100.0));
+        let link = {
+            let state = tree
+                .state
+                .downcast_ref::<State<text::highlighter::PlainText>>();
+            let caret = state.document.caret(Position { line: 0, column: 2 });
+            Point::new(padding + caret.x, padding + caret.y + caret.height / 2.0)
+        };
+        let blank = Point::new(link.x, 90.0);
+
+        assert_eq!(
+            Widget::mouse_interaction(
+                &editor,
+                &tree,
+                Layout::new(&node),
+                mouse::Cursor::Available(link),
+                &viewport,
+                &renderer,
+            ),
+            mouse::Interaction::Pointer
+        );
+        assert_eq!(
+            Widget::mouse_interaction(
+                &editor,
+                &tree,
+                Layout::new(&node),
+                mouse::Cursor::Available(blank),
+                &viewport,
+                &renderer,
+            ),
+            mouse::Interaction::Text
+        );
+
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        for point in [blank, link] {
+            {
+                let mut shell = Shell::new(&mut messages);
+                editor.update(
+                    &mut tree,
+                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+            }
+            messages.clear();
+            let captured = {
+                let mut shell = Shell::new(&mut messages);
+                editor.update(
+                    &mut tree,
+                    &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut clipboard,
+                    &mut shell,
+                    &viewport,
+                );
+                shell.is_event_captured()
+            };
+            assert_eq!(captured, point == blank);
+            assert!(messages.is_empty());
+        }
     }
 
     #[test]
