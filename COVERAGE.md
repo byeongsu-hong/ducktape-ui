@@ -60,6 +60,19 @@ and timeout tests keep the previous process and clean the candidate. This is
 process replacement, so no application, window, or widget state-preservation
 coverage is claimed.
 
+Deterministic semantic and render-inspection tests continue to use the
+headless tiny-skia backend. A separate native CI matrix forces iced's `wgpu`
+compositor with no tiny-skia fallback and requires the generated root to
+publish its exact readiness token after the first child draw. Linux exercises
+the canvas, shader, image, SVG, clipping, and font surface in `iced-app` through
+Vulkan; macOS boots the native Markdown editor through Metal; Windows boots the
+component showcase through DX12. The harness fails on early process exit,
+malformed readiness output, renderer initialization failure, or a 60-second
+first-draw timeout, and requires the process to remain alive for one second
+after readiness so fatal submission/device errors cannot pass on the draw
+callback alone. This is a native startup and first-frame contract, not a
+cross-platform pixel-golden claim.
+
 Source graphs support both bare fragment imports and aliased module imports.
 Aliases preserve checked `::` identity for components, recipes, extern
 functions/types, and fonts, including nested imports and repeated imports of
