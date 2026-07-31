@@ -2130,6 +2130,60 @@ mod tests {
     use iced::widget::text_editor::{Action, Edit};
 
     #[test]
+    fn bundled_body_font_keeps_korean_ime_stages_on_one_baseline() {
+        use iced::advanced::graphics::text::{Paragraph, font_system};
+        use iced::advanced::text::{Paragraph as _, Shaping, Text, Wrapping};
+        use iced::{Pixels, Size, alignment};
+        use std::borrow::Cow;
+
+        font_system()
+            .write()
+            .expect("font system")
+            .load_font(Cow::Borrowed(include_bytes!(
+                "../assets/fonts/IBMPlexSansKR-Regular.ttf"
+            )));
+
+        let metrics = |stage: &str| {
+            let content = format!("앞{stage}뒤");
+            let paragraph = Paragraph::with_text(Text {
+                content: &content,
+                bounds: Size::new(620.0, 100.0),
+                size: Pixels(super::BODY_SIZE),
+                line_height: iced::advanced::text::LineHeight::Relative(super::BODY_LINE_HEIGHT),
+                font: super::body_font(iced::font::Weight::Normal, iced::font::Style::Normal),
+                align_x: iced::advanced::text::Alignment::Default,
+                align_y: alignment::Vertical::Top,
+                shaping: Shaping::Advanced,
+                wrapping: Wrapping::Word,
+            });
+            let run = paragraph
+                .buffer()
+                .layout_runs()
+                .next()
+                .expect("one visual line");
+            let glyph = run
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.start == "앞".len())
+                .expect("composition glyph");
+
+            (
+                run.line_y.to_bits(),
+                run.line_height.to_bits(),
+                glyph.font_id,
+                glyph.y.to_bits(),
+                glyph.y_offset.to_bits(),
+                glyph.font_size.to_bits(),
+                glyph.w.to_bits(),
+            )
+        };
+
+        let ieung = metrics("ㅇ");
+        assert_eq!(metrics("으"), ieung);
+        assert_eq!(metrics("응"), ieung);
+    }
+
+    #[test]
     fn hides_markers_until_the_caret_enters_the_span() {
         let line = "as**df**";
         let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 1, false));
