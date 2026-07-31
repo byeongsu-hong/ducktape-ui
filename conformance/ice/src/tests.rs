@@ -9,6 +9,13 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 const CONTRACT: &str = include_str!("../../expected/reference.json");
+const GEIST_REGULAR: &[u8] =
+    include_bytes!("../../../examples/showcase/assets/fonts/Geist-Regular.ttf");
+const GEIST_BOLD: &[u8] = include_bytes!("../../../examples/showcase/assets/fonts/Geist-Bold.ttf");
+const GEIST_MONO_REGULAR: &[u8] =
+    include_bytes!("../../../examples/showcase/assets/fonts/GeistMono-Regular.ttf");
+const GEIST_MONO_BOLD: &[u8] =
+    include_bytes!("../../../examples/showcase/assets/fonts/GeistMono-Bold.ttf");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +91,17 @@ fn compare_case(
     };
     let theme = app.__theme();
     let mut simulator = Simulator::with_size(
-        iced::Settings::default(),
+        iced::Settings {
+            fonts: vec![
+                GEIST_REGULAR.into(),
+                GEIST_BOLD.into(),
+                GEIST_MONO_REGULAR.into(),
+                GEIST_MONO_BOLD.into(),
+            ],
+            default_font: iced::Font::with_name("Geist"),
+            default_text_size: iced::Pixels(14.0),
+            ..iced::Settings::default()
+        },
         iced::Size::new(800.0, 200.0),
         app.__view(),
     );
