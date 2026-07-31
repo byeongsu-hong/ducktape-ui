@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - api/baselines/**
       - Cargo.lock
       - scripts/package-smoke.sh
       - scripts/downstream-package-smoke.sh
@@ -32,6 +33,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/package-smoke.sh
       - run: scripts/downstream-package-smoke.sh
+      - name: Verify release API baseline
+        run: |
+          committed=api/baselines/ducktape-ui.json
+          current=target/release-ducktape-ui-api.json
+          report=target/release-ducktape-ui-api-diff.json
+
+          cargo ice api crates/ui/src/ice/default.ice > "$current"
+          if ! cmp -- "$committed" "$current"; then
+            echo "::error file=$committed::release API baseline is not the exact current fingerprint"
+            diff -u -- "$committed" "$current" || true
+            exit 1
+          fi
+
+          cargo ice api diff "$committed" "$current" --format json > "$report"
+          if ! grep -Fq '"breaking": 0' "$report" ||
+            ! grep -Fq '"behavioral_review": 0' "$report" ||
+            ! grep -Fq '"additive": 0' "$report" ||
+            ! grep -Fq '"changes": []' "$report"; then
+            echo "::error file=$report::release API baseline did not produce an exact zero diff"
+            cat "$report"
+            exit 1
+          fi
 
   build:
     name: cargo-ice (${{ matrix.target }})

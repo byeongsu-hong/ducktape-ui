@@ -43,6 +43,11 @@ ICE_PACKAGE_ALLOW_DIRTY=1 scripts/package-smoke.sh
 ```
 
 The default remains strict so the release command refuses a dirty checkout.
+The downstream smoke then builds the extracted `cargo-ice` package and uses
+that binary to emit the same declaration-only fingerprint twice, verify a zero
+JSON diff, reject a named event added to an existing component, and reject a
+hash-corrupt artifact. This proves the public API workflow from packaged crates
+rather than from workspace paths.
 
 The default component library also keeps a reviewed semantic API baseline at
 `api/baselines/ducktape-ui.json`. Before release, regenerate and compare it:
@@ -64,7 +69,13 @@ addition and removal rerun the gate. The approval applies only to the current
 head: any later push makes the synchronize run fail until a maintainer removes
 and reapplies the label. Ordinary contributors and fork pull requests receive
 no write token or baseline override. Retargeting a pull request also reruns the
-gate against the new target commit and requires a fresh breaking approval.
+gate against the new target commit and requires a fresh breaking approval. The
+approval label records review of a pull-request change; it does not bypass
+release evidence. The tag workflow regenerates the committed artifact again,
+requires byte equality, and runs the canonical reader through an exact zero
+JSON diff before publishing. Because the package version participates in the
+fingerprint payload, an intentional release version bump must regenerate and
+review the baseline too.
 
 ## Registry order
 

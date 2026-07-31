@@ -76,6 +76,76 @@ if [[ ! -x "$cargo_ice" ]]; then
   echo "packaged cargo-ice binary was not built at $cargo_ice" >&2
   exit 1
 fi
+
+api_baseline="$downstream_scratch/api-baseline.json"
+api_repeat="$downstream_scratch/api-repeat.json"
+api_event_added="$downstream_scratch/api-event-added.json"
+api_zero_report="$downstream_scratch/api-zero-diff.json"
+api_breaking_report="$downstream_scratch/api-breaking-diff.json"
+api_breaking_error="$downstream_scratch/api-breaking-diff.stderr"
+api_corrupt="$downstream_scratch/api-corrupt.json"
+api_corrupt_error="$downstream_scratch/api-corrupt.stderr"
+
+"$cargo_ice" ice api src/ui/api/baseline.ice > "$api_baseline"
+"$cargo_ice" ice api src/ui/api/baseline.ice > "$api_repeat"
+if ! cmp -- "$api_baseline" "$api_repeat"; then
+  echo "packaged cargo-ice emitted a non-deterministic API fingerprint" >&2
+  diff -u -- "$api_baseline" "$api_repeat" >&2 || true
+  exit 1
+fi
+
+"$cargo_ice" ice api diff "$api_baseline" "$api_repeat" --format json > "$api_zero_report"
+if ! grep -Fq '"breaking": 0' "$api_zero_report" ||
+  ! grep -Fq '"behavioral_review": 0' "$api_zero_report" ||
+  ! grep -Fq '"additive": 0' "$api_zero_report" ||
+  ! grep -Fq '"changes": []' "$api_zero_report"; then
+  echo "packaged cargo-ice did not report an empty API diff for identical fingerprints" >&2
+  cat "$api_zero_report" >&2
+  exit 1
+fi
+
+"$cargo_ice" ice api src/ui/api/event-added.ice > "$api_event_added"
+set +e
+"$cargo_ice" ice api diff "$api_baseline" "$api_event_added" --format json \
+  > "$api_breaking_report" 2> "$api_breaking_error"
+api_breaking_status=$?
+set -e
+if [[ $api_breaking_status -eq 0 ]]; then
+  echo "packaged cargo-ice accepted a named event added to an existing component" >&2
+  cat "$api_breaking_report" >&2
+  exit 1
+fi
+if ! grep -Fq '"breaking": 1' "$api_breaking_report" ||
+  ! grep -Fq '"additive": 0' "$api_breaking_report" ||
+  ! grep -Fq '"classification": "breaking"' "$api_breaking_report" ||
+  ! grep -Fq '"code": "event_added"' "$api_breaking_report" ||
+  ! grep -Fq '"path": "components.PackagedCard.events.opened"' "$api_breaking_report" ||
+  ! grep -Fq 'Ice API diff contains 1 breaking change(s)' "$api_breaking_error"; then
+  echo "packaged cargo-ice did not emit the named-event breaking API contract" >&2
+  cat "$api_breaking_report" >&2
+  cat "$api_breaking_error" >&2
+  exit 1
+fi
+
+awk '
+  !changed && /"fingerprint": "sha256:/ {
+    sub(/sha256:/, "sha256:0")
+    changed = 1
+  }
+  { print }
+' "$api_baseline" > "$api_corrupt"
+set +e
+"$cargo_ice" ice api diff "$api_corrupt" "$api_baseline" --format json \
+  > /dev/null 2> "$api_corrupt_error"
+api_corrupt_status=$?
+set -e
+if [[ $api_corrupt_status -eq 0 ]] ||
+  ! grep -Fq 'corrupt API fingerprint' "$api_corrupt_error"; then
+  echo "packaged cargo-ice accepted a corrupt API fingerprint" >&2
+  cat "$api_corrupt_error" >&2
+  exit 1
+fi
+
 "$cargo_ice" ice check
 "$cargo_ice" ice test packaged_consumer_contract -- --nocapture
 cargo test --locked packaged_runtime_is_a_direct_dependency
