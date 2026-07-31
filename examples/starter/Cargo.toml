@@ -1,0 +1,16 @@
+[package]
+name = "ice-starter"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+iced = { version = "=0.14.0", features = ["smol"] }
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
+
+[build-dependencies]
+ui-lang-build.workspace = true
+
+[lints]
+workspace = true
