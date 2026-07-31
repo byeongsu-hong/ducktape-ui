@@ -2455,8 +2455,8 @@ pub fn document() -> Value {
                 "diskFallbackOnClose": true,
                 "ownership": "app roots own reports; reports are aggregated by diagnostic URI; fragments are not analyzed as standalone apps",
                 "scope": "all open app roots and their overlaid import graphs",
-                "reanalyze": "reverse imports invalidate affected open roots; unrelated checked roots are reused",
-                "incrementalMetrics": ["filesParsed", "rootsRechecked", "rootsReused", "symbolsResolved", "loadElapsed", "checkElapsed", "codegenRoots", "codegenElapsed"],
+                "reanalyze": "reverse imports invalidate affected open roots; failed roots remain dirty for dependency recovery; unrelated reports are retained without loading their graphs",
+                "incrementalMetrics": ["filesLoaded", "bytesLoaded", "filesHashed", "bytesHashed", "filesScanned", "rootsChecked", "rootsReused", "symbolsIndexed", "loadElapsed", "checkElapsed", "codegenRoots", "codegenElapsed"],
                 "severities": ["error", "warning"],
                 "warnings": {
                     "W001": "component unreachable from every open app root and test mount",

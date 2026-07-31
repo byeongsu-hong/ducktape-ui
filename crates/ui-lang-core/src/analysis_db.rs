@@ -3,7 +3,7 @@ use crate::source::{
 };
 use crate::{Error, FileAnalysis, FileCompilation, codegen, lower, source_is_app};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -109,10 +109,14 @@ pub struct AnalysisTimings {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnalysisMetrics {
-    pub files_parsed: usize,
-    pub roots_rechecked: usize,
+    pub files_loaded: usize,
+    pub bytes_loaded: usize,
+    pub files_hashed: usize,
+    pub bytes_hashed: usize,
+    pub files_scanned: usize,
+    pub roots_checked: usize,
     pub roots_reused: usize,
-    pub symbols_resolved: usize,
+    pub symbols_indexed: usize,
     pub codegen_roots: usize,
     pub elapsed: AnalysisTimings,
 }
@@ -155,7 +159,6 @@ struct CheckedRoot {
 struct LoadedGraph {
     loaded: LoadedSource,
     fingerprint: RootFingerprint,
-    direct_dependencies: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 /// Process-local incremental storage for Ice source graphs.
@@ -172,6 +175,7 @@ pub struct AnalysisDb {
     dependencies: HashMap<PathBuf, BTreeSet<PathBuf>>,
     reverse_dependencies: HashMap<PathBuf, BTreeSet<PathBuf>>,
     known_roots: BTreeSet<PathBuf>,
+    dirty_roots: BTreeSet<PathBuf>,
     checked_roots: HashMap<PathBuf, CheckedRoot>,
     metrics: AnalysisMetrics,
 }
@@ -204,13 +208,31 @@ impl AnalysisDb {
         self.checked_roots.len()
     }
 
+    /// Roots whose checked result is absent or invalid after an input failure.
+    pub fn dirty_roots(&self) -> &BTreeSet<PathBuf> {
+        &self.dirty_roots
+    }
+
+    /// Whether a root must be analyzed before its previous result can be used.
+    pub fn needs_analysis(&self, path: impl AsRef<Path>) -> bool {
+        let Ok(path) = normalize_path(path.as_ref()) else {
+            return true;
+        };
+        !self.known_roots.contains(&path)
+            || self.dirty_roots.contains(&path)
+            || !self.checked_roots.contains_key(&path)
+    }
+
     /// Stop retaining a checked root while keeping reusable parsed imports.
     pub fn forget_root(&mut self, path: impl AsRef<Path>) -> bool {
         let Ok(path) = normalize_path(path.as_ref()) else {
             return false;
         };
         self.known_roots.remove(&path);
-        self.checked_roots.remove(&path).is_some()
+        self.dirty_roots.remove(&path);
+        let removed = self.checked_roots.remove(&path).is_some();
+        self.prune_unreachable_files();
+        removed
     }
 
     pub fn dependencies(&self, path: impl AsRef<Path>) -> BTreeSet<PathBuf> {
@@ -247,7 +269,10 @@ impl AnalysisDb {
         let changed = self.current_files.get(&path) != Some(&key);
         self.overlays.insert(path.clone(), source);
         if !changed {
-            return Ok(AnalysisInvalidation::default());
+            return Ok(AnalysisInvalidation {
+                changed: false,
+                affected_roots: self.dirty_roots.clone(),
+            });
         }
         let affected_roots = self.replace_current_key(path, key);
         Ok(AnalysisInvalidation {
@@ -272,13 +297,29 @@ impl AnalysisDb {
         let Some(previous) = self.overlays.remove(&path) else {
             return Ok(AnalysisInvalidation::default());
         };
-        let disk = fs::read_to_string(&path).map_err(|error| {
-            file_error("E181", &path, 1, format!("cannot read .ice file: {error}"))
-        })?;
+        let disk = match fs::read_to_string(&path) {
+            Ok(disk) => {
+                self.metrics.files_loaded += 1;
+                self.metrics.bytes_loaded += disk.len();
+                disk
+            }
+            Err(error) => {
+                self.remove_current_file(&path);
+                return Err(file_error(
+                    "E181",
+                    &path,
+                    1,
+                    format!("cannot read .ice file: {error}"),
+                ));
+            }
+        };
         if previous.as_ref() == disk {
             let key = self.file_key(path.clone(), &disk);
             self.replace_current_key(path, key);
-            return Ok(AnalysisInvalidation::default());
+            return Ok(AnalysisInvalidation {
+                changed: false,
+                affected_roots: self.dirty_roots.clone(),
+            });
         }
         let key = self.file_key(path.clone(), &disk);
         let affected_roots = self.replace_current_key(path, key);
@@ -298,10 +339,19 @@ impl AnalysisDb {
                 format!("cannot resolve source path: {error}"),
             )
         })?;
-        let source = self.read_source(&path)?;
+        let source = match self.read_source(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.remove_current_file(&path);
+                return Err(error);
+            }
+        };
         let key = self.file_key(path.clone(), &source);
         if self.current_files.get(&path) == Some(&key) {
-            return Ok(AnalysisInvalidation::default());
+            return Ok(AnalysisInvalidation {
+                changed: false,
+                affected_roots: self.dirty_roots.clone(),
+            });
         }
         let affected_roots = self.replace_current_key(path, key);
         Ok(AnalysisInvalidation {
@@ -329,18 +379,18 @@ impl AnalysisDb {
             )
         })?;
         self.known_roots.insert(root.clone());
+        self.dirty_roots.insert(root.clone());
         let started = Instant::now();
         let graph = self.load_graph(&root);
         self.metrics.elapsed.load += started.elapsed();
         let graph = graph?;
-        self.install_graph(&graph.direct_dependencies);
-
         if let Some(cached) = self.checked_roots.get(&root)
             && cached.fingerprint == graph.fingerprint
         {
             check_assets(&cached.analysis.document, &graph.loaded)
                 .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
             self.metrics.roots_reused += 1;
+            self.dirty_roots.remove(&root);
             let mut analysis = cached.analysis.clone();
             analysis.dependencies.push(requested_path);
             analysis.dependencies.sort();
@@ -349,12 +399,12 @@ impl AnalysisDb {
         }
 
         let started = Instant::now();
-        self.metrics.roots_rechecked += 1;
+        self.metrics.roots_checked += 1;
         let document = analyze_loaded(&graph.loaded);
         self.metrics.elapsed.check += started.elapsed();
         let document = document?;
         let asset_dependencies = asset_dependencies(&document, &graph.loaded);
-        self.metrics.symbols_resolved += document.symbols().len();
+        self.metrics.symbols_indexed += document.symbols().len();
         let mut dependencies = graph.loaded.dependencies.clone();
         dependencies.push(requested_path);
         dependencies.sort();
@@ -365,12 +415,13 @@ impl AnalysisDb {
             asset_dependencies,
         };
         self.checked_roots.insert(
-            root,
+            root.clone(),
             CheckedRoot {
                 fingerprint: graph.fingerprint,
                 analysis: analysis.clone(),
             },
         );
+        self.dirty_roots.remove(&root);
         Ok(analysis)
     }
 
@@ -422,7 +473,9 @@ impl AnalysisDb {
         })
     }
 
-    fn file_key(&self, canonical_path: PathBuf, source: &str) -> FileKey {
+    fn file_key(&mut self, canonical_path: PathBuf, source: &str) -> FileKey {
+        self.metrics.files_hashed += 1;
+        self.metrics.bytes_hashed += source.len();
         FileKey {
             canonical_path,
             content_hash: ContentHash::of(source),
@@ -431,17 +484,27 @@ impl AnalysisDb {
         }
     }
 
-    fn read_source(&self, path: &Path) -> Result<Arc<str>, Error> {
-        if let Some(source) = self.overlays.get(path) {
-            return Ok(Arc::clone(source));
-        }
-        fs::read_to_string(path)
-            .map(Arc::from)
-            .map_err(|error| file_error("E181", path, 1, format!("cannot read .ice file: {error}")))
+    fn read_source(&mut self, path: &Path) -> Result<Arc<str>, Error> {
+        let source = if let Some(source) = self.overlays.get(path) {
+            Arc::clone(source)
+        } else {
+            fs::read_to_string(path).map(Arc::from).map_err(|error| {
+                file_error("E181", path, 1, format!("cannot read .ice file: {error}"))
+            })?
+        };
+        self.metrics.files_loaded += 1;
+        self.metrics.bytes_loaded += source.len();
+        Ok(source)
     }
 
     fn parsed_file(&mut self, path: &Path) -> Result<(FileKey, Arc<ParsedFile>), Error> {
-        let source = self.read_source(path)?;
+        let source = match self.read_source(path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.remove_current_file(path);
+                return Err(error);
+            }
+        };
         let key = self.file_key(path.to_owned(), &source);
         if self.current_files.get(path) != Some(&key) {
             self.replace_current_key(path.to_owned(), key.clone());
@@ -473,7 +536,7 @@ impl AnalysisDb {
         }
         let parsed = Arc::new(ParsedFile { source, lines });
         self.parsed_files.insert(key.clone(), Arc::clone(&parsed));
-        self.metrics.files_parsed += 1;
+        self.metrics.files_scanned += 1;
         Ok((key, parsed))
     }
 
@@ -494,7 +557,6 @@ impl AnalysisDb {
                 dependencies: Vec::new(),
             },
             fingerprint: RootFingerprint(Vec::new()),
-            direct_dependencies: BTreeMap::new(),
         };
         let mut included = HashSet::new();
         let mut stack = Vec::new();
@@ -534,23 +596,28 @@ impl AnalysisDb {
         let (key, parsed) = self.parsed_file(path)?;
         graph.fingerprint.0.push((key, namespace.clone()));
         let mut direct = BTreeSet::new();
+        let mut resolved_imports = Vec::new();
+        let mut first_import_error = None;
         for line in &parsed.lines {
-            match line {
-                ParsedLine::Import {
-                    path: relative,
-                    alias,
-                    line,
-                } => {
-                    let candidate = path
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(relative);
-                    if let Ok(candidate_path) = absolute_lexical_path(&candidate)
-                        && !graph.loaded.dependencies.contains(&candidate_path)
-                    {
-                        graph.loaded.dependencies.push(candidate_path);
-                    }
-                    let target = self.resolve_import(&candidate, path, *line)?;
+            let ParsedLine::Import {
+                path: relative,
+                alias,
+                line,
+            } = line
+            else {
+                continue;
+            };
+            let candidate = path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(relative);
+            if let Ok(candidate_path) = absolute_lexical_path(&candidate)
+                && !graph.loaded.dependencies.contains(&candidate_path)
+            {
+                graph.loaded.dependencies.push(candidate_path);
+            }
+            match self.resolve_import(&candidate, path, *line) {
+                Ok(target) => {
                     direct.insert(target.clone());
                     let child_namespace = alias.as_ref().map_or_else(
                         || namespace.clone(),
@@ -561,9 +628,33 @@ impl AnalysisDb {
                             ))
                         },
                     );
+                    resolved_imports.push((target, child_namespace, *line));
+                }
+                Err(error) => {
+                    if let Ok(target) = normalize_path(&candidate) {
+                        direct.insert(target);
+                    }
+                    if first_import_error.is_none() {
+                        first_import_error = Some(error);
+                    }
+                }
+            }
+        }
+        self.replace_dependencies(path.to_owned(), direct);
+        if let Some(error) = first_import_error {
+            return Err(error);
+        }
+
+        let mut imports = resolved_imports.into_iter();
+        for line in &parsed.lines {
+            match line {
+                ParsedLine::Import { .. } => {
+                    let (target, child_namespace, line) = imports
+                        .next()
+                        .expect("every resolved import retains its source position");
                     self.load_into(
                         &target,
-                        (path, *line),
+                        (path, line),
                         child_namespace,
                         graph,
                         included,
@@ -581,29 +672,31 @@ impl AnalysisDb {
                 }
             }
         }
-        graph.direct_dependencies.insert(path.to_owned(), direct);
         stack.pop();
         Ok(())
     }
 
-    fn install_graph(&mut self, graph: &BTreeMap<PathBuf, BTreeSet<PathBuf>>) {
-        for (source, next) in graph {
-            if let Some(previous) = self.dependencies.insert(source.clone(), next.clone()) {
-                for dependency in previous.difference(next) {
-                    if let Some(reverse) = self.reverse_dependencies.get_mut(dependency) {
-                        reverse.remove(source);
-                        if reverse.is_empty() {
-                            self.reverse_dependencies.remove(dependency);
-                        }
+    fn replace_dependencies(&mut self, source: PathBuf, next: BTreeSet<PathBuf>) {
+        let previous = if next.is_empty() {
+            self.dependencies.remove(&source)
+        } else {
+            self.dependencies.insert(source.clone(), next.clone())
+        };
+        if let Some(previous) = previous {
+            for dependency in previous.difference(&next) {
+                if let Some(reverse) = self.reverse_dependencies.get_mut(dependency) {
+                    reverse.remove(&source);
+                    if reverse.is_empty() {
+                        self.reverse_dependencies.remove(dependency);
                     }
                 }
             }
-            for dependency in next {
-                self.reverse_dependencies
-                    .entry(dependency.clone())
-                    .or_default()
-                    .insert(source.clone());
-            }
+        }
+        for dependency in next {
+            self.reverse_dependencies
+                .entry(dependency)
+                .or_default()
+                .insert(source.clone());
         }
     }
 
@@ -648,6 +741,7 @@ impl AnalysisDb {
             }
             if self.known_roots.contains(&path) {
                 self.checked_roots.remove(&path);
+                self.dirty_roots.insert(path.clone());
                 affected.insert(path.clone());
             }
             pending.extend(
@@ -663,13 +757,53 @@ impl AnalysisDb {
 
     fn replace_current_key(&mut self, path: PathBuf, key: FileKey) -> BTreeSet<PathBuf> {
         if self.current_files.get(&path) == Some(&key) {
-            return BTreeSet::new();
+            return self.dirty_roots.clone();
         }
-        let affected = self.invalidate_dependents(&path);
+        let mut affected = self.invalidate_dependents(&path);
+        self.replace_dependencies(path.clone(), BTreeSet::new());
         if let Some(previous) = self.current_files.insert(path, key) {
             self.parsed_files.remove(&previous);
         }
+        affected.extend(self.dirty_roots.iter().cloned());
         affected
+    }
+
+    fn remove_current_file(&mut self, path: &Path) -> BTreeSet<PathBuf> {
+        let mut affected = self.invalidate_dependents(path);
+        self.replace_dependencies(path.to_owned(), BTreeSet::new());
+        if let Some(previous) = self.current_files.remove(path) {
+            self.parsed_files.remove(&previous);
+        }
+        affected.extend(self.dirty_roots.iter().cloned());
+        affected
+    }
+
+    fn prune_unreachable_files(&mut self) {
+        let mut reachable = self
+            .known_roots
+            .iter()
+            .chain(self.overlays.keys())
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut pending = reachable.iter().cloned().collect::<Vec<_>>();
+        while let Some(path) = pending.pop() {
+            for dependency in self.dependencies.get(&path).into_iter().flatten() {
+                if reachable.insert(dependency.clone()) {
+                    pending.push(dependency.clone());
+                }
+            }
+        }
+
+        self.dependencies
+            .retain(|source, _| reachable.contains(source));
+        self.reverse_dependencies.retain(|dependency, sources| {
+            sources.retain(|source| reachable.contains(source));
+            reachable.contains(dependency) && !sources.is_empty()
+        });
+        self.current_files
+            .retain(|path, _| reachable.contains(path));
+        self.parsed_files
+            .retain(|key, _| reachable.contains(key.canonical_path()));
     }
 }
 
@@ -686,15 +820,34 @@ fn remap_origin(mut error: Error, origins: &[(PathBuf, usize)]) -> Error {
 }
 
 fn normalize_path(path: &Path) -> std::io::Result<PathBuf> {
-    path.canonicalize().or_else(|original_error| {
-        let normalized = absolute_lexical_path(path)?;
-        let parent = normalized.parent().unwrap_or_else(|| Path::new("."));
-        if parent.is_dir() {
-            Ok(normalized)
-        } else {
-            Err(original_error)
+    match path.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(original_error) => {
+            let normalized = absolute_lexical_path(path)?;
+            let mut ancestor = normalized.as_path();
+            let mut missing = Vec::new();
+            loop {
+                match ancestor.canonicalize() {
+                    Ok(mut canonical) => {
+                        for component in missing.iter().rev() {
+                            canonical.push(component);
+                        }
+                        return Ok(canonical);
+                    }
+                    Err(_) => {
+                        let Some(name) = ancestor.file_name() else {
+                            return Err(original_error);
+                        };
+                        missing.push(name.to_owned());
+                        let Some(parent) = ancestor.parent() else {
+                            return Err(original_error);
+                        };
+                        ancestor = parent;
+                    }
+                }
+            }
         }
-    })
+    }
 }
 
 fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
@@ -721,6 +874,7 @@ fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{AnalysisConfig, AnalysisDb, CompilerFeatureSet, LANGUAGE_REVISION};
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -748,6 +902,10 @@ mod tests {
 
         fn path(&self, relative: &str) -> PathBuf {
             self.0.join(relative)
+        }
+
+        fn remove(&self, relative: &str) {
+            fs::remove_file(self.path(relative)).unwrap();
         }
     }
 
@@ -781,6 +939,29 @@ mod tests {
 
     fn component(name: &str, text: &str) -> String {
         format!("component {name}()\n  text \"{text}\"\n")
+    }
+
+    fn inline_app(name: &str, text: &str) -> String {
+        format!(
+            concat!(
+                "app {}\n",
+                "theme contract AppTheme\n",
+                "  bg\n",
+                "  fg\n",
+                "  primary\n",
+                "  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n",
+                "  fg #ffffff\n",
+                "  primary #333333\n",
+                "  danger #ff0000\n",
+                "component Part()\n",
+                "  text \"{}\"\n",
+                "view\n",
+                "  Part\n",
+            ),
+            name, text
+        )
     }
 
     #[test]
@@ -825,8 +1006,8 @@ mod tests {
         db.analyze_root(fixture.path("b.ice")).unwrap();
 
         let metrics = db.take_metrics();
-        assert_eq!(metrics.files_parsed, 1);
-        assert_eq!(metrics.roots_rechecked, 1);
+        assert_eq!(metrics.files_scanned, 1);
+        assert_eq!(metrics.roots_checked, 1);
         assert_eq!(metrics.roots_reused, 1);
     }
 
@@ -849,7 +1030,31 @@ mod tests {
         assert!(db.reverse_dependencies(fixture.path("shared.ice")).len() == 2);
         db.analyze_root(fixture.path("a.ice")).unwrap();
         db.analyze_root(fixture.path("b.ice")).unwrap();
-        assert_eq!(db.take_metrics().roots_rechecked, 2);
+        assert_eq!(db.take_metrics().roots_checked, 2);
+    }
+
+    #[test]
+    fn forgetting_a_root_prunes_only_its_unreachable_file_state() {
+        let fixture = Fixture::new();
+        fixture.write("a.ice", &app("A", "a_part.ice", "AView"));
+        fixture.write("a_part.ice", &component("AView", "one"));
+        fixture.write("b.ice", &app("B", "b_part.ice", "BView"));
+        fixture.write("b_part.ice", &component("BView", "two"));
+        let a = fixture.path("a.ice").canonicalize().unwrap();
+        let a_part = fixture.path("a_part.ice").canonicalize().unwrap();
+        let b = fixture.path("b.ice").canonicalize().unwrap();
+        let b_part = fixture.path("b_part.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+        db.analyze_root(&a).unwrap();
+        db.analyze_root(&b).unwrap();
+
+        assert!(db.forget_root(&a));
+        assert!(!db.current_files.contains_key(&a));
+        assert!(!db.current_files.contains_key(&a_part));
+        assert!(db.current_files.contains_key(&b));
+        assert!(db.current_files.contains_key(&b_part));
+        assert_eq!(db.checked_root_count(), 1);
+        assert_eq!(db.parsed_file_count(), 2);
     }
 
     #[test]
@@ -866,7 +1071,7 @@ mod tests {
             .unwrap();
         assert!(!unchanged.changed);
         db.analyze_root(fixture.path("app.ice")).unwrap();
-        assert_eq!(db.take_metrics().roots_rechecked, 0);
+        assert_eq!(db.take_metrics().roots_checked, 0);
 
         db.set_overlay(fixture.path("part.ice"), component("Part", "overlay"))
             .unwrap();
@@ -875,7 +1080,7 @@ mod tests {
         let closed = db.remove_overlay(fixture.path("part.ice")).unwrap();
         assert!(closed.changed);
         db.analyze_root(fixture.path("app.ice")).unwrap();
-        assert_eq!(db.take_metrics().roots_rechecked, 1);
+        assert_eq!(db.take_metrics().roots_checked, 1);
     }
 
     #[test]
@@ -893,7 +1098,7 @@ mod tests {
         assert!(changed.changed);
         assert_eq!(changed.affected_roots.len(), 1);
         db.analyze_root(fixture.path("app.ice")).unwrap();
-        assert_eq!(db.take_metrics().roots_rechecked, 1);
+        assert_eq!(db.take_metrics().roots_checked, 1);
     }
 
     #[test]
@@ -908,5 +1113,171 @@ mod tests {
         assert_eq!(db.dependencies(fixture.path("app.ice")).len(), 1);
         assert_eq!(db.dependencies(fixture.path("middle.ice")).len(), 1);
         assert_eq!(db.reverse_dependencies(fixture.path("part.ice")).len(), 1);
+    }
+
+    #[test]
+    fn missing_import_records_a_recovery_edge_before_the_file_exists() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "missing.ice", "Part"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let missing = fixture.path("missing.ice");
+        let mut db = AnalysisDb::default();
+
+        assert!(db.analyze_root(&root).is_err());
+        assert!(db.dirty_roots().contains(&root));
+        assert_eq!(
+            db.reverse_dependencies(&missing),
+            BTreeSet::from([root.clone()])
+        );
+
+        let invalidation = db
+            .set_overlay(&missing, component("Part", "created"))
+            .unwrap();
+        assert!(invalidation.affected_roots.contains(&root));
+        db.analyze_root(&root).unwrap();
+        assert!(!db.dirty_roots().contains(&root));
+    }
+
+    #[test]
+    fn malformed_import_keeps_its_parent_root_dirty_until_fixed() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "middle.ice", "Part"));
+        fixture.write("middle.ice", "use part.ice\n");
+        fixture.write("part.ice", &component("Part", "fixed"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let middle = fixture.path("middle.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+
+        assert!(db.analyze_root(&root).is_err());
+        assert_eq!(
+            db.reverse_dependencies(&middle),
+            BTreeSet::from([root.clone()])
+        );
+        let invalidation = db.set_overlay(&middle, "use \"part.ice\"\n").unwrap();
+        assert!(invalidation.affected_roots.contains(&root));
+        db.analyze_root(&root).unwrap();
+    }
+
+    #[test]
+    fn semantic_check_failure_keeps_the_root_dirty_until_its_fragment_is_fixed() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Expected"));
+        fixture.write("part.ice", &component("Wrong", "broken"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let part = fixture.path("part.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+
+        assert!(db.analyze_root(&root).is_err());
+        assert!(db.dirty_roots().contains(&root));
+        let invalidation = db
+            .set_overlay(&part, component("Expected", "fixed"))
+            .unwrap();
+        assert!(invalidation.affected_roots.contains(&root));
+        db.analyze_root(&root).unwrap();
+        assert!(!db.dirty_roots().contains(&root));
+    }
+
+    #[test]
+    fn import_add_rename_and_remove_replace_reverse_edges_immediately() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &inline_app("Demo", "inline"));
+        fixture.write("a.ice", &component("Part", "a"));
+        fixture.write("b.ice", &component("Part", "b"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let a = fixture.path("a.ice").canonicalize().unwrap();
+        let b = fixture.path("b.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+        db.analyze_root(&root).unwrap();
+
+        db.set_overlay(&root, app("Demo", "a.ice", "Part")).unwrap();
+        db.analyze_root(&root).unwrap();
+        assert_eq!(db.reverse_dependencies(&a), BTreeSet::from([root.clone()]));
+
+        db.set_overlay(&root, app("Demo", "b.ice", "Part")).unwrap();
+        assert!(db.reverse_dependencies(&a).is_empty());
+        db.analyze_root(&root).unwrap();
+        assert_eq!(db.reverse_dependencies(&b), BTreeSet::from([root.clone()]));
+
+        db.set_overlay(&root, inline_app("Demo", "inline again"))
+            .unwrap();
+        assert!(db.reverse_dependencies(&b).is_empty());
+        db.analyze_root(&root).unwrap();
+    }
+
+    #[test]
+    fn deleted_file_invalidates_cached_roots_and_recovers_after_recreation() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("part.ice", &component("Part", "one"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let part = fixture.path("part.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+        db.analyze_root(&root).unwrap();
+
+        fixture.remove("part.ice");
+        assert!(db.refresh_file(&part).is_err());
+        assert!(db.needs_analysis(&root));
+        assert!(!db.current_files.contains_key(&part));
+        assert!(db.analyze_root(&root).is_err());
+
+        fixture.write("part.ice", &component("Part", "recreated"));
+        let invalidation = db.refresh_file(&part).unwrap();
+        assert!(invalidation.affected_roots.contains(&root));
+        db.analyze_root(&root).unwrap();
+    }
+
+    #[test]
+    fn import_cycle_records_edges_and_recovers_when_the_cycle_is_removed() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "a.ice", "Part"));
+        fixture.write("a.ice", "use \"b.ice\"\n");
+        fixture.write("b.ice", "use \"a.ice\"\n");
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let b = fixture.path("b.ice").canonicalize().unwrap();
+        let mut db = AnalysisDb::default();
+
+        assert!(db.analyze_root(&root).is_err());
+        let invalidation = db
+            .set_overlay(&b, component("Part", "cycle removed"))
+            .unwrap();
+        assert!(invalidation.affected_roots.contains(&root));
+        db.analyze_root(&root).unwrap();
+    }
+
+    #[test]
+    fn missing_disk_after_overlay_close_marks_the_root_dirty() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        let root = fixture.path("app.ice").canonicalize().unwrap();
+        let part = fixture.path("part.ice");
+        let mut db = AnalysisDb::default();
+        db.set_overlay(&part, component("Part", "overlay")).unwrap();
+        db.analyze_root(&root).unwrap();
+
+        assert!(db.remove_overlay(&part).is_err());
+        assert!(db.needs_analysis(&root));
+        assert!(db.analyze_root(&root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_overlay_under_a_symlink_uses_the_imports_canonical_parent() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        fixture.write("real/app.ice", &app("Demo", "pending.ice", "Part"));
+        symlink(fixture.path("real"), fixture.path("link")).unwrap();
+        let root = fixture.path("real/app.ice");
+        let overlay = fixture.path("link/pending.ice");
+        let canonical_overlay = fixture.path("real/pending.ice");
+        let mut db = AnalysisDb::default();
+
+        db.set_overlay(&overlay, component("Part", "unsaved"))
+            .unwrap();
+        db.analyze_root(&root).unwrap();
+        assert_eq!(
+            db.reverse_dependencies(&canonical_overlay),
+            BTreeSet::from([root.canonicalize().unwrap()])
+        );
     }
 }

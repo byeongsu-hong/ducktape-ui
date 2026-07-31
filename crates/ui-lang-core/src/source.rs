@@ -254,6 +254,10 @@ pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result
     Ok(())
 }
 
+// The best-effort dependency and asset discovery APIs still use this
+// non-cached loader. `AnalysisDb` owns normal analysis and compilation; move
+// discovery onto its partial graph in a separate change before deleting this
+// duplicate traversal.
 fn load(path: &Path) -> Result<LoadedSource, Error> {
     load_with_overlays(path, &HashMap::<PathBuf, String>::new())
 }

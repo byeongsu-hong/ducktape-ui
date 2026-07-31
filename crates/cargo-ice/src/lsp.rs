@@ -478,22 +478,45 @@ fn reanalyze_open_roots(
     cargo_reports: &CargoDiagnosticReports,
 ) -> io::Result<()> {
     let overlays = source_overlays(documents);
-    let next = documents
+    let open_roots = documents
         .iter()
         .filter(|(_, source)| ui_lang_core::source_is_app(source))
-        .map(|(uri, source)| {
-            (
-                uri.clone(),
-                analyze_diagnostics(analysis_db, uri, source, &overlays),
-            )
-        })
+        .map(|(uri, source)| (uri.clone(), source))
         .collect::<HashMap<_, _>>();
     let targets = reports
         .values()
-        .chain(next.values())
         .flat_map(|report| report.diagnostics.iter().map(|(target, _)| target.clone()))
         .collect::<BTreeSet<_>>();
-    *reports = next;
+    let closed_roots = reports
+        .keys()
+        .filter(|uri| !open_roots.contains_key(*uri))
+        .cloned()
+        .collect::<Vec<_>>();
+    for uri in &closed_roots {
+        if let Some(path) = file_uri_path(uri) {
+            analysis_db.forget_root(path);
+        }
+    }
+    reports.retain(|uri, _| open_roots.contains_key(uri));
+
+    for (uri, source) in open_roots {
+        let should_analyze =
+            file_uri_path(&uri).is_none_or(|path| analysis_db.needs_analysis(path));
+        if should_analyze {
+            reports.insert(
+                uri.clone(),
+                analyze_diagnostics(analysis_db, &uri, source, &overlays),
+            );
+        }
+    }
+    let targets = targets
+        .into_iter()
+        .chain(
+            reports
+                .values()
+                .flat_map(|report| report.diagnostics.iter().map(|(target, _)| target.clone())),
+        )
+        .collect::<BTreeSet<_>>();
     for target in targets {
         publish_aggregated(writer, reports, cargo_reports, &target)?;
     }
@@ -3954,6 +3977,20 @@ mod tests {
     fn lsp_db_rechecks_only_the_root_affected_by_an_overlay() {
         let fixture = Fixture::new();
         let theme = APP_THEME;
+        let unrelated_payload = "B".repeat(128 * 1024);
+        let mut unrelated_imports = String::new();
+        for index in 0..128 {
+            unrelated_imports.push_str(&format!("use \"b_part_{index}.ice\"\n"));
+            let text = if index == 127 {
+                unrelated_payload.as_str()
+            } else {
+                "B"
+            };
+            fixture.write(
+                &format!("b_part_{index}.ice"),
+                &format!("component BView{index}()\n  text \"{text}\"\n"),
+            );
+        }
         fixture.write(
             "a.ice",
             &format!("app A\nuse \"a_part.ice\"\n{theme}view\n  AView\n"),
@@ -3961,9 +3998,8 @@ mod tests {
         fixture.write("a_part.ice", "component AView()\n  text \"A\"\n");
         fixture.write(
             "b.ice",
-            &format!("app B\nuse \"b_part.ice\"\n{theme}view\n  BView\n"),
+            &format!("app B\n{unrelated_imports}{theme}view\n  BView0\n"),
         );
-        fixture.write("b_part.ice", "component BView()\n  text \"B\"\n");
         let a_uri = file_path_uri(&fixture.path("a.ice"));
         let b_uri = file_path_uri(&fixture.path("b.ice"));
         let part_uri = file_path_uri(&fixture.path("a_part.ice"));
@@ -4008,8 +4044,11 @@ mod tests {
         .unwrap();
 
         let metrics = db.take_metrics();
-        assert_eq!(metrics.roots_rechecked, 1);
-        assert_eq!(metrics.roots_reused, 1);
+        assert_eq!(metrics.roots_checked, 1);
+        assert_eq!(metrics.roots_reused, 0);
+        assert_eq!(metrics.files_loaded, 3);
+        assert!(metrics.bytes_loaded < unrelated_payload.len());
+        assert_eq!(reports.len(), 2);
     }
 
     #[test]

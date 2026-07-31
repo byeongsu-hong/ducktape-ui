@@ -226,12 +226,14 @@ fn analyze(files: &[PathBuf], all_files: &[PathBuf]) -> Result<(), String> {
     }
     let metrics = analysis_db.metrics();
     println!(
-        "checked {} .ice root graph(s): parsed {}, rechecked {}, reused {}, resolved {} symbol(s) in {:?} load + {:?} check",
+        "checked {} .ice root graph(s): loaded {} file(s)/{} byte(s), scanned {}, checked {}, reused {}, indexed {} symbol(s) in {:?} load + {:?} check",
         files.len(),
-        metrics.files_parsed,
-        metrics.roots_rechecked,
+        metrics.files_loaded,
+        metrics.bytes_loaded,
+        metrics.files_scanned,
+        metrics.roots_checked,
         metrics.roots_reused,
-        metrics.symbols_resolved,
+        metrics.symbols_indexed,
         metrics.elapsed.load,
         metrics.elapsed.check,
     );
