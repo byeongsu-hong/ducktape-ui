@@ -99,6 +99,7 @@ pub(in crate::codegen) fn generate_statements(
         ("", "")
     };
     for statement in statements {
+        has_task |= statement.immediate_task().is_some();
         writeln!(out, "{}", source_marker(statement.span())).unwrap();
         match statement {
             Statement::Let { name, value, .. } => {
@@ -164,7 +165,6 @@ pub(in crate::codegen) fn generate_statements(
                 writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
             }
             Statement::Exit { .. } => {
-                has_task = true;
                 writeln!(
                     out,
                     "{}::iced::exit::<{message}>(){}",
@@ -181,7 +181,6 @@ pub(in crate::codegen) fn generate_statements(
                 span,
                 ..
             } => {
-                has_task = true;
                 let mapper = if component_context(env).is_some() {
                     "move "
                 } else {
@@ -324,7 +323,6 @@ pub(in crate::codegen) fn generate_statements(
                 error,
                 span,
             } => {
-                has_task = true;
                 let action =
                     find_extern_function(document, function, ExternKind::Sip).ok_or_else(|| {
                         Error::new("E130", span, format!("unknown extern sip `{function}`"))
@@ -359,7 +357,6 @@ pub(in crate::codegen) fn generate_statements(
                 units,
                 ..
             } => {
-                has_task = true;
                 let type_env = env
                     .iter()
                     .map(|(name, binding)| (name.clone(), binding.ty.clone()))
@@ -403,7 +400,6 @@ pub(in crate::codegen) fn generate_statements(
             Statement::TaskGroup {
                 kind, statements, ..
             } => {
-                has_task = true;
                 let mut task_env = env.clone();
                 for binding in task_env.values_mut() {
                     binding.local = false;
@@ -454,7 +450,6 @@ pub(in crate::codegen) fn generate_statements(
                 task,
                 ..
             } => {
-                has_task = true;
                 let mut task_env = env.clone();
                 for binding in task_env.values_mut() {
                     binding.local = false;
@@ -501,7 +496,6 @@ pub(in crate::codegen) fn generate_statements(
                 writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{target}.take() {{ __span.finish(); }}").unwrap();
             }
             Statement::ClipboardWrite { primary, value, .. } => {
-                has_task = true;
                 let value = expr_code(value, env, document, ValueMode::Owned)?;
                 let function = if *primary { "write_primary" } else { "write" };
                 writeln!(
@@ -514,7 +508,6 @@ pub(in crate::codegen) fn generate_statements(
             Statement::WidgetOperation {
                 operation, route, ..
             } => {
-                has_task = true;
                 let id = |target: &WidgetTarget| widget_target_code(target, env, document);
                 let value = |value: &Expr, cast: &str| {
                     let code = expr_code(value, env, document, ValueMode::Owned)?;
@@ -728,7 +721,6 @@ pub(in crate::codegen) fn generate_statements(
                         }
                     }
                     PaneOperation::Maximized | PaneOperation::Adjacent { .. } => {
-                        has_task = true;
                         let value = match operation {
                             PaneOperation::Maximized => if dynamic {
                                 format!("{state}.{field}.maximized().and_then(|__pane| {state}.{field}.get(__pane)).map(|__pane| __pane.__name())")
@@ -771,7 +763,6 @@ pub(in crate::codegen) fn generate_statements(
                 route,
                 ..
             } => {
-                has_task = true;
                 let target = target
                     .as_ref()
                     .map(|target| expr_code(target, env, document, ValueMode::Owned))

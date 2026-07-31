@@ -2551,8 +2551,11 @@ Rules:
   `instant` instead;
 - `combo state push value` requires a `combo[T]` state and a `T` value;
 - `return if` requires `bool`;
-- `run`, `task`, `sip`, `flow`, or a task group must be the final statement because each
-  returns one iced `Task`;
+- every statement that immediately returns an iced `Task` must be final:
+  `exit`, `run`, `task`, `stream`, `sip`, `flow`, task groups, abortable tasks,
+  clipboard writes, widget operations, window tasks, and pane queries;
+- `return if` is a conditional guard, and pane mutations are synchronous state
+  changes, so either may precede later statements;
 - fallible externs require both success and error routes;
 - infallible externs permit only the success route;
 - parameter names are unique within each handler;
