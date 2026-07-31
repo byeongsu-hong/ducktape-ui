@@ -1,15 +1,23 @@
+use atomicwrites::{AllowOverwrite, AtomicFile};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
 const GENERATED_MANIFEST: &str = "manifest.json";
-const GENERATED_MANIFEST_SCHEMA: u32 = 1;
+const GENERATED_MANIFEST_SCHEMA: u32 = 2;
+const GENERATION_LOCK: &str = ".generation.lock";
+const TRANSACTION_DIRECTORY_PREFIX: &str = ".ui-lang-transaction-";
+const ATOMIC_WRITE_DIRECTORY_PREFIX: &str = ".atomicwrite";
 const COMPILER_STACK_SIZE: usize = 8 * 1024 * 1024;
 const DEV_BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
+
+static TRANSACTION_ID: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 std::thread_local! {
@@ -31,7 +39,14 @@ impl std::error::Error for Error {}
 #[serde(rename_all = "camelCase")]
 struct GeneratedManifest {
     schema_version: u32,
-    outputs: BTreeMap<String, String>,
+    outputs: BTreeMap<String, GeneratedManifestEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeneratedManifestEntry {
+    source: String,
+    content_sha256: String,
 }
 
 impl Default for GeneratedManifest {
@@ -44,21 +59,28 @@ impl Default for GeneratedManifest {
 }
 
 impl GeneratedManifest {
-    fn record(&mut self, relative: &str) -> Result<String, Error> {
+    fn record(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
         let output = generated_file_name(relative);
-        self.insert(output.clone(), relative.to_owned())?;
+        self.insert(
+            output.clone(),
+            GeneratedManifestEntry {
+                source: relative.to_owned(),
+                content_sha256: content_digest(contents.as_bytes()),
+            },
+        )?;
         Ok(output)
     }
 
-    fn insert(&mut self, output: String, relative: String) -> Result<(), Error> {
+    fn insert(&mut self, output: String, entry: GeneratedManifestEntry) -> Result<(), Error> {
         if let Some(existing) = self.outputs.get(&output)
-            && existing != &relative
+            && existing.source != entry.source
         {
             return Err(Error(format!(
-                "ui-lang-build: generated output collision: {output} maps to both {existing} and {relative}"
+                "ui-lang-build: generated output collision: {output} maps to both {} and {}",
+                existing.source, entry.source
             )));
         }
-        self.outputs.insert(output, relative);
+        self.outputs.insert(output, entry);
         Ok(())
     }
 
@@ -69,17 +91,42 @@ impl GeneratedManifest {
                 self.schema_version
             )));
         }
-        for (output, relative) in &self.outputs {
-            let normalized = normalized_relative(Path::new(relative))?;
+        for (output, entry) in &self.outputs {
+            let normalized = normalized_relative(Path::new(&entry.source))?;
             let expected = generated_file_name(&normalized);
-            if relative != &normalized || output != &expected {
+            if entry.source != normalized || output != &expected {
                 return Err(Error(format!(
-                    "ui-lang-build: invalid generated manifest mapping {output} -> {relative}; expected {expected} -> {normalized}"
+                    "ui-lang-build: invalid generated manifest mapping {output} -> {}; expected {expected} -> {normalized}",
+                    entry.source
+                )));
+            }
+            if entry.content_sha256.len() != 64
+                || !entry
+                    .content_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                return Err(Error(format!(
+                    "ui-lang-build: invalid generated content digest for {output}: {}",
+                    entry.content_sha256
                 )));
             }
         }
         Ok(())
     }
+}
+
+struct GenerationLock {
+    _file: File,
+}
+
+struct GenerationTransaction {
+    directory: PathBuf,
+    staging_directory: PathBuf,
+    manifest: GeneratedManifest,
+    staged_outputs: BTreeSet<String>,
+    committed: bool,
+    _lock: GenerationLock,
 }
 
 /// Compiles one manifest-relative Ice root into Cargo's `OUT_DIR`.
@@ -100,12 +147,7 @@ where
     compiler_thread(move || {
         let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
         let out_dir = cargo_path("OUT_DIR")?;
-        let mut generated_manifest = load_generated_manifest(&out_dir)?;
-        for path in paths {
-            compile_one(&manifest, &out_dir, &path, &mut generated_manifest)?;
-        }
-        write_generated_manifest(&out_dir, &generated_manifest)?;
-        Ok(())
+        compile_many_at(&manifest, &out_dir, &paths)
     })
 }
 
@@ -129,14 +171,19 @@ pub fn generated_path(out_dir: impl AsRef<Path>, relative: &str) -> Result<PathB
 }
 
 fn generated_file_name(relative: &str) -> String {
+    let mut encoded = content_digest(relative.as_bytes());
+    encoded.push_str(".rs");
+    encoded
+}
+
+fn content_digest(contents: &[u8]) -> String {
     use std::fmt::Write as _;
 
-    let digest = Sha256::digest(relative.as_bytes());
-    let mut encoded = String::with_capacity(digest.len() * 2 + 3);
+    let digest = Sha256::digest(contents);
+    let mut encoded = String::with_capacity(digest.len() * 2);
     for byte in digest {
         write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
     }
-    encoded.push_str(".rs");
     encoded
 }
 
@@ -163,6 +210,14 @@ where
         })?
         .join()
         .map_err(|_| Error("ui-lang-build: compiler thread panicked".to_owned()))?
+}
+
+fn compile_many_at(manifest: &Path, out_dir: &Path, paths: &[PathBuf]) -> Result<(), Error> {
+    let mut transaction = GenerationTransaction::begin(out_dir)?;
+    for path in paths {
+        compile_one(manifest, path, &mut transaction)?;
+    }
+    transaction.commit()
 }
 
 fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<(), Error> {
@@ -198,14 +253,13 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
             directory.display()
         )));
     }
-    let mut generated_manifest = load_generated_manifest(out_dir)?;
+    let mut transaction = GenerationTransaction::begin(out_dir)?;
     let generated = roots
         .iter()
-        .map(|root| compile_one(manifest, out_dir, root, &mut generated_manifest))
+        .map(|root| compile_one(manifest, root, &mut transaction))
         .collect::<Result<HashSet<_>, _>>()?;
-    prune_generated(out_dir, &relative, &generated, &mut generated_manifest)?;
-    write_generated_manifest(out_dir, &generated_manifest)?;
-    Ok(())
+    prune_generated(&relative, &generated, &mut transaction.manifest);
+    transaction.commit()
 }
 
 fn collect_ice_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(), Error> {
@@ -239,10 +293,9 @@ fn collect_ice_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(
 
 fn compile_one(
     manifest: &Path,
-    out_dir: &Path,
     relative: &Path,
-    generated_manifest: &mut GeneratedManifest,
-) -> Result<PathBuf, Error> {
+    transaction: &mut GenerationTransaction,
+) -> Result<String, Error> {
     let relative = normalized_relative(relative)?;
     let source = manifest.join(Path::new(&relative));
     let compilation = ui_lang_core::compile_file(&source)
@@ -250,17 +303,7 @@ fn compile_one(
     for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
         println!("{directive}");
     }
-    let output = generated_manifest.record(&relative)?;
-    let directory = out_dir.join(GENERATED_DIRECTORY);
-    let destination = directory.join(output);
-    fs::create_dir_all(&directory).map_err(|error| {
-        Error(format!(
-            "ui-lang-build: cannot create {}: {error}",
-            directory.display()
-        ))
-    })?;
-    write_generated_if_changed(&destination, &compilation.rust, "generated output")?;
-    Ok(destination)
+    transaction.stage_output(&relative, &compilation.rust)
 }
 
 fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
@@ -276,13 +319,217 @@ fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
     .collect()
 }
 
-fn load_generated_manifest(out_dir: &Path) -> Result<GeneratedManifest, Error> {
-    let path = out_dir.join(GENERATED_DIRECTORY).join(GENERATED_MANIFEST);
+impl GenerationLock {
+    fn acquire(directory: &Path) -> Result<Self, Error> {
+        fs::create_dir_all(directory).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot create {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let path = directory.join(GENERATION_LOCK);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| {
+                Error(format!(
+                    "ui-lang-build: cannot open generation lock {}: {error}",
+                    path.display()
+                ))
+            })?;
+        fs2::FileExt::lock_exclusive(&file).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot lock generation directory {}: {error}",
+                directory.display()
+            ))
+        })?;
+        Ok(Self { _file: file })
+    }
+}
+
+impl GenerationTransaction {
+    fn begin(out_dir: &Path) -> Result<Self, Error> {
+        let directory = out_dir.join(GENERATED_DIRECTORY);
+        let generation_lock = GenerationLock::acquire(&directory)?;
+        cleanup_stale_temporary_entries(&directory)?;
+        let manifest = load_or_recover_generated_manifest(&directory)?;
+        let staging_directory = create_staging_directory(&directory)?;
+        Ok(Self {
+            directory,
+            staging_directory,
+            manifest,
+            staged_outputs: BTreeSet::new(),
+            committed: false,
+            _lock: generation_lock,
+        })
+    }
+
+    fn stage_output(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
+        let output = self.manifest.record(relative, contents)?;
+        let destination = self.directory.join(&output);
+        if file_contents_equal(&destination, contents.as_bytes()) {
+            return Ok(output);
+        }
+        let staged = self.staging_directory.join(&output);
+        write_synced(&staged, contents.as_bytes(), "staged generated output")?;
+        self.staged_outputs.insert(output.clone());
+        Ok(output)
+    }
+
+    fn commit(mut self) -> Result<(), Error> {
+        self.manifest.validate()?;
+        let obsolete = obsolete_generated_outputs(&self.directory, &self.manifest)?;
+        let manifest_contents = serialize_generated_manifest(&self.directory, &self.manifest)?;
+        let manifest_destination = self.directory.join(GENERATED_MANIFEST);
+        let manifest_changed = !file_contents_equal(&manifest_destination, &manifest_contents);
+
+        if self.staged_outputs.is_empty() && obsolete.is_empty() && !manifest_changed {
+            self.cleanup_staging()?;
+            return Ok(());
+        }
+
+        let staged_manifest = self.staging_directory.join(GENERATED_MANIFEST);
+        write_synced(
+            &staged_manifest,
+            &manifest_contents,
+            "staged generated manifest",
+        )?;
+
+        for output in &self.staged_outputs {
+            replace_atomically(
+                &self.staging_directory.join(output),
+                &self.directory.join(output),
+                "generated output",
+            )?;
+            record_generated_write();
+        }
+        for output in obsolete {
+            let path = self.directory.join(output);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(Error(format!(
+                        "ui-lang-build: cannot remove stale output {}: {error}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+
+        replace_atomically(
+            &staged_manifest,
+            &manifest_destination,
+            "generated manifest",
+        )?;
+        record_generated_write();
+        self.cleanup_staging()
+    }
+
+    fn cleanup_staging(&mut self) -> Result<(), Error> {
+        fs::remove_dir_all(&self.staging_directory).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot remove transaction directory {}: {error}",
+                self.staging_directory.display()
+            ))
+        })?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for GenerationTransaction {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_dir_all(&self.staging_directory);
+        }
+    }
+}
+
+fn create_staging_directory(directory: &Path) -> Result<PathBuf, Error> {
+    loop {
+        let id = TRANSACTION_ID.fetch_add(1, Ordering::Relaxed);
+        let staging = directory.join(format!(
+            "{TRANSACTION_DIRECTORY_PREFIX}{}-{id}",
+            std::process::id()
+        ));
+        match fs::create_dir(&staging) {
+            Ok(()) => return Ok(staging),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(Error(format!(
+                    "ui-lang-build: cannot create transaction directory {}: {error}",
+                    staging.display()
+                )));
+            }
+        }
+    }
+}
+
+fn cleanup_stale_temporary_entries(directory: &Path) -> Result<(), Error> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot read {}: {error}",
+            directory.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot read an entry in {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(TRANSACTION_DIRECTORY_PREFIX)
+            && !name.starts_with(ATOMIC_WRITE_DIRECTORY_PREFIX)
+        {
+            continue;
+        }
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot inspect stale temporary entry {}: {error}",
+                path.display()
+            ))
+        })?;
+        let result = if file_type.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        result.map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot remove stale temporary entry {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn load_or_recover_generated_manifest(directory: &Path) -> Result<GeneratedManifest, Error> {
+    match read_generated_manifest(directory) {
+        Ok(Some(manifest)) => {
+            remove_untracked_generated(directory, &manifest)?;
+            Ok(manifest)
+        }
+        Ok(None) | Err(_) => {
+            reset_generated_cache(directory)?;
+            Ok(GeneratedManifest::default())
+        }
+    }
+}
+
+fn read_generated_manifest(directory: &Path) -> Result<Option<GeneratedManifest>, Error> {
+    let path = directory.join(GENERATED_MANIFEST);
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(GeneratedManifest::default());
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(Error(format!(
                 "ui-lang-build: cannot read generated manifest {}: {error}",
@@ -297,59 +544,136 @@ fn load_generated_manifest(out_dir: &Path) -> Result<GeneratedManifest, Error> {
         ))
     })?;
     manifest.validate()?;
-    Ok(manifest)
+    for (output, entry) in &manifest.outputs {
+        let output_path = directory.join(output);
+        let contents = fs::read(&output_path).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot validate generated output {}: {error}",
+                output_path.display()
+            ))
+        })?;
+        let actual = content_digest(&contents);
+        if actual != entry.content_sha256 {
+            return Err(Error(format!(
+                "ui-lang-build: generated output digest mismatch for {}: expected {}, found {actual}",
+                output_path.display(),
+                entry.content_sha256
+            )));
+        }
+    }
+    Ok(Some(manifest))
 }
 
-fn write_generated_manifest(
-    out_dir: &Path,
-    generated_manifest: &GeneratedManifest,
-) -> Result<(), Error> {
-    generated_manifest.validate()?;
-    let directory = out_dir.join(GENERATED_DIRECTORY);
-    fs::create_dir_all(&directory).map_err(|error| {
-        Error(format!(
-            "ui-lang-build: cannot create {}: {error}",
-            directory.display()
-        ))
-    })?;
-    prune_untracked_generated(&directory, generated_manifest)?;
+fn serialize_generated_manifest(
+    directory: &Path,
+    manifest: &GeneratedManifest,
+) -> Result<Vec<u8>, Error> {
     let path = directory.join(GENERATED_MANIFEST);
-    let mut contents = serde_json::to_string_pretty(generated_manifest).map_err(|error| {
+    let mut contents = serde_json::to_string_pretty(manifest).map_err(|error| {
         Error(format!(
             "ui-lang-build: cannot serialize generated manifest {}: {error}",
             path.display()
         ))
     })?;
     contents.push('\n');
-    write_generated_if_changed(&path, &contents, "generated manifest")?;
-    Ok(())
+    Ok(contents.into_bytes())
 }
 
-fn write_generated_if_changed(path: &Path, contents: &str, kind: &str) -> Result<(), Error> {
-    if fs::read_to_string(path).ok().as_deref() == Some(contents) {
-        return Ok(());
-    }
-    fs::write(path, contents).map_err(|error| {
+fn write_synced(path: &Path, contents: &[u8], kind: &str) -> Result<(), Error> {
+    let mut file = File::create(path).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot create {kind} {}: {error}",
+            path.display()
+        ))
+    })?;
+    file.write_all(contents).map_err(|error| {
         Error(format!(
             "ui-lang-build: cannot write {kind} {}: {error}",
             path.display()
         ))
     })?;
-    #[cfg(test)]
-    GENERATED_WRITES.with(|writes| writes.set(writes.get() + 1));
+    file.flush().map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot flush {kind} {}: {error}",
+            path.display()
+        ))
+    })?;
+    file.sync_all().map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot sync {kind} {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn replace_atomically(staged: &Path, destination: &Path, kind: &str) -> Result<(), Error> {
+    AtomicFile::new(destination, AllowOverwrite)
+        .write(|file| -> io::Result<()> {
+            let mut source = File::open(staged)?;
+            io::copy(&mut source, file)?;
+            file.flush()
+        })
+        .map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot atomically replace {kind} {}: {error}",
+                destination.display()
+            ))
+        })
+}
+
+fn reset_generated_cache(directory: &Path) -> Result<(), Error> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        Error(format!(
+            "ui-lang-build: cannot read {} while resetting generated cache: {error}",
+            directory.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot read an entry in {} while resetting generated cache: {error}",
+                directory.display()
+            ))
+        })?;
+        let path = entry.path();
+        let is_manifest = entry.file_name() == GENERATED_MANIFEST;
+        let is_generated_rust = path.extension().is_some_and(|extension| extension == "rs");
+        if is_manifest || is_generated_rust {
+            fs::remove_file(&path).map_err(|error| {
+                Error(format!(
+                    "ui-lang-build: cannot remove invalid cache entry {}: {error}",
+                    path.display()
+                ))
+            })?;
+        }
+    }
     Ok(())
 }
 
-fn prune_untracked_generated(
+fn remove_untracked_generated(directory: &Path, manifest: &GeneratedManifest) -> Result<(), Error> {
+    for output in obsolete_generated_outputs(directory, manifest)? {
+        let path = directory.join(output);
+        fs::remove_file(&path).map_err(|error| {
+            Error(format!(
+                "ui-lang-build: cannot remove untracked output {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn obsolete_generated_outputs(
     directory: &Path,
-    generated_manifest: &GeneratedManifest,
-) -> Result<(), Error> {
+    manifest: &GeneratedManifest,
+) -> Result<Vec<String>, Error> {
     let entries = fs::read_dir(directory).map_err(|error| {
         Error(format!(
             "ui-lang-build: cannot read {}: {error}",
             directory.display()
         ))
     })?;
+    let mut obsolete = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             Error(format!(
@@ -368,55 +692,37 @@ fn prune_untracked_generated(
             })?
             .is_file()
             && path.extension().is_some_and(|extension| extension == "rs")
-            && path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_none_or(|name| !generated_manifest.outputs.contains_key(name))
+            && let Some(name) = path.file_name().and_then(|name| name.to_str())
+            && !manifest.outputs.contains_key(name)
         {
-            fs::remove_file(&path).map_err(|error| {
-                Error(format!(
-                    "ui-lang-build: cannot remove untracked output {}: {error}",
-                    path.display()
-                ))
-            })?;
+            obsolete.push(name.to_owned());
         }
     }
-    Ok(())
+    obsolete.sort();
+    Ok(obsolete)
 }
 
 fn prune_generated(
-    out_dir: &Path,
     relative_directory: &str,
-    expected: &HashSet<PathBuf>,
-    generated_manifest: &mut GeneratedManifest,
-) -> Result<(), Error> {
-    let directory = out_dir.join(GENERATED_DIRECTORY);
-    let stale = generated_manifest
-        .outputs
-        .iter()
-        .filter(|(output, relative)| {
-            relative
-                .strip_prefix(relative_directory)
-                .is_some_and(|suffix| suffix.starts_with('/'))
-                && !expected.contains(&directory.join(output))
-        })
-        .map(|(output, _)| output.clone())
-        .collect::<Vec<_>>();
-    for output in stale {
-        let path = directory.join(&output);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(Error(format!(
-                    "ui-lang-build: cannot remove stale output {}: {error}",
-                    path.display()
-                )));
-            }
-        }
-        generated_manifest.outputs.remove(&output);
-    }
-    Ok(())
+    expected: &HashSet<String>,
+    manifest: &mut GeneratedManifest,
+) {
+    manifest.outputs.retain(|output, entry| {
+        !entry
+            .source
+            .strip_prefix(relative_directory)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+            || expected.contains(output)
+    });
+}
+
+fn file_contents_equal(path: &Path, contents: &[u8]) -> bool {
+    fs::read(path).is_ok_and(|existing| existing == contents)
+}
+
+fn record_generated_write() {
+    #[cfg(test)]
+    GENERATED_WRITES.with(|writes| writes.set(writes.get() + 1));
 }
 
 fn normalized_relative(path: &Path) -> Result<String, Error> {
@@ -458,12 +764,15 @@ fn validate_relative(relative: &str) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GeneratedManifest, compile_dir_at, generated_file_name, generated_path,
-        load_generated_manifest, rerun_directives, write_generated_manifest,
+        GENERATED_DIRECTORY, GENERATED_MANIFEST, GeneratedManifest, GeneratedManifestEntry,
+        GenerationLock, compile_dir_at, compile_many_at, content_digest, generated_file_name,
+        generated_path, read_generated_manifest, rerun_directives, serialize_generated_manifest,
     };
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::thread;
     use std::time::{Duration, Instant};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -474,6 +783,63 @@ mod tests {
 
     fn generated_writes() -> usize {
         super::GENERATED_WRITES.with(std::cell::Cell::get)
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ui-lang-build-{name}-{}-{}",
+            std::process::id(),
+            FIXTURE_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn app_source(name: &str, text: &str) -> String {
+        format!(
+            concat!(
+                "app {}\n",
+                "theme contract AppTheme\n",
+                "  bg\n",
+                "  fg\n",
+                "  primary\n",
+                "  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n",
+                "  fg #ffffff\n",
+                "  primary #333333\n",
+                "  danger #ff0000\n",
+                "view\n",
+                "  text \"{}\"\n",
+            ),
+            name, text
+        )
+    }
+
+    fn write_manifest_fixture(out_dir: &Path, manifest: &GeneratedManifest) {
+        let directory = out_dir.join(GENERATED_DIRECTORY);
+        fs::create_dir_all(&directory).unwrap();
+        let contents = serialize_generated_manifest(&directory, manifest).unwrap();
+        fs::write(directory.join(GENERATED_MANIFEST), contents).unwrap();
+    }
+
+    fn read_manifest(out_dir: &Path) -> GeneratedManifest {
+        read_generated_manifest(&out_dir.join(GENERATED_DIRECTORY))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn assert_no_temporary_entries(out_dir: &Path) {
+        let directory = out_dir.join(GENERATED_DIRECTORY);
+        if !directory.exists() {
+            return;
+        }
+        for entry in fs::read_dir(directory).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(
+                !name.starts_with(super::TRANSACTION_DIRECTORY_PREFIX)
+                    && !name.starts_with(super::ATOMIC_WRITE_DIRECTORY_PREFIX),
+                "stale transaction entry remained: {name}"
+            );
+        }
     }
 
     #[test]
@@ -517,9 +883,15 @@ mod tests {
     #[test]
     fn manifest_rejects_output_collisions() {
         let mut manifest = GeneratedManifest::default();
-        let output = manifest.record("src/ui/app.ice").unwrap();
+        let output = manifest.record("src/ui/app.ice", "first").unwrap();
         let error = manifest
-            .insert(output, "src/ui/other.ice".to_owned())
+            .insert(
+                output,
+                GeneratedManifestEntry {
+                    source: "src/ui/other.ice".to_owned(),
+                    content_sha256: content_digest(b"second"),
+                },
+            )
             .unwrap_err();
         assert!(error.to_string().contains("generated output collision"));
     }
@@ -539,7 +911,10 @@ mod tests {
         let mut manifest = GeneratedManifest::default();
         manifest.outputs.insert(
             "not-the-source-hash.rs".to_owned(),
-            "src/ui/app.ice".to_owned(),
+            GeneratedManifestEntry {
+                source: "src/ui/app.ice".to_owned(),
+                content_sha256: content_digest(b"generated"),
+            },
         );
         assert!(
             manifest
@@ -552,31 +927,13 @@ mod tests {
 
     #[test]
     fn generates_and_prunes_roots_below_cargo_out_dir() {
-        let fixture = std::env::temp_dir().join(format!(
-            "ui-lang-build-{}-{}",
-            std::process::id(),
-            FIXTURE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let fixture = fixture("prune");
         let manifest = fixture.join("manifest");
         let out_dir = fixture.join("target/out");
         fs::create_dir_all(manifest.join("src/ui/fragments")).unwrap();
         fs::write(
             manifest.join("src/ui/app.ice"),
-            concat!(
-                "app Example\n",
-                "theme contract AppTheme\n",
-                "  bg\n",
-                "  fg\n",
-                "  primary\n",
-                "  danger\n",
-                "palette app for AppTheme\n",
-                "  bg #000000\n",
-                "  fg #ffffff\n",
-                "  primary #333333\n",
-                "  danger #ff0000\n",
-                "view\n",
-                "  text \"Hello\"\n",
-            ),
+            app_source("Example", "Hello"),
         )
         .unwrap();
         fs::write(
@@ -593,10 +950,12 @@ mod tests {
         fs::write(&outside, "another compile call owns this output").unwrap();
         let mut previous_manifest = GeneratedManifest::default();
         previous_manifest
-            .record("src/ui/fragments/text.ice")
+            .record("src/ui/fragments/text.ice", "stale")
             .unwrap();
-        previous_manifest.record("other/app.ice").unwrap();
-        write_generated_manifest(&out_dir, &previous_manifest).unwrap();
+        previous_manifest
+            .record("other/app.ice", "another compile call owns this output")
+            .unwrap();
+        write_manifest_fixture(&out_dir, &previous_manifest);
         let untracked = stale.parent().unwrap().join("untracked.rs");
         fs::write(&untracked, "not in the canonical manifest").unwrap();
 
@@ -609,19 +968,19 @@ mod tests {
         assert!(!untracked.exists());
         assert!(marker.exists());
         assert!(outside.exists());
-        let generated_manifest = load_generated_manifest(&out_dir).unwrap();
+        let generated_manifest = read_manifest(&out_dir);
         assert_eq!(
             generated_manifest
                 .outputs
                 .get(&generated_file_name("src/ui/app.ice"))
-                .map(String::as_str),
+                .map(|entry| entry.source.as_str()),
             Some("src/ui/app.ice")
         );
         assert_eq!(
             generated_manifest
                 .outputs
                 .get(&generated_file_name("other/app.ice"))
-                .map(String::as_str),
+                .map(|entry| entry.source.as_str()),
             Some("other/app.ice")
         );
         assert!(
@@ -629,6 +988,237 @@ mod tests {
                 .outputs
                 .contains_key(&generated_file_name("src/ui/fragments/text.ice"))
         );
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn failed_batch_publishes_nothing() {
+        let fixture = fixture("failed-batch");
+        let manifest = fixture.join("manifest");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(manifest.join("src/ui")).unwrap();
+        fs::write(
+            manifest.join("src/ui/valid.ice"),
+            app_source("Valid", "ready"),
+        )
+        .unwrap();
+        fs::write(
+            manifest.join("src/ui/invalid.ice"),
+            "app Invalid\nview\n  wat\n",
+        )
+        .unwrap();
+
+        let error = compile_many_at(
+            &manifest,
+            &out_dir,
+            &[
+                PathBuf::from("src/ui/valid.ice"),
+                PathBuf::from("src/ui/invalid.ice"),
+            ],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown view node `wat`"));
+        assert!(
+            !generated_path(&out_dir, "src/ui/valid.ice")
+                .unwrap()
+                .exists()
+        );
+        assert!(
+            !out_dir
+                .join(GENERATED_DIRECTORY)
+                .join(GENERATED_MANIFEST)
+                .exists()
+        );
+        assert_no_temporary_entries(&out_dir);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn failed_batch_preserves_previous_generation() {
+        let fixture = fixture("failed-update");
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(&source_dir).unwrap();
+        let valid = source_dir.join("valid.ice");
+        fs::write(&valid, app_source("Valid", "before")).unwrap();
+        compile_many_at(&manifest, &out_dir, &[PathBuf::from("src/ui/valid.ice")]).unwrap();
+        let output = generated_path(&out_dir, "src/ui/valid.ice").unwrap();
+        let manifest_path = out_dir.join(GENERATED_DIRECTORY).join(GENERATED_MANIFEST);
+        let previous_output = fs::read(&output).unwrap();
+        let previous_manifest = fs::read(&manifest_path).unwrap();
+
+        fs::write(&valid, app_source("Valid", "after")).unwrap();
+        fs::write(source_dir.join("invalid.ice"), "app Invalid\nview\n  wat\n").unwrap();
+        compile_many_at(
+            &manifest,
+            &out_dir,
+            &[
+                PathBuf::from("src/ui/valid.ice"),
+                PathBuf::from("src/ui/invalid.ice"),
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(fs::read(output).unwrap(), previous_output);
+        assert_eq!(fs::read(manifest_path).unwrap(), previous_manifest);
+        assert_no_temporary_entries(&out_dir);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn corrupt_cache_is_discarded_and_fully_regenerated() {
+        let fixture = fixture("corrupt-cache");
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("first.ice"), app_source("First", "one")).unwrap();
+        fs::write(source_dir.join("second.ice"), app_source("Second", "two")).unwrap();
+
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let directory = out_dir.join(GENERATED_DIRECTORY);
+        let manifest_path = directory.join(GENERATED_MANIFEST);
+        fs::write(&manifest_path, "{not-json").unwrap();
+
+        reset_generated_writes();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        assert_eq!(
+            generated_writes(),
+            3,
+            "a malformed manifest must regenerate every root and the manifest"
+        );
+        assert_eq!(read_manifest(&out_dir).outputs.len(), 2);
+
+        let interrupted = generated_path(&out_dir, "src/ui/first.ice").unwrap();
+        fs::write(&interrupted, "partially replaced output").unwrap();
+        let stale_transaction = directory.join(format!(
+            "{}dead-process",
+            super::TRANSACTION_DIRECTORY_PREFIX
+        ));
+        let stale_atomic = directory.join(format!(
+            "{}dead-process",
+            super::ATOMIC_WRITE_DIRECTORY_PREFIX
+        ));
+        fs::create_dir_all(&stale_transaction).unwrap();
+        fs::write(stale_transaction.join("output.tmp"), "partial").unwrap();
+        fs::create_dir_all(&stale_atomic).unwrap();
+        fs::write(stale_atomic.join("tmpfile.tmp"), "partial").unwrap();
+
+        reset_generated_writes();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        assert_eq!(
+            generated_writes(),
+            3,
+            "an interrupted output replacement must invalidate the complete cache"
+        );
+        assert!(!stale_transaction.exists());
+        assert!(!stale_atomic.exists());
+        assert_no_temporary_entries(&out_dir);
+        assert_eq!(read_manifest(&out_dir).outputs.len(), 2);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn unchanged_generation_preserves_output_and_manifest_mtime() {
+        let fixture = fixture("mtime");
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("app.ice"), app_source("Stable", "same")).unwrap();
+
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let output = generated_path(&out_dir, "src/ui/app.ice").unwrap();
+        let manifest_path = out_dir.join(GENERATED_DIRECTORY).join(GENERATED_MANIFEST);
+        let output_mtime = fs::metadata(&output).unwrap().modified().unwrap();
+        let manifest_mtime = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+        thread::sleep(Duration::from_millis(50));
+
+        reset_generated_writes();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+
+        assert_eq!(generated_writes(), 0);
+        assert_eq!(
+            fs::metadata(output).unwrap().modified().unwrap(),
+            output_mtime
+        );
+        assert_eq!(
+            fs::metadata(manifest_path).unwrap().modified().unwrap(),
+            manifest_mtime
+        );
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn generation_lock_serializes_concurrent_publishers() {
+        let fixture = fixture("concurrent");
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        let generated_directory = out_dir.join(GENERATED_DIRECTORY);
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let first_lock = GenerationLock::acquire(&generated_directory).unwrap();
+        let (acquired_sender, acquired_receiver) = mpsc::channel();
+        let blocked_directory = generated_directory.clone();
+        let blocked = thread::spawn(move || {
+            let second_lock = GenerationLock::acquire(&blocked_directory).unwrap();
+            acquired_sender.send(()).unwrap();
+            drop(second_lock);
+        });
+        assert!(
+            acquired_receiver
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "a second publisher acquired the generation directory while it was locked"
+        );
+        drop(first_lock);
+        acquired_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        blocked.join().unwrap();
+
+        fs::write(source_dir.join("first.ice"), app_source("First", "one")).unwrap();
+        fs::write(source_dir.join("second.ice"), app_source("Second", "two")).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let first = {
+            let barrier = Arc::clone(&barrier);
+            let manifest = manifest.clone();
+            let out_dir = out_dir.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                compile_many_at(&manifest, &out_dir, &[PathBuf::from("src/ui/first.ice")]).unwrap();
+            })
+        };
+        let second = {
+            let barrier = Arc::clone(&barrier);
+            let manifest = manifest.clone();
+            let out_dir = out_dir.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                compile_many_at(&manifest, &out_dir, &[PathBuf::from("src/ui/second.ice")])
+                    .unwrap();
+            })
+        };
+        barrier.wait();
+        first.join().unwrap();
+        second.join().unwrap();
+
+        let generated_manifest = read_manifest(&out_dir);
+        assert_eq!(generated_manifest.outputs.len(), 2);
+        assert!(
+            generated_path(&out_dir, "src/ui/first.ice")
+                .unwrap()
+                .is_file()
+        );
+        assert!(
+            generated_path(&out_dir, "src/ui/second.ice")
+                .unwrap()
+                .is_file()
+        );
+        assert_no_temporary_entries(&out_dir);
         fs::remove_dir_all(fixture).unwrap();
     }
 

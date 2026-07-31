@@ -2405,7 +2405,9 @@ pub fn document() -> Value {
                 "output": "OUT_DIR/ui-lang-generated",
                 "outputFileName": "lowercase full SHA-256 of normalized manifest-relative Ice root plus .rs",
                 "manifest": "OUT_DIR/ui-lang-generated/manifest.json",
-                "manifestSchemaVersion": 1,
+                "manifestSchemaVersion": 2,
+                "publication": "directory-locked transaction; synced atomic outputs, manifest committed last",
+                "cacheRecovery": "missing, invalid, incomplete, or digest-mismatched cache is fully regenerated",
                 "includeMacro": "ui_lang::include_app!",
                 "procMacroWritesFiles": false,
             },
@@ -2684,7 +2686,15 @@ mod tests {
             schema["backend"]["build"]["manifest"],
             "OUT_DIR/ui-lang-generated/manifest.json"
         );
-        assert_eq!(schema["backend"]["build"]["manifestSchemaVersion"], 1);
+        assert_eq!(schema["backend"]["build"]["manifestSchemaVersion"], 2);
+        assert_eq!(
+            schema["backend"]["build"]["publication"],
+            "directory-locked transaction; synced atomic outputs, manifest committed last"
+        );
+        assert_eq!(
+            schema["backend"]["build"]["cacheRecovery"],
+            "missing, invalid, incomplete, or digest-mismatched cache is fully regenerated"
+        );
         assert_eq!(schema["backend"]["build"]["procMacroWritesFiles"], false);
         assert_eq!(
             schema["backend"]["runtime"]["version"],
