@@ -1268,7 +1268,8 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
     }
 
     #[test]
-    fn ten_thousand_fact_lookups_are_direct_arena_accesses() {
+    #[ignore = "explicit large checked-fact performance contract"]
+    fn performance_contract_ten_thousand_fact_lookups_are_direct_arena_accesses() {
         const VALUES: usize = 10_000;
         let mut source = format!("app Facts\n{THEME}state\n");
         for index in 0..VALUES {
