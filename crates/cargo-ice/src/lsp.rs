@@ -3188,7 +3188,7 @@ mod tests {
     use std::fs;
     use std::io::{BufReader, Cursor};
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
     const APP_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
@@ -4178,6 +4178,47 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("event select(str)")
+        );
+    }
+
+    #[test]
+    #[ignore = "CI performance contract; run explicitly"]
+    fn performance_contract_completes_a_large_document_interactively() {
+        const REQUESTS: usize = 20;
+        const BUDGET: Duration = Duration::from_secs(5);
+
+        let uri = "file:///tmp/performance.ice";
+        let mut source =
+            String::from("app Performance\ncomponent Catalog(value:str)\n  col\n    text value\n");
+        for index in 0..500 {
+            source.push_str(&format!("    text \"row {index}\"\n"));
+        }
+        source.push_str("view\n  Catalog value=\"Ready\"\n");
+        let line = source
+            .lines()
+            .position(|line| line.trim_start().starts_with("Catalog value="))
+            .unwrap();
+        let documents = HashMap::from([(uri.to_owned(), source)]);
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": 10 },
+        });
+
+        let warm = completion_items_at(&documents, &params).unwrap();
+        assert!(warm.iter().any(|item| item["label"] == "value="));
+        let started = Instant::now();
+        for _ in 0..REQUESTS {
+            let items = completion_items_at(&documents, &params).unwrap();
+            assert!(items.iter().any(|item| item["label"] == "value="));
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed <= BUDGET,
+            "{REQUESTS} completions for a 500-node document took {elapsed:?}; budget is {BUDGET:?}"
+        );
+        eprintln!(
+            "{REQUESTS} completions for a 500-node document in {elapsed:?} ({:?} average)",
+            elapsed / REQUESTS as u32
         );
     }
 

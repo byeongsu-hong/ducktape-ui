@@ -68,9 +68,15 @@ fn only_accepts_a_settled_input_snapshot() {
 }
 
 #[test]
-#[ignore = "manual full-snapshot scaling benchmark"]
-fn benchmark_full_dev_snapshot_at_1k_and_10k_files() {
+#[ignore = "CI performance contract; run explicitly"]
+fn performance_contract_dev_snapshot_at_1k_and_10k_files() {
     for file_count in [1_000, 10_000] {
+        let full_budget = if file_count == 1_000 {
+            std::time::Duration::from_secs(2)
+        } else {
+            std::time::Duration::from_secs(5)
+        };
+        let selective_budget = std::time::Duration::from_secs(2);
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path();
         let source = root.join("app.ice");
@@ -91,6 +97,10 @@ fn benchmark_full_dev_snapshot_at_1k_and_10k_files() {
 
         assert_eq!(snapshot.0.len(), 1);
         assert!(snapshot.1.len() >= file_count);
+        assert!(
+            elapsed <= full_budget,
+            "{file_count} files: complete content snapshot took {elapsed:?}; budget is {full_budget:?}"
+        );
         eprintln!("{file_count} files: one complete content snapshot in {elapsed:?}");
 
         let changed = root
@@ -114,6 +124,10 @@ fn benchmark_full_dev_snapshot_at_1k_and_10k_files() {
 
         assert_ne!(selective.1, snapshot.1);
         assert_eq!(file_stamp_attempts(), 2);
+        assert!(
+            elapsed <= selective_budget,
+            "{file_count} files: selective verification took {elapsed:?}; budget is {selective_budget:?}"
+        );
         eprintln!(
             "{file_count} files: selective two-pass verification in {elapsed:?} (2 content reads)"
         );
@@ -545,7 +559,9 @@ fn candidate_early_exit_keeps_the_previous_process_and_cleans_the_snapshot() {
 
 #[cfg(unix)]
 #[test]
-fn successful_candidate_handoff_replaces_the_previous_process() {
+fn successful_candidate_handoff_replaces_the_previous_process_within_budget() {
+    const HANDOFF_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
     let fixture = tempfile::tempdir().unwrap();
     let old_args = ["-c".to_owned(), "sleep 5".to_owned()];
     let mut app = ChildGuard::spawn(fixture.path(), Path::new("/bin/sh"), &old_args).unwrap();
@@ -558,6 +574,7 @@ fn successful_candidate_handoff_replaces_the_previous_process() {
         "printf '%s' \"$ICE_DEV_READY_TOKEN\" > \"$ICE_DEV_READY_PATH\"; sleep 5".to_owned(),
     ];
 
+    let started = std::time::Instant::now();
     app.restart(
         fixture.path(),
         staged,
@@ -566,9 +583,14 @@ fn successful_candidate_handoff_replaces_the_previous_process() {
         3,
     )
     .unwrap();
+    let elapsed = started.elapsed();
 
     assert_ne!(app.id(), old_pid);
     assert!(app.try_wait().unwrap().is_none());
+    assert!(
+        elapsed <= HANDOFF_BUDGET,
+        "last-known-good candidate handoff took {elapsed:?}; budget is {HANDOFF_BUDGET:?}"
+    );
     assert!(
         std::fs::read_dir(fixture.path()).unwrap().all(|entry| {
             !entry

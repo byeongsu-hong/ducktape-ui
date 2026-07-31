@@ -36,6 +36,10 @@ jobs:
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
+      - name: Run performance contracts
+        run: |
+          cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
       - run: cargo ice compat
       - run: scripts/package-smoke.sh
 
@@ -59,8 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo check --workspace --locked
-      - name: Test native editor interactions on macOS
-        if: matrix.runner == 'macos-latest'
+      - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
           cargo test --locked -p markdown-example

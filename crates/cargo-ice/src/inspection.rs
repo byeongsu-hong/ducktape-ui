@@ -757,4 +757,37 @@ mod tests {
         assert_eq!(differences[0]["path"], "/source");
         assert_eq!(differences[0]["current"]["$missing"], true);
     }
+
+    #[test]
+    #[ignore = "CI performance contract; run explicitly"]
+    fn performance_contract_compares_four_megapixels_in_one_pass() {
+        const WIDTH: u32 = 2048;
+        const HEIGHT: u32 = 2048;
+        const PIXELS: usize = WIDTH as usize * HEIGHT as usize;
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let baseline = PngImage {
+            width: WIDTH,
+            height: HEIGHT,
+            rgba: vec![0; PIXELS * 4],
+        };
+        let current = PngImage {
+            width: WIDTH,
+            height: HEIGHT,
+            rgba: vec![0; PIXELS * 4],
+        };
+        let started = std::time::Instant::now();
+        let difference = compare_pixels(&baseline, &current, 0).unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(difference.total, PIXELS);
+        assert_eq!(difference.changed, 0);
+        assert_eq!(difference.rgba.len(), PIXELS * 4);
+        assert_eq!(difference.rgba.capacity(), PIXELS * 4);
+        assert!(
+            elapsed <= BUDGET,
+            "four-megapixel inspection diff took {elapsed:?}; budget is {BUDGET:?}"
+        );
+        eprintln!("{PIXELS} pixels compared in {elapsed:?} with an exact-size output buffer");
+    }
 }
