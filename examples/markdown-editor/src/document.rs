@@ -216,6 +216,20 @@ pub fn cursor_status(line: i64, column: i64, lines: i64) -> String {
     format!("Ln {}, Col {}  ·  {} lines", line + 1, column + 1, lines)
 }
 
+pub fn compact_file_name(name: String) -> String {
+    const MAX_DISPLAY_CHARS: usize = 48;
+
+    if name.chars().count() <= MAX_DISPLAY_CHARS {
+        return name;
+    }
+
+    let prefix = name
+        .chars()
+        .take(MAX_DISPLAY_CHARS.saturating_sub(1))
+        .collect::<String>();
+    format!("{prefix}…")
+}
+
 fn document_file(path: &Path, source: String) -> DocumentFile {
     let path = normalize_path(path);
     let name = Path::new(&path)
@@ -249,7 +263,7 @@ fn safe_web_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Shortcut, link_at_cursor, safe_web_url, shortcut};
+    use super::{Shortcut, compact_file_name, link_at_cursor, safe_web_url, shortcut};
 
     #[test]
     fn resolves_only_the_link_under_the_cursor() {
@@ -281,5 +295,14 @@ mod tests {
             shortcut(key, physical, command | Modifiers::SHIFT),
             Some(Shortcut::Redo)
         );
+    }
+
+    #[test]
+    fn compacts_long_file_names_without_splitting_unicode() {
+        assert_eq!(compact_file_name("notes.md".into()), "notes.md");
+
+        let compacted = compact_file_name("문서-이름-".repeat(20));
+        assert_eq!(compacted.chars().count(), 48);
+        assert!(compacted.ends_with('…'));
     }
 }

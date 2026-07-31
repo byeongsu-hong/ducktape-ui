@@ -8,21 +8,35 @@ on system_theme_changed(next)
   active_palette = AppTheme.dark
 
 on toggle_theme
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
   dark = !dark
   active_palette = AppTheme.light
   return if !dark
   active_palette = AppTheme.dark
 
 on request_new
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
+  find_open = false
+  find_query = ""
+  error = ""
   pending = PendingAction.new_document
   return if is_dirty()
   document = reset_document("")
   path = ""
   name = "Untitled.md"
   pending = PendingAction.idle
-  error = ""
 
 on request_open
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
+  find_open = false
+  find_query = ""
+  error = ""
   pending = PendingAction.open_document
   return if is_dirty()
   pending = PendingAction.idle
@@ -30,16 +44,26 @@ on request_open
   run open_document() -> opened _ | failed _
 
 on request_save
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
+  error = ""
   busy = true
   run save_current(path, name, editor_text(document), revision()) -> saved _ | failed _
 
 on request_save_as
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
+  error = ""
   busy = true
   run save_document_as(name, editor_text(document), revision()) -> saved _ | failed _
 
 on opened(file)
   busy = false
   return if empty(file.path)
+  find_open = false
+  find_query = ""
   document = reset_document(file.source)
   path = file.path
   name = file.name
@@ -53,61 +77,101 @@ on saved(file)
   error = ""
 
 on request_close
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
+  find_open = false
+  find_query = ""
+  error = ""
   pending = PendingAction.close_window
   return if is_dirty()
   pending = PendingAction.idle
   task window close
 
 on cancel_pending
+  return if busy
+  editor_focused = false
+  document = clear_editor_selection(document)
   pending = PendingAction.idle
 
 on discard_new
+  return if busy
+  editor_focused = false
+  document = clear_editor_selection(document)
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   document = reset_document("")
   path = ""
   name = "Untitled.md"
   error = ""
 
 on discard_open
+  return if busy
+  editor_focused = false
+  document = clear_editor_selection(document)
   pending = PendingAction.idle
+  error = ""
   busy = true
   run open_document() -> opened _ | failed _
 
 on discard_close
+  return if busy
+  editor_focused = false
+  document = clear_editor_selection(document)
   pending = PendingAction.idle
   task window close
 
 on save_then_new
+  return if busy || pending != PendingAction.new_document
+  editor_focused = false
+  document = clear_editor_selection(document)
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed_save_new _
 
 on saved_then_new(file)
   busy = false
+  return if pending != PendingAction.new_document
   return if empty(file.path)
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   document = reset_document("")
   path = ""
   name = "Untitled.md"
   error = ""
 
 on save_then_open
+  return if busy || pending != PendingAction.open_document
+  editor_focused = false
+  document = clear_editor_selection(document)
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed_save_open _
 
 on saved_then_open(file)
   busy = false
+  return if pending != PendingAction.open_document
   return if empty(file.path)
   pending = PendingAction.idle
+  find_open = false
+  find_query = ""
   path = file.path
   name = file.name
   run open_document() -> opened _ | failed _
 
 on save_then_close
+  return if busy || pending != PendingAction.close_window
+  editor_focused = false
+  document = clear_editor_selection(document)
+  error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed _
+  run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed_save_close _
 
 on saved_then_close(file)
   busy = false
+  return if pending != PendingAction.close_window
   return if empty(file.path)
   pending = PendingAction.idle
   task window close
@@ -119,6 +183,7 @@ on redo
   document = redo_document(document)
 
 on edit_document(action)
+  editor_focused = true
   document = apply_rich_action(document, action)
 
 on bold
@@ -134,19 +199,27 @@ on link
   document = format_document(document, "link")
 
 on toggle_find
+  return if busy || confirming
+  editor_focused = false
+  document = clear_editor_selection(document)
   find_open = !find_open
   return if !find_open
   task widget focus #app/find_bar/root/find_query
 
 on find_next
-  return if empty(find_query)
+  return if busy || confirming || empty(find_query)
+  editor_focused = false
   document = find_document(document, find_query, false)
 
 on find_previous
-  return if empty(find_query)
+  return if busy || confirming || empty(find_query)
+  editor_focused = false
   document = find_document(document, find_query, true)
 
 on escape
+  return if busy
+  editor_focused = false
+  document = clear_editor_selection(document)
   pending = PendingAction.idle
   find_open = false
 
@@ -159,11 +232,25 @@ on follow_link
 on link_opened
 
 on dismiss_error
+  editor_focused = false
+  document = clear_editor_selection(document)
   error = ""
 
 on failed(cause)
   busy = false
   pending = PendingAction.idle
+  error = cause.message
+
+on failed_save_new(cause)
+  busy = false
+  error = cause.message
+
+on failed_save_open(cause)
+  busy = false
+  error = cause.message
+
+on failed_save_close(cause)
+  busy = false
   error = cause.message
 
 subscribe

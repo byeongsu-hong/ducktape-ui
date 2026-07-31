@@ -17,11 +17,15 @@ component FindBar(bind query:str)
         h=fill
         gap=8.0
         align=center
-      space w=fill h=1.0
-      input "Find" #find_query <-> query
+      text "Find"
+        with
+          size=12.0
+          @font-semibold
+          @text-muted
+      input "" #find_query <-> query
         with
           label="Find in document"
-          hint="Find in document"
+          hint="Search markdown"
           submit=emit(next)
           w=280.0
           p=8.0
@@ -31,14 +35,15 @@ component FindBar(bind query:str)
         hovered bg=toolbar border=muted border-w=1.0 r=7.0 value=fg placeholder=muted selection=selection
         focused bg=surface border=primary border-w=1.0 r=7.0 value=fg placeholder=muted selection=selection
         focused-hovered bg=surface border=primary border-w=1.0 r=7.0 value=fg placeholder=muted selection=selection
-      button "↑" -> emit(previous)
+      button "↑" #previous -> emit(previous)
         with
           label="Previous match"
           disabled=empty(query)
           @toolbar_action
-      button "↓" -> emit(next)
+      button "↓" #next -> emit(next)
         with
           label="Next match"
           disabled=empty(query)
           @toolbar_action
-      button "Close" @toolbar_action -> emit(close)
+      button "Close" #close @toolbar_action -> emit(close)
+      space w=fill h=1.0

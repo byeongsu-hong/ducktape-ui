@@ -1,6 +1,6 @@
 use iced::advanced::text::{Highlight as TextHighlight, Highlighter, LineHeight};
 use iced::font::{Family, Style as FontStyle, Weight};
-use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
+use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
 use iced::{Border, Color, Element, Font, Padding, Pixels, Theme, mouse};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cmp::Ordering;
@@ -106,6 +106,7 @@ pub fn markdown_editor<'a>(
     document: &'a Content,
     dark: bool,
     disabled: bool,
+    focused: bool,
 ) -> Element<'a, RichEditorAction> {
     let cursor = document.cursor().position;
     let format_theme = if dark { Theme::Dark } else { Theme::Light };
@@ -114,6 +115,7 @@ pub fn markdown_editor<'a>(
         .placeholder("Start writing…")
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
+        .focus_enabled(focused && !disabled)
         .min_height(320.0)
         .font(body_font(Weight::Normal, FontStyle::Normal))
         .size(BODY_SIZE)
@@ -1103,7 +1105,24 @@ pub fn track_action(content: &mut Content, action: Action) {
 pub fn apply_rich_action(mut content: Content, action: RichEditorAction) -> Content {
     match action {
         RichEditorAction::Edit(action) => track_action(&mut content, action),
-        RichEditorAction::MoveTo(cursor) => content.move_to(cursor),
+        RichEditorAction::MoveTo(cursor) => {
+            if cursor.selection.is_none() {
+                content = clear_editor_selection(content);
+            }
+            content.move_to(cursor);
+        }
+    }
+    content
+}
+
+pub fn clear_editor_selection(mut content: Content) -> Content {
+    let cursor = content.cursor();
+    if cursor.selection.is_some() {
+        content.perform(Action::Move(Motion::Left));
+        content.move_to(Cursor {
+            position: cursor.position,
+            selection: None,
+        });
     }
     content
 }
@@ -2172,12 +2191,12 @@ fn position_at(content: &Content, mut offset: usize) -> Position {
 #[cfg(test)]
 mod tests {
     use super::{
-        MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, format_document,
-        inline_highlights, is_dirty, mark_saved, redo_document, reset_document, revision,
-        track_action, undo_document,
+        MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, clear_editor_selection,
+        format_document, inline_highlights, is_dirty, mark_saved, redo_document, reset_document,
+        revision, track_action, undo_document,
     };
     use iced::advanced::text::Highlighter;
-    use iced::widget::text_editor::{Action, Edit};
+    use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
 
     #[test]
     fn keeps_unparsed_whitespace_at_body_metrics() {
@@ -2748,6 +2767,43 @@ mod tests {
 
         assert_eq!(document.text(), "**text**");
         assert_eq!(document.selection().as_deref(), Some("text"));
+    }
+
+    #[test]
+    fn clearing_selection_preserves_text_and_caret() {
+        let mut document = Content::with_text("selected text");
+        let position = Position { line: 0, column: 8 };
+        document.move_to(Cursor {
+            position,
+            selection: Some(Position { line: 0, column: 0 }),
+        });
+
+        let document = clear_editor_selection(document);
+
+        assert_eq!(document.text(), "selected text");
+        assert_eq!(document.cursor().position, position);
+        assert_eq!(document.cursor().selection, None);
+    }
+
+    #[test]
+    fn moving_without_selection_clears_previous_selection() {
+        let mut document = Content::with_text("selected text");
+        document.move_to(Cursor {
+            position: Position { line: 0, column: 8 },
+            selection: Some(Position { line: 0, column: 0 }),
+        });
+
+        let document = super::apply_rich_action(
+            document,
+            super::RichEditorAction::MoveTo(Cursor {
+                position: Position { line: 0, column: 4 },
+                selection: None,
+            }),
+        );
+
+        assert_eq!(document.text(), "selected text");
+        assert_eq!(document.cursor().position, Position { line: 0, column: 4 });
+        assert_eq!(document.cursor().selection, None);
     }
 
     #[test]

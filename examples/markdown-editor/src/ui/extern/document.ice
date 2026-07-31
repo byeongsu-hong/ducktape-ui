@@ -7,6 +7,7 @@ extern crate::document
   open_url(url:str) -> unit ! EditorError
   sync link_at_cursor(line:str?, column:i64) -> str
   sync cursor_status(line:i64, column:i64, lines:i64) -> str
+  sync compact_file_name(name:str) -> str
   sync new_shortcut(press:key-press) -> unit?
   sync open_shortcut(press:key-press) -> unit?
   sync save_shortcut(press:key-press) -> unit?

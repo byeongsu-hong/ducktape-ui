@@ -14,6 +14,7 @@ state
   busy = false
   error = ""
   dark = false
+  editor_focused = true
   active_palette:palette[AppTheme] = AppTheme.light
 
 derived
@@ -22,9 +23,31 @@ derived
   line_count = editor_line_count(document)
   current_line = editor_line(document, caret_line)
   confirming = pending != PendingAction.idle
-  editor_enabled = !busy && !confirming
+  interaction_blocked = busy || confirming
+  editor_enabled = !interaction_blocked
   has_error = !empty(error)
 
 preset test
   state
     document = editor("# Native Markdown\n\nA **focused** writing surface with [a link](https://example.com).")
+
+preset error
+  state
+    error = "Previous error"
+
+preset busy
+  state
+    busy = true
+
+preset busy_modal
+  state
+    busy = true
+    pending = PendingAction.new_document
+
+preset long_name
+  state
+    name = "a-document-name-that-is-long-enough-to-exercise-the-minimum-width-toolbar-layout.md"
+
+preset long_error
+  state
+    error = "Could not save /a/very/long/path/with/many/nested/directories/that/should/not/break/the/status/bar/when/permission/is/denied.md: permission denied"

@@ -51,7 +51,7 @@ view
             with
               name=name
               dirty=is_dirty()
-              busy=busy
+              blocked=interaction_blocked
               undo_available=can_undo()
               redo_available=can_redo()
               dark=dark
@@ -80,6 +80,7 @@ view
                 document=document
                 dark=dark
                 disabled=!editor_enabled
+                focused=editor_focused
           StatusBar #status-bar
             with
               cursor_label=cursor_status(caret_line, caret_column, line_count)
@@ -89,7 +90,12 @@ view
             events
               dismiss_error -> dismiss_error
     layer
-      ConfirmDialog #confirm action=pending name=name
+      ConfirmDialog #confirm
+        with
+          action=pending
+          name=name
+          busy=busy
+          error=error
         events
           save_new -> save_then_new
           discard_new -> discard_new

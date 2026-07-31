@@ -61,4 +61,19 @@ mod tests {
         let _ = app.__update(__MarkdownEditorMessage::Redo);
         assert_eq!(app.document.text(), "hello!?");
     }
+
+    #[test]
+    fn clicking_a_shell_action_clears_editor_selection() {
+        let _lock = crate::editor::test_history_lock();
+        let (mut app, _) = MarkdownEditor::__boot();
+        app.document = crate::editor::reset_document("hello".into());
+        app.document.move_to(Cursor {
+            position: Position { line: 0, column: 5 },
+            selection: Some(Position { line: 0, column: 0 }),
+        });
+
+        let _ = app.__update(__MarkdownEditorMessage::ToggleTheme);
+
+        assert_eq!(app.document.selection(), None);
+    }
 }
