@@ -519,8 +519,13 @@ where
         let cursor = self.content.cursor();
         let state = tree.state.downcast_mut::<State<Highlighter>>();
 
+        // Caret-aware highlighters may reveal hidden syntax and change glyph
+        // widths. Keep the exact layout that produced the press position for
+        // the whole pointer gesture, otherwise the source anchor moves under
+        // a stationary mouse as soon as the first caret action is applied.
         let settings_changed = state.settings != self.highlighter_settings;
-        if settings_changed {
+        let settings_updated = settings_changed && state.drag_anchor.is_none();
+        if settings_updated {
             state.highlighter.update(&self.highlighter_settings);
             state.settings = self.highlighter_settings.clone();
         }
@@ -529,7 +534,7 @@ where
         let preedit_changed = state.shaped_preedit != state.preedit;
         let needs_shape = source_changed
             || preedit_changed
-            || settings_changed
+            || settings_updated
             || state.width != inner_width
             || state.font != font
             || state.text_size != text_size
@@ -583,7 +588,7 @@ where
         state.viewport_height = viewport_height;
         state.scroll = state.scroll.clamp(0.0, state.max_scroll());
 
-        if source_changed || preedit_changed || cursor != state.last_cursor {
+        if source_changed || preedit_changed || settings_updated || cursor != state.last_cursor {
             let position = state
                 .composition
                 .as_ref()
@@ -732,7 +737,8 @@ where
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let dragged = state.drag_anchor.take().is_some() && state.drag_moved;
+                let had_drag_anchor = state.drag_anchor.take().is_some();
+                let dragged = had_drag_anchor && state.drag_moved;
                 state.drag_moved = false;
                 let release_over_pointer = cursor.position_in(bounds).is_some_and(|point| {
                     let local = point - Vector::new(self.padding.left, self.padding.top)
@@ -745,6 +751,12 @@ where
                     // Only an actual rendered link click may reach an outer
                     // release handler.
                     shell.capture_event();
+                }
+                if had_drag_anchor {
+                    // Apply any caret-aware highlighter setting that was held
+                    // back to keep the drag geometry stable.
+                    shell.invalidate_layout();
+                    shell.request_redraw();
                 }
             }
             Event::InputMethod(input_method::Event::Opened) => {
@@ -2525,6 +2537,45 @@ mod tests {
         }
     }
 
+    struct CaretSizedMarker {
+        current_line: usize,
+        expanded: bool,
+    }
+
+    impl text::Highlighter for CaretSizedMarker {
+        type Settings = bool;
+        type Highlight = bool;
+        type Iterator<'a> = std::vec::IntoIter<(Range<usize>, bool)>;
+
+        fn new(expanded: &Self::Settings) -> Self {
+            Self {
+                current_line: 0,
+                expanded: *expanded,
+            }
+        }
+
+        fn update(&mut self, expanded: &Self::Settings) {
+            self.expanded = *expanded;
+        }
+
+        fn change_line(&mut self, line: usize) {
+            self.current_line = line;
+        }
+
+        fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
+            self.current_line += 1;
+            (!line.is_empty())
+                .then_some((0..1, self.expanded))
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into_iter()
+        }
+
+        fn current_line(&self) -> usize {
+            self.current_line
+        }
+    }
+
     fn test_layout_style(width: f32) -> LineLayoutStyle {
         LineLayoutStyle {
             width,
@@ -3618,6 +3669,126 @@ mod tests {
         };
         assert_eq!(clicked.position, start_position);
         assert_eq!(clicked.selection, None);
+    }
+
+    #[test]
+    fn drag_anchor_keeps_the_press_layout_until_release() {
+        use iced::advanced::clipboard;
+        use iced::advanced::renderer::Headless;
+
+        let mut content = Content::with_text("xabcdef");
+        let padding = 8.0;
+        let marker_format = |expanded: &bool| Format {
+            size: Some(Pixels(if *expanded { 64.0 } else { 0.01 })),
+            ..Format::default()
+        };
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(220.0))
+            .height(Length::Fixed(80.0))
+            .padding(padding)
+            .highlight_with::<CaretSizedMarker>(false, 0, marker_format)
+            .on_action(|action| action);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(220.0, 80.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(220.0, 80.0));
+        let anchor = Position { line: 0, column: 4 };
+        let start = {
+            let caret = tree
+                .state
+                .downcast_ref::<State<CaretSizedMarker>>()
+                .document
+                .caret(anchor);
+            Point::new(padding + caret.x, padding + caret.y + caret.height / 2.0)
+        };
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(start),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        let [Action::MoveTo(clicked)] = messages.as_slice() else {
+            panic!("press must publish one caret move: {messages:?}");
+        };
+        assert_eq!(clicked.position, anchor);
+        let clicked = *clicked;
+        messages.clear();
+        drop(editor);
+        content.move_to(clicked);
+
+        let mut editor = RichTextEditor::new(&content)
+            .width(Length::Fixed(220.0))
+            .height(Length::Fixed(80.0))
+            .padding(padding)
+            .highlight_with::<CaretSizedMarker>(true, 0, marker_format)
+            .on_action(|action| action);
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        assert!(
+            !tree
+                .state
+                .downcast_ref::<State<CaretSizedMarker>>()
+                .settings
+        );
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::CursorMoved { position: start }),
+                Layout::new(&node),
+                mouse::Cursor::Available(start),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        assert_eq!(
+            messages,
+            [Action::MoveTo(Cursor {
+                position: anchor,
+                selection: None,
+            })],
+            "returning to the physical press point must collapse the drag"
+        );
+        messages.clear();
+
+        let release_invalidated_layout = {
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(start),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            shell.is_layout_invalid()
+        };
+        assert!(release_invalidated_layout);
+
+        editor.layout(&mut tree, &renderer, &limits);
+        assert!(
+            tree.state
+                .downcast_ref::<State<CaretSizedMarker>>()
+                .settings
+        );
     }
 
     #[test]
