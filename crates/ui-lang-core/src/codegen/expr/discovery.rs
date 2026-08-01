@@ -1,25 +1,28 @@
 use super::*;
+use crate::lower::{ResolvedAnimation, ResolvedAnimationEasing, ResolvedInitializer};
 
-pub(in crate::codegen) fn initial_code(state: &State, document: &Document) -> String {
-    let Type::Animation(inner) = &state.ty else {
-        return initial_value_code(&state.initial, &state.ty, document);
+pub(in crate::codegen) fn resolved_initializer_code(
+    initializer: &ResolvedInitializer,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let mut code = checked_expr_use_code(
+        program,
+        initializer.expression,
+        &HashMap::new(),
+        ValueMode::Owned,
+    )?;
+    let Some(options) = &initializer.animation else {
+        return Ok(code);
     };
-    let mut code = initial_value_code(&state.initial, inner, document);
-    if **inner == Type::F64 {
-        code = format!("({code}) as f32");
-    }
-    code = format!("::iced::Animation::new({code})");
-    let options = state.animation.as_ref().expect("parsed animation options");
     if let Some(easing) = &options.easing {
-        let easing = if ANIMATION_EASINGS.contains(&easing.as_str()) {
-            format!("::iced::animation::Easing::{}", pascal(easing))
-        } else {
-            let function = find_extern_function(document, easing, ExternKind::Sync)
-                .expect("checked custom animation easing");
-            format!(
+        let easing = match easing {
+            ResolvedAnimationEasing::Builtin(easing) => {
+                format!("::iced::animation::Easing::{}", pascal(easing))
+            }
+            ResolvedAnimationEasing::Custom(function) => format!(
                 "::iced::animation::Easing::Custom(|__value: f32| {}(__value as f64) as f32)",
-                function.rust_path
-            )
+                program.extern_function(*function).rust_path
+            ),
         };
         code.push_str(&format!(".easing({easing})"));
     }
@@ -30,17 +33,17 @@ pub(in crate::codegen) fn initial_code(state: &State, document: &Document) -> St
             AnimationDuration::Slow => ".slow()",
             AnimationDuration::VerySlow => ".very_slow()",
             AnimationDuration::Milliseconds(milliseconds) => {
-                return format!(
+                return Ok(format!(
                     "{code}.duration(::std::time::Duration::from_millis({milliseconds})){}",
                     animation_tail(options)
-                );
+                ));
             }
         });
     }
-    format!("{code}{}", animation_tail(options))
+    Ok(format!("{code}{}", animation_tail(options)))
 }
 
-pub(in crate::codegen) fn animation_tail(options: &AnimationOptions) -> String {
+fn animation_tail(options: &ResolvedAnimation) -> String {
     let mut code = String::new();
     if let Some(milliseconds) = options.delay_ms {
         code.push_str(&format!(
@@ -56,45 +59,6 @@ pub(in crate::codegen) fn animation_tail(options: &AnimationOptions) -> String {
         code.push_str(".auto_reverse()");
     }
     code
-}
-
-pub(in crate::codegen) fn initial_value_code(
-    expr: &Expr,
-    ty: &Type,
-    document: &Document,
-) -> String {
-    match (expr, ty) {
-        (Expr::Str(value), Type::Str) => format!("{}.to_owned()", rust_string(value)),
-        (Expr::Str(value), Type::Markdown) => format!(
-            "::iced::widget::markdown::Content::parse({})",
-            rust_string(value)
-        ),
-        (Expr::Str(value), Type::Editor) => format!(
-            "::iced::widget::text_editor::Content::with_text({})",
-            rust_string(value)
-        ),
-        (Expr::EmptyList, Type::List(_)) => "::std::vec::Vec::new()".into(),
-        (Expr::EmptyList, Type::Combo(_)) => {
-            "::iced::widget::combo_box::State::new(::std::vec::Vec::new())".into()
-        }
-        (Expr::List(values), Type::Combo(_)) => format!(
-            "::iced::widget::combo_box::State::new(::std::vec![{}])",
-            values
-                .iter()
-                .map(|value| {
-                    expr_code(value, &HashMap::new(), document, ValueMode::Owned)
-                        .unwrap_or_else(|_| "::core::default::Default::default()".into())
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        (Expr::None, Type::Option(_)) => "::std::option::Option::None".into(),
-        (Expr::Bool(value), _) => value.to_string(),
-        (Expr::I64(value), _) => value.to_string(),
-        (Expr::F64(value), _) => rust_f64(*value),
-        _ => expr_code(expr, &HashMap::new(), document, ValueMode::Owned)
-            .unwrap_or_else(|_| "::core::default::Default::default()".into()),
-    }
 }
 
 pub(in crate::codegen) fn pane_field(name: &str) -> String {

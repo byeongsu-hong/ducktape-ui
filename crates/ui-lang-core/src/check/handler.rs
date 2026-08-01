@@ -1,3 +1,4 @@
+use super::expr::ExprTypeEnv;
 use super::*;
 
 pub(in crate::check) fn check_handler(
@@ -719,7 +720,7 @@ pub(in crate::check) fn extern_function<'a>(
 pub(in crate::check) fn check_call_args(
     function: &ExternFn,
     args: &[Expr],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {

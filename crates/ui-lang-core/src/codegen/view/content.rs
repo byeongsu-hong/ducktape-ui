@@ -123,11 +123,10 @@ pub(in crate::codegen) fn render_content(
                 component_env.insert(
                     argument.name.clone(),
                     Binding {
-                        code: expr_code(
+                        code: resolved_argument_code(
+                            document.program(),
                             &argument.expression,
                             value_env,
-                            document,
-                            ValueMode::Borrowed,
                         )?,
                         ty: argument.ty.clone(),
                         local: false,
@@ -223,13 +222,14 @@ pub(in crate::codegen) fn render_content(
                     ComponentStorage::Stateless => unreachable!(),
                 };
                 for state in &component.states {
-                    let state = &state.source;
+                    let initial =
+                        resolved_initializer_code(&state.initializer, document.program())?;
                     component_env.insert(
                         state.name.clone(),
                         Binding {
                             code: format!(
                                 "{states}.get(&{scope_binding}).map_or_else(|| {}, |__state| __state.{}.clone())",
-                                initial_code(state, document),
+                                initial,
                                 state.name
                             ),
                             ty: state.ty.clone(),

@@ -7,6 +7,8 @@ pub(crate) struct ExprTypeAnalysisMetrics {
     pub(crate) queries: usize,
     pub(crate) nodes: usize,
     pub(crate) cache_hits: usize,
+    pub(crate) scoped_env_overlays: usize,
+    pub(crate) scoped_env_full_clones: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +32,48 @@ struct ActiveExprTypeAnalysis {
     types: HashMap<usize, Type>,
     queries: usize,
     cache_hits: usize,
+    scoped_env_overlays: usize,
+}
+
+pub(crate) trait ExprTypeEnv {
+    fn get_type(&self, name: &str) -> Option<&Type>;
+
+    fn contains_type(&self, name: &str) -> bool {
+        self.get_type(name).is_some()
+    }
+}
+
+impl ExprTypeEnv for HashMap<String, Type> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.get(name)
+    }
+}
+
+struct LayeredTypeEnv<'a> {
+    base: &'a dyn ExprTypeEnv,
+    name: &'a str,
+    ty: Type,
+}
+
+impl<'a> LayeredTypeEnv<'a> {
+    fn new(base: &'a dyn ExprTypeEnv, name: &'a str, ty: Type) -> Self {
+        ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+            if let Some(active) = active.borrow_mut().as_mut() {
+                active.scoped_env_overlays += 1;
+            }
+        });
+        Self { base, name, ty }
+    }
+}
+
+impl ExprTypeEnv for LayeredTypeEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        if name == self.name {
+            Some(&self.ty)
+        } else {
+            self.base.get_type(name)
+        }
+    }
 }
 
 thread_local! {
@@ -85,7 +129,7 @@ fn expr_key(expr: &Expr) -> usize {
 
 pub(crate) fn analyze_expr_types(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<ExprTypeAnalysis, Error> {
@@ -101,6 +145,8 @@ pub(crate) fn analyze_expr_types(
             queries: active.queries,
             nodes: active.types.len(),
             cache_hits: active.cache_hits,
+            scoped_env_overlays: active.scoped_env_overlays,
+            scoped_env_full_clones: 0,
         },
         types: active.types,
     })
@@ -191,7 +237,7 @@ fn contextual_builtin_call(name: &str, document: &Document) -> Option<Contextual
 
 fn complete_expr_type_analysis(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -215,8 +261,7 @@ fn complete_expr_type_analysis(
             let Expr::Path(binding) = &args[1] else {
                 return Err(Error::new("E196", span, "missing animation binding name"));
             };
-            let mut scoped = env.clone();
-            scoped.insert(binding[0].clone(), inner);
+            let scoped = LayeredTypeEnv::new(env, &binding[0], inner);
             complete_expr_type_analysis(&args[2], &scoped, document, span)?;
             if let Some(at) = args.get(3) {
                 complete_expr_type_analysis(at, env, document, span)?;
@@ -262,7 +307,7 @@ fn active_expr_type(expr: &Expr) -> Option<Type> {
 
 pub(crate) fn expr_type(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -289,7 +334,7 @@ pub(crate) fn expr_type(
 
 fn expr_type_uncached(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -345,7 +390,7 @@ fn expr_type_uncached(
                 return Ok(Type::Named(enum_name.clone()));
             }
             let mut ty = env
-                .get(&path[0])
+                .get_type(&path[0])
                 .cloned()
                 .ok_or_else(|| Error::new("E150", span, format!("unknown value `{}`", path[0])))?;
             for field in &path[1..] {
@@ -370,7 +415,7 @@ fn expr_type_uncached(
                     ));
                 };
                 let slot = unqualified_name(slot);
-                if !env.contains_key(&format!("\0slot-provided:{slot}")) {
+                if !env.contains_type(&format!("\0slot-provided:{slot}")) {
                     return Err(Error::new(
                         "E152",
                         span,
@@ -2298,7 +2343,7 @@ fn expr_type_uncached(
 fn check_contextual_builtin(
     builtin: ContextualBuiltin,
     args: &[Expr],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -2474,8 +2519,7 @@ fn check_contextual_builtin(
                     "animation.project second argument must be a binding name",
                 ));
             }
-            let mut projection_env = env.clone();
-            projection_env.insert(binding[0].clone(), inner);
+            let projection_env = LayeredTypeEnv::new(env, &binding[0], inner);
             let output = expr_type(&args[2], &projection_env, document, span)?;
             if output != Type::F64 && output != Type::Option(Box::new(Type::F64)) {
                 return Err(Error::new(

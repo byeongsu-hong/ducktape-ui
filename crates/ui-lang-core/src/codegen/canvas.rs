@@ -16,8 +16,14 @@ pub(in crate::codegen) fn render_canvas(
         .join(" ");
     let state_initials = locals
         .iter()
-        .map(|local| format!("{}: {},", local.name, initial_code(local, document)))
-        .collect::<Vec<_>>()
+        .map(|local| {
+            Ok(format!(
+                "{}: {},",
+                local.name,
+                canvas_initial_code(local, document)?
+            ))
+        })
+        .collect::<Result<Vec<_>, Error>>()?
         .join(" ");
     let mut canvas_env = env.clone();
     for local in locals {
@@ -168,6 +174,36 @@ let __canvas = ::iced::widget::canvas(__program)"
     append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
     code.push_str("; __canvas.into() }");
     Ok(code)
+}
+
+// Canvas-local state belongs to the still AST-backed view-expression slice.
+// Unlike the former shared initializer fallback, emission is checked and fallible.
+fn canvas_initial_code(state: &State, document: &Document) -> Result<String, Error> {
+    if matches!(state.ty, Type::Animation(_)) {
+        return Err(Error::new(
+            "E196",
+            &state.span,
+            "canvas-local animation passed semantic checking",
+        ));
+    }
+    Ok(match (&state.initial, &state.ty) {
+        (Expr::Str(value), Type::Markdown) => format!(
+            "::iced::widget::markdown::Content::parse({})",
+            rust_string(value)
+        ),
+        (Expr::Str(value), Type::Editor) => format!(
+            "::iced::widget::text_editor::Content::with_text({})",
+            rust_string(value)
+        ),
+        (Expr::EmptyList, Type::Combo(_)) => {
+            "::iced::widget::combo_box::State::new(::std::vec::Vec::new())".into()
+        }
+        (Expr::List(values), Type::Combo(_)) => format!(
+            "::iced::widget::combo_box::State::new(::std::vec![{}])",
+            expr_list_code(values, &HashMap::new(), document)?
+        ),
+        _ => expr_code(&state.initial, &HashMap::new(), document, ValueMode::Owned)?,
+    })
 }
 
 fn canvas_capture_env(

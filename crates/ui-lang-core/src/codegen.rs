@@ -253,10 +253,11 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
     }
 }
 
-fn generate_derived(out: &mut String, document: &Document) -> Result<(), Error> {
+fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Error> {
+    let document = program.document();
     let env = state_env(document, "self");
-    for derived in &document.derived {
-        let value = expr_code(&derived.value, &env, document, ValueMode::Owned)?;
+    for derived in program.derived() {
+        let value = checked_expr_use_code(program, derived.initializer, &env, ValueMode::Owned)?;
         writeln!(out, "{}", source_marker(&derived.span)).unwrap();
         writeln!(
             out,
@@ -357,7 +358,6 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         let ty = component_state_type(&component.name);
         writeln!(out, "#[allow(dead_code)]\npub(crate) struct {ty} {{").unwrap();
         for state in &component.states {
-            let state = &state.source;
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
@@ -379,9 +379,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
         for state in &component.states {
-            let state = &state.source;
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
-            writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
+            writeln!(
+                out,
+                "{}: {},",
+                state.name,
+                resolved_initializer_code(&state.initializer, program)?
+            )
+            .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
         for line in component_generation_lines(&component.handlers) {
@@ -536,7 +541,6 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         for state in component
             .states
             .iter()
-            .map(|state| &state.source)
             .filter(|state| state.ty == Type::Str)
         {
             writeln!(
@@ -612,7 +616,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         app_default_font_code(document)
     )
     .unwrap();
-    generate_derived(&mut out, document)?;
+    generate_derived(&mut out, program)?;
     generate_named_windows(&mut out, document, source_path);
     let subscription = ".subscription(Self::__subscription)";
     let default_font = document

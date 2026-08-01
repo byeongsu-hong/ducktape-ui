@@ -213,66 +213,6 @@ pub(in crate::codegen) fn env_types(env: &HashMap<String, Binding>) -> HashMap<S
         .collect()
 }
 
-pub(in crate::codegen) fn pixel_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Pixels {
-            code
-        } else {
-            format!("({code}) as f32")
-        },
-    )
-}
-
-pub(in crate::codegen) fn pixel_scalar_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Pixels {
-            format!("({code}).0")
-        } else {
-            format!("({code}) as f32")
-        },
-    )
-}
-
-pub(in crate::codegen) fn radius_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Radius {
-            code
-        } else {
-            format!("::iced::border::Radius::from(({code}) as f32)")
-        },
-    )
-}
-
-pub(in crate::codegen) fn radians_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Radians {
-            code
-        } else {
-            format!("::iced::Radians(({code}) as f32)")
-        },
-    )
-}
-
 pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {
     match ty {
         Type::KeyPress => match field {
