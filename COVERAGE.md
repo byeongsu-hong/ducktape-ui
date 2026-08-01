@@ -27,18 +27,23 @@ direct and reverse imports, invalidates only reverse-dependent checked roots,
 retains failed roots and unresolved import edges for recovery, and reports
 loaded/hashed byte, source/asset metadata-probe, import-scan,
 checked/reused-root, indexed-symbol, codegen-root, and phase-timing counters.
-Every retained root also owns stamps for its complete non-overlay source and
-host-asset closure. A semantic query probes those stamps before returning its
-shared result, so correctness does not depend on a language client supporting,
-accepting, or reliably delivering file-watch notifications. Metadata-only
-source changes are content-verified without rechecking semantics. Focused
-fixtures prove an unrelated
+Every retained root also owns lexical-link identity, resolved-target identity,
+metadata, and content hashes for its complete non-overlay source and host-asset
+closure. Semantic queries validate those inputs on a bounded epoch before
+returning a shared result, so correctness does not depend on a language client
+supporting, accepting, or reliably delivering file-watch notifications. The
+unwatched/rejected safety epoch is 750 milliseconds; an active watcher uses a
+five-second content-verification backstop for dropped events. Requests within
+an epoch perform no disk probes. Metadata-only source changes are
+content-verified without rechecking semantics. Focused fixtures prove an unrelated
 large root is not loaded after a leaf edit, a shared fragment invalidates every
 dependent root, missing/malformed/deleted/cyclic imports recover, add/rename/
 remove replaces reverse edges, symlinked missing overlays resolve to one key,
 an overlay close returns to disk, byte-identical content is reused, and
 transitive reverse edges are retained. They also prove notification-free import
-edits, font deletion/recreation, and invalid icon-byte changes are observed.
+edits, same-length timestamp-preserving and atomic replacements, source and
+asset symlink retargeting, stable overlay close across a root-symlink retarget,
+font deletion/recreation, and invalid icon-byte changes are observed.
 LSP diagnostics, the dev
 preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
 own and reuse this same DB API without global or process-persistent state.
@@ -46,8 +51,9 @@ Completion, hover, signature help, code actions, definition, and rename now
 query the exact retained analysis used by LSP diagnostics. An unchanged root
 returns the same shared analysis allocation with zero source loads, hashes,
 import scans, semantic checks, or symbol indexing; qualification candidates run
-against discarded speculative DB forks without invalidating that retained
-root. The LSP synchronizes overlay strings only on open/change/close, retains a
+against discarded snapshots limited to the selected root closure without
+copying unrelated workspace state or invalidating the retained root. The LSP
+synchronizes overlay strings only on open/change/close, retains a
 workspace app-root index instead of rediscovering and rereading every `.ice`
 file during navigation, and carries `Arc<FileAnalysis>` through diagnostics and
 all semantic request families. Pointer-identity and `dhat` allocation contracts
@@ -55,13 +61,19 @@ guard against checked-document and open-overlay copies. A 500-node mixed-request
 performance contract uses a nonempty workspace plus an open imported fragment,
 exercises all five request families including navigation, and proves zero
 source loads, hashes, import scans, semantic checks, workspace rescans, or
-workspace source reads under explicit wall-time and heap-allocation budgets.
+workspace source reads under explicit wall-time and heap-allocation budgets. A
+1,000-file real-disk closure contract proves repeated requests perform no
+metadata calls inside the validation epoch, and a many-root/many-alias `dhat`
+contract exercises the actual qualification branch.
 The server dynamically registers a `**/*` workspace watch so both Ice sources
 and arbitrary font/icon asset paths are covered, records pending, accepted, and
 rejected registration state including the client error, and treats events only
-as eager hints. A relevant disk change refreshes the affected input and
-reverse-root set before semantic requests reuse the cache, while an open
-overlay continues to win over disk notifications.
+as eager hints. Workspace-index completeness follows that state: rename forces
+a complete rescan even when an active watcher may have dropped an event, while
+ordinary navigation uses watcher-specific bounded validation epochs. A relevant disk change refreshes the affected input and
+reverse-root set before semantic requests reuse the cache, including read
+failures and deletions, while an open overlay continues to win over disk
+notifications.
 Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw

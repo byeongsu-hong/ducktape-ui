@@ -7,6 +7,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use ui_lang_core::{
     CursorContext, STYLE_STATUS_NAMES as STATUS_NAMES, SourcePosition,
     editor_ancestor_lines as ancestor_lines, editor_block_end as child_block_end,
@@ -43,6 +44,20 @@ enum WatchRegistrationState {
     Rejected(String),
 }
 
+const UNWATCHED_VALIDATION_INTERVAL: Duration = Duration::from_millis(750);
+const WATCHED_VALIDATION_INTERVAL: Duration = Duration::from_secs(5);
+
+impl WatchRegistrationState {
+    fn validation_interval(&self) -> Duration {
+        match self {
+            Self::Active => WATCHED_VALIDATION_INTERVAL,
+            Self::Unsupported | Self::Ready | Self::Pending | Self::Rejected(_) => {
+                UNWATCHED_VALIDATION_INTERVAL
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct WorkspaceIndexMetrics {
     scans: usize,
@@ -55,6 +70,8 @@ struct WorkspaceIndex {
     app_roots: BTreeSet<PathBuf>,
     complete: bool,
     metrics: WorkspaceIndexMetrics,
+    last_scan: Option<Instant>,
+    validation_interval: Duration,
 }
 
 impl WorkspaceIndex {
@@ -65,6 +82,7 @@ impl WorkspaceIndex {
                 .map(|path| canonical_path(&path).unwrap_or(path))
                 .collect(),
             complete: true,
+            validation_interval: UNWATCHED_VALIDATION_INTERVAL,
             ..Self::default()
         };
         index.metrics.scans = 1;
@@ -87,19 +105,44 @@ impl WorkspaceIndex {
                 }
             }
         }
+        index.last_scan = Some(Instant::now());
         index
     }
 
+    fn configure_watching(&mut self, state: &WatchRegistrationState) {
+        self.validation_interval = state.validation_interval();
+    }
+
+    fn ensure_fresh(&mut self, require_complete: bool) {
+        if self.workspace_roots.is_empty() {
+            return;
+        }
+        let due = self
+            .last_scan
+            .is_none_or(|last| last.elapsed() >= self.validation_interval);
+        if !due && !require_complete {
+            return;
+        }
+        let mut fresh = Self::build(self.workspace_roots.clone());
+        self.app_roots = std::mem::take(&mut fresh.app_roots);
+        self.complete = fresh.complete;
+        self.last_scan = fresh.last_scan;
+        self.metrics.scans += fresh.metrics.scans;
+        self.metrics.source_reads += fresh.metrics.source_reads;
+    }
+
     fn update_source(&mut self, path: &Path, source: Option<&str>) -> bool {
-        if path.extension().and_then(|extension| extension.to_str()) != Some("ice")
-            || !self
-                .workspace_roots
-                .iter()
-                .any(|workspace| path.starts_with(workspace))
-        {
+        if path.extension().and_then(|extension| extension.to_str()) != Some("ice") {
             return false;
         }
         let path = canonical_path(path).unwrap_or_else(|| path.to_owned());
+        if !self
+            .workspace_roots
+            .iter()
+            .any(|workspace| path.starts_with(workspace))
+        {
+            return false;
+        }
         let was_root = self.app_roots.contains(&path);
         let is_root = source.is_some_and(ui_lang_core::source_is_app);
         if is_root {
@@ -164,6 +207,16 @@ fn record_watch_registration_response(state: &mut WatchRegistrationState, messag
         )
     };
     true
+}
+
+fn configure_validation(
+    state: &WatchRegistrationState,
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    workspace_index: &mut WorkspaceIndex,
+) {
+    let interval = state.validation_interval();
+    analysis_db.set_validation_policy(ui_lang_core::ValidationPolicy::new(interval, interval));
+    workspace_index.configure_watching(state);
 }
 
 struct Navigation {
@@ -271,7 +324,9 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             && id.is_some()
             && (message.get("result").is_some() ^ message.get("error").is_some());
         if valid_id && valid_response {
-            record_watch_registration_response(&mut watch_registration, &message);
+            if record_watch_registration_response(&mut watch_registration, &message) {
+                configure_validation(&watch_registration, &mut analysis_db, &mut workspace_index);
+            }
             continue;
         }
         if !message.is_object()
@@ -346,6 +401,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                 } else {
                     WatchRegistrationState::Unsupported
                 };
+                configure_validation(&watch_registration, &mut analysis_db, &mut workspace_index);
                 respond(
                     writer,
                     id,
@@ -429,11 +485,11 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                         .remove(uri)
                         .is_some_and(|source| ui_lang_core::source_is_app(&source));
                     if let Some(path) = file_uri_path(uri) {
+                        if was_root {
+                            analysis_db.forget_root(&path);
+                        }
                         let _ = analysis_db.remove_overlay(&path);
                         workspace_index.refresh_disk_path(&path);
-                        if was_root {
-                            analysis_db.forget_root(path);
-                        }
                     }
                     reanalyze_open_roots(
                         writer,
@@ -568,7 +624,8 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                         let result = navigation_at(
                             &mut analysis_db,
                             &documents,
-                            &workspace_index,
+                            &mut workspace_index,
+                            false,
                             &message["params"],
                         )
                         .and_then(|navigation| {
@@ -590,7 +647,8 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                         let result = navigation_at(
                             &mut analysis_db,
                             &documents,
-                            &workspace_index,
+                            &mut workspace_index,
+                            true,
                             &message["params"],
                         )
                         .filter(Navigation::renameable)
@@ -625,7 +683,8 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                         navigation_at(
                             &mut analysis_db,
                             &documents,
-                            &workspace_index,
+                            &mut workspace_index,
+                            true,
                             &message["params"],
                         ),
                         new_name,
@@ -709,9 +768,10 @@ fn refresh_watched_files(
             continue;
         };
         let root_changed = workspace_index.refresh_disk_path(&path);
-        let input_changed = analysis_db
-            .refresh_input(&path)
-            .is_ok_and(|invalidation| invalidation.changed);
+        let input_changed = match analysis_db.refresh_input(&path) {
+            Ok(invalidation) => invalidation.changed,
+            Err(_) => true,
+        };
         refreshed |= root_changed || input_changed;
     }
     refreshed
@@ -2101,10 +2161,9 @@ fn qualification_action(
         };
         let mut candidate = source.to_owned();
         candidate.replace_range(offset + start..offset + end, &qualified);
-        let valid = analysis_db.speculate(|candidate_db| {
-            candidate_db.set_overlay(&path, candidate).is_ok()
-                && candidate_db.query_root(&path).is_ok()
-        });
+        let valid = analysis_db
+            .analyze_overlay_candidate(&path, candidate)
+            .is_ok();
         if valid {
             candidates.push(qualified);
         }
@@ -2865,9 +2924,11 @@ fn is_view_node(name: &str) -> bool {
 fn navigation_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
     documents: &HashMap<String, String>,
-    workspace_index: &WorkspaceIndex,
+    workspace_index: &mut WorkspaceIndex,
+    require_complete: bool,
     params: &Value,
 ) -> Option<Navigation> {
+    workspace_index.ensure_fresh(require_complete);
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
     let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
@@ -3538,8 +3599,8 @@ mod tests {
         params: &Value,
     ) -> Option<Navigation> {
         let mut db = seeded_db(documents);
-        let index = WorkspaceIndex::build(workspace_roots.to_vec());
-        navigation_at_with_db(&mut db, documents, &index, params)
+        let mut index = WorkspaceIndex::build(workspace_roots.to_vec());
+        navigation_at_with_db(&mut db, documents, &mut index, true, params)
     }
 
     fn seeded_db(documents: &HashMap<String, String>) -> ui_lang_core::AnalysisDb {
@@ -3605,6 +3666,18 @@ mod tests {
             }
         }
         Ok(messages)
+    }
+
+    fn output_messages(output: Vec<u8>) -> Vec<Value> {
+        let mut reader = BufReader::new(Cursor::new(output));
+        let mut messages = Vec::new();
+        while let Some(incoming) = read_message(&mut reader).unwrap() {
+            match incoming {
+                super::Incoming::Message(message) => messages.push(message),
+                super::Incoming::ParseError => unreachable!("server emitted invalid JSON"),
+            }
+        }
+        messages
     }
 
     fn response(messages: &[Value], id: impl Into<Value>) -> &Value {
@@ -3791,6 +3864,84 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "qualification allocation contract; run alone with --test-threads=1"]
+    fn qualification_snapshot_cost_is_independent_of_unrelated_roots() {
+        const UNRELATED_ROOTS: usize = 500;
+        const ALIASES: usize = 20;
+        const MAX_BYTES: u64 = 8 * 1_024 * 1_024;
+
+        let fixture = Fixture::new();
+        let mut db = ui_lang_core::AnalysisDb::default();
+        for index in 0..UNRELATED_ROOTS {
+            let path = fixture.path(&format!("unrelated-{index}.ice"));
+            let source =
+                format!("app Unrelated{index}\n{APP_THEME}view\n  text \"root {index}\"\n");
+            db.set_overlay(&path, source).unwrap();
+            db.query_root(&path).unwrap();
+        }
+
+        let mut target = String::from("app Candidate\n");
+        for index in 0..ALIASES {
+            let path = fixture.path(&format!("part-{index}.ice"));
+            let component = if index + 1 == ALIASES {
+                "Card".to_owned()
+            } else {
+                format!("Other{index}")
+            };
+            db.set_overlay(
+                &path,
+                format!("component {component}()\n  text \"{component}\"\n"),
+            )
+            .unwrap();
+            target.push_str(&format!("use \"part-{index}.ice\" as alias{index}\n"));
+        }
+        target.push_str(APP_THEME);
+        target.push_str("view\n  Card\n");
+        let target_path = fixture.path("candidate.ice");
+        let target_uri = file_path_uri(&target_path);
+        db.set_overlay(&target_path, &target).unwrap();
+        assert!(db.query_root(&target_path).is_err());
+        db.take_metrics();
+        let line = target
+            .lines()
+            .position(|line| line.trim() == "Card")
+            .unwrap();
+        let documents = HashMap::from([(target_uri.clone(), target)]);
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let actions = code_actions_at_with_db(
+            &mut db,
+            &documents,
+            &json!({
+                "textDocument": { "uri": target_uri },
+                "range": {
+                    "start": { "line": line, "character": 6 },
+                    "end": { "line": line, "character": 6 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let heap = dhat::HeapStats::get();
+        let metrics = db.take_metrics();
+
+        assert!(actions.iter().any(|action| {
+            action["title"]
+                .as_str()
+                .is_some_and(|title| title.contains("alias19::Card"))
+        }));
+        assert_eq!(metrics.speculative_runs, ALIASES, "{metrics:?}");
+        assert!(
+            heap.total_bytes <= MAX_BYTES,
+            "qualification copied unrelated workspace state: {heap:?}"
+        );
+        eprintln!(
+            "{ALIASES} candidates with {UNRELATED_ROOTS} unrelated roots: {} blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+    }
+
+    #[test]
     fn watched_disk_import_invalidates_the_retained_root() {
         let fixture = Fixture::new();
         let source = "app Watched\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Part\n";
@@ -3825,6 +3976,133 @@ mod tests {
         assert_eq!(metrics.root_cache_hits, 1, "{metrics:?}");
         assert_eq!(metrics.files_loaded, 0, "{metrics:?}");
         assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
+    }
+
+    #[test]
+    fn watched_import_deletion_republishes_the_read_error() {
+        let fixture = Fixture::new();
+        let source = "app Watched\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Part\n";
+        fixture.write("app.ice", source);
+        fixture.write("part.ice", "component Part()\n  text \"ready\"\n");
+        let root = fixture.path("app.ice");
+        let root_uri = file_path_uri(&root);
+        let part = fixture.path("part.ice");
+        let part_uri = file_path_uri(&part);
+        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let mut db = seeded_db(&documents);
+        db.query_root(&root).unwrap();
+        let mut reports = HashMap::new();
+        let cargo_reports = HashMap::new();
+        let mut output = Vec::new();
+
+        fs::remove_file(part).unwrap();
+        assert!(refresh_watched_files(
+            &mut db,
+            &documents,
+            &mut WorkspaceIndex::default(),
+            &json!({ "changes": [{ "uri": part_uri, "type": 3 }] }),
+        ));
+        reanalyze_open_roots(
+            &mut output,
+            &documents,
+            &mut db,
+            &mut reports,
+            &cargo_reports,
+        )
+        .unwrap();
+
+        let messages = output_messages(output);
+        let diagnostics = messages
+            .iter()
+            .find(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"] == root_uri
+            })
+            .unwrap();
+        assert_eq!(diagnostics["params"]["diagnostics"][0]["code"], "E181");
+    }
+
+    #[test]
+    fn watched_invalid_utf8_import_republishes_the_read_error() {
+        let fixture = Fixture::new();
+        let source = "app Watched\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Part\n";
+        fixture.write("app.ice", source);
+        fixture.write("part.ice", "component Part()\n  text \"ready\"\n");
+        let root = fixture.path("app.ice");
+        let root_uri = file_path_uri(&root);
+        let part = fixture.path("part.ice");
+        let part_uri = file_path_uri(&part);
+        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let mut db = seeded_db(&documents);
+        db.query_root(&root).unwrap();
+
+        fs::write(part, [0xff, 0xfe]).unwrap();
+        assert!(refresh_watched_files(
+            &mut db,
+            &documents,
+            &mut WorkspaceIndex::default(),
+            &json!({ "changes": [{ "uri": part_uri, "type": 2 }] }),
+        ));
+        let mut output = Vec::new();
+        let mut reports = HashMap::new();
+        reanalyze_open_roots(
+            &mut output,
+            &documents,
+            &mut db,
+            &mut reports,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        let messages = output_messages(output);
+        assert!(messages.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == root_uri
+                && message["params"]["diagnostics"][0]["code"] == "E181"
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watched_unreadable_import_republishes_the_permission_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        let source = "app Watched\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Part\n";
+        fixture.write("app.ice", source);
+        fixture.write("part.ice", "component Part()\n  text \"ready\"\n");
+        let root = fixture.path("app.ice");
+        let root_uri = file_path_uri(&root);
+        let part = fixture.path("part.ice");
+        let part_uri = file_path_uri(&part);
+        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let mut db = seeded_db(&documents);
+        db.query_root(&root).unwrap();
+
+        fs::set_permissions(&part, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(refresh_watched_files(
+            &mut db,
+            &documents,
+            &mut WorkspaceIndex::default(),
+            &json!({ "changes": [{ "uri": part_uri, "type": 2 }] }),
+        ));
+        let mut output = Vec::new();
+        let mut reports = HashMap::new();
+        reanalyze_open_roots(
+            &mut output,
+            &documents,
+            &mut db,
+            &mut reports,
+            &HashMap::new(),
+        )
+        .unwrap();
+        fs::set_permissions(&part, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(output_messages(output).iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == root_uri
+                && message["params"]["diagnostics"][0]["code"] == "E181"
+        }));
     }
 
     #[test]
@@ -4880,7 +5158,8 @@ mod tests {
         navigation_at_with_db(
             &mut db,
             &documents,
-            &WorkspaceIndex::default(),
+            &mut WorkspaceIndex::default(),
+            false,
             &position(14, 3),
         )
         .unwrap();
@@ -4942,13 +5221,21 @@ mod tests {
         db.set_overlay(&catalog_path, catalog).unwrap();
         db.query_root(&root).unwrap();
         let mut workspace_index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        workspace_index.configure_watching(&WatchRegistrationState::Active);
 
         let warm = completion_items_at_with_db(&mut db, &documents, &position(10)).unwrap();
         assert!(warm.iter().any(|item| item["label"] == "value="));
         hover_at_with_db(&mut db, &documents, &position(3)).unwrap();
         signature_help_at_with_db(&mut db, &documents, &position(10)).unwrap();
         code_actions_at_with_db(&mut db, &documents, &action).unwrap();
-        navigation_at_with_db(&mut db, &documents, &workspace_index, &position(3)).unwrap();
+        navigation_at_with_db(
+            &mut db,
+            &documents,
+            &mut workspace_index,
+            false,
+            &position(3),
+        )
+        .unwrap();
         db.take_metrics();
         workspace_index.take_metrics();
 
@@ -4960,7 +5247,14 @@ mod tests {
             hover_at_with_db(&mut db, &documents, &position(3)).unwrap();
             signature_help_at_with_db(&mut db, &documents, &position(10)).unwrap();
             code_actions_at_with_db(&mut db, &documents, &action).unwrap();
-            navigation_at_with_db(&mut db, &documents, &workspace_index, &position(3)).unwrap();
+            navigation_at_with_db(
+                &mut db,
+                &documents,
+                &mut workspace_index,
+                false,
+                &position(3),
+            )
+            .unwrap();
         }
         let elapsed = started.elapsed();
         let heap = dhat::HeapStats::get();
@@ -6152,6 +6446,78 @@ mod tests {
             navigation_at(&documents, std::slice::from_ref(&fixture.0), &params).unwrap();
 
         assert!(navigation.renameable());
+    }
+
+    #[test]
+    fn unsupported_watcher_rescans_before_imported_rename() {
+        let fixture = Fixture::new();
+        let theme = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+        let a = format!("app A\nuse \"part.ice\"\n{theme}view\n  Card\n");
+        let b = format!("app B\nuse \"part.ice\"\n{theme}view\n  Card\n");
+        let part = "component Card()\n  text \"Card\"\n";
+        fixture.write("a.ice", &a);
+        fixture.write("part.ice", part);
+        let a_path = fixture.path("a.ice");
+        let b_path = fixture.path("b.ice");
+        let part_path = fixture.path("part.ice");
+        let a_uri = file_path_uri(&a_path);
+        let b_uri = file_path_uri(&b_path);
+        let part_uri = file_path_uri(&part_path);
+        let documents = HashMap::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
+        let mut db = seeded_db(&documents);
+        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        index.configure_watching(&WatchRegistrationState::Unsupported);
+
+        fixture.write("b.ice", &b);
+        let navigation = navigation_at_with_db(
+            &mut db,
+            &documents,
+            &mut index,
+            true,
+            &json!({
+                "textDocument": { "uri": a_uri },
+                "position": { "line": 13, "character": 3 },
+            }),
+        )
+        .unwrap();
+        let edit = workspace_edit(&documents, &navigation, "Tile").unwrap();
+
+        assert!(navigation.renameable());
+        assert!(edit["changes"][&b_uri].is_array(), "{edit:?}");
+        assert!(edit["changes"][&part_uri].is_array(), "{edit:?}");
+        assert_eq!(index.metrics.scans, 2);
+    }
+
+    #[test]
+    fn active_watcher_index_rescans_after_its_validation_epoch() {
+        let fixture = Fixture::new();
+        fixture.write("a.ice", "app A\nview\n  text \"A\"\n");
+        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        index.configure_watching(&WatchRegistrationState::Active);
+        fixture.write("b.ice", "app B\nview\n  text \"B\"\n");
+        let b = fixture.path("b.ice").canonicalize().unwrap();
+        assert!(!index.app_roots.contains(&b));
+
+        index.last_scan = Some(Instant::now() - Duration::from_secs(6));
+        index.ensure_fresh(false);
+
+        assert!(index.app_roots.contains(&b));
+        assert_eq!(index.metrics.scans, 2);
+    }
+
+    #[test]
+    fn active_watcher_rescans_before_a_completeness_sensitive_request() {
+        let fixture = Fixture::new();
+        fixture.write("a.ice", "app A\nview\n  text \"A\"\n");
+        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        index.configure_watching(&WatchRegistrationState::Active);
+        fixture.write("b.ice", "app B\nview\n  text \"B\"\n");
+        let b = fixture.path("b.ice").canonicalize().unwrap();
+
+        index.ensure_fresh(true);
+
+        assert!(index.app_roots.contains(&b));
+        assert_eq!(index.metrics.scans, 2);
     }
 
     #[test]
