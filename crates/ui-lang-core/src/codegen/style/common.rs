@@ -126,61 +126,6 @@ pub(in crate::codegen) fn background_code(
     }
 }
 
-pub(in crate::codegen) fn container_surface_style_value(
-    utilities: &ResolvedStyle,
-    options: &ContainerStyleOptions,
-    custom: Option<&ExternCall>,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<Option<String>, Error> {
-    let has_typed_style = options.background.is_some()
-        || options.text_color.is_some()
-        || options.border_color.is_some()
-        || options.border_width.is_some()
-        || options.radius.is_some()
-        || options.radius_top_left.is_some()
-        || options.radius_top_right.is_some()
-        || options.radius_bottom_right.is_some()
-        || options.radius_bottom_left.is_some()
-        || options.shadow_color.is_some()
-        || options.shadow_x.is_some()
-        || options.shadow_y.is_some()
-        || options.shadow_blur.is_some()
-        || options.pixel_snap.is_some();
-    let utility_style = container_style_value(utilities);
-    let custom_style = custom
-        .map(|style| {
-            custom_style_call_code(style, ExternKind::ContainerStyle, "__theme", env, document)
-        })
-        .transpose()?;
-    if !has_typed_style && custom_style.is_none() {
-        return Ok(utility_style);
-    }
-    if !has_typed_style && utility_style.is_none() {
-        return Ok(custom_style);
-    }
-
-    let has_custom_style = custom_style.is_some();
-    let base = custom_style
-        .or_else(|| utility_style.clone())
-        .unwrap_or_else(|| "::iced::widget::container::Style::default()".into());
-    let mut code = format!("{{ let mut __style = {base};");
-    if has_custom_style {
-        append_container_utility_overrides(&mut code, utilities);
-    }
-    append_surface_style_overrides(&mut code, options, env, document)?;
-    if let Some(color) = &options.text_color {
-        write!(
-            code,
-            " __style.text_color = ::std::option::Option::Some({});",
-            theme_color(document, color)
-        )
-        .unwrap();
-    }
-    code.push_str(" __style }");
-    Ok(Some(code))
-}
-
 pub(in crate::codegen) fn append_container_utility_overrides(
     code: &mut String,
     style: &ResolvedStyle,

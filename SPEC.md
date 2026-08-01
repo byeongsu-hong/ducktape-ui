@@ -375,6 +375,17 @@ origin parentage. Rust generation reads that record and uses the source node
 only for the content and layer subtrees and the still-shared widget ID surface;
 it does not reread Overlay options or its dismiss route.
 
+Container is a completed structural layout HIR slice. One checked record owns
+its padding, dimensions, clipping, custom style arguments, typed surface,
+dashed-border pattern, utility style, and CSS flex-child metadata. Lowering
+resolves every theme color and style extern, separates numeric and native
+lengths, folds padding and margin precedence into explicit sides, and publishes
+`ResolvedContainer` with stable expression owners and physical source origin.
+Box rendering and flex-parent item construction consume that record; the source
+node supplies only its content subtree and the still-shared widget ID surface.
+Generation does not reread Container options, surface colors, custom style,
+border dash, flex basis/alignment/margins, or utility lookup state.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

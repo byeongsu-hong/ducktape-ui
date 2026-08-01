@@ -78,6 +78,174 @@ pub struct ContainerOptions {
     pub flex_item: FlexItemOptions,
 }
 
+pub(crate) fn container_expression_roots(options: &ContainerOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    roots.extend(
+        [
+            &options.padding.all,
+            &options.padding.x,
+            &options.padding.y,
+            &options.padding.top,
+            &options.padding.right,
+            &options.padding.bottom,
+            &options.padding.left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    for length in [&options.width, &options.height].into_iter().flatten() {
+        if let LengthValue::Fixed(expression) = length {
+            roots.push(expression);
+        }
+    }
+    roots.extend(
+        [&options.max_width, &options.max_height, &options.clip]
+            .into_iter()
+            .flatten(),
+    );
+    if let Some(style) = &options.custom_style {
+        roots.extend(&style.args);
+    }
+    if let Some(BackgroundValue::Linear { angle, stops }) = &options.style.background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    roots.extend(
+        [
+            &options.style.border_width,
+            &options.style.radius,
+            &options.style.radius_top_left,
+            &options.style.radius_top_right,
+            &options.style.radius_bottom_right,
+            &options.style.radius_bottom_left,
+            &options.style.shadow_x,
+            &options.style.shadow_y,
+            &options.style.shadow_blur,
+            &options.style.pixel_snap,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots.extend(&options.border_dash);
+    roots.extend(
+        [
+            &options.flex_item.order,
+            &options.flex_item.grow,
+            &options.flex_item.shrink,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    if let Some(FlexBasisValue::Fixed(expression) | FlexBasisValue::Percent(expression)) =
+        &options.flex_item.basis
+    {
+        roots.push(expression);
+    }
+    for margin in [
+        &options.flex_item.margin.all,
+        &options.flex_item.margin.x,
+        &options.flex_item.margin.y,
+        &options.flex_item.margin.top,
+        &options.flex_item.margin.right,
+        &options.flex_item.margin.bottom,
+        &options.flex_item.margin.left,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let FlexMarginValue::Fixed(expression) | FlexMarginValue::Percent(expression) = margin {
+            roots.push(expression);
+        }
+    }
+    roots
+}
+
+pub(crate) fn container_semantic_key(options: &ContainerOptions) -> String {
+    let present = |value: bool| if value { '1' } else { '0' };
+    let length = |value: &Option<LengthValue>| match value {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    };
+    let background = match &options.style.background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    let basis = match &options.flex_item.basis {
+        None => "none",
+        Some(FlexBasisValue::Auto) => "auto",
+        Some(FlexBasisValue::Content) => "content",
+        Some(FlexBasisValue::Fixed(_)) => "fixed",
+        Some(FlexBasisValue::Percent(_)) => "percent",
+    };
+    let margin = |value: &Option<FlexMarginValue>| match value {
+        None => 'n',
+        Some(FlexMarginValue::Auto) => 'a',
+        Some(FlexMarginValue::Fixed(_)) => 'f',
+        Some(FlexMarginValue::Percent(_)) => 'p',
+    };
+    let custom = options.custom_style.as_ref().map_or_else(
+        || "none".into(),
+        |style| format!("{}:{}", style.function, style.args.len()),
+    );
+    format!(
+        "container|padding={}|size={}:{}|max={}{}|align={:?}:{:?}|clip={}|custom={custom}|surface={background}:{:?}:{:?}:{}{}{}{}{}:{:?}:{}{}{}{}|dash={}|flex={}{}{}:{basis}:{:?}:{}{}{}{}{}{}{}",
+        [
+            options.padding.all.is_some(),
+            options.padding.x.is_some(),
+            options.padding.y.is_some(),
+            options.padding.top.is_some(),
+            options.padding.right.is_some(),
+            options.padding.bottom.is_some(),
+            options.padding.left.is_some(),
+        ]
+        .into_iter()
+        .map(present)
+        .collect::<String>(),
+        length(&options.width),
+        length(&options.height),
+        present(options.max_width.is_some()),
+        present(options.max_height.is_some()),
+        options.align_x,
+        options.align_y,
+        present(options.clip.is_some()),
+        options.style.text_color,
+        options.style.border_color,
+        present(options.style.border_width.is_some()),
+        present(options.style.radius.is_some()),
+        present(options.style.radius_top_left.is_some()),
+        present(options.style.radius_top_right.is_some()),
+        present(options.style.radius_bottom_right.is_some()),
+        options.style.shadow_color,
+        present(options.style.radius_bottom_left.is_some()),
+        present(options.style.shadow_x.is_some()),
+        present(options.style.shadow_y.is_some()),
+        present(options.style.shadow_blur.is_some()),
+        options.border_dash.len(),
+        present(options.flex_item.order.is_some()),
+        present(options.flex_item.grow.is_some()),
+        present(options.flex_item.shrink.is_some()),
+        options.flex_item.align_self,
+        margin(&options.flex_item.margin.all),
+        margin(&options.flex_item.margin.x),
+        margin(&options.flex_item.margin.y),
+        margin(&options.flex_item.margin.top),
+        margin(&options.flex_item.margin.right),
+        margin(&options.flex_item.margin.bottom),
+        margin(&options.flex_item.margin.left),
+    ) + &format!("|snap={}", present(options.style.pixel_snap.is_some()))
+}
+
 #[derive(Clone, Debug)]
 pub struct FlexboxOptions {
     pub direction: FlexDirectionValue,

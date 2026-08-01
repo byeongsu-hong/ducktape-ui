@@ -19,14 +19,15 @@ pub(in crate::codegen) fn render_foundation(
         } => render_layout(
             *kind, options, id, children, span, document, message, env, scope, slot,
         ),
-        ViewNode::Container {
-            options,
+        ViewNode::Container { id, content, .. } => render_container(
+            document.program().resolved_container_for(node)?,
             id,
             content,
-            span,
-            ..
-        } => render_container(
-            options, id, content, span, document, message, env, scope, slot,
+            document,
+            message,
+            env,
+            scope,
+            slot,
         ),
         ViewNode::Overlay {
             id, content, layer, ..

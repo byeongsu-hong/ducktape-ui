@@ -161,6 +161,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let container_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "box size")?;
             }
@@ -231,6 +232,7 @@ pub(in crate::check) fn infer_layout_group(
             check_container_style_options(&options.style, env, document, span, "E184")?;
             check_border_dash(options, env, document, span)?;
             check_styles(styles, document, span, StyleTarget::Container(options))?;
+            retain_container_analyses(span, container_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Overlay {

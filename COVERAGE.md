@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -675,6 +675,19 @@ assertions, malformed expression/route/origin IDs, pre-lowering expression and
 static-topology mutation, post-lowering option/route poisoning, existing native
 overlay codegen, and an ignored 4,000-overlay lower+emit contract cover the
 boundary.
+
+Container has a complete private HIR boundary. Its checked record owns a stable
+expression partition and static contract for padding, dimensions, clipping,
+custom style arguments, gradient stops, complete typed surface fields,
+dashed-border segments, CSS flex-child properties, and effective margin
+precedence. Lowering resolves lengths, theme colors, the exact box-style extern,
+utility style, alignments, flex basis and margins, stable view identity, and
+physical origin into `ResolvedContainer`. Production box rendering and flex
+item construction consume that record; the raw node supplies only its content
+subtree and shared widget ID. Structural HIR assertions, malformed expression
+IDs, pre-lowering expression and static-topology mutation, post-lowering box and
+flex-option poisoning, imported source markers, existing complete styled/flex
+codegen, and an ignored 4,000-container lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

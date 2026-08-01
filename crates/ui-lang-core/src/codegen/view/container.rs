@@ -2,30 +2,31 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_container(
-    options: &ContainerOptions,
+    container: &ResolvedContainer,
     id: &Option<Id>,
     content: &ViewNode,
-    span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
+    let program = document.program();
+    let span = Span::line(container.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "container", span, scope, env, document)?;
+        accessibility_key_code(id.as_ref(), "container", &span, scope, env, document)?;
     let child_scope = id.as_ref().map_or_else(
         || Ok(scope.to_owned()),
         |id| id_code(id, scope, env, document),
     )?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
-    let mut style = document.program().style_use(span)?.style.clone();
-    let mut surface = options.style.clone();
+    let mut style = container.utility_style.clone();
+    let mut surface = container.surface.clone();
     // A dashed border replaces the solid one rather than adding to it: iced
     // can only draw a solid quad border, so both style lanes drop theirs and
     // the dash is stroked over the same rectangle instead.
-    let dash = (!options.border_dash.is_empty())
-        .then(|| border_dash_code(options, &style, env, document))
+    let dash = (!container.border_dash.is_empty())
+        .then(|| resolved_container_border_dash_code(container, &style, program, env))
         .transpose()?;
     if dash.is_some() {
         surface.border_color = None;
@@ -52,53 +53,58 @@ pub(in crate::codegen) fn render_container(
     if style.clip {
         code.push_str(".clip(true)");
     }
-    if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
+    if let Some(padding) = resolved_container_padding_code(&container.padding, program, env)? {
         write!(code, ".padding({padding})").unwrap();
     }
-    append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
+    append_resolved_container_dimensions(
+        &mut code,
+        [&container.width, &container.height],
+        program,
+        env,
+    )?;
     for (method, value) in [
-        ("max_width", &options.max_width),
-        ("max_height", &options.max_height),
+        ("max_width", container.max_width),
+        ("max_height", container.max_height),
     ] {
         if let Some(value) = value {
             write!(
                 code,
                 ".{method}({} as f32)",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
     }
-    if let Some(align) = options.align_x {
+    if let Some(align) = container.align_x {
         let align = match align {
-            FlexAlignment::Start => "Left",
-            FlexAlignment::Center => "Center",
-            FlexAlignment::End => "Right",
+            ResolvedContainerAlignment::Start => "Left",
+            ResolvedContainerAlignment::Center => "Center",
+            ResolvedContainerAlignment::End => "Right",
         };
         write!(code, ".align_x(::iced::alignment::Horizontal::{align})").unwrap();
     }
-    if let Some(align) = options.align_y {
+    if let Some(align) = container.align_y {
         let align = match align {
-            FlexAlignment::Start => "Top",
-            FlexAlignment::Center => "Center",
-            FlexAlignment::End => "Bottom",
+            ResolvedContainerAlignment::Start => "Top",
+            ResolvedContainerAlignment::Center => "Center",
+            ResolvedContainerAlignment::End => "Bottom",
         };
         write!(code, ".align_y(::iced::alignment::Vertical::{align})").unwrap();
     }
-    if let Some(clip) = &options.clip {
+    if let Some(clip) = container.clip {
         write!(
             code,
             ".clip({})",
-            expr_code(clip, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(mut surface) = container_surface_style_value(
+    if let Some(mut surface) = resolved_container_surface_style_value(
         &style,
         &surface,
-        options.custom_style.as_ref(),
+        container.custom_style.as_ref(),
+        program,
         env,
-        document,
     )? {
         // A custom style can return its own solid border. Clear that final
         // value too, after every style lane has been composed, so the dash is
@@ -126,46 +132,294 @@ pub(in crate::codegen) fn render_container(
 /// radius the surface would have drawn its solid border with, plus the dash
 /// pattern. Corner radii come from the same typed/utility pair the quad reads,
 /// so the stroke traces the surface it replaces, per corner.
-fn border_dash_code(
-    options: &ContainerOptions,
+fn resolved_container_border_dash_code(
+    container: &ResolvedContainer,
     style: &ResolvedStyle,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<String, Error> {
-    let color = options
-        .style
+    let color = container
+        .surface
         .border_color
         .as_ref()
         .expect("checker requires `border=` on a dashed box");
-    let width = options
-        .style
+    let width = container
+        .surface
         .border_width
-        .as_ref()
-        .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", env, document))
+        .map(|width| resolved_container_clamped_f32(width, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| format!("{}.0", style.border_width.max(1)));
-    let radius = radius_code(
-        options.style.radius.as_ref(),
-        [
-            options.style.radius_top_left.as_ref(),
-            options.style.radius_top_right.as_ref(),
-            options.style.radius_bottom_right.as_ref(),
-            options.style.radius_bottom_left.as_ref(),
-        ],
-        env,
-        document,
-    )?
-    .unwrap_or_else(|| format!("::iced::border::Radius::from({}.0)", style.radius));
-    let segments = options
+    let radius = resolved_container_radius_code(&container.surface.radius, program, env)?
+        .unwrap_or_else(|| format!("::iced::border::Radius::from({}.0)", style.radius));
+    let segments = container
         .border_dash
         .iter()
-        .map(|segment| clamped_f32_code(segment, "0.0", "f32::MAX", env, document))
+        .map(|segment| resolved_container_clamped_f32(*segment, "0.0", "f32::MAX", program, env))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!(
         "{}, {width}, {radius}, ::std::vec![{segments}]",
-        theme_color(document, color)
+        resolved_theme_color(color)
     ))
+}
+
+fn resolved_container_padding_code(
+    padding: &ResolvedContainerPadding,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if padding.all.is_none()
+        && padding.x.is_none()
+        && padding.y.is_none()
+        && padding.top.is_none()
+        && padding.right.is_none()
+        && padding.bottom.is_none()
+        && padding.left.is_none()
+    {
+        return Ok(None);
+    }
+    let value = |expression: Option<CheckedExprUseId>| {
+        expression
+            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .transpose()
+    };
+    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
+    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
+    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
+    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
+    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
+    let bottom = value(padding.bottom)?.unwrap_or(y);
+    let left = value(padding.left)?.unwrap_or(x);
+    Ok(Some(format!(
+        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
+    )))
+}
+
+fn append_resolved_container_dimensions(
+    code: &mut String,
+    dimensions: [&Option<ResolvedContainerLength>; 2],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<(), Error> {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        let Some(length) = length else { continue };
+        let value = match length {
+            ResolvedContainerLength::Fill => "::iced::Fill".into(),
+            ResolvedContainerLength::FillPortion(portion) => {
+                format!("::iced::Length::FillPortion({portion})")
+            }
+            ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
+            ResolvedContainerLength::FixedF64(expression) => format!(
+                "{} as f32",
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            ),
+            ResolvedContainerLength::FixedLength(expression) => {
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            }
+        };
+        write!(code, ".{method}({value})").unwrap();
+    }
+    Ok(())
+}
+
+fn resolved_container_custom_style_code(
+    style: &ResolvedContainerCustomStyle,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let arguments = style
+        .arguments
+        .iter()
+        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?;
+    let suffix = arguments
+        .into_iter()
+        .map(|argument| format!(", {argument}"))
+        .collect::<String>();
+    Ok(format!(
+        "{}(__theme{suffix})",
+        program.extern_function(style.function).rust_path
+    ))
+}
+
+fn resolved_container_background_code(
+    background: &ResolvedContainerBackground,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match background {
+        ResolvedContainerBackground::Color(color) => {
+            format!("::iced::Background::Color({})", resolved_theme_color(color))
+        }
+        ResolvedContainerBackground::Linear { angle, stops } => {
+            let mut code = format!(
+                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
+                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+            );
+            for stop in stops {
+                write!(
+                    code,
+                    ".add_stop({} as f32, {})",
+                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_theme_color(&stop.color)
+                )
+                .unwrap();
+            }
+            code.push(')');
+            code
+        }
+    })
+}
+
+fn resolved_container_radius_code(
+    radius: &ResolvedContainerRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let base = radius
+        .all
+        .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corner = |value: Option<CheckedExprUseId>| {
+        value
+            .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
+    let top_right = corner(radius.top_right)?.unwrap_or_else(|| base.clone());
+    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| base.clone());
+    let bottom_left = corner(radius.bottom_left)?.unwrap_or(base);
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
+    )))
+}
+
+fn resolved_container_surface_style_value(
+    utilities: &ResolvedStyle,
+    surface: &ResolvedContainerSurface,
+    custom: Option<&ResolvedContainerCustomStyle>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    let has_typed = surface.background.is_some()
+        || surface.text_color.is_some()
+        || surface.border_color.is_some()
+        || surface.border_width.is_some()
+        || surface.radius.all.is_some()
+        || surface.radius.top_left.is_some()
+        || surface.radius.top_right.is_some()
+        || surface.radius.bottom_right.is_some()
+        || surface.radius.bottom_left.is_some()
+        || surface.shadow_color.is_some()
+        || surface.shadow_x.is_some()
+        || surface.shadow_y.is_some()
+        || surface.shadow_blur.is_some()
+        || surface.pixel_snap.is_some();
+    let utility = container_style_value(utilities);
+    let custom = custom
+        .map(|style| resolved_container_custom_style_code(style, program, env))
+        .transpose()?;
+    if !has_typed && custom.is_none() {
+        return Ok(utility);
+    }
+    if !has_typed && utility.is_none() {
+        return Ok(custom);
+    }
+    let has_custom = custom.is_some();
+    let base = custom
+        .or_else(|| utility.clone())
+        .unwrap_or_else(|| "::iced::widget::container::Style::default()".into());
+    let mut code = format!("{{ let mut __style = {base};");
+    if has_custom {
+        append_container_utility_overrides(&mut code, utilities);
+    }
+    if let Some(background) = &surface.background {
+        write!(
+            code,
+            " __style.background = ::std::option::Option::Some({});",
+            resolved_container_background_code(background, program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(color) = &surface.border_color {
+        write!(
+            code,
+            " __style.border.color = {};",
+            resolved_theme_color(color)
+        )
+        .unwrap();
+    }
+    if let Some(width) = surface.border_width {
+        write!(
+            code,
+            " __style.border.width = {} as f32;",
+            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(radius) = resolved_container_radius_code(&surface.radius, program, env)? {
+        write!(code, " __style.border.radius = {radius};").unwrap();
+    }
+    if let Some(color) = &surface.shadow_color {
+        write!(
+            code,
+            " __style.shadow.color = {};",
+            resolved_theme_color(color)
+        )
+        .unwrap();
+    }
+    for (expression, field) in [
+        (surface.shadow_x, "offset.x"),
+        (surface.shadow_y, "offset.y"),
+        (surface.shadow_blur, "blur_radius"),
+    ] {
+        if let Some(expression) = expression {
+            write!(
+                code,
+                " __style.shadow.{field} = {} as f32;",
+                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(snap) = surface.pixel_snap {
+        write!(
+            code,
+            " __style.snap = {};",
+            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(color) = &surface.text_color {
+        write!(
+            code,
+            " __style.text_color = ::std::option::Option::Some({});",
+            resolved_theme_color(color)
+        )
+        .unwrap();
+    }
+    code.push_str(" __style }");
+    Ok(Some(code))
+}
+
+fn resolved_container_clamped_f32(
+    expression: CheckedExprUseId,
+    minimum: &str,
+    maximum: &str,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
 #[allow(clippy::too_many_arguments)]

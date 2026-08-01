@@ -701,10 +701,12 @@ fn render_flex_children(
                     )
                 } else {
                     let options = match child {
-                        ViewNode::Container { options, .. } => Some(&options.flex_item),
+                        ViewNode::Container { .. } => {
+                            Some(&document.program().resolved_container_for(child)?.flex_item)
+                        }
                         _ => None,
                     };
-                    flex_item_code("__flex_child", options, env, document)?
+                    resolved_flex_item_code("__flex_child", options, document.program(), env)?
                 };
                 write!(
                     out,
@@ -717,45 +719,47 @@ fn render_flex_children(
     Ok(())
 }
 
-fn flex_item_code(
+fn resolved_flex_item_code(
     child: &str,
-    options: Option<&FlexItemOptions>,
+    options: Option<&ResolvedContainerFlexItem>,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<String, Error> {
     let mut code = format!("::ui_lang_runtime::flex_item({child})");
     let Some(options) = options else {
         return Ok(code);
     };
-    if let Some(order) = &options.order {
+    if let Some(order) = options.order {
         write!(
             code,
             ".order({} as i64)",
-            expr_code(order, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, order, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    for (value, method) in [(&options.grow, "grow"), (&options.shrink, "shrink")] {
+    for (value, method) in [(options.grow, "grow"), (options.shrink, "shrink")] {
         if let Some(value) = value {
             write!(
                 code,
                 ".{method}({} as f32)",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
     }
     if let Some(basis) = &options.basis {
         let basis = match basis {
-            FlexBasisValue::Auto => "::ui_lang_runtime::FlexBasis::Auto".to_owned(),
-            FlexBasisValue::Content => "::ui_lang_runtime::FlexBasis::Content".to_owned(),
-            FlexBasisValue::Fixed(value) => format!(
+            ResolvedContainerFlexBasis::Auto => "::ui_lang_runtime::FlexBasis::Auto".to_owned(),
+            ResolvedContainerFlexBasis::Content => {
+                "::ui_lang_runtime::FlexBasis::Content".to_owned()
+            }
+            ResolvedContainerFlexBasis::Fixed(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Fixed({} as f32)",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
-            FlexBasisValue::Percent(value) => format!(
+            ResolvedContainerFlexBasis::Percent(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Percent(({} as f32) / 100.0)",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
         };
         write!(code, ".basis({basis})").unwrap();
@@ -764,79 +768,53 @@ fn flex_item_code(
         write!(
             code,
             ".align_self(::ui_lang_runtime::AlignItems::{})",
-            flex_item_alignment_name(align)
+            resolved_flex_item_alignment_name(align)
         )
         .unwrap();
     }
-    if flex_margin_present(&options.margin) {
-        let top = flex_margin_side(
-            options.margin.top.as_ref(),
-            options.margin.y.as_ref(),
-            options.margin.all.as_ref(),
-        );
-        let right = flex_margin_side(
-            options.margin.right.as_ref(),
-            options.margin.x.as_ref(),
-            options.margin.all.as_ref(),
-        );
-        let bottom = flex_margin_side(
-            options.margin.bottom.as_ref(),
-            options.margin.y.as_ref(),
-            options.margin.all.as_ref(),
-        );
-        let left = flex_margin_side(
-            options.margin.left.as_ref(),
-            options.margin.x.as_ref(),
-            options.margin.all.as_ref(),
-        );
+    if let Some(margins) = &options.margins {
         write!(
             code,
             ".margins(::ui_lang_runtime::FlexMargins {{ top: {}, right: {}, bottom: {}, left: {} }})",
-            flex_margin_code(top, env, document)?,
-            flex_margin_code(right, env, document)?,
-            flex_margin_code(bottom, env, document)?,
-            flex_margin_code(left, env, document)?,
+            resolved_flex_margin_code(&margins.top, program, env)?,
+            resolved_flex_margin_code(&margins.right, program, env)?,
+            resolved_flex_margin_code(&margins.bottom, program, env)?,
+            resolved_flex_margin_code(&margins.left, program, env)?,
         )
         .unwrap();
     }
     Ok(code)
 }
 
-fn flex_margin_present(margin: &FlexMarginOptions) -> bool {
-    margin.all.is_some()
-        || margin.x.is_some()
-        || margin.y.is_some()
-        || margin.top.is_some()
-        || margin.right.is_some()
-        || margin.bottom.is_some()
-        || margin.left.is_some()
-}
-
-fn flex_margin_side<'a>(
-    side: Option<&'a FlexMarginValue>,
-    axis: Option<&'a FlexMarginValue>,
-    all: Option<&'a FlexMarginValue>,
-) -> Option<&'a FlexMarginValue> {
-    side.or(axis).or(all)
-}
-
-fn flex_margin_code(
-    margin: Option<&FlexMarginValue>,
+fn resolved_flex_margin_code(
+    margin: &ResolvedContainerFlexMargin,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<String, Error> {
     Ok(match margin {
-        None => "::ui_lang_runtime::FlexMargin::Zero".to_owned(),
-        Some(FlexMarginValue::Auto) => "::ui_lang_runtime::FlexMargin::Auto".to_owned(),
-        Some(FlexMarginValue::Fixed(value)) => format!(
+        ResolvedContainerFlexMargin::Zero => "::ui_lang_runtime::FlexMargin::Zero".to_owned(),
+        ResolvedContainerFlexMargin::Auto => "::ui_lang_runtime::FlexMargin::Auto".to_owned(),
+        ResolvedContainerFlexMargin::Fixed(value) => format!(
             "::ui_lang_runtime::FlexMargin::Fixed({} as f32)",
-            expr_code(value, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
-        Some(FlexMarginValue::Percent(value)) => format!(
+        ResolvedContainerFlexMargin::Percent(value) => format!(
             "::ui_lang_runtime::FlexMargin::Percent(({} as f32) / 100.0)",
-            expr_code(value, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
     })
+}
+
+fn resolved_flex_item_alignment_name(align: ResolvedContainerFlexAlignment) -> &'static str {
+    match align {
+        ResolvedContainerFlexAlignment::Start => "Start",
+        ResolvedContainerFlexAlignment::End => "End",
+        ResolvedContainerFlexAlignment::FlexStart => "FlexStart",
+        ResolvedContainerFlexAlignment::FlexEnd => "FlexEnd",
+        ResolvedContainerFlexAlignment::Center => "Center",
+        ResolvedContainerFlexAlignment::Baseline => "Baseline",
+        ResolvedContainerFlexAlignment::Stretch => "Stretch",
+    }
 }
 
 fn flex_direction_name(direction: FlexDirectionValue) -> &'static str {

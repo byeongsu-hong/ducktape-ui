@@ -32,6 +32,7 @@ use std::path::Path;
 
 mod canvas;
 mod conditional;
+mod container;
 mod float;
 mod interaction;
 mod iteration;
@@ -50,6 +51,7 @@ mod tooltip;
 
 pub(crate) use canvas::*;
 pub(crate) use conditional::*;
+pub(crate) use container::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use iteration::*;
@@ -1462,6 +1464,7 @@ pub(crate) struct LoweredProgram {
     subscriptions: Vec<ResolvedSubscription>,
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    containers: HashMap<ViewId, ResolvedContainer>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3014,6 +3017,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn container(&self, id: ViewId) -> Option<&ResolvedContainer> {
+        self.containers.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3111,6 +3119,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "canvas reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_container_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedContainer, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "container reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "container reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.containers.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "container reached code generation without normalized HIR",
             )
         })
     }
@@ -3765,6 +3802,7 @@ pub(crate) struct Lowerer {
     app_handlers: Vec<HandlerId>,
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    containers: HashMap<ViewId, ResolvedContainer>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4494,6 +4532,7 @@ impl Lowerer {
             app_handlers: Vec::new(),
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
+            containers: HashMap::new(),
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4581,6 +4620,7 @@ impl Lowerer {
             subscriptions,
             tests,
             canvases: self.canvases,
+            containers: self.containers,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -8500,8 +8540,16 @@ impl Lowerer {
                 content: Some(content),
                 ..
             }
-            | ViewNode::Container { content, .. }
             | ViewNode::Theme { content, .. } => {
+                self.lower_view(content, outer_component)?;
+            }
+            ViewNode::Container {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_container(options, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
             ViewNode::Overlay {
@@ -11095,6 +11143,200 @@ view
     }
 
     #[test]
+    fn normalizes_complete_container_surface_layout_flex_and_expression_owners() {
+        let source = format!(
+            "app ContainerHir\nextern crate::backend\n  box-style dynamic_container(active:bool)\n{THEME}state\n  active = true\nview\n  flex\n    box style=dynamic_container(active) w=fill h=80.0 max-w=640.0 max-h=120.0 align-x=center align-y=end clip=true p=8.0 pl=12.0 bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary border-w=2.0 border-dash=(4.0, 3.0) r=4.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=6.0 px-snap=true order=2 grow=1.0 shrink=0.5 basis=percent(40.0) self=flex-end m=auto mx=percent(5.0) mt=-2.0\n      text \"Card\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let container = program.container(ViewId(1)).unwrap();
+
+        assert_eq!(container.id, ViewId(1));
+        assert!(matches!(
+            container.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            container.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(container.align_x, Some(ResolvedContainerAlignment::Center));
+        assert_eq!(container.align_y, Some(ResolvedContainerAlignment::End));
+        assert!(container.clip.is_some());
+        assert_eq!(container.border_dash.len(), 2);
+        assert!(matches!(
+            container.surface.background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(matches!(
+            container.surface.border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+        let custom = container.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(custom.function).name,
+            "dynamic_container"
+        );
+        assert_eq!(custom.arguments.len(), 1);
+        assert_eq!(
+            container.flex_item.align_self,
+            Some(ResolvedContainerFlexAlignment::FlexEnd)
+        );
+        assert!(matches!(
+            container.flex_item.basis,
+            Some(ResolvedContainerFlexBasis::Percent(_))
+        ));
+        let margins = container.flex_item.margins.as_ref().unwrap();
+        assert!(matches!(margins.top, ResolvedContainerFlexMargin::Fixed(_)));
+        assert!(matches!(
+            margins.right,
+            ResolvedContainerFlexMargin::Percent(_)
+        ));
+        assert!(matches!(margins.bottom, ResolvedContainerFlexMargin::Auto));
+        assert!(matches!(
+            margins.left,
+            ResolvedContainerFlexMargin::Percent(_)
+        ));
+
+        let checked = program.checked_facts().container(ViewId(1)).unwrap();
+        assert_eq!(checked.expression_count, 28);
+        for index in 0..checked.expression_count {
+            let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(1),
+                index,
+            });
+            let expression = program
+                .checked_facts()
+                .expression_use_by_owner(owner)
+                .unwrap();
+            assert_eq!(
+                program.checked_facts().expression_use(expression).owner,
+                owner
+            );
+        }
+    }
+
+    #[test]
+    fn container_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedContainer\n{THEME}state\n  size = 80.0\nview\n  flex\n    box h=size p=8.0 bg=primary border=fg border-w=1.0 grow=1.0 mx=percent(5.0)\n      text \"Card\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-container.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_container_expressions(&mut checked.document.view);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-container.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let options = raw_container_options(&mut changed_static.document.view);
+        options.align_x = Some(FlexAlignment::End);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn container_codegen_ignores_raw_box_and_flex_options_after_lowering() {
+        let source = format!(
+            "app LoweredContainer\n{THEME}state\n  size = 80.0\nview\n  flex\n    box h=size p=8.0 bg=primary border=fg border-w=1.0 grow=1.0 mx=percent(5.0)\n      text \"Card\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-container.ice").unwrap();
+
+        poison_raw_container_expressions(&mut program.document.view);
+        let options = raw_container_options(&mut program.document.view);
+        options.align_x = Some(FlexAlignment::End);
+        options.style.background = Some(BackgroundValue::Color("danger".into()));
+        options.style.border_color = Some("danger".into());
+        options.flex_item.align_self = Some(FlexItemAlignment::Stretch);
+
+        let actual = crate::codegen::generate(&program, "lowered-container.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("999.0"));
+    }
+
+    fn raw_container_options(node: &mut ViewNode) -> &mut ContainerOptions {
+        let ViewNode::Layout { children, .. } = node else {
+            panic!("fixture root must be a flex layout");
+        };
+        let ViewNode::Container { options, .. } = &mut children[0] else {
+            panic!("fixture child must be a container");
+        };
+        options
+    }
+
+    fn poison_raw_container_expressions(node: &mut ViewNode) {
+        let options = raw_container_options(node);
+        options.height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding.all = Some(Expr::F64(999.0));
+        options.style.border_width = Some(Expr::F64(999.0));
+        options.flex_item.grow = Some(Expr::F64(999.0));
+        options.flex_item.margin.x = Some(FlexMarginValue::Percent(Expr::F64(999.0)));
+    }
+
+    #[test]
+    fn malformed_checked_container_expression_id_does_not_panic() {
+        let source =
+            format!("app InvalidContainerFacts\n{THEME}view\n  box p=8.0\n    text \"Card\"\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_container_keeps_physical_origin_and_generated_source_marker() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-container-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("container.ice");
+        fs::write(
+            &root,
+            format!("app ImportedContainerApp\nuse \"container.ice\"\n{THEME}view\n  ImportedContainer\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContainer()\n  state\n    active = true\n  box p=12.0 bg=primary border=fg border-w=1.0\n    text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let container = program.containers.values().next().unwrap();
+        let origin = program.origin(container.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
@@ -12418,6 +12660,37 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized overlays lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized container lowering and emission performance contract"]
+    fn performance_contract_four_thousand_containers_lower_and_emit_under_two_seconds() {
+        const CONTAINERS: usize = 4_000;
+        let mut source = format!("app ContainerScale\n{THEME}view\n  flex wrap=wrap\n");
+        for index in 0..CONTAINERS {
+            writeln!(
+                source,
+                "    box h=48.0 p=8.0 bg=bg border=primary border-w=1.0 r=4.0 grow=1.0 basis=percent(25.0)\n      text \"Card {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "container-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.containers.len(), CONTAINERS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::container(__container_content)")
+                .count(),
+            CONTAINERS
+        );
+        eprintln!("4k normalized containers lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized containers lowered and emitted in {elapsed:?}"
         );
     }
 

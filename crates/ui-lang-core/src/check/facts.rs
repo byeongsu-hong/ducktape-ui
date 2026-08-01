@@ -864,6 +864,14 @@ pub(crate) struct CheckedMedia {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedContainer {
+    pub(crate) id: ViewId,
+    pub(crate) expression_count: u32,
+    pub(crate) semantic_key: String,
+    pub(crate) style: Option<ExternFnId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -954,6 +962,7 @@ pub(crate) struct CheckedFacts {
     views: Vec<CheckedView>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
+    containers: HashMap<ViewId, CheckedContainer>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1229,6 +1238,12 @@ impl CheckedFacts {
 
     pub(crate) fn media(&self, id: ViewId) -> Option<&CheckedMedia> {
         self.media.get(&id).filter(|media| media.id == id)
+    }
+
+    pub(crate) fn container(&self, id: ViewId) -> Option<&CheckedContainer> {
+        self.containers
+            .get(&id)
+            .filter(|container| container.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3012,6 +3027,80 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(span, "duplicate checked test expression owner"));
         }
         Ok(id)
+    }
+
+    fn lower_container_facts(
+        &mut self,
+        container: ViewId,
+        options: &ContainerOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(container).origin;
+        let roots = crate::ast::container_expression_roots(options);
+        let mut expression_count = 0u32;
+        for expression in &roots {
+            self.push_interaction_expression(
+                container,
+                &mut expression_count,
+                expression,
+                None,
+                env,
+                span,
+                parent,
+            )?;
+        }
+        let remaining_expressions = self
+            .analyses
+            .interaction_entries
+            .keys()
+            .filter(|(owner, _)| *owner == container)
+            .count();
+        let remaining_routes = self
+            .analyses
+            .interaction_route_inputs
+            .keys()
+            .filter(|(owner, _)| *owner == container)
+            .count();
+        if remaining_expressions != 0 || remaining_routes != 0 {
+            return Err(self.invariant(
+                span,
+                format!(
+                    "container left {remaining_expressions} expression and {remaining_routes} route analyses unconsumed"
+                ),
+            ));
+        }
+        if expression_count != roots.len() as u32 {
+            return Err(self.invariant(span, "container expression count diverged"));
+        }
+        let style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ContainerStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "container style extern disappeared"))
+            })
+            .transpose()?;
+        if self
+            .facts
+            .containers
+            .insert(
+                container,
+                CheckedContainer {
+                    id: container,
+                    expression_count,
+                    semantic_key: crate::ast::container_semantic_key(options),
+                    style,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "container facts were produced more than once"));
+        }
+        Ok(())
     }
 
     fn lower_media_facts(
@@ -7411,6 +7500,16 @@ impl<'a> FactsBuilder<'a> {
                         }
                     }
                 }
+            }
+            ViewNode::Container {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_container_facts(view, options, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
+                CheckedViewFlow::None
             }
             ViewNode::Canvas {
                 options,
