@@ -10,11 +10,11 @@ repository.workspace = true
 
 [features]
 default = []
-wgpu = ["iced/wgpu"]
-tiny-skia = ["iced/tiny-skia"]
-x11 = ["iced/x11", "thread-pool"]
-wayland = ["iced/wayland", "thread-pool"]
-thread-pool = ["iced/thread-pool"]
+wgpu = ["iced/wgpu", "ui-lang-runtime?/wgpu"]
+tiny-skia = ["iced/tiny-skia", "ui-lang-runtime?/tiny-skia"]
+x11 = ["iced/x11", "thread-pool", "ui-lang-runtime?/x11"]
+wayland = ["iced/wayland", "thread-pool", "ui-lang-runtime?/wayland"]
+thread-pool = ["iced/thread-pool", "ui-lang-runtime?/thread-pool"]
 full = [
     "accordion",
     "alert",
@@ -86,6 +86,7 @@ full = [
     "toggle-group",
     "tooltip",
     "typography",
+    "virtual-list",
 ]
 theme = ["dep:iced"]
 surface = ["theme"]
@@ -110,6 +111,7 @@ label = ["theme"]
 pagination = ["button"]
 skeleton = ["theme"]
 typography = ["theme"]
+virtual-list = ["theme", "dep:ui-lang-runtime"]
 attachment = ["theme"]
 bubble = ["theme"]
 button-group = ["theme"]
@@ -160,6 +162,7 @@ drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
+ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true, default-features = false, features = ["virtual-list"] }
 
 [dev-dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }

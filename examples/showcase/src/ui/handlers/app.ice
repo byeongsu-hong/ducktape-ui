@@ -161,6 +161,9 @@ on message_scroller_changed(event)
 on message_scroller_applied(next)
   message_scroller = next
 
+on virtual_list_changed(event)
+  virtual_list = virtual_list_apply(virtual_list, event)
+
 on native_popover_changed(event)
   task popover_apply(event) -> native_popover_applied _
 

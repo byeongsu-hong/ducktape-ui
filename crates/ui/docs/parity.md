@@ -78,3 +78,12 @@ Status on 2026-07-17:
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
 ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, `focus-control`, `modal`, and `menu` primitives. `focus-control` provides a stable focus ID and visible ring for either pointer/touch/Enter/Space activation or passive keyboard regions through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.
+
+`VirtualList` is an additional iced-specific product primitive rather than a
+shadcn catalog entry. V1 virtualizes fixed-height unique-key rows, exposes
+controlled single selection and visible-range inspection, supports mouse and
+full list keyboard navigation, and exports mounted-only AccessKit item
+semantics with selected-item active-descendant tracking. Consecutive mounted
+windows retain state for their shared owned keys, and the renderer-only feature
+boundary compiles on native and wasm. Variable-height measurement is
+intentionally out of scope.

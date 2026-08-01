@@ -2,6 +2,7 @@ test app_behavior
   preset test
   viewport 1120 820
   target app = #app
+  target scroller = app/catalog-scroll
   target grid = app/catalog-scroll/page/catalog-grid/root
   target buttons = grid/buttons/root
   target fields = grid/fields/root
@@ -12,6 +13,7 @@ test app_behavior
   expect clicks == 0
   click primary
   expect clicks == 1
+  scroll-to scroller 0.0 400.0
   click project_input
   type "catalog"
   expect project_input.value == "catalog"
@@ -119,7 +121,7 @@ test generated_control_accessibility
 
 test catalog_layout
   preset test
-  viewport 1120 820
+  viewport 1120 1200
   target app = #app
   target scroller = app/catalog-scroll
   target page = scroller/page
@@ -155,7 +157,7 @@ test catalog_layout
   target toast = page/migration-toast/root
   target dismiss_toast = toast/dismiss-toast
   expect app.width ~= 1120.0
-  expect app.height ~= 820.0
+  expect app.height ~= 1200.0
   expect page.x ~= app.x
   expect page.width ~= app.width - 16.0
   expect grid.x ~= page.x + 24.0
@@ -288,6 +290,27 @@ test focused_component_feedback
   expect otp_group.width > 240.0
   expect message_stage.height ~= 188.0
 
+test virtual_list_native_boundary
+  preset test
+  viewport 620 360
+  mount
+    VirtualList.Frame #virtual-list-frame
+      with
+        title="Virtual list"
+        description="Only the mounted fixed-height rows cross the typed boundary."
+        count=100000
+      box #virtual-list-stage w=fill h=252.0
+        extern virtual_list(virtual_list) -> virtual_list_changed _
+  target list_stage = #virtual-list-frame/root/virtual-list-stage
+  expect list_stage.height ~= 252.0
+  click list_stage
+  idle
+  key end
+  idle
+  expect text "mounted 99989..100000 · Selected #99999"
+  expect text "#99999"
+  capture virtual_list_end_selection
+
 test modal_trigger_is_only_the_action
   preset test
   viewport 560 240
@@ -322,7 +345,7 @@ test catalog_full_scroll_visuals
   capture modal_and_data_table
   scroll-to scroller 0.0 4400.0
   capture messages_and_edge_panels
-  scroll-to scroller 0.0 5320.0
+  scroll-to scroller 0.0 5000.0
   click navigation_trigger
   idle
   expect navigation_menu_is_open(navigation_menu)

@@ -43,8 +43,9 @@ view
 Outside this source workspace, vendor the `src/ice` directory at a stable
 application-relative path or use the Rust library below. The workspace entry
 file [`src/ice/default.ice`](src/ice/default.ice) imports only the default
-theme, reusable recipes, and the shared Ice components in
-[`src/ice/components.ice`](src/ice/components.ice). Visual
+theme, reusable recipes, the shared Ice components in
+[`src/ice/components.ice`](src/ice/components.ice), and the retained-widget
+frame in [`src/ice/virtual-list.ice`](src/ice/virtual-list.ice). Visual
 variants use checked compound names such as `Alert.Success`, `Badge.Warning`,
 and `Typography.Caption`; there are no free-form variant strings that can silently
 render an empty component. Its Ice tokens are checked against the retained Rust
@@ -54,6 +55,14 @@ API, where callers pass a complete `Theme`; the Ice interface intentionally
 does not expose partial accent-only theming. Applications that need retained
 widgets define a small typed `extern` boundary for their own data and events;
 the showcase adapter interface is not part of the default application surface.
+
+Large fixed-row collections use the feature-gated
+[`VirtualList`](docs/virtual-list.md). Its state/event API lives in
+`ui-lang-runtime`, `ducktape-ui` applies semantic theme tokens, and
+`VirtualList.Frame` provides the reusable Ice composition around an
+application-owned typed extern. Give the extern slot a bounded height outside
+any vertical scrollable ancestor; the retained list owns vertical scrolling.
+This is intentionally a runtime widget, not new Core syntax.
 
 ## Rust library quick start
 

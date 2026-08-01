@@ -33,10 +33,13 @@ core_patch=(
 build_patch=(
   --config "patch.crates-io.ui-lang-build.path=\"$package_root/crates/ui-lang-build\""
 )
+runtime_patch=(
+  --config "patch.crates-io.ui-lang-runtime.path=\"$package_root/crates/ui-lang-runtime\""
+)
 
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-core
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime
-cargo package --locked --no-verify "${dirty_args[@]}" -p ducktape-ui
+cargo package --locked --no-verify "${dirty_args[@]}" -p ducktape-ui "${runtime_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-build "${core_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang \
   "${core_patch[@]}" "${build_patch[@]}"
@@ -68,6 +71,9 @@ packaged_patches=(
 packaged_build_patch=(
   --config "patch.crates-io.ui-lang-build.path=\"$package_scratch/ui-lang-build-$package_version\""
 )
+packaged_runtime_patch=(
+  --config "patch.crates-io.ui-lang-runtime.path=\"$package_scratch/ui-lang-runtime-$package_version\""
+)
 
 check_package() {
   local package=$1
@@ -78,9 +84,21 @@ check_package() {
     "$@"
 }
 
+check_package_features() {
+  local package=$1
+  local features=$2
+  shift 2
+  CARGO_TARGET_DIR="$package_root/target" cargo check \
+    --manifest-path "$package_scratch/$package-$package_version/Cargo.toml" \
+    --no-default-features \
+    --features "$features" \
+    "$@"
+}
+
 check_package ui-lang-core
 check_package ui-lang-runtime
-check_package ducktape-ui
+check_package_features ui-lang-runtime virtual-list,x11
+check_package ducktape-ui "${packaged_runtime_patch[@]}"
 check_package ui-lang-build "${packaged_patches[@]}"
 check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}"
 check_package cargo-ice "${packaged_patches[@]}"

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:f35f0263c7e0119bab3def0d2640fc7aa51e89e9167094cd7cd4a4c46e352235",
+  "fingerprint": "sha256:6cedd5c5919a89db660a7e3d2896140b0e1d3a067346049f66db4d389ee53174",
   "language_revision": "2.0",
   "package": {
     "name": "ducktape-ui",
@@ -809,6 +809,41 @@
         "events": [],
         "default_output": "unit",
         "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "VirtualList.Frame",
+        "props": [
+          {
+            "name": "count",
+            "ty": "i64",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
         "lifetime": "retained"
       }
     ],

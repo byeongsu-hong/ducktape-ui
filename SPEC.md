@@ -2036,6 +2036,57 @@ with any `Highlighter`, settings, highlight type, and format function. Stock
 Iced editor formats can vary color and font. Mixed metrics, span backgrounds,
 visual-line backgrounds, and shared rich hit-test geometry require a custom
 widget such as `ui_lang_runtime::RichTextEditor`.
+Large fixed-height collections use `ui_lang_runtime::VirtualListState` and the
+feature-gated `ducktape_ui::ui::virtual_list` typed boundary. Stable unique keys
+reconcile selection across reorder/delete, while native focus, pointer selection,
+Up/Down/Home/End/PageUp/PageDown, scroll-to-item, visible-range inspection, and
+named AccessKit list/item metadata remain runtime behavior. Visible and mounted
+range queries derive from the current item count, measured native viewport, and
+scroll offset. Native layout changes emit the typed `ViewportChanged` event;
+revisioned private operations synchronize programmatic state to the native
+scrollable on first layout, remount, and absolute offset zero without a
+caller-owned Iced task. Public keys require `Clone + Eq + Hash`, so owned domain
+identifiers do not require interning. An
+application mounts the widget in a bounded-height parent that does not scroll it
+vertically; `VirtualList` owns its native vertical scrolling. Arbitrary standard
+Iced scrolling ancestors are outside the v1 pointer contract when they translate
+or clip the list on a hit-test axis. Iced 0.14 retains raw window-coordinate
+touch positions while translating only cursor and replacement viewport data, and
+does not expose the lost ancestor transform to the descendant. Ordinary
+non-scrolling layout parents remain supported; nested scrolling requires a
+future explicit coordinate-context contract rather than inferred geometry. An
+explicit `VirtualListId` combines a readable logical name with a runtime-unique
+namespace; identity and retained state are not clonable, while explicit `fork`
+requires a new logical name and copies retained data into a new namespace
+instead of aliasing it. Logical names must be unique among concurrently mounted
+lists so headless selectors are exact. Separate `VirtualListId::new` calls with
+duplicate logical names violate that selector contract, but their runtime-unique
+namespaces still prevent native widget and AccessKit identity collisions.
+The collection selector comes from `VirtualListId::selector`, and reconciled
+row selectors come from `VirtualListState::item_selector`; callers do not
+reconstruct either from the readable logical name. Canonical UTF-8 percent
+escaping and separate reserved list/item namespaces prevent a logical name that
+resembles a row path from aliasing another semantic target.
+`update_snapshot` preserves identity only for value-oriented reducer replacement
+and its old snapshot may not remain mounted. Its immutable per-key semantic map
+is shared in constant time; only successful explicit reconciliation publishes a
+new complete map. Retained
+per-key semantic allocations remain distinct even when
+different keys produce the same hash. Only mounted visible-plus-overscan rows
+become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
+behavior take precedence over row selection. Touch ownership uses the pressed
+and lifted event positions translated through the list's owned native scroll
+offset, clipped to its owned viewport, plus descendant capture before and after
+dispatch, independently of the current mouse cursor. Trees for
+keys in consecutive mounted-window intersections
+remain retained. The focused AccessKit list exposes its selected mounted item as
+the active descendant. `VirtualList.Frame`
+is an Ice composition around an app-owned extern component; there is deliberately
+no `virtual-for` syntax, variable-height measurement, or nested vertical-scroll
+contract in v1. Accessibility v1
+focuses and navigates the collection but does not create offscreen item nodes or
+per-item accessibility actions.
+
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
 inside a component may bind only a prop declared with `bind`. Every call passes

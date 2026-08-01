@@ -4,6 +4,7 @@ use iced::advanced::widget::Operation;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
@@ -19,15 +20,30 @@ pub const READY_PATH_ENV: &str = "ICE_DEV_READY_PATH";
 #[doc(hidden)]
 pub const READY_TOKEN_ENV: &str = "ICE_DEV_READY_TOKEN";
 
+/// Optional draw probe that must run before the readiness marker is published.
+#[doc(hidden)]
+pub const REQUIRED_DRAW_ENV: &str = "ICE_DEV_REQUIRED_DRAW";
+
 static READY_CONFIG: OnceLock<Option<ReadyConfig>> = OnceLock::new();
 static READY_PUBLISHED: AtomicBool = AtomicBool::new(false);
 static READY_PUBLISH_LOCK: Mutex<()> = Mutex::new(());
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
+static DRAW_PROBES: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
 
 #[derive(Debug)]
 struct ReadyConfig {
     path: PathBuf,
     token: String,
+    required_draw: Option<String>,
+}
+
+/// Records that a named widget completed its renderer-specific draw path.
+#[doc(hidden)]
+pub fn record_draw_probe(name: &'static str) {
+    let mut probes = DRAW_PROBES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    probes.get_or_insert_with(HashSet::new).insert(name);
 }
 
 /// Wraps the generated root so a dev candidate signals readiness after its
@@ -175,7 +191,22 @@ fn publish_ready() {
         return;
     };
 
+    if !required_draw_completed(config.required_draw.as_deref()) {
+        return;
+    }
+
     let _ = try_publish_ready(config, &READY_PUBLISHED, &READY_PUBLISH_LOCK);
+}
+
+fn required_draw_completed(required: Option<&str>) -> bool {
+    let Some(required) = required else {
+        return true;
+    };
+    DRAW_PROBES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .is_some_and(|probes| probes.contains(required))
 }
 
 impl ReadyConfig {
@@ -190,6 +221,9 @@ impl ReadyConfig {
         Some(Self {
             path: path.into(),
             token,
+            required_draw: std::env::var(REQUIRED_DRAW_ENV)
+                .ok()
+                .filter(|probe| !probe.is_empty()),
         })
     }
 }
@@ -292,6 +326,7 @@ mod tests {
             &ReadyConfig {
                 path: marker.clone(),
                 token: "candidate token with spaces".into(),
+                required_draw: None,
             },
             &published,
             &lock,
@@ -302,6 +337,7 @@ mod tests {
             &ReadyConfig {
                 path: marker.clone(),
                 token: "replacement".into(),
+                required_draw: None,
             },
             &published,
             &lock,
@@ -317,6 +353,7 @@ mod tests {
         let config = ReadyConfig {
             path: marker.clone(),
             token: "retry-token".into(),
+            required_draw: None,
         };
         let published = AtomicBool::new(false);
         let lock = Mutex::new(());
@@ -327,6 +364,15 @@ mod tests {
         fs::create_dir(&parent).unwrap();
         assert!(try_publish_ready(&config, &published, &lock));
         assert_eq!(fs::read(marker).unwrap(), b"retry-token");
+    }
+
+    #[test]
+    fn required_draw_probe_blocks_readiness_until_the_widget_draws() {
+        const PROBE: &str = "virtual-list-test-probe";
+        assert!(!required_draw_completed(Some(PROBE)));
+        record_draw_probe(PROBE);
+        assert!(required_draw_completed(Some(PROBE)));
+        assert!(required_draw_completed(None));
     }
 
     struct DrawRecorder(Arc<AtomicU8>);

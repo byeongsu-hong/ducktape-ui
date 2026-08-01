@@ -7,10 +7,17 @@ mod dynamic_themer;
 mod flex;
 mod qr;
 mod resize_handle;
+#[cfg(feature = "full-runtime")]
 pub mod rich_text_editor;
 mod selectable_text;
 #[doc(hidden)]
+#[cfg(feature = "test-runtime")]
 pub mod testing;
+#[cfg(not(feature = "test-runtime"))]
+#[path = "testing_minimal.rs"]
+pub mod testing;
+#[cfg(feature = "virtual-list")]
+mod virtual_list;
 mod zstack;
 
 pub use dashed_border::*;
@@ -18,8 +25,11 @@ pub use dynamic_themer::*;
 pub use flex::*;
 pub use qr::*;
 pub use resize_handle::*;
+#[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use selectable_text::*;
+#[cfg(feature = "virtual-list")]
+pub use virtual_list::*;
 pub use zstack::*;
 
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
@@ -111,6 +121,10 @@ impl StableId {
         Self(NodeId(if hash == 0 { 1 } else { hash }))
     }
 
+    pub(crate) const fn from_node_id(node_id: NodeId) -> Self {
+        Self(node_id)
+    }
+
     /// Returns the AccessKit node identity.
     pub const fn node_id(self) -> NodeId {
         self.0
@@ -139,6 +153,10 @@ struct Semantics<Message> {
     description: Option<String>,
     value: Option<String>,
     checked: Option<bool>,
+    selected: Option<bool>,
+    position_in_set: Option<usize>,
+    size_of_set: Option<usize>,
+    active_descendant: Option<StableId>,
     disabled: bool,
     focus: FocusBehavior,
     focus_id: widget::Id,
@@ -169,6 +187,10 @@ impl<Message> Semantics<Message> {
             description: None,
             value: None,
             checked: None,
+            selected: None,
+            position_in_set: None,
+            size_of_set: None,
+            active_descendant: None,
             disabled: false,
             focus,
             focus_id: id.widget_id(),
@@ -321,6 +343,36 @@ where
         self
     }
 
+    /// Marks whether this semantic item is selected.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.semantics.selected = Some(selected);
+        self
+    }
+
+    /// Sets this item's one-based position in its logical collection.
+    pub fn position_in_set(mut self, position: usize) -> Self {
+        self.semantics.position_in_set = Some(position);
+        self
+    }
+
+    /// Sets the total number of items in this semantic collection.
+    pub fn size_of_set(mut self, size: usize) -> Self {
+        self.semantics.size_of_set = Some(size);
+        self
+    }
+
+    /// Identifies the currently active semantic descendant of this collection.
+    pub fn active_descendant(mut self, id: StableId) -> Self {
+        self.semantics.active_descendant = Some(id);
+        self
+    }
+
+    /// Identifies the active descendant when the item is currently mounted.
+    pub fn active_descendant_maybe(mut self, id: Option<StableId>) -> Self {
+        self.semantics.active_descendant = id;
+        self
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.semantics.disabled = disabled;
         self
@@ -328,6 +380,12 @@ where
 
     pub fn focus_id(mut self, id: impl Into<widget::Id>) -> Self {
         self.semantics.focus_id = id.into();
+        self
+    }
+
+    /// Maps focus from a native focusable descendant onto this semantic node.
+    pub fn focus_descendant(mut self) -> Self {
+        self.semantics.focus = FocusBehavior::Descendant;
         self
     }
 
@@ -1070,6 +1128,18 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(checked) = semantics.checked {
             node.set_toggled(Toggled::from(checked));
+        }
+        if let Some(selected) = semantics.selected {
+            node.set_selected(selected);
+        }
+        if let Some(position) = semantics.position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = semantics.size_of_set {
+            node.set_size_of_set(size);
+        }
+        if let Some(active_descendant) = semantics.active_descendant {
+            node.set_active_descendant(active_descendant.node_id());
         }
         if semantics.disabled {
             node.set_disabled();
