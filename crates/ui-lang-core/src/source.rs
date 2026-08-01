@@ -119,13 +119,9 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     AnalysisDb::default().compile_root(path)
 }
 
-pub(crate) fn analyze_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
-    let document = analyze_loaded_without_assets(loaded)?;
-    check_assets(&document, loaded).map_err(|error| remap_error(error, loaded))?;
-    Ok(document)
-}
-
-fn analyze_loaded_without_assets(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
+pub(crate) fn analyze_loaded_without_assets(
+    loaded: &LoadedSource,
+) -> Result<CheckedDocument, Error> {
     let namespaces = loaded
         .origins
         .iter()
