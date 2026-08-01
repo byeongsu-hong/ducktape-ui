@@ -271,7 +271,7 @@ fn allocation_contract_100k_total_allocations() {
     );
 
     drop(profiler);
-    write_records(&records);
+    assert_allocation_budgets(&records);
 }
 
 fn measure(
@@ -287,22 +287,36 @@ fn measure(
     let after = dhat::HeapStats::get();
     let allocation_count = after.total_blocks - before.total_blocks;
     let allocated_bytes = after.total_bytes - before.total_bytes;
-    assert!(
-        allocation_count <= allocation_count_budget,
-        "{scenario} allocated {allocation_count} blocks; budget is {allocation_count_budget}"
+    let injected = std::env::var_os("ICE_EDITOR_PERF_INJECT_HEAP_FAILURE");
+    let (allocation_count_budget, allocated_bytes_budget) = allocation_budgets(
+        scenario,
+        allocation_count_budget,
+        allocated_bytes_budget,
+        injected.as_deref(),
     );
-    assert!(
-        allocated_bytes <= allocated_bytes_budget,
-        "{scenario} allocated {allocated_bytes} bytes; budget is {allocated_bytes_budget}"
-    );
-    records.push(AllocationRecord {
+    let record = AllocationRecord {
         scenario,
         iterations,
         allocation_count,
         allocated_bytes,
         allocation_count_budget,
         allocated_bytes_budget,
-    });
+    };
+    write_record(&record);
+    records.push(record);
+}
+
+fn allocation_budgets(
+    scenario: &str,
+    allocation_count_budget: u64,
+    allocated_bytes_budget: u64,
+    injected_failure: Option<&std::ffi::OsStr>,
+) -> (u64, u64) {
+    if injected_failure == Some(std::ffi::OsStr::new(scenario)) {
+        (1, 1)
+    } else {
+        (allocation_count_budget, allocated_bytes_budget)
+    }
 }
 
 fn editable_editor(
@@ -345,37 +359,123 @@ fn large_source() -> String {
         .collect()
 }
 
-fn write_records(records: &[AllocationRecord]) {
+fn write_record(record: &AllocationRecord) {
     let Some(path) = std::env::var_os("ICE_EDITOR_PERF_JSONL") else {
-        for record in records {
-            eprintln!(
-                "{}: {} allocations, {} bytes",
-                record.scenario, record.allocation_count, record.allocated_bytes
-            );
-        }
+        eprintln!(
+            "{}: {} allocations, {} bytes",
+            record.scenario, record.allocation_count, record.allocated_bytes
+        );
         return;
     };
-    let path = PathBuf::from(path);
+    write_record_to(&PathBuf::from(path), record);
+}
+
+fn write_record_to(path: &std::path::Path, record: &AllocationRecord) {
     let mut output = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .unwrap_or_else(|error| panic!("failed to open {}: {error}", path.display()));
+    let value = serde_json::json!({
+        "schema": "ice.rich-text-editor.performance.v1",
+        "kind": "heap",
+        "scenario": record.scenario,
+        "document_lines": LINE_COUNT + 1,
+        "iterations": record.iterations,
+        "collector": "dhat-0.3.3",
+        "scope": "operation-only",
+        "allocation_count": record.allocation_count,
+        "allocated_bytes": record.allocated_bytes,
+        "allocation_count_budget": record.allocation_count_budget,
+        "allocated_bytes_budget": record.allocated_bytes_budget,
+    });
+    writeln!(output, "{value}")
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+    output
+        .flush()
+        .unwrap_or_else(|error| panic!("failed to flush {}: {error}", path.display()));
+    output
+        .sync_all()
+        .unwrap_or_else(|error| panic!("failed to sync {}: {error}", path.display()));
+}
+
+fn allocation_budget_failures(records: &[AllocationRecord]) -> Vec<String> {
+    let mut failures = Vec::new();
     for record in records {
-        let value = serde_json::json!({
-            "schema": "ice.rich-text-editor.performance.v1",
-            "kind": "heap",
-            "scenario": record.scenario,
-            "document_lines": LINE_COUNT + 1,
-            "iterations": record.iterations,
-            "collector": "dhat-0.3.3",
-            "scope": "operation-only",
-            "allocation_count": record.allocation_count,
-            "allocated_bytes": record.allocated_bytes,
-            "allocation_count_budget": record.allocation_count_budget,
-            "allocated_bytes_budget": record.allocated_bytes_budget,
-        });
-        writeln!(output, "{value}")
-            .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+        if record.allocation_count > record.allocation_count_budget {
+            failures.push(format!(
+                "{} allocated {} blocks; budget is {}",
+                record.scenario, record.allocation_count, record.allocation_count_budget
+            ));
+        }
+        if record.allocated_bytes > record.allocated_bytes_budget {
+            failures.push(format!(
+                "{} allocated {} bytes; budget is {}",
+                record.scenario, record.allocated_bytes, record.allocated_bytes_budget
+            ));
+        }
     }
+    failures
+}
+
+fn assert_allocation_budgets(records: &[AllocationRecord]) {
+    if let Err(message) = allocation_budget_gate(records) {
+        panic!("{message}");
+    }
+}
+
+fn allocation_budget_gate(records: &[AllocationRecord]) -> Result<(), String> {
+    let failures = allocation_budget_failures(records);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "RichTextEditor allocation budgets failed:\n{}",
+            failures.join("\n")
+        ))
+    }
+}
+
+#[test]
+fn performance_evidence_failure_injection_preserves_heap_record() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    let path = std::env::temp_dir().join(format!(
+        "ice-editor-heap-evidence-{}-{}.jsonl",
+        std::process::id(),
+        NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (allocation_count_budget, allocated_bytes_budget) = allocation_budgets(
+        "caret_1000",
+        2_000,
+        1_000_000,
+        Some(std::ffi::OsStr::new("caret_1000")),
+    );
+    let record = AllocationRecord {
+        scenario: "caret_1000",
+        iterations: 1_000,
+        allocation_count: 2,
+        allocated_bytes: 3,
+        allocation_count_budget,
+        allocated_bytes_budget,
+    };
+    write_record_to(&path, &record);
+    let failures = allocation_budget_failures(&[record]);
+
+    let raw = std::fs::read_to_string(&path).expect("failure evidence must be readable");
+    std::fs::remove_file(&path).expect("temporary failure evidence must be removable");
+    let lines = raw.lines().collect::<Vec<_>>();
+    let [line] = lines.as_slice() else {
+        panic!("failure evidence must contain exactly one record: {raw:?}");
+    };
+    let value: serde_json::Value = serde_json::from_str(line).expect("valid failure evidence");
+    assert_eq!(value["scenario"], "caret_1000");
+    assert_eq!(value["allocation_count"], 2);
+    assert_eq!(value["allocated_bytes"], 3);
+    assert_eq!(failures.len(), 2);
+    assert!(failures[0].contains("allocated 2 blocks; budget is 1"));
+    assert!(failures[1].contains("allocated 3 bytes; budget is 1"));
+    assert!(allocation_budget_gate(&[record]).is_err());
 }

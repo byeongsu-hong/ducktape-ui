@@ -143,10 +143,14 @@ The wrapper keeps unsafe allocator implementation out of this workspace's
 forbid-unsafe source. These totals do not include the fixture setup, resident
 memory, GPU/driver allocations, or native allocations that bypass Rust's
 global allocator. They are therefore allocator-request evidence for the hot
-operation, not a whole-process or physical-memory measurement. CI validates
-the wall-time, deterministic-counter, and heap-budget records as a strict
-12-line JSONL artifact and uploads that evidence. The same gate is reproducible
-with `scripts/editor-performance-contracts.sh [artifact-path]`.
+operation, not a whole-process or physical-memory measurement. Each operation
+and heap record is flushed and synced before its budget is gated. The runner
+continues through the remaining scenarios after a budget failure, then reports
+the aggregate failure, so the uploaded evidence retains every measurable
+actual value. CI rejects duplicate JSON object keys at any nesting depth,
+non-finite values, and the existing schema, identity, numeric, and budget
+violations before accepting the strict 12-line JSONL artifact. The same gate is
+reproducible with `scripts/editor-performance-contracts.sh [artifact-path]`.
 
 Text revisions still materialize and parse the native buffer, line layout
 still prepares O(N) slots and top offsets, and a stateful highlighter or format

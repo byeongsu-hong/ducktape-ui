@@ -502,6 +502,7 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     tree.state
         .downcast_mut::<State<text::highlighter::PlainText>>()
         .metrics = LayoutMetrics::default();
+    let mut budget_failures = Vec::new();
 
     let caret_started = Instant::now();
     for event in 0..1_000 {
@@ -526,14 +527,13 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.document.lines.len(), 100_001);
     assert_eq!(state.metrics, LayoutMetrics::default());
-    assert_performance_budget("1,000 caret layouts", caret_elapsed, 5);
-    record_performance_metrics(
+    budget_failures.extend(record_performance_metrics(
         "caret_1000",
         1_000,
         caret_elapsed,
         Duration::from_secs(5),
         &state.metrics,
-    );
+    ));
 
     tree.state
         .downcast_mut::<State<text::highlighter::PlainText>>()
@@ -599,18 +599,18 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.metrics.highlighted_lines, 50_001);
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
-    assert_performance_budget("hinted 100k-line edit", elapsed, 5);
-    record_performance_metrics(
+    budget_failures.extend(record_performance_metrics(
         "one_char_insertion",
         1,
         elapsed,
         Duration::from_secs(5),
         &state.metrics,
-    );
+    ));
     eprintln!(
         "100k caret={caret_elapsed:?}, insertion={elapsed:?}, metrics={:?}",
         state.metrics
     );
+    assert_performance_budgets(&budget_failures);
 }
 
 #[test]
@@ -726,18 +726,20 @@ fn performance_contract_100k_selection_drag_pointer_events() {
         .downcast_ref::<State<text::highlighter::PlainText>>();
     assert_eq!(state.document.lines.len(), 100_001);
     assert_eq!(state.metrics, LayoutMetrics::default());
-    assert_performance_budget("1,000 selection drag events", elapsed, 10);
-    record_performance_metrics(
+    let budget_failures = record_performance_metrics(
         "selection_drag_1000",
         1_000,
         elapsed,
         Duration::from_secs(10),
         &state.metrics,
-    );
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
     eprintln!(
         "100k selection drag={elapsed:?}, metrics={:?}",
         state.metrics
     );
+    assert_performance_budgets(&budget_failures);
 }
 
 #[test]
@@ -809,15 +811,17 @@ fn performance_contract_100k_hangul_ime_sequence() {
     assert_eq!(state.metrics.shaped_paragraphs, 3);
     assert_eq!(state.metrics.highlighted_lines, 150_003);
     assert_eq!(state.metrics.accepted_change_hints, 0);
-    assert_performance_budget("100k-line Hangul IME sequence", elapsed, 15);
-    record_performance_metrics(
+    let budget_failures = record_performance_metrics(
         "hangul_ime_sequence",
         3,
         elapsed,
         Duration::from_secs(15),
         &state.metrics,
-    );
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
     eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
+    assert_performance_budgets(&budget_failures);
 }
 
 #[test]
@@ -862,15 +866,17 @@ fn performance_contract_100k_format_key_only_layout() {
     assert_eq!(state.metrics.rebuilt_lines, 100_001);
     assert_eq!(state.metrics.shaped_paragraphs, 100_001);
     assert_eq!(state.metrics.highlighted_lines, 100_001);
-    assert_performance_budget("100k-line format-key-only layout", elapsed, 30);
-    record_performance_metrics(
+    let budget_failures = record_performance_metrics(
         "format_key_only",
         1,
         elapsed,
         Duration::from_secs(30),
         &state.metrics,
-    );
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
     eprintln!("100k format key={elapsed:?}, metrics={:?}", state.metrics);
+    assert_performance_budgets(&budget_failures);
 }
 
 #[test]
@@ -912,15 +918,17 @@ fn performance_contract_100k_viewport_resize() {
     assert_eq!(state.metrics.rebuilt_lines, 100_001);
     assert_eq!(state.metrics.shaped_paragraphs, 100_001);
     assert_eq!(state.metrics.highlighted_lines, 0);
-    assert_performance_budget("100k-line viewport resize", elapsed, 30);
-    record_performance_metrics(
+    let budget_failures = record_performance_metrics(
         "viewport_resize",
         1,
         elapsed,
         Duration::from_secs(30),
         &state.metrics,
-    );
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
     eprintln!("100k resize={elapsed:?}, metrics={:?}", state.metrics);
+    assert_performance_budgets(&budget_failures);
 }
 
 fn large_source() -> String {
@@ -929,31 +937,46 @@ fn large_source() -> String {
         .collect()
 }
 
-fn assert_performance_budget(label: &str, elapsed: Duration, seconds: u64) {
-    assert!(
-        elapsed < Duration::from_secs(seconds),
-        "{label} took {elapsed:?}; budget is {seconds}s"
-    );
-}
-
 fn record_performance_metrics(
     scenario: &str,
     iterations: usize,
     elapsed: Duration,
     budget: Duration,
     metrics: &LayoutMetrics,
-) {
-    use std::fs::OpenOptions;
-    use std::io::Write as _;
+) -> Option<String> {
+    let path = std::env::var_os("ICE_EDITOR_PERF_JSONL").map(std::path::PathBuf::from);
+    let injected = std::env::var_os("ICE_EDITOR_PERF_INJECT_WALL_FAILURE");
+    let budget = wall_time_budget(scenario, budget, injected.as_deref());
+    record_performance_metrics_to(
+        path.as_deref(),
+        scenario,
+        iterations,
+        elapsed,
+        budget,
+        metrics,
+    )
+}
 
-    let Some(path) = std::env::var_os("ICE_EDITOR_PERF_JSONL") else {
-        return;
-    };
-    let mut output = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .unwrap_or_else(|error| panic!("failed to open {}: {error}", path.to_string_lossy()));
+fn wall_time_budget(
+    scenario: &str,
+    budget: Duration,
+    injected_failure: Option<&std::ffi::OsStr>,
+) -> Duration {
+    if injected_failure == Some(std::ffi::OsStr::new(scenario)) {
+        Duration::from_nanos(1)
+    } else {
+        budget
+    }
+}
+
+fn record_performance_metrics_to(
+    path: Option<&std::path::Path>,
+    scenario: &str,
+    iterations: usize,
+    elapsed: Duration,
+    budget: Duration,
+    metrics: &LayoutMetrics,
+) -> Option<String> {
     let value = serde_json::json!({
         "schema": "ice.rich-text-editor.performance.v1",
         "kind": "operation",
@@ -983,6 +1006,92 @@ fn record_performance_metrics(
             "rejected_change_hints": metrics.rejected_change_hints,
         },
     });
+    if let Some(path) = path {
+        append_performance_record(path, &value);
+    }
+
+    (elapsed >= budget).then(|| {
+        format!(
+            "{scenario} took {}ns; budget is {}ns",
+            elapsed.as_nanos(),
+            budget.as_nanos()
+        )
+    })
+}
+
+fn append_performance_record(path: &std::path::Path, value: &serde_json::Value) {
+    use std::fs::OpenOptions;
+    use std::io::Write as _;
+
+    let mut output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap_or_else(|error| panic!("failed to open {}: {error}", path.display()));
     writeln!(output, "{value}")
-        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.to_string_lossy()));
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+    output
+        .flush()
+        .unwrap_or_else(|error| panic!("failed to flush {}: {error}", path.display()));
+    output
+        .sync_all()
+        .unwrap_or_else(|error| panic!("failed to sync {}: {error}", path.display()));
+}
+
+fn assert_performance_budgets(failures: &[String]) {
+    if let Err(message) = performance_budget_gate(failures) {
+        panic!("{message}");
+    }
+}
+
+fn performance_budget_gate(failures: &[String]) -> Result<(), String> {
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "RichTextEditor wall-time budgets failed:\n{}",
+            failures.join("\n")
+        ))
+    }
+}
+
+#[test]
+fn performance_evidence_failure_injection_preserves_wall_record() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    let path = std::env::temp_dir().join(format!(
+        "ice-editor-wall-evidence-{}-{}.jsonl",
+        std::process::id(),
+        NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+    ));
+    let metrics = LayoutMetrics::default();
+    let budget = wall_time_budget(
+        "caret_1000",
+        Duration::from_secs(5),
+        Some(std::ffi::OsStr::new("caret_1000")),
+    );
+    let failure = record_performance_metrics_to(
+        Some(&path),
+        "caret_1000",
+        1_000,
+        Duration::from_nanos(2),
+        budget,
+        &metrics,
+    )
+    .expect("injected wall-time excess must fail the gate");
+
+    let raw = std::fs::read_to_string(&path).expect("failure evidence must be readable");
+    std::fs::remove_file(&path).expect("temporary failure evidence must be removable");
+    let lines = raw.lines().collect::<Vec<_>>();
+    let [line] = lines.as_slice() else {
+        panic!("failure evidence must contain exactly one record: {raw:?}");
+    };
+    let record: serde_json::Value = serde_json::from_str(line).expect("valid failure evidence");
+    assert_eq!(record["scenario"], "caret_1000");
+    assert_eq!(record["elapsed_ns"], 2);
+    assert_eq!(record["wall_time_budget_ns"], 1);
+    assert!(failure.contains("took 2ns; budget is 1ns"));
+    assert!(performance_budget_gate(&[failure]).is_err());
 }
