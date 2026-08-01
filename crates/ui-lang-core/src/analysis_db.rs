@@ -116,6 +116,8 @@ pub struct AnalysisMetrics {
     pub files_scanned: usize,
     pub roots_checked: usize,
     pub roots_reused: usize,
+    pub root_cache_hits: usize,
+    pub speculative_runs: usize,
     pub symbols_indexed: usize,
     pub codegen_roots: usize,
     pub elapsed: AnalysisTimings,
@@ -152,7 +154,7 @@ struct RootFingerprint(Vec<(FileKey, Option<String>)>);
 #[derive(Clone, Debug)]
 struct CheckedRoot {
     fingerprint: RootFingerprint,
-    analysis: FileAnalysis,
+    analysis: Arc<FileAnalysis>,
 }
 
 #[derive(Debug)]
@@ -166,7 +168,7 @@ struct LoadedGraph {
 /// The owner controls its lifetime. The DB never writes a cache to disk and it
 /// does not use global state, so LSP/dev processes can retain it while one-shot
 /// callers can create it for a single command.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AnalysisDb {
     config: AnalysisConfig,
     overlays: HashMap<PathBuf, Arc<str>>,
@@ -198,6 +200,29 @@ impl AnalysisDb {
 
     pub fn take_metrics(&mut self) -> AnalysisMetrics {
         std::mem::take(&mut self.metrics)
+    }
+
+    /// Run a candidate analysis against a cheap fork and discard every cache,
+    /// overlay, and dependency mutation while retaining exact work counters.
+    pub fn speculate<T>(&mut self, operation: impl FnOnce(&mut AnalysisDb) -> T) -> T {
+        let mut candidate = self.clone();
+        candidate.metrics = AnalysisMetrics::default();
+        let result = operation(&mut candidate);
+        self.metrics.files_loaded += candidate.metrics.files_loaded;
+        self.metrics.bytes_loaded += candidate.metrics.bytes_loaded;
+        self.metrics.files_hashed += candidate.metrics.files_hashed;
+        self.metrics.bytes_hashed += candidate.metrics.bytes_hashed;
+        self.metrics.files_scanned += candidate.metrics.files_scanned;
+        self.metrics.roots_checked += candidate.metrics.roots_checked;
+        self.metrics.roots_reused += candidate.metrics.roots_reused;
+        self.metrics.root_cache_hits += candidate.metrics.root_cache_hits;
+        self.metrics.symbols_indexed += candidate.metrics.symbols_indexed;
+        self.metrics.codegen_roots += candidate.metrics.codegen_roots;
+        self.metrics.elapsed.load += candidate.metrics.elapsed.load;
+        self.metrics.elapsed.check += candidate.metrics.elapsed.check;
+        self.metrics.elapsed.codegen += candidate.metrics.elapsed.codegen;
+        self.metrics.speculative_runs += 1 + candidate.metrics.speculative_runs;
+        result
     }
 
     pub fn parsed_file_count(&self) -> usize {
@@ -256,6 +281,7 @@ impl AnalysisDb {
         path: impl AsRef<Path>,
         source: impl Into<String>,
     ) -> Result<AnalysisInvalidation, Error> {
+        let source = source.into();
         let path = normalize_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
@@ -264,7 +290,17 @@ impl AnalysisDb {
                 format!("cannot resolve overlay path: {error}"),
             )
         })?;
-        let source: Arc<str> = Arc::from(source.into());
+        if self
+            .overlays
+            .get(&path)
+            .is_some_and(|current| current.as_ref() == source)
+        {
+            return Ok(AnalysisInvalidation {
+                changed: false,
+                affected_roots: self.dirty_roots.clone(),
+            });
+        }
+        let source: Arc<str> = Arc::from(source);
         let key = self.file_key(path.clone(), &source);
         let changed = self.current_files.get(&path) != Some(&key);
         self.overlays.insert(path.clone(), source);
@@ -391,7 +427,7 @@ impl AnalysisDb {
                 .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
             self.metrics.roots_reused += 1;
             self.dirty_roots.remove(&root);
-            let mut analysis = cached.analysis.clone();
+            let mut analysis = cached.analysis.as_ref().clone();
             analysis.dependencies.push(requested_path);
             analysis.dependencies.sort();
             analysis.dependencies.dedup();
@@ -409,20 +445,53 @@ impl AnalysisDb {
         dependencies.push(requested_path);
         dependencies.sort();
         dependencies.dedup();
-        let analysis = FileAnalysis {
+        let analysis = Arc::new(FileAnalysis {
             document,
             dependencies,
             asset_dependencies,
-        };
+        });
         self.checked_roots.insert(
             root.clone(),
             CheckedRoot {
                 fingerprint: graph.fingerprint,
-                analysis: analysis.clone(),
+                analysis: Arc::clone(&analysis),
             },
         );
         self.dirty_roots.remove(&root);
-        Ok(analysis)
+        Ok(analysis.as_ref().clone())
+    }
+
+    /// Return the retained checked root without loading, hashing, parsing, or
+    /// checking any source when the owner has not invalidated it.
+    ///
+    /// Long-lived owners must report input changes through `set_overlay`,
+    /// `remove_overlay`, or `refresh_file`. One-shot callers that do not own an
+    /// input-change feed should continue to use `analyze_root`.
+    pub fn query_root(&mut self, path: impl AsRef<Path>) -> Result<Arc<FileAnalysis>, Error> {
+        let requested = path.as_ref().to_owned();
+        let root = normalize_path(&requested).map_err(|error| {
+            file_error(
+                "E181",
+                &requested,
+                1,
+                format!("cannot resolve source path: {error}"),
+            )
+        })?;
+        if !self.dirty_roots.contains(&root)
+            && let Some(cached) = self.checked_roots.get(&root)
+        {
+            self.metrics.root_cache_hits += 1;
+            return Ok(Arc::clone(&cached.analysis));
+        }
+
+        self.analyze_root(&requested)?;
+        Ok(Arc::clone(
+            &self
+                .checked_roots
+                .get(&root)
+                .expect("successful root analysis must populate the checked cache")
+                .analysis,
+        ))
     }
 
     pub fn analyze_roots(
@@ -876,6 +945,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -985,6 +1055,55 @@ mod tests {
             key.compiler_features().iter().collect::<Vec<_>>(),
             ["native-dialog"]
         );
+    }
+
+    #[test]
+    fn retained_root_query_performs_zero_source_or_semantic_work() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("part.ice", &component("Part", "one"));
+        let mut db = AnalysisDb::default();
+
+        let first = db.query_root(fixture.path("app.ice")).unwrap();
+        db.take_metrics();
+        let second = db.query_root(fixture.path("app.ice")).unwrap();
+        let metrics = db.take_metrics();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(metrics.root_cache_hits, 1);
+        assert_eq!(metrics.files_loaded, 0);
+        assert_eq!(metrics.bytes_loaded, 0);
+        assert_eq!(metrics.files_hashed, 0);
+        assert_eq!(metrics.bytes_hashed, 0);
+        assert_eq!(metrics.files_scanned, 0);
+        assert_eq!(metrics.roots_checked, 0);
+        assert_eq!(metrics.roots_reused, 0);
+        assert_eq!(metrics.symbols_indexed, 0);
+    }
+
+    #[test]
+    fn speculative_analysis_preserves_the_retained_root() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("part.ice", &component("Part", "one"));
+        let mut db = AnalysisDb::default();
+        let retained = db.query_root(fixture.path("app.ice")).unwrap();
+        db.take_metrics();
+
+        let candidate_checked = db.speculate(|candidate| {
+            candidate
+                .set_overlay(fixture.path("part.ice"), component("Part", "candidate"))
+                .unwrap();
+            candidate.query_root(fixture.path("app.ice")).is_ok()
+        });
+        assert!(candidate_checked);
+        let current = db.query_root(fixture.path("app.ice")).unwrap();
+        assert!(Arc::ptr_eq(&retained, &current));
+
+        let metrics = db.take_metrics();
+        assert_eq!(metrics.speculative_runs, 1);
+        assert_eq!(metrics.roots_checked, 1);
+        assert_eq!(metrics.root_cache_hits, 1);
     }
 
     #[test]

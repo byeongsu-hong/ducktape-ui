@@ -113,6 +113,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
     let mut cargo_diagnostic_reports = CargoDiagnosticReports::new();
     let mut workspace_roots = Vec::<PathBuf>::new();
     let mut initialized = false;
+    let mut watched_files_registration = false;
     let mut shutdown = false;
 
     while let Some(incoming) = read_message(reader)? {
@@ -124,6 +125,14 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
         let valid_id = id
             .as_ref()
             .is_none_or(|id| id.is_null() || id.is_number() || id.is_string());
+        let valid_response = message.is_object()
+            && message.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+            && message.get("method").is_none()
+            && id.is_some()
+            && (message.get("result").is_some() ^ message.get("error").is_some());
+        if valid_id && valid_response {
+            continue;
+        }
         if !message.is_object()
             || message.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
             || !message.get("method").is_some_and(Value::is_string)
@@ -148,6 +157,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     | "textDocument/didOpen"
                     | "textDocument/didChange"
                     | "textDocument/didClose"
+                    | "workspace/didChangeWatchedFiles"
             )
         {
             request_error(
@@ -185,6 +195,10 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     continue;
                 };
                 workspace_roots = initialize_roots(params);
+                watched_files_registration = params["capabilities"]["workspace"]
+                    ["didChangeWatchedFiles"]["dynamicRegistration"]
+                    .as_bool()
+                    == Some(true);
                 respond(
                     writer,
                     id,
@@ -280,6 +294,17 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     )?;
                 }
             }
+            "workspace/didChangeWatchedFiles" => {
+                if refresh_watched_files(&mut analysis_db, &documents, &message["params"]) {
+                    reanalyze_open_roots(
+                        writer,
+                        &documents,
+                        &mut analysis_db,
+                        &mut diagnostic_reports,
+                        &cargo_diagnostic_reports,
+                    )?;
+                }
+            }
             "textDocument/formatting" => {
                 if let Some(id) = id {
                     if valid_document_formatting_params(&message["params"]) {
@@ -307,8 +332,9 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/completion" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        let items = completion_items_at(&documents, &message["params"])
-                            .unwrap_or_else(schema::completion_items);
+                        let items =
+                            completion_items_at(&mut analysis_db, &documents, &message["params"])
+                                .unwrap_or_else(schema::completion_items);
                         respond(writer, id, Value::Array(items))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
@@ -318,7 +344,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/hover" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        let result = hover_at(&documents, &message["params"]);
+                        let result = hover_at(&mut analysis_db, &documents, &message["params"]);
                         respond(writer, id, result.unwrap_or(Value::Null))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
@@ -328,7 +354,8 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/signatureHelp" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        let result = signature_help_at(&documents, &message["params"]);
+                        let result =
+                            signature_help_at(&mut analysis_db, &documents, &message["params"]);
                         respond(writer, id, result.unwrap_or(Value::Null))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
@@ -339,7 +366,8 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                 if let Some(id) = id {
                     if valid_code_action_params(&message["params"]) {
                         let actions =
-                            code_actions_at(&documents, &message["params"]).unwrap_or_default();
+                            code_actions_at(&mut analysis_db, &documents, &message["params"])
+                                .unwrap_or_default();
                         let mut actions = actions;
                         if accepts_code_action_kind(&message["params"], "source") {
                             actions.push(lint_code_action());
@@ -382,15 +410,19 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/definition" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        let result =
-                            navigation_at(&documents, &workspace_roots, &message["params"])
-                                .and_then(|navigation| {
-                                    location(
-                                        &documents,
-                                        &navigation.symbol.definition,
-                                        &navigation.root_uri,
-                                    )
-                                });
+                        let result = navigation_at(
+                            &mut analysis_db,
+                            &documents,
+                            &workspace_roots,
+                            &message["params"],
+                        )
+                        .and_then(|navigation| {
+                            location(
+                                &documents,
+                                &navigation.symbol.definition,
+                                &navigation.root_uri,
+                            )
+                        });
                         respond(writer, id, result.unwrap_or(Value::Null))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
@@ -400,27 +432,31 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
             "textDocument/prepareRename" => {
                 if let Some(id) = id {
                     if valid_text_document_position_params(&message["params"]) {
-                        let result =
-                            navigation_at(&documents, &workspace_roots, &message["params"])
-                                .filter(Navigation::renameable)
-                                .and_then(|navigation| {
-                                    let (_, source) = range_document(
-                                        &documents,
-                                        &navigation.occurrence,
-                                        &navigation.root_uri,
-                                    )?;
-                                    source_range(&source, &navigation.occurrence).map(|range| {
-                                        json!({
-                                            "range": range,
-                                            "placeholder": navigation
-                                                .symbol
-                                                .name
-                                                .rsplit("::")
-                                                .next()
-                                                .unwrap_or(&navigation.symbol.name),
-                                        })
-                                    })
-                                });
+                        let result = navigation_at(
+                            &mut analysis_db,
+                            &documents,
+                            &workspace_roots,
+                            &message["params"],
+                        )
+                        .filter(Navigation::renameable)
+                        .and_then(|navigation| {
+                            let (_, source) = range_document(
+                                &documents,
+                                &navigation.occurrence,
+                                &navigation.root_uri,
+                            )?;
+                            source_range(&source, &navigation.occurrence).map(|range| {
+                                json!({
+                                    "range": range,
+                                    "placeholder": navigation
+                                        .symbol
+                                        .name
+                                        .rsplit("::")
+                                        .next()
+                                        .unwrap_or(&navigation.symbol.name),
+                                })
+                            })
+                        });
                         respond(writer, id, result.unwrap_or(Value::Null))?;
                     } else {
                         invalid_params(writer, id, "invalid text document position")?;
@@ -431,7 +467,12 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                 if let Some(id) = id {
                     let new_name = message["params"]["newName"].as_str();
                     match (
-                        navigation_at(&documents, &workspace_roots, &message["params"]),
+                        navigation_at(
+                            &mut analysis_db,
+                            &documents,
+                            &workspace_roots,
+                            &message["params"],
+                        ),
                         new_name,
                     ) {
                         (Some(navigation), Some(new_name))
@@ -460,7 +501,28 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
                     }
                 }
             }
-            "initialized" | "$/cancelRequest" => {}
+            "initialized" => {
+                if watched_files_registration {
+                    write_message(
+                        writer,
+                        &json!({
+                            "jsonrpc": "2.0",
+                            "id": "ice-watch-files",
+                            "method": "client/registerCapability",
+                            "params": {
+                                "registrations": [{
+                                    "id": "ice-watch-files",
+                                    "method": "workspace/didChangeWatchedFiles",
+                                    "registerOptions": {
+                                        "watchers": [{ "globPattern": "**/*.ice", "kind": 7 }]
+                                    }
+                                }]
+                            }
+                        }),
+                    )?;
+                }
+            }
+            "$/cancelRequest" => {}
             _ if id.is_some() => {
                 request_error(writer, id.unwrap(), -32601, "method not found")?;
             }
@@ -468,6 +530,31 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn refresh_watched_files(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    documents: &HashMap<String, String>,
+    params: &Value,
+) -> bool {
+    let Some(changes) = params["changes"].as_array() else {
+        return false;
+    };
+    let mut refreshed = false;
+    for change in changes {
+        let Some(uri) = change["uri"].as_str() else {
+            continue;
+        };
+        if documents.contains_key(uri) {
+            continue;
+        }
+        let Some(path) = file_uri_path(uri) else {
+            continue;
+        };
+        let _ = analysis_db.refresh_file(path);
+        refreshed = true;
+    }
+    refreshed
 }
 
 fn reanalyze_open_roots(
@@ -896,22 +983,34 @@ fn accepts_code_action_kind(params: &Value, kind: &str) -> bool {
 }
 
 fn checked_document(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     documents: &HashMap<String, String>,
     uri: &str,
 ) -> Option<ui_lang_core::CheckedDocument> {
     let source = documents.get(uri)?;
-    let overlays = source_overlays(documents);
+    for (path, source) in source_overlays(documents) {
+        analysis_db.set_overlay(path, source).ok()?;
+    }
     file_uri_path(uri).map_or_else(
         || ui_lang_core::analyze(source).ok(),
-        |path| ui_lang_core::analyze_file_with_overlays(path, &overlays).ok(),
+        |path| {
+            analysis_db
+                .query_root(path)
+                .ok()
+                .map(|analysis| analysis.document.clone())
+        },
     )
 }
 
-fn completion_items_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+fn completion_items_at(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    documents: &HashMap<String, String>,
+    params: &Value,
+) -> Option<Vec<Value>> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
     let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
-    let checked = checked_document(documents, uri);
+    let checked = checked_document(analysis_db, documents, uri);
     let parsed = checked
         .is_none()
         .then(|| ui_lang_core::parse(source).ok())
@@ -1420,13 +1519,17 @@ fn component_event_signature(event: &ui_lang_core::ComponentEvent) -> String {
     format!("event {}({payloads})", event.name)
 }
 
-fn hover_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+fn hover_at(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    documents: &HashMap<String, String>,
+    params: &Value,
+) -> Option<Value> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
     let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
     let character = usize::try_from(params["position"]["character"].as_u64()?).ok()?;
     let word = word_at(source_line(source, line)?, character)?;
-    let checked = checked_document(documents, uri);
+    let checked = checked_document(analysis_db, documents, uri);
     let parsed = checked
         .is_none()
         .then(|| ui_lang_core::parse(source).ok())
@@ -1451,12 +1554,16 @@ fn hover_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value
     }))
 }
 
-fn signature_help_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+fn signature_help_at(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    documents: &HashMap<String, String>,
+    params: &Value,
+) -> Option<Value> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
     let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
     let character = usize::try_from(params["position"]["character"].as_u64()?).ok()?;
-    let checked = checked_document(documents, uri);
+    let checked = checked_document(analysis_db, documents, uri);
     let parsed = checked
         .is_none()
         .then(|| ui_lang_core::parse(source).ok())
@@ -1617,7 +1724,11 @@ fn recipe_hover(document: &ui_lang_core::Document, recipe: &ui_lang_core::StyleR
     )
 }
 
-fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+fn code_actions_at(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    documents: &HashMap<String, String>,
+    params: &Value,
+) -> Option<Vec<Value>> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
     let line = usize::try_from(params["range"]["start"]["line"].as_u64()?).ok()?;
@@ -1625,7 +1736,7 @@ fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Optio
     let lines = source.split('\n').collect::<Vec<_>>();
     let current = lines.get(line).copied()?;
     let parsed = ui_lang_core::parse(source).ok();
-    let checked = checked_document(documents, uri);
+    let checked = checked_document(analysis_db, documents, uri);
     let document = checked.as_deref().or(parsed.as_ref());
     let mut actions = Vec::new();
 
@@ -1638,7 +1749,15 @@ fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Optio
         recipe_extraction_action(source, &lines, current, document, uri, &mut actions);
         component_handler_event_action(source, &lines, line, current, document, uri, &mut actions);
     }
-    qualification_action(documents, source, line, character, uri, &mut actions);
+    qualification_action(
+        analysis_db,
+        documents,
+        source,
+        line,
+        character,
+        uri,
+        &mut actions,
+    );
     button_label_action(source, &lines, line, uri, &mut actions);
     with_block_action(source, line, current, uri, &mut actions);
     Some(actions)
@@ -1783,6 +1902,7 @@ fn import_aliases(source: &str) -> BTreeSet<&str> {
 }
 
 fn qualification_action(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     documents: &HashMap<String, String>,
     source: &str,
     line: usize,
@@ -1812,8 +1932,12 @@ fn qualification_action(
     if aliases.is_empty() {
         return;
     }
-    let mut overlays = source_overlays(documents);
-    if ui_lang_core::analyze_file_with_overlays(&path, &overlays).is_ok() {
+    for (overlay_path, overlay) in source_overlays(documents) {
+        if analysis_db.set_overlay(overlay_path, overlay).is_err() {
+            return;
+        }
+    }
+    if analysis_db.query_root(&path).is_ok() {
         return;
     }
     let offset = source
@@ -1830,8 +1954,11 @@ fn qualification_action(
         };
         let mut candidate = source.to_owned();
         candidate.replace_range(offset + start..offset + end, &qualified);
-        overlays.insert(path.clone(), candidate);
-        if ui_lang_core::analyze_file_with_overlays(&path, &overlays).is_ok() {
+        let valid = analysis_db.speculate(|candidate_db| {
+            candidate_db.set_overlay(&path, candidate).is_ok()
+                && candidate_db.query_root(&path).is_ok()
+        });
+        if valid {
             candidates.push(qualified);
         }
     }
@@ -2589,13 +2716,16 @@ fn is_view_node(name: &str) -> bool {
 }
 
 fn navigation_at(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
     documents: &HashMap<String, String>,
     workspace_roots: &[PathBuf],
     params: &Value,
 ) -> Option<Navigation> {
     let uri = params["textDocument"]["uri"].as_str()?;
     let source = documents.get(uri)?;
-    let overlays = source_overlays(documents);
+    for (path, source) in source_overlays(documents) {
+        analysis_db.set_overlay(path, source).ok()?;
+    }
     let line = usize::try_from(params["position"]["line"].as_u64()?).ok()?;
     let character = usize::try_from(params["position"]["character"].as_u64()?).ok()?;
     let column = utf16_column(source_line(source, line)?, character)?;
@@ -2651,8 +2781,8 @@ fn navigation_at(
     let mut incomplete = false;
     for (root_uri, root_source) in &roots {
         let checked = match file_uri_path(root_uri) {
-            Some(path) => match ui_lang_core::analyze_file_with_overlays(path, &overlays) {
-                Ok(checked) => checked,
+            Some(path) => match analysis_db.query_root(path) {
+                Ok(analysis) => analysis.document.clone(),
                 Err(_) => {
                     incomplete = true;
                     continue;
@@ -3229,11 +3359,14 @@ fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Navigation, accepts_code_action_kind, code_actions_at, collect_cargo_lint_diagnostics,
-        compiler_diagnostic_to_lsp, completion_items_at, diagnostic_range, file_path_uri,
-        file_uri_path, has_unsaved_workspace_document, hover_at, lint_code_action, navigation_at,
-        read_message, reanalyze_open_roots, serve, signature_help_at, source_range,
-        whole_document_range, workspace_edit,
+        Navigation, accepts_code_action_kind, code_actions_at as code_actions_at_with_db,
+        collect_cargo_lint_diagnostics, compiler_diagnostic_to_lsp,
+        completion_items_at as completion_items_at_with_db, diagnostic_range, file_path_uri,
+        file_uri_path, has_unsaved_workspace_document, hover_at as hover_at_with_db,
+        lint_code_action, navigation_at as navigation_at_with_db, read_message,
+        reanalyze_open_roots, refresh_watched_files, serve,
+        signature_help_at as signature_help_at_with_db, source_range, whole_document_range,
+        workspace_edit,
     };
     use serde_json::{Value, json};
     use std::collections::{BTreeSet, HashMap};
@@ -3244,6 +3377,38 @@ mod tests {
 
     const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
     const APP_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+
+    fn completion_items_at(
+        documents: &HashMap<String, String>,
+        params: &Value,
+    ) -> Option<Vec<Value>> {
+        completion_items_at_with_db(&mut ui_lang_core::AnalysisDb::default(), documents, params)
+    }
+
+    fn hover_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+        hover_at_with_db(&mut ui_lang_core::AnalysisDb::default(), documents, params)
+    }
+
+    fn signature_help_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+        signature_help_at_with_db(&mut ui_lang_core::AnalysisDb::default(), documents, params)
+    }
+
+    fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+        code_actions_at_with_db(&mut ui_lang_core::AnalysisDb::default(), documents, params)
+    }
+
+    fn navigation_at(
+        documents: &HashMap<String, String>,
+        workspace_roots: &[PathBuf],
+        params: &Value,
+    ) -> Option<Navigation> {
+        navigation_at_with_db(
+            &mut ui_lang_core::AnalysisDb::default(),
+            documents,
+            workspace_roots,
+            params,
+        )
+    }
 
     struct Fixture(PathBuf);
 
@@ -3363,6 +3528,79 @@ mod tests {
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(response(&messages, 2)["result"], Value::Null);
+    }
+
+    #[test]
+    fn registers_and_accepts_dynamic_ice_file_watching() {
+        let messages = run(&[
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "didChangeWatchedFiles": { "dynamicRegistration": true }
+                        }
+                    }
+                }
+            }),
+            json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+            json!({ "jsonrpc": "2.0", "id": "ice-watch-files", "result": null }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        let registration = messages
+            .iter()
+            .find(|message| message["method"] == "client/registerCapability")
+            .unwrap();
+        assert_eq!(registration["id"], "ice-watch-files");
+        assert_eq!(
+            registration["params"]["registrations"][0]["method"],
+            "workspace/didChangeWatchedFiles"
+        );
+        assert_eq!(
+            registration["params"]["registrations"][0]["registerOptions"]["watchers"][0],
+            json!({ "globPattern": "**/*.ice", "kind": 7 })
+        );
+        assert_eq!(response(&messages, 2)["result"], Value::Null);
+    }
+
+    #[test]
+    fn watched_disk_import_invalidates_the_retained_root() {
+        let fixture = Fixture::new();
+        let source = "app Watched\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Part\n";
+        fixture.write("app.ice", source);
+        fixture.write("part.ice", "component Part()\n  text \"before\"\n");
+        let root = fixture.path("app.ice");
+        let root_uri = file_path_uri(&root);
+        let part = fixture.path("part.ice");
+        let part_uri = file_path_uri(&part);
+        let documents = HashMap::from([(root_uri, source.to_owned())]);
+        let mut db = ui_lang_core::AnalysisDb::default();
+        db.set_overlay(&root, source).unwrap();
+        let retained = db.query_root(&root).unwrap();
+        db.take_metrics();
+
+        fixture.write("part.ice", "component Part()\n  text \"after\"\n");
+        assert!(refresh_watched_files(
+            &mut db,
+            &documents,
+            &json!({ "changes": [{ "uri": part_uri, "type": 2 }] }),
+        ));
+        let refreshed = db.query_root(&root).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&retained, &refreshed));
+        let metrics = db.take_metrics();
+        assert_eq!(metrics.roots_checked, 1, "{metrics:?}");
+
+        let cached = db.query_root(&root).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&refreshed, &cached));
+        let metrics = db.take_metrics();
+        assert_eq!(metrics.root_cache_hits, 1, "{metrics:?}");
+        assert_eq!(metrics.files_loaded, 0, "{metrics:?}");
+        assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
     }
 
     #[test]
@@ -4312,42 +4550,124 @@ mod tests {
     }
 
     #[test]
+    fn semantic_requests_share_the_diagnostic_analysis_db() {
+        let fixture = Fixture::new();
+        let source = "app SemanticDb\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Card(value:str)\n  text value\nview\n  Card value=\"Ready\"\n";
+        fixture.write("app.ice", source);
+        let root = fixture.path("app.ice");
+        let uri = file_path_uri(&root);
+        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let mut db = ui_lang_core::AnalysisDb::default();
+        db.set_overlay(&root, source).unwrap();
+        db.query_root(&root).unwrap();
+        db.take_metrics();
+
+        let position = |line, character| {
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+            })
+        };
+        completion_items_at_with_db(&mut db, &documents, &position(14, 7)).unwrap();
+        hover_at_with_db(&mut db, &documents, &position(11, 11)).unwrap();
+        signature_help_at_with_db(&mut db, &documents, &position(14, 7)).unwrap();
+        code_actions_at_with_db(
+            &mut db,
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": 14, "character": 7 },
+                    "end": { "line": 14, "character": 7 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        navigation_at_with_db(&mut db, &documents, &[], &position(14, 3)).unwrap();
+
+        let metrics = db.take_metrics();
+        assert!(metrics.root_cache_hits >= 5, "{metrics:?}");
+        assert_eq!(metrics.files_loaded, 0, "{metrics:?}");
+        assert_eq!(metrics.files_hashed, 0, "{metrics:?}");
+        assert_eq!(metrics.files_scanned, 0, "{metrics:?}");
+        assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
+        assert_eq!(metrics.roots_reused, 0, "{metrics:?}");
+        assert_eq!(metrics.symbols_indexed, 0, "{metrics:?}");
+    }
+
+    #[test]
     #[ignore = "CI performance contract; run explicitly"]
-    fn performance_contract_completes_a_large_document_interactively() {
+    fn performance_contract_reuses_large_document_semantics_across_requests() {
         const REQUESTS: usize = 20;
         const BUDGET: Duration = Duration::from_secs(5);
 
-        let uri = "file:///tmp/performance.ice";
-        let mut source =
-            String::from("app Performance\ncomponent Catalog(value:str)\n  col\n    text value\n");
+        let fixture = Fixture::new();
+        let mut source = String::from(
+            "app Performance\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Catalog(value:str)\n  col\n    text value\n",
+        );
         for index in 0..500 {
             source.push_str(&format!("    text \"row {index}\"\n"));
         }
         source.push_str("view\n  Catalog value=\"Ready\"\n");
+        fixture.write("app.ice", &source);
+        let root = fixture.path("app.ice");
+        let uri = file_path_uri(&root);
         let line = source
             .lines()
             .position(|line| line.trim_start().starts_with("Catalog value="))
             .unwrap();
-        let documents = HashMap::from([(uri.to_owned(), source)]);
-        let params = json!({
+        let documents = HashMap::from([(uri.clone(), source.clone())]);
+        let position = |character| {
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+            })
+        };
+        let action = json!({
             "textDocument": { "uri": uri },
-            "position": { "line": line, "character": 10 },
+            "range": {
+                "start": { "line": line, "character": 10 },
+                "end": { "line": line, "character": 10 },
+            },
+            "context": { "diagnostics": [] },
         });
+        let mut db = ui_lang_core::AnalysisDb::default();
+        db.set_overlay(&root, source).unwrap();
+        db.query_root(&root).unwrap();
 
-        let warm = completion_items_at(&documents, &params).unwrap();
+        let warm = completion_items_at_with_db(&mut db, &documents, &position(10)).unwrap();
         assert!(warm.iter().any(|item| item["label"] == "value="));
+        hover_at_with_db(&mut db, &documents, &position(3)).unwrap();
+        signature_help_at_with_db(&mut db, &documents, &position(10)).unwrap();
+        code_actions_at_with_db(&mut db, &documents, &action).unwrap();
+        navigation_at_with_db(&mut db, &documents, &[], &position(3)).unwrap();
+        db.take_metrics();
+
         let started = Instant::now();
         for _ in 0..REQUESTS {
-            let items = completion_items_at(&documents, &params).unwrap();
+            let items = completion_items_at_with_db(&mut db, &documents, &position(10)).unwrap();
             assert!(items.iter().any(|item| item["label"] == "value="));
+            hover_at_with_db(&mut db, &documents, &position(3)).unwrap();
+            signature_help_at_with_db(&mut db, &documents, &position(10)).unwrap();
+            code_actions_at_with_db(&mut db, &documents, &action).unwrap();
+            navigation_at_with_db(&mut db, &documents, &[], &position(3)).unwrap();
         }
         let elapsed = started.elapsed();
+        let metrics = db.take_metrics();
         assert!(
             elapsed <= BUDGET,
-            "{REQUESTS} completions for a 500-node document took {elapsed:?}; budget is {BUDGET:?}"
+            "{REQUESTS} mixed semantic request rounds for a 500-node document took {elapsed:?}; budget is {BUDGET:?}"
         );
+        assert!(metrics.root_cache_hits >= REQUESTS * 5, "{metrics:?}");
+        assert_eq!(metrics.files_loaded, 0, "{metrics:?}");
+        assert_eq!(metrics.files_hashed, 0, "{metrics:?}");
+        assert_eq!(metrics.files_scanned, 0, "{metrics:?}");
+        assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
+        assert_eq!(metrics.roots_reused, 0, "{metrics:?}");
+        assert_eq!(metrics.symbols_indexed, 0, "{metrics:?}");
         eprintln!(
-            "{REQUESTS} completions for a 500-node document in {elapsed:?} ({:?} average)",
+            "{REQUESTS} mixed semantic request rounds for a 500-node document in {elapsed:?} ({:?} average)",
             elapsed / REQUESTS as u32
         );
     }

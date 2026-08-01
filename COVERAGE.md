@@ -34,6 +34,17 @@ an overlay close returns to disk, byte-identical content is reused, and
 transitive reverse edges are retained. LSP diagnostics, the dev
 preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
 own and reuse this same DB API without global or process-persistent state.
+Completion, hover, signature help, code actions, definition, and rename now
+query the exact retained analysis used by LSP diagnostics. An unchanged root
+returns the same shared analysis allocation with zero source loads, hashes,
+import scans, semantic checks, or symbol indexing; qualification candidates run
+against discarded speculative DB forks without invalidating that retained
+root. A 500-node mixed-request performance contract exercises all five request
+families repeatedly under the same zero-analysis-work invariant. The server
+dynamically registers `**/*.ice` workspace watches when the client advertises
+that capability; a disk change refreshes the affected file and reverse-root
+set before semantic requests reuse the cache, while an open overlay continues
+to win over the disk notification.
 Successful analysis reports unreachable components and handlers,
 readerless/writerless state using only reachable handler accesses, immediate
 and future/task/query/stream/progress routing cycles, unfiltered raw-event redraw
