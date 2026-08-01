@@ -1,13 +1,18 @@
 use super::*;
 
-pub(in crate::codegen) fn generate_keyboard_types(out: &mut String, document: &Document) {
-    if !document
-        .subscriptions
+pub(in crate::codegen) fn generate_keyboard_types(
+    out: &mut String,
+    document: &Document,
+    subscriptions: &[ResolvedSubscription],
+) {
+    if !subscriptions.iter().any(|subscription| {
+        matches!(
+            &subscription.source,
+            ResolvedSubscriptionSource::Keyboard(_)
+        )
+    }) && !canvas_events(document)
         .iter()
-        .any(|subscription| matches!(&subscription.source, SubscriptionSource::Keyboard(_)))
-        && !canvas_events(document)
-            .iter()
-            .any(|event| matches!(event.source, SubscriptionSource::Keyboard(_)))
+        .any(|event| matches!(event.source, SubscriptionSource::Keyboard(_)))
     {
         return;
     }
@@ -36,13 +41,19 @@ pub(crate) struct __IceKeyRelease {
     );
 }
 
-pub(in crate::codegen) fn generate_system_types(out: &mut String, document: &Document) {
+pub(in crate::codegen) fn generate_system_types(
+    out: &mut String,
+    document: &Document,
+    subscriptions: &[ResolvedSubscription],
+) {
     let information = uses_system_task(document, "__ice_system_info");
     let theme = uses_system_task(document, "__ice_system_theme")
-        || document
-            .subscriptions
-            .iter()
-            .any(|subscription| matches!(&subscription.source, SubscriptionSource::SystemTheme));
+        || subscriptions.iter().any(|subscription| {
+            matches!(
+                &subscription.source,
+                ResolvedSubscriptionSource::SystemTheme
+            )
+        });
     if information {
         out.push_str(
             r#"#[allow(dead_code)]

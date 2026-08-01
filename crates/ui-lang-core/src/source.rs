@@ -1137,6 +1137,51 @@ mod tests {
     }
 
     #[test]
+    fn generated_subscription_markers_retain_imported_origins() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"subscriptions.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non tick(now)\nview\n  text \"Ready\"\n",
+        );
+        fixture.write("subscriptions.ice", "subscribe\n  every 10ms -> tick _\n");
+        let imported = fixture.path("subscriptions.ice").canonicalize().unwrap();
+        let encoded_path = imported
+            .display()
+            .to_string()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let generated = compile_file(fixture.path("app.ice")).unwrap().rust;
+        assert!(
+            generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_path}")),
+            "generated Rust did not retain the imported subscription location:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn subscription_lowering_invariants_retain_imported_origins() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\nuse \"subscriptions.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non tick(now)\nview\n  text \"Ready\"\n",
+        );
+        fixture.write("subscriptions.ice", "subscribe\n  every 10ms -> tick _\n");
+        let imported = fixture.path("subscriptions.ice").canonicalize().unwrap();
+        let mut checked = analyze_file(fixture.path("app.ice")).unwrap();
+        checked.facts.corrupt_subscription_source(
+            0,
+            crate::check::CheckedSubscriptionSource::Mouse(crate::MouseEvent::Moved),
+        );
+
+        let error = crate::lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!((error.line, error.column), (2, 1));
+        assert!(error.message.contains("payload contract"));
+    }
+
+    #[test]
     fn keeps_component_local_handlers_out_of_global_symbol_navigation() {
         let fixture = Fixture::new();
         let root = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Toggle()\n  state\n    enabled = false\n  on changed(next)\n    enabled = next\n  checkbox \"Enabled\" checked=enabled -> changed _\non changed\nview\n  Toggle #toggle\n";

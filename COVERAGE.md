@@ -472,6 +472,29 @@ fields, named-window opening, packaged fonts, custom renderer/executor, and
 native application/daemon builders. The ignored 5,000-named-window contract
 requires stable sequential IDs and a two-second debug-build lowering budget.
 
+Application subscription HIR covers every native source plus `repeat`, stream
+`run`, recipe, raw-event recipe, and extern-subscription sources. Stable
+subscription, handler, and extern IDs replace source-name lookup. Source
+arguments, event identities, contexts, and conditions retain one authoritative
+typed expression analysis; source payloads and delivered filter/context
+payloads are separate fixed contracts; routes retain only ordered checked
+payload indices, which become the same typed payload-route arguments used by
+handler effects. Lowering's shared expression graph validator revalidates
+ownership, roles, DAG shape, literal/operator/call/projection types, native
+payload topology, duration and source-option compatibility, identity-data
+hashability, exact extern IDs/names/kinds/signatures, app-state-only value
+scope, App-handler ownership, and handler payloads, then publishes private
+resolved source, filter, and route records. Production codegen and runtime
+helper discovery consume only those records and normalized expression IDs,
+without raw subscription AST, declaration, or extern-name lookup.
+Native/extern generation tests, raw subscription removal, same-name component
+handler injection, wrong-role/cycle/wrong-kind/same-signature identity swap,
+invalid duration/option/hashability, intrinsic-swap corruption tests, imported
+diagnostic/source-marker coverage, and an ignored 500-to-4,000
+analyze+lower+codegen linearity contract provide the evidence.
+Canvas locals, tests, and remaining expression-bearing widget options remain
+open HIR slices.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

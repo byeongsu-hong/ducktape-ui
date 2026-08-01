@@ -5,8 +5,9 @@ use super::expr::{
 use super::*;
 use crate::hir::{
     AppSettingExprId, AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, HandlerId,
-    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, TaskId, TestId, ViewId,
+    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, ExternRef, HandlerId,
+    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
+    TestId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -138,6 +139,65 @@ pub(crate) struct CheckedView {
     pub(crate) origin: OriginId,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedSubscriptionSource {
+    Every {
+        milliseconds: u64,
+    },
+    Repeat {
+        function: ExternRef,
+        milliseconds: u64,
+    },
+    Run {
+        function: ExternRef,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    Recipe {
+        function: ExternRef,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    Events {
+        identity: CheckedExprUseId,
+        filter: ExternRef,
+    },
+    Event {
+        raw: bool,
+    },
+    Extern {
+        function: ExternRef,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    InputMethod(InputMethodEvent),
+    Keyboard(KeyboardEvent),
+    Mouse(MouseEvent),
+    SystemTheme,
+    Touch(TouchEvent),
+    Window(WindowEvent),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedSubscriptionRoute {
+    pub(crate) handler: HandlerId,
+    pub(crate) handler_name: String,
+    pub(crate) payloads: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedSubscription {
+    pub(crate) id: SubscriptionId,
+    pub(crate) source: CheckedSubscriptionSource,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) delivered_payloads: Vec<Type>,
+    pub(crate) filter: Option<ExternRef>,
+    pub(crate) context: Option<CheckedExprUseId>,
+    pub(crate) condition: Option<CheckedExprUseId>,
+    pub(crate) window_id: bool,
+    pub(crate) status: Option<EventStatus>,
+    pub(crate) route: CheckedSubscriptionRoute,
+    pub(crate) span: Span,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) enum CheckedViewFlow {
     #[default]
@@ -228,6 +288,18 @@ pub(crate) enum CheckedExprOwner {
         route: RouteId,
         argument: u32,
     },
+    Subscription {
+        subscription: SubscriptionId,
+        role: CheckedSubscriptionExprRole,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CheckedSubscriptionExprRole {
+    Condition,
+    Context,
+    SourceArgument(u32),
+    EventIdentity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +319,49 @@ pub(crate) enum CheckedViewExprRole {
     TableRows,
     PaneTemplateKey(u32),
     ResponsiveBreakpoint,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedSubscriptionSourceAnalysis {
+    Every {
+        milliseconds: u64,
+    },
+    Repeat {
+        function: ExternRef,
+        milliseconds: u64,
+    },
+    Run {
+        function: ExternRef,
+    },
+    Recipe {
+        function: ExternRef,
+    },
+    Events {
+        filter: ExternRef,
+    },
+    Event {
+        raw: bool,
+    },
+    Extern {
+        function: ExternRef,
+    },
+    InputMethod(InputMethodEvent),
+    Keyboard(KeyboardEvent),
+    Mouse(MouseEvent),
+    SystemTheme,
+    Touch(TouchEvent),
+    Window(WindowEvent),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedSubscriptionAnalysis {
+    pub(crate) source: CheckedSubscriptionSourceAnalysis,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) delivered_payloads: Vec<Type>,
+    pub(crate) filter: Option<ExternRef>,
+    pub(crate) route_handler: HandlerId,
+    pub(crate) route_handler_name: String,
+    pub(crate) route_payloads: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -294,7 +409,7 @@ pub(crate) struct CheckedProjection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedCallTarget {
     Builtin(CheckedBuiltinId),
-    Extern(ExternFnId),
+    Extern(ExternRef),
     EnumVariant(EnumVariantId),
 }
 
@@ -347,8 +462,25 @@ pub(crate) enum CheckedExprKind {
     },
 }
 
+fn checked_expression_children(kind: &CheckedExprKind) -> Vec<CheckedExprId> {
+    match kind {
+        CheckedExprKind::List(values) => values.clone(),
+        CheckedExprKind::Call { arguments, .. } => arguments
+            .iter()
+            .filter_map(|argument| match argument {
+                CheckedCallArgument::Value(id) => Some(*id),
+                CheckedCallArgument::Binding(_) => None,
+            })
+            .collect(),
+        CheckedExprKind::Unary { value, .. } => vec![*value],
+        CheckedExprKind::Binary { left, right, .. } => vec![*left, *right],
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedExpr {
+    pub(crate) owner: CheckedExprUseId,
     pub(crate) ty: Type,
     pub(crate) kind: CheckedExprKind,
     pub(crate) origin: OriginId,
@@ -425,6 +557,7 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) handler_authoritative_analyses: usize,
     /// Final checker queries whose roots are nested inside an authoritative HIR operand.
     pub(crate) handler_auxiliary_analyses: usize,
+    pub(crate) subscription_analysis_passes: usize,
     pub(crate) type_scope_env_overlays: usize,
     pub(crate) type_scope_env_full_clones: usize,
     pub(crate) declaration_lookups: usize,
@@ -444,6 +577,7 @@ pub(crate) struct CheckedFacts {
     locals: Vec<CheckedLocal>,
     locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
+    subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
     component_argument_sources:
@@ -477,6 +611,15 @@ pub(crate) struct CheckedAppSettings {
 }
 
 impl CheckedFacts {
+    #[cfg(test)]
+    pub(crate) fn corrupt_subscription_source(
+        &mut self,
+        index: usize,
+        source: CheckedSubscriptionSource,
+    ) {
+        self.subscriptions[index].source = source;
+    }
+
     #[cfg(test)]
     pub(crate) fn corrupt_handler_param_local(
         &mut self,
@@ -592,6 +735,10 @@ impl CheckedFacts {
     pub(crate) fn view(&self, id: ViewId) -> &CheckedView {
         self.record_lookup();
         &self.views[id.0 as usize]
+    }
+
+    pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
+        &self.subscriptions
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -926,16 +1073,16 @@ impl CheckedFacts {
             "editor expression root ID is outside its arena",
         ))?;
         let CheckedExprKind::Call {
-            target: CheckedCallTarget::Extern(function),
+            target: CheckedCallTarget::Extern(reference),
             ..
-        } = root.kind
+        } = &root.kind
         else {
             return Ok(false);
         };
         let function = declarations
-            .try_extern_decl(function)
+            .try_extern_decl(reference.id)
             .ok_or((root.origin, "editor sync extern ID is outside its arena"))?;
-        if function.kind != ExternKind::Sync {
+        if function.name != reference.name || function.kind != ExternKind::Sync {
             return Ok(false);
         }
 
@@ -1069,6 +1216,7 @@ pub(super) struct CheckedAnalyses {
     preset_handlers: Vec<Handler>,
     pub(super) view_scope_env_overlays: usize,
     pub(super) view_scope_env_full_clones: usize,
+    subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
 }
 
 impl CheckedAnalyses {
@@ -1104,6 +1252,26 @@ impl CheckedAnalyses {
             && self.handler_entries.is_empty()
             && self.handler_route_inputs.is_empty()
             && self.preset_handlers.is_empty()
+            && self.subscriptions.is_empty()
+    }
+
+    pub(super) fn insert_subscription(
+        &mut self,
+        id: SubscriptionId,
+        analysis: CheckedSubscriptionAnalysis,
+    ) -> Result<(), Error> {
+        if self.subscriptions.insert(id, analysis).is_some() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "subscription was analyzed more than once",
+            ));
+        }
+        Ok(())
+    }
+
+    fn remove_subscription(&mut self, id: SubscriptionId) -> Option<CheckedSubscriptionAnalysis> {
+        self.subscriptions.remove(&id)
     }
 
     pub(super) fn extend(&mut self, other: Self) -> Result<(), Error> {
@@ -1139,6 +1307,9 @@ impl CheckedAnalyses {
                 ));
             }
             self.preset_handlers = other.preset_handlers;
+        }
+        for (id, analysis) in other.subscriptions {
+            self.insert_subscription(id, analysis)?;
         }
         Ok(())
     }
@@ -1356,6 +1527,7 @@ impl<'a> FactsBuilder<'a> {
         self.lower_app_setting_expressions()?;
         self.index_views()?;
         self.lower_view_expressions()?;
+        self.lower_subscriptions()?;
         self.lower_handler_expressions()?;
         self.facts.metrics.handler_auxiliary_analyses = self.analyses.handler_entries.len();
         self.analyses.handler_entries.clear();
@@ -1363,8 +1535,9 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
+                    self.analyses.subscriptions.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -3123,6 +3296,270 @@ impl<'a> FactsBuilder<'a> {
         env
     }
 
+    fn lower_subscriptions(&mut self) -> Result<(), Error> {
+        if self.document.subscriptions.is_empty() {
+            return Ok(());
+        }
+        let env = self.fact_env(ValueScope::App);
+        for (index, subscription) in self.document.subscriptions.iter().enumerate() {
+            let declaration = self.declarations.subscription(index);
+            let analysis = self
+                .analyses
+                .remove_subscription(declaration.id)
+                .ok_or_else(|| {
+                    self.invariant(
+                        &subscription.span,
+                        "missing authoritative subscription analysis",
+                    )
+                })?;
+            let condition = subscription
+                .condition
+                .as_ref()
+                .map(|expression| {
+                    self.push_subscription_expression(
+                        declaration.id,
+                        CheckedSubscriptionExprRole::Condition,
+                        expression,
+                        Some(&Type::Bool),
+                        &env,
+                        &subscription.span,
+                    )
+                })
+                .transpose()?;
+            let context = subscription
+                .context
+                .as_ref()
+                .map(|expression| {
+                    self.push_subscription_expression(
+                        declaration.id,
+                        CheckedSubscriptionExprRole::Context,
+                        expression,
+                        None,
+                        &env,
+                        &subscription.span,
+                    )
+                })
+                .transpose()?;
+            let source = match (&subscription.source, analysis.source) {
+                (
+                    SubscriptionSource::Every { .. },
+                    CheckedSubscriptionSourceAnalysis::Every { milliseconds },
+                ) => CheckedSubscriptionSource::Every { milliseconds },
+                (
+                    SubscriptionSource::Repeat { .. },
+                    CheckedSubscriptionSourceAnalysis::Repeat {
+                        function,
+                        milliseconds,
+                    },
+                ) => CheckedSubscriptionSource::Repeat {
+                    function,
+                    milliseconds,
+                },
+                (
+                    SubscriptionSource::Run { args, .. },
+                    CheckedSubscriptionSourceAnalysis::Run { function },
+                ) => CheckedSubscriptionSource::Run {
+                    arguments: self.lower_subscription_arguments(
+                        declaration,
+                        args,
+                        function.id,
+                        &env,
+                        &subscription.span,
+                    )?,
+                    function,
+                },
+                (
+                    SubscriptionSource::Recipe { args, .. },
+                    CheckedSubscriptionSourceAnalysis::Recipe { function },
+                ) => CheckedSubscriptionSource::Recipe {
+                    arguments: self.lower_subscription_arguments(
+                        declaration,
+                        args,
+                        function.id,
+                        &env,
+                        &subscription.span,
+                    )?,
+                    function,
+                },
+                (
+                    SubscriptionSource::Events { id, .. },
+                    CheckedSubscriptionSourceAnalysis::Events { filter },
+                ) => CheckedSubscriptionSource::Events {
+                    identity: self.push_subscription_expression(
+                        declaration.id,
+                        CheckedSubscriptionExprRole::EventIdentity,
+                        id,
+                        None,
+                        &env,
+                        &subscription.span,
+                    )?,
+                    filter,
+                },
+                (
+                    SubscriptionSource::Event { .. },
+                    CheckedSubscriptionSourceAnalysis::Event { raw },
+                ) => CheckedSubscriptionSource::Event { raw },
+                (
+                    SubscriptionSource::Extern { args, .. },
+                    CheckedSubscriptionSourceAnalysis::Extern { function },
+                ) => CheckedSubscriptionSource::Extern {
+                    arguments: self.lower_subscription_arguments(
+                        declaration,
+                        args,
+                        function.id,
+                        &env,
+                        &subscription.span,
+                    )?,
+                    function,
+                },
+                (
+                    SubscriptionSource::InputMethod(_),
+                    CheckedSubscriptionSourceAnalysis::InputMethod(event),
+                ) => CheckedSubscriptionSource::InputMethod(event),
+                (
+                    SubscriptionSource::Keyboard(_),
+                    CheckedSubscriptionSourceAnalysis::Keyboard(event),
+                ) => CheckedSubscriptionSource::Keyboard(event),
+                (SubscriptionSource::Mouse(_), CheckedSubscriptionSourceAnalysis::Mouse(event)) => {
+                    CheckedSubscriptionSource::Mouse(event)
+                }
+                (
+                    SubscriptionSource::SystemTheme,
+                    CheckedSubscriptionSourceAnalysis::SystemTheme,
+                ) => CheckedSubscriptionSource::SystemTheme,
+                (SubscriptionSource::Touch(_), CheckedSubscriptionSourceAnalysis::Touch(event)) => {
+                    CheckedSubscriptionSource::Touch(event)
+                }
+                (
+                    SubscriptionSource::Window(_),
+                    CheckedSubscriptionSourceAnalysis::Window(event),
+                ) => CheckedSubscriptionSource::Window(event),
+                _ => {
+                    return Err(self.invariant(
+                        &subscription.span,
+                        "subscription source changed after semantic analysis",
+                    ));
+                }
+            };
+            self.facts.subscriptions.push(CheckedSubscription {
+                id: declaration.id,
+                source,
+                source_payloads: analysis.source_payloads,
+                delivered_payloads: analysis.delivered_payloads,
+                filter: analysis.filter,
+                context,
+                condition,
+                window_id: subscription.window_id,
+                status: subscription.status,
+                route: CheckedSubscriptionRoute {
+                    handler: analysis.route_handler,
+                    handler_name: analysis.route_handler_name,
+                    payloads: analysis.route_payloads,
+                },
+                span: subscription.span.clone(),
+                origin: declaration.origin,
+            });
+        }
+        Ok(())
+    }
+
+    fn lower_subscription_arguments(
+        &mut self,
+        declaration: crate::hir::Declaration<SubscriptionId>,
+        arguments: &[Expr],
+        function: ExternFnId,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<Vec<CheckedExprUseId>, Error> {
+        let parameter_types = self
+            .declarations
+            .extern_decl(function)
+            .params
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .collect::<Vec<_>>();
+        arguments
+            .iter()
+            .zip(&parameter_types)
+            .enumerate()
+            .map(|(index, (argument, expected))| {
+                self.push_subscription_expression(
+                    declaration.id,
+                    CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                    argument,
+                    Some(expected),
+                    env,
+                    span,
+                )
+            })
+            .collect()
+    }
+
+    fn push_subscription_expression(
+        &mut self,
+        subscription: SubscriptionId,
+        role: CheckedSubscriptionExprRole,
+        expr: &Expr,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Subscription { subscription, role };
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let analysis = self.analyses.remove(owner).ok_or_else(|| {
+            self.invariant(
+                span,
+                "missing authoritative subscription expression analysis",
+            )
+        })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.subscription_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
+            self.invariant(span, "missing retained subscription expression root type")
+        })?;
+        let source = resolve_erased_type(&contextual_type(inferred, expected));
+        let parent = self
+            .declarations
+            .subscription(subscription.0 as usize)
+            .origin;
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "subscription expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: expected.cloned().unwrap_or(source),
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked subscription expression owner"));
+        }
+        Ok(id)
+    }
+
     fn push_view_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -4026,6 +4463,7 @@ impl<'a> FactsBuilder<'a> {
                         })?;
                         let id = CheckedExprId(self.facts.expressions.len() as u32);
                         self.facts.expressions.push(CheckedExpr {
+                            owner: lowering.owner,
                             ty,
                             kind: CheckedExprKind::SlotProvided(slot),
                             origin: lowering.origin,
@@ -4092,6 +4530,7 @@ impl<'a> FactsBuilder<'a> {
             };
         let id = CheckedExprId(self.facts.expressions.len() as u32);
         self.facts.expressions.push(CheckedExpr {
+            owner: lowering.owner,
             ty,
             kind,
             origin: lowering.origin,
@@ -4196,7 +4635,10 @@ impl<'a> FactsBuilder<'a> {
         if let Some(declaration) = self.declarations.extern_decl_by_name(name)
             && declaration.kind == ExternKind::Sync
         {
-            return Ok(CheckedCallTarget::Extern(declaration.declaration.id));
+            return Ok(CheckedCallTarget::Extern(ExternRef {
+                id: declaration.declaration.id,
+                name: declaration.name.clone(),
+            }));
         }
         let name = unqualified_name(name);
         debug_assert_ne!(name, "provided");
@@ -4307,9 +4749,9 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
     ) -> Result<Vec<BuiltinArgumentContext>, Error> {
         Ok(match target {
-            CheckedCallTarget::Extern(id) => self
+            CheckedCallTarget::Extern(reference) => self
                 .declarations
-                .extern_decl(*id)
+                .extern_decl(reference.id)
                 .params
                 .iter()
                 .map(|(_, ty)| BuiltinArgumentContext::Value {
@@ -4541,6 +4983,22 @@ impl CheckedFacts {
             )
             .unwrap();
         }
+        for (index, subscription) in self.subscriptions.iter().enumerate() {
+            writeln!(
+                output,
+                "subscription s{index} id={:?} source={:?} source_payloads={:?} delivered={:?} filter={:?} context={:?} condition={:?} route={:?} origin=o{}",
+                subscription.id,
+                subscription.source,
+                subscription.source_payloads,
+                subscription.delivered_payloads,
+                subscription.filter,
+                subscription.context,
+                subscription.condition,
+                subscription.route,
+                subscription.origin.0,
+            )
+            .unwrap();
+        }
         output
     }
 }
@@ -4619,7 +5077,7 @@ use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index:
 use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
 use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o23
 expr e0 i64 1 : I64 origin=o0
-expr e1 call Extern(ExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
+expr e1 call Extern(ExternRef { id: ExternFnId(0), name: "load_user" }) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
 expr e3 f64 0.5 : F64 origin=o1
 expr e4 f64 0.75 : F64 origin=o1
@@ -4661,6 +5119,7 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 view_analysis_passes: 1,
                 handler_authoritative_analyses: 0,
                 handler_auxiliary_analyses: 0,
+                subscription_analysis_passes: 0,
                 type_scope_env_overlays: 0,
                 type_scope_env_full_clones: 0,
                 declaration_lookups: 18,
@@ -4781,6 +5240,778 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
     }
 
     #[test]
+    fn subscriptions_retain_resolved_sources_payloads_routes_and_expressions() {
+        let source = format!(
+            r#"app Subscriptions
+extern crate::backend
+  stream numbers(seed:i64) -> i64
+  recipe ticks(seed:i64) -> i64
+  event-filter raw_event() -> str
+  sync positive(value:i64) -> i64?
+{THEME}state
+  enabled = true
+  seed = 2
+  tag = 7
+on number(tag, value)
+on tick(value)
+on event(value)
+subscribe
+  run numbers(seed) with=tag filter=positive when enabled -> number _ _
+  recipe ticks(seed) -> tick _
+  events seed using=raw_event -> event _
+view
+  text "ready"
+"#
+        );
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let resolved = program.subscriptions();
+        assert_eq!(resolved.len(), 3);
+        assert!(matches!(
+            &resolved[0].source,
+            lower::ResolvedSubscriptionSource::Run {
+                function,
+                arguments,
+            } if function.id == ExternFnId(0)
+                && function.params == [lower::ResolvedType::Value(Type::I64)]
+                && arguments.len() == 1
+        ));
+        assert_eq!(
+            resolved[0].source_payloads,
+            [lower::ResolvedType::Value(Type::I64)]
+        );
+        assert_eq!(
+            resolved[0].delivered_payloads,
+            [
+                lower::ResolvedType::Value(Type::I64),
+                lower::ResolvedType::Value(Type::I64),
+            ]
+        );
+        assert_eq!(resolved[0].route.handler, HandlerId(0));
+        assert_eq!(resolved[0].route.handler_name, "number");
+        assert!(matches!(
+            resolved[0].route.args.as_slice(),
+            [
+                lower::ResolvedRouteArg::Payload {
+                    index: 0,
+                    ty: Type::I64,
+                },
+                lower::ResolvedRouteArg::Payload {
+                    index: 1,
+                    ty: Type::I64,
+                },
+            ]
+        ));
+        assert!(matches!(
+            &resolved[1].source,
+            lower::ResolvedSubscriptionSource::Recipe { function, .. }
+                if function.id == ExternFnId(1)
+        ));
+        assert!(matches!(
+            &resolved[2].source,
+            lower::ResolvedSubscriptionSource::Events { filter, .. }
+                if filter.id == ExternFnId(2)
+        ));
+        let facts = program.checked_facts();
+        let subscriptions = facts.subscriptions();
+        assert_eq!(subscriptions.len(), 3);
+        assert!(matches!(
+            &subscriptions[0].source,
+            CheckedSubscriptionSource::Run {
+                function,
+                arguments,
+            } if function.id == ExternFnId(0) && arguments.len() == 1
+        ));
+        assert_eq!(subscriptions[0].source_payloads, vec![Type::I64]);
+        assert_eq!(
+            subscriptions[0].delivered_payloads,
+            vec![Type::I64, Type::I64]
+        );
+        assert_eq!(subscriptions[0].filter.as_ref().unwrap().id, ExternFnId(3));
+        assert!(subscriptions[0].context.is_some());
+        assert!(subscriptions[0].condition.is_some());
+        assert_eq!(subscriptions[0].route.handler, HandlerId(0));
+        assert_eq!(subscriptions[0].route.payloads, vec![0, 1]);
+        assert!(matches!(
+            &subscriptions[1].source,
+            CheckedSubscriptionSource::Recipe {
+                function,
+                arguments,
+            } if function.id == ExternFnId(1) && arguments.len() == 1
+        ));
+        assert!(matches!(
+            &subscriptions[2].source,
+            CheckedSubscriptionSource::Events {
+                filter,
+                ..
+            } if filter.id == ExternFnId(2)
+        ));
+        assert_eq!(facts.metrics().subscription_analysis_passes, 5);
+
+        let generated = crate::codegen::generate(&program, "subscriptions.ice").unwrap();
+        assert!(generated.contains("::iced::Subscription::run_with(self.seed"));
+        assert!(generated.contains("crate::backend::positive(__value)"));
+        assert!(generated.contains(".with(self.tag)"));
+        assert!(generated.contains("__SubscriptionsMessage::Number(__value.0, __value.1)"));
+        assert!(generated.contains("__IceEventFilterRawEvent"));
+    }
+
+    #[test]
+    fn subscription_lowering_and_codegen_ignore_raw_subscription_mutations() {
+        let source = format!(
+            "app FrozenSubscription\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\non key(value)\non theme(value)\nsubscribe\n  run numbers(seed) -> number _\n  keyboard press -> key _\n  system theme -> theme _\nview\n  text \"ready\"\n"
+        );
+        let baseline = lower::lower(analyze(&source).unwrap()).unwrap();
+        let baseline = crate::codegen::generate(&baseline, "frozen-subscription.ice").unwrap();
+        assert!(baseline.contains("pub(crate) struct __IceKeyPress"));
+        assert!(baseline.contains("fn __ice_system_theme"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.subscriptions.clear();
+        let program = lower::lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "frozen-subscription.ice").unwrap();
+        assert_eq!(generated, baseline);
+    }
+
+    #[test]
+    fn subscription_run_type_uses_normalized_struct_path_after_raw_mutation() {
+        let source = format!(
+            "app FrozenRunType\nextern crate::backend\n  User(name:str)\n  sync load_user(seed:i64) -> User\n  stream users(seed:User) -> str\n{THEME}state\n  user:User = load_user(1)\non user_event(value)\nsubscribe\n  run users(user) -> user_event _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.document.structs[0].rust_path = "crate::mutated::WrongUser".into();
+        let program = lower::lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "frozen-run-type.ice").unwrap();
+        let run = generated
+            .lines()
+            .find(|line| line.contains("::iced::Subscription::run_with"))
+            .unwrap();
+        assert!(run.contains("|__data: &crate::backend::User|"));
+        assert!(!run.contains("crate::mutated::WrongUser"));
+    }
+
+    #[test]
+    fn invalid_subscription_source_and_filter_extern_ids_are_e196_invariants() {
+        let source = format!(
+            "app InvalidSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  sync positive(value:i64) -> i64?\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
+        );
+
+        let mut invalid_source = analyze(&source).unwrap();
+        let span = invalid_source.facts.subscriptions[0].span.clone();
+        let CheckedSubscriptionSource::Run { function, .. } =
+            &mut invalid_source.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        function.id = ExternFnId(u32::MAX);
+        let error = lower::lower(invalid_source).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("invalid extern declaration ID"));
+
+        let mut invalid_filter = analyze(&source).unwrap();
+        let span = invalid_filter.facts.subscriptions[0].span.clone();
+        invalid_filter.facts.subscriptions[0]
+            .filter
+            .as_mut()
+            .unwrap()
+            .id = ExternFnId(u32::MAX);
+        let error = lower::lower(invalid_filter).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("invalid extern declaration ID"));
+    }
+
+    #[test]
+    fn same_arena_subscription_extern_ids_must_match_the_checked_contract() {
+        let source = format!(
+            "app WrongSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  sync positive(value:i64) -> i64?\n  stream wrong_arity() -> i64\n  stream wrong_param(seed:str) -> i64\n  stream wrong_output(seed:i64) -> str\n  sync wrong_filter_param(value:str) -> i64?\n  sync wrong_filter_output(value:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
+        );
+
+        fn extern_ref(checked: &crate::CheckedDocument, name: &str) -> ExternRef {
+            let declaration = checked.declarations.extern_decl_by_name(name).unwrap();
+            ExternRef {
+                id: declaration.declaration.id,
+                name: declaration.name.clone(),
+            }
+        }
+
+        fn replace_source(checked: &mut crate::CheckedDocument, name: &str) {
+            let replacement = extern_ref(checked, name);
+            let CheckedSubscriptionSource::Run { function, .. } =
+                &mut checked.facts.subscriptions[0].source
+            else {
+                unreachable!();
+            };
+            *function = replacement;
+        }
+
+        fn replace_filter(checked: &mut crate::CheckedDocument, name: &str) {
+            let replacement = extern_ref(checked, name);
+            checked.facts.subscriptions[0].filter = Some(replacement);
+        }
+
+        fn assert_contract_error(checked: crate::CheckedDocument, needle: &str) {
+            let span = checked.facts.subscriptions[0].span.clone();
+            let error = lower::lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!((error.line, error.column), (span.line, span.column));
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut wrong_kind = analyze(&source).unwrap();
+        replace_source(&mut wrong_kind, "positive");
+        assert_contract_error(wrong_kind, "declaration contract");
+
+        let mut wrong_arity = analyze(&source).unwrap();
+        replace_source(&mut wrong_arity, "wrong_arity");
+        assert_contract_error(wrong_arity, "mismatched arity");
+
+        let mut wrong_param = analyze(&source).unwrap();
+        replace_source(&mut wrong_param, "wrong_param");
+        assert_contract_error(wrong_param, "type contract");
+
+        let mut wrong_output = analyze(&source).unwrap();
+        replace_source(&mut wrong_output, "wrong_output");
+        assert_contract_error(wrong_output, "payload contract");
+
+        let mut wrong_filter_kind = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_kind, "numbers");
+        assert_contract_error(wrong_filter_kind, "declaration contract");
+
+        let mut wrong_filter_param = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_param, "wrong_filter_param");
+        assert_contract_error(wrong_filter_param, "filter has mismatched parameter");
+
+        let mut wrong_filter_output = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_output, "wrong_filter_output");
+        assert_contract_error(wrong_filter_output, "non-optional output");
+    }
+
+    #[test]
+    fn invalid_subscription_handler_id_is_a_source_mapped_e196_invariant() {
+        let source = format!(
+            "app InvalidSubscriptionHandler\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let span = checked.facts.subscriptions[0].span.clone();
+        checked.facts.subscriptions[0].route.handler = HandlerId(u32::MAX);
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("invalid handler declaration ID"));
+    }
+
+    #[test]
+    fn same_arena_subscription_handler_id_must_match_the_payload_contract() {
+        let source = format!(
+            "app WrongSubscriptionHandler\n{THEME}on tick(now)\non theme(label)\nsubscribe\n  every 10ms -> tick _\n  system theme -> theme _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let replacement = checked
+            .declarations
+            .handler_id(crate::hir::HandlerOwner::App, "theme")
+            .unwrap();
+        let span = checked.facts.subscriptions[0].span.clone();
+        checked.facts.subscriptions[0].route.handler = replacement;
+        checked.facts.subscriptions[0].route.handler_name = "theme".into();
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("payload type diverged"));
+    }
+
+    #[test]
+    fn subscription_route_rejects_a_same_name_component_handler_id() {
+        let source = format!(
+            "app SubscriptionHandlerOwner\n{THEME}on tick\ncomponent Surface()\n  on tick\n  text \"surface\"\nsubscribe\n  every 10ms -> tick\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let component_tick = checked
+            .declarations
+            .handler_id(crate::hir::HandlerOwner::Component(ComponentId(0)), "tick")
+            .unwrap();
+        checked.facts.subscriptions[0].route.handler = component_tick;
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract"));
+    }
+
+    #[test]
+    fn invalid_subscription_expression_ids_are_source_mapped_e196_invariants() {
+        let source = format!(
+            "app InvalidSubscriptionExpression\n{THEME}state\n  enabled = true\non tick(now)\nsubscribe\n  every 10ms when enabled -> tick _\nview\n  text \"ready\"\n"
+        );
+
+        let mut invalid_use = analyze(&source).unwrap();
+        let span = invalid_use.facts.subscriptions[0].span.clone();
+        invalid_use.facts.subscriptions[0].condition = Some(CheckedExprUseId(u32::MAX));
+        let error = lower::lower(invalid_use).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("invalid expression-use ID"));
+
+        let mut invalid_root = analyze(&source).unwrap();
+        let span = invalid_root.facts.subscriptions[0].span.clone();
+        let condition = invalid_root.facts.subscriptions[0].condition.unwrap();
+        invalid_root.facts.expression_uses[condition.0 as usize].root = CheckedExprId(u32::MAX);
+        let error = lower::lower(invalid_root).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn subscription_expression_roles_types_and_cycles_are_lowering_invariants() {
+        let source = format!(
+            "app SubscriptionExpressionContracts\n{THEME}state\n  enabled = true\n  tag = 7\non tick(tag, now)\nsubscribe\n  every 10ms with=tag when !enabled -> tick _ _\nview\n  text \"ready\"\n"
+        );
+        let checked = analyze(&source).unwrap();
+        let condition = checked.facts.subscriptions[0].condition.unwrap();
+        let context = checked.facts.subscriptions[0].context.unwrap();
+
+        fn assert_e196(checked: crate::CheckedDocument, needle: &str) {
+            let error = lower::lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut wrong_role = checked.clone();
+        wrong_role.facts.subscriptions[0].condition = Some(context);
+        assert_e196(wrong_role, "owner or role");
+
+        let mut wrong_source = checked.clone();
+        wrong_source.facts.expression_uses[condition.0 as usize].source = Type::Str;
+        assert_e196(wrong_source, "type contract");
+
+        let mut wrong_destination = checked.clone();
+        wrong_destination.facts.expression_uses[condition.0 as usize].destination = Type::Str;
+        assert_e196(wrong_destination, "type contract");
+
+        let mut wrong_coercion = checked.clone();
+        wrong_coercion.facts.expression_uses[condition.0 as usize].coercion =
+            CheckedInitializerCoercion::StrToMarkdown;
+        assert_e196(wrong_coercion, "type contract");
+
+        let mut wrong_owner = checked.clone();
+        let root = wrong_owner.facts.expression_uses[condition.0 as usize].root;
+        wrong_owner.facts.expressions[root.0 as usize].owner = context;
+        assert_e196(wrong_owner, "belongs to another retained expression use");
+
+        let mut cycle = checked;
+        let root = cycle.facts.expression_uses[condition.0 as usize].root;
+        let CheckedExprKind::Unary { value, .. } =
+            &mut cycle.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *value = root;
+        assert_e196(cycle, "contains a cycle");
+    }
+
+    #[test]
+    fn subscription_expression_nodes_revalidate_retained_operator_and_call_contracts() {
+        let source = format!(
+            r#"app SubscriptionNodeContracts
+extern crate::backend
+  sync normalize(value:i64) -> i64
+  sync normalize_alias(value:i64) -> i64
+  wrong_kind(value:i64) -> i64
+  stream numbers(value:i64) -> i64
+  stream lists(value:[i64]) -> i64
+  stream options(value:i64?) -> i64
+{THEME}state
+  enabled = true
+  seed = 7
+derived
+  copied_seed = seed
+on tick(value)
+on timer(now)
+subscribe
+  run numbers(normalize(seed)) -> tick _
+  run numbers(len([seed])) -> tick _
+  run lists([seed]) -> tick _
+  run options(some(seed)) -> tick _
+  every 10ms when !enabled && enabled -> timer _
+view
+  text "ready"
+"#
+        );
+        let checked = analyze(&source).unwrap();
+
+        fn argument_root(checked: &crate::CheckedDocument, subscription: usize) -> CheckedExprId {
+            let CheckedSubscriptionSource::Run { arguments, .. } =
+                &checked.facts.subscriptions[subscription].source
+            else {
+                unreachable!();
+            };
+            checked.facts.expression_uses[arguments[0].0 as usize].root
+        }
+
+        fn assert_e196(checked: crate::CheckedDocument, needle: &str) {
+            let error = lower::lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut wrong_extern_kind = checked.clone();
+        let root = argument_root(&wrong_extern_kind, 0);
+        let wrong_id = wrong_extern_kind
+            .declarations
+            .extern_decl_by_name("wrong_kind")
+            .unwrap()
+            .declaration
+            .id;
+        let CheckedExprKind::Call { target, .. } =
+            &mut wrong_extern_kind.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *target = CheckedCallTarget::Extern(ExternRef {
+            id: wrong_id,
+            name: "wrong_kind".into(),
+        });
+        assert_e196(wrong_extern_kind, "extern call");
+
+        let mut wrong_extern_identity = checked.clone();
+        let root = argument_root(&wrong_extern_identity, 0);
+        let alias_id = wrong_extern_identity
+            .declarations
+            .extern_decl_by_name("normalize_alias")
+            .unwrap()
+            .declaration
+            .id;
+        let CheckedExprKind::Call {
+            target: CheckedCallTarget::Extern(reference),
+            ..
+        } = &mut wrong_extern_identity.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        reference.id = alias_id;
+        assert_e196(wrong_extern_identity, "extern call");
+
+        let mut wrong_value_scope = checked.clone();
+        let root = argument_root(&wrong_value_scope, 0);
+        wrong_value_scope.facts.expressions[root.0 as usize].kind = CheckedExprKind::Path {
+            root: CheckedPathRoot::Value(CheckedValueRef::Derived(DerivedId(0))),
+            projections: Vec::new(),
+        };
+        assert_e196(wrong_value_scope, "cannot reference a derived value");
+
+        let mut wrong_literal = checked.clone();
+        let root = argument_root(&wrong_literal, 2);
+        let CheckedExprKind::List(items) = &wrong_literal.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        let item = items[0];
+        wrong_literal.facts.expressions[item.0 as usize].kind = CheckedExprKind::Bool(true);
+        assert_e196(wrong_literal, "kind does not match its retained type");
+
+        let mut wrong_list_item = checked.clone();
+        let root = argument_root(&wrong_list_item, 2);
+        let CheckedExprKind::List(items) = &wrong_list_item.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        let item = items[0];
+        wrong_list_item.facts.expressions[item.0 as usize].ty = Type::Str;
+        assert_e196(wrong_list_item, "kind does not match its retained type");
+
+        let mut wrong_builtin = checked.clone();
+        let len_root = argument_root(&wrong_builtin, 1);
+        let some_root = argument_root(&wrong_builtin, 3);
+        let CheckedExprKind::Call {
+            target: len_target, ..
+        } = wrong_builtin.facts.expressions[len_root.0 as usize]
+            .kind
+            .clone()
+        else {
+            unreachable!();
+        };
+        let CheckedExprKind::Call { target, .. } =
+            &mut wrong_builtin.facts.expressions[some_root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *target = len_target;
+        assert_e196(wrong_builtin, "collection query input");
+
+        let mut wrong_binary = checked.clone();
+        let condition = wrong_binary.facts.subscriptions[4].condition.unwrap();
+        let root = wrong_binary.facts.expression_uses[condition.0 as usize].root;
+        let CheckedExprKind::Binary { operator, left, .. } =
+            &mut wrong_binary.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *operator = CheckedBinaryOperator::Boolean(BinaryOp::Add);
+        let left = *left;
+        assert_e196(wrong_binary, "binary expression");
+
+        let mut wrong_unary = checked;
+        let CheckedExprKind::Unary { operator, .. } =
+            &mut wrong_unary.facts.expressions[left.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *operator = CheckedUnaryOperator::NumericNegation(Type::I64);
+        assert_e196(wrong_unary, "unary expression");
+    }
+
+    #[test]
+    fn native_subscription_payload_contract_is_recomputed_during_lowering() {
+        let source = format!(
+            "app NativePayloadContract\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.subscriptions[0].source = CheckedSubscriptionSource::Mouse(MouseEvent::Moved);
+        checked.document.subscriptions[0].source = SubscriptionSource::Mouse(MouseEvent::Moved);
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("payload contract"));
+    }
+
+    #[test]
+    fn subscription_options_revalidate_their_source_compatibility() {
+        let frame = format!(
+            "app InvalidWindowId\n{THEME}on frame\nsubscribe\n  window frame -> frame\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&frame).unwrap();
+        checked.facts.subscriptions[0].window_id = true;
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("does not support a window ID"));
+
+        let timer = format!(
+            "app InvalidStatus\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&timer).unwrap();
+        checked.facts.subscriptions[0].status = Some(EventStatus::Captured);
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("does not support status filtering"));
+
+        let mut every = analyze(&timer).unwrap();
+        every.facts.subscriptions[0].source = CheckedSubscriptionSource::Every { milliseconds: 0 };
+        let error = lower::lower(every).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duration is not positive"));
+
+        let repeat = format!(
+            "app InvalidRepeatDuration\nextern crate::backend\n  refresh() -> i64\n{THEME}on tick(now)\nsubscribe\n  repeat refresh() every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut repeat = analyze(&repeat).unwrap();
+        let CheckedSubscriptionSource::Repeat { milliseconds, .. } =
+            &mut repeat.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        *milliseconds = 0;
+        let error = lower::lower(repeat).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duration is not positive"));
+    }
+
+    #[test]
+    fn subscription_hashability_is_revalidated_during_lowering() {
+        fn replace_expression_type(
+            checked: &mut crate::CheckedDocument,
+            expression: CheckedExprUseId,
+            ty: Type,
+        ) {
+            let root = checked.facts.expression_uses[expression.0 as usize].root;
+            checked.facts.expression_uses[expression.0 as usize].source = ty.clone();
+            checked.facts.expression_uses[expression.0 as usize].destination = ty.clone();
+            checked.facts.expressions[root.0 as usize].ty = ty;
+            checked.facts.expressions[root.0 as usize].kind = CheckedExprKind::F64(1.0);
+        }
+
+        let run = format!(
+            "app InvalidRunHash\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 1\non tick(value)\nsubscribe\n  run numbers(seed) -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut run = analyze(&run).unwrap();
+        let CheckedSubscriptionSource::Run {
+            function,
+            arguments,
+        } = &run.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        let function = function.id;
+        let argument = arguments[0];
+        run.declarations
+            .replace_extern_param_type_for_test(function, 0, Type::F64);
+        replace_expression_type(&mut run, argument, Type::F64);
+        let error = lower::lower(run).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run data is not hashable"));
+
+        let events = format!(
+            "app InvalidEventIdentity\nextern crate::backend\n  event-filter raw_event() -> str\n{THEME}state\n  seed = 1\non event(value)\nsubscribe\n  events seed using=raw_event -> event _\nview\n  text \"ready\"\n"
+        );
+        let mut events = analyze(&events).unwrap();
+        let CheckedSubscriptionSource::Events { identity, .. } =
+            events.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        replace_expression_type(&mut events, identity, Type::F64);
+        let error = lower::lower(events).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("event identity is not hashable"));
+
+        let context = format!(
+            "app InvalidContextHash\n{THEME}state\n  tag = 1\non tick(tag, value)\nsubscribe\n  every 10ms with=tag -> tick _ _\nview\n  text \"ready\"\n"
+        );
+        let mut context = analyze(&context).unwrap();
+        let context_expression = context.facts.subscriptions[0].context.unwrap();
+        replace_expression_type(&mut context, context_expression, Type::F64);
+        let error = lower::lower(context).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("context is not hashable"));
+    }
+
+    #[test]
+    fn checked_program_kind_is_frozen_before_lowering() {
+        let source = format!("app FrozenProgramKind\n{THEME}view\n  text \"ready\"\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.document.daemon = true;
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (1, 1));
+        assert!(error.message.contains("application kind changed"));
+    }
+
+    #[test]
+    fn invalid_subscription_expression_descendant_ids_are_e196_invariants() {
+        let source = format!(
+            r#"app InvalidSubscriptionDescendants
+enum Mode
+  idle
+  loaded(str)
+extern crate::backend
+  User(name:str)
+  sync load_user() -> User
+  stream modes(value:Mode) -> i64
+  stream labels(value:str) -> i64
+  stream palettes(value:palette[AppTheme]) -> i64
+{THEME}state
+  user:User = load_user()
+on tick(value)
+subscribe
+  run modes(Mode.loaded("ready")) -> tick _
+  run modes(Mode.idle) -> tick _
+  run labels(user.name) -> tick _
+  run palettes(AppTheme.app) -> tick _
+view
+  text "ready"
+"#
+        );
+        let checked = analyze(&source).unwrap();
+
+        fn argument_root(checked: &crate::CheckedDocument, subscription: usize) -> CheckedExprId {
+            let CheckedSubscriptionSource::Run { arguments, .. } =
+                &checked.facts.subscriptions[subscription].source
+            else {
+                unreachable!();
+            };
+            checked.facts.expression_uses[arguments[0].0 as usize].root
+        }
+
+        fn assert_e196(checked: crate::CheckedDocument, subscription: usize, needle: &str) {
+            let span = checked.facts.subscriptions[subscription].span.clone();
+            let error = lower::lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!((error.line, error.column), (span.line, span.column));
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut enum_call = checked.clone();
+        let root = argument_root(&enum_call, 0);
+        let CheckedExprKind::Call { target, .. } =
+            &mut enum_call.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *target = CheckedCallTarget::EnumVariant(crate::hir::EnumVariantId {
+            owner: crate::hir::EnumId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(enum_call, 0, "expression declaration ID");
+
+        let mut enum_path = checked.clone();
+        let root = argument_root(&enum_path, 1);
+        let CheckedExprKind::Path { root, .. } =
+            &mut enum_path.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *root = CheckedPathRoot::EnumVariant(crate::hir::EnumVariantId {
+            owner: crate::hir::EnumId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(enum_path, 1, "expression declaration ID");
+
+        let mut struct_projection = checked.clone();
+        let root = argument_root(&struct_projection, 2);
+        let CheckedExprKind::Path { projections, .. } =
+            &mut struct_projection.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        projections[0].kind = CheckedProjectionKind::Struct(crate::hir::StructFieldId {
+            owner: crate::hir::StructId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(struct_projection, 2, "expression declaration ID");
+
+        let mut palette = checked.clone();
+        let root = argument_root(&palette, 3);
+        let CheckedExprKind::Path { root, .. } =
+            &mut palette.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *root = CheckedPathRoot::Palette(PaletteId(u32::MAX));
+        assert_e196(palette, 3, "expression declaration ID");
+
+        let mut slot = checked;
+        let root = argument_root(&slot, 1);
+        slot.facts.expressions[root.0 as usize].kind =
+            CheckedExprKind::SlotProvided(ComponentSlotId {
+                component: ComponentId(u32::MAX),
+                index: 0,
+            });
+        slot.facts.expressions[root.0 as usize].ty = Type::Bool;
+        assert_e196(slot, 1, "expression declaration ID");
+    }
+
+    #[test]
+    fn malformed_subscription_payload_hir_is_an_e196_invariant() {
+        let source = format!(
+            "app MalformedSubscription\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.subscriptions[0].delivered_payloads.clear();
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("payload"));
+
+        let source = format!(
+            "app ReorderedSubscription\n{THEME}on moved(x, y)\nsubscribe\n  mouse moved -> moved _ _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.subscriptions[0].route.payloads.swap(0, 1);
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("payload order"));
+    }
+
+    #[test]
     fn missing_and_leftover_view_analyses_are_e196_invariants() {
         let missing_source =
             format!("app Missing\n{THEME}view\n  col\n    if true\n      text \"ok\"\n");
@@ -4894,6 +6125,83 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
             error
                 .message
                 .contains("missing authoritative handler expression")
+        );
+    }
+
+    #[test]
+    fn missing_and_leftover_subscription_analyses_are_e196_invariants() {
+        let missing_source = format!(
+            "app MissingSubscription\n{THEME}on tick(now)\nsubscribe\n  every 10ms when true -> tick _\nview\n  text \"ok\"\n"
+        );
+        let missing_document = crate::parse(&missing_source).unwrap();
+        let mut missing_origins = OriginArena::default();
+        let missing_declarations = DeclarationIndex::build(&missing_document, &mut missing_origins);
+        let subscription = missing_declarations.subscription(0).id;
+        let mut missing_analyses = CheckedAnalyses::default();
+        missing_analyses
+            .insert_subscription(
+                subscription,
+                CheckedSubscriptionAnalysis {
+                    source: CheckedSubscriptionSourceAnalysis::Every { milliseconds: 10 },
+                    source_payloads: vec![Type::Instant],
+                    delivered_payloads: vec![Type::Instant],
+                    filter: None,
+                    route_handler: missing_declarations
+                        .handler_id(crate::hir::HandlerOwner::App, "tick")
+                        .unwrap(),
+                    route_handler_name: "tick".into(),
+                    route_payloads: vec![0],
+                },
+            )
+            .unwrap();
+        let missing = build(
+            &missing_document,
+            &missing_declarations,
+            &mut missing_origins,
+            missing_analyses,
+        )
+        .unwrap_err();
+        assert_eq!(missing.code, "E196");
+        assert!(
+            missing
+                .message
+                .contains("missing authoritative subscription expression analysis")
+        );
+
+        let extra_source =
+            format!("app ExtraSubscription\n{THEME}on tick(now)\nview\n  text \"ok\"\n");
+        let extra_document = crate::parse(&extra_source).unwrap();
+        let mut extra_origins = OriginArena::default();
+        let extra_declarations = DeclarationIndex::build(&extra_document, &mut extra_origins);
+        let mut extra_analyses = CheckedAnalyses::default();
+        extra_analyses
+            .insert_subscription(
+                SubscriptionId(0),
+                CheckedSubscriptionAnalysis {
+                    source: CheckedSubscriptionSourceAnalysis::Every { milliseconds: 10 },
+                    source_payloads: vec![Type::Instant],
+                    delivered_payloads: vec![Type::Instant],
+                    filter: None,
+                    route_handler: extra_declarations
+                        .handler_id(crate::hir::HandlerOwner::App, "tick")
+                        .unwrap(),
+                    route_handler_name: "tick".into(),
+                    route_payloads: vec![0],
+                },
+            )
+            .unwrap();
+        let leftover = build(
+            &extra_document,
+            &extra_declarations,
+            &mut extra_origins,
+            extra_analyses,
+        )
+        .unwrap_err();
+        assert_eq!(leftover.code, "E196");
+        assert!(
+            leftover
+                .message
+                .contains("checked analyses were not consumed")
         );
     }
 
@@ -5855,6 +7163,71 @@ view
         assert!(
             large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
             "projection scaling exceeded the linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit retained subscription-expression linearity contract"]
+    fn performance_contract_four_thousand_subscriptions_reuse_one_app_scope() {
+        fn measure(count: usize) -> (CheckedFactMetrics, usize, usize, usize, std::time::Duration) {
+            let mut source = String::from("app SubscriptionFacts\nextern crate::backend\n");
+            for index in 0..count {
+                writeln!(source, "  sync retain_{index}(value:instant) -> instant?").unwrap();
+            }
+            write!(
+                source,
+                "{THEME}state\n  enabled = true\n  tag = 7\non tick(tag, now)\nsubscribe\n"
+            )
+            .unwrap();
+            for index in 0..count {
+                writeln!(
+                    source,
+                    "  every 10ms with=tag filter=retain_{index} when enabled -> tick _ _"
+                )
+                .unwrap();
+            }
+            source.push_str("view\n  text \"ready\"\n");
+            let started = Instant::now();
+            let program = lower::lower(analyze(&source).unwrap()).unwrap();
+            let generated =
+                crate::codegen::generate(&program, "subscription-performance.ice").unwrap();
+            let generated_subscriptions = generated.matches("::iced::time::every").count();
+            (
+                program.checked_facts().metrics(),
+                program.declarations().extern_name_lookup_count(),
+                generated_subscriptions,
+                generated.len(),
+                started.elapsed(),
+            )
+        }
+
+        let (small, small_lookups, small_generated, small_rust_bytes, small_elapsed) = measure(500);
+        let (large, large_lookups, large_generated, large_rust_bytes, large_elapsed) =
+            measure(4_000);
+        assert_eq!(large.subscription_analysis_passes, 8_000);
+        assert_eq!(small_lookups, 500);
+        assert_eq!(large_lookups, 4_000);
+        assert_eq!(small_generated, 500);
+        assert_eq!(large_generated, 4_000);
+        assert!(large_rust_bytes > small_rust_bytes * 6);
+        assert_eq!(large.expression_uses - 2, (small.expression_uses - 2) * 8);
+        assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
+        assert_eq!(
+            large.type_analysis_nodes - 2,
+            (small.type_analysis_nodes - 2) * 8
+        );
+        assert_eq!(large.type_scope_env_full_clones, 0);
+        assert_eq!(large.scope_env_full_clones, 0);
+        eprintln!(
+            "500 subscriptions through codegen in {small_elapsed:?} ({small_rust_bytes} Rust bytes); 4k in {large_elapsed:?} ({large_rust_bytes} Rust bytes)"
+        );
+        assert!(
+            large_elapsed.as_secs_f64() < 8.0,
+            "4k subscriptions completed in {large_elapsed:?}"
+        );
+        assert!(
+            large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
+            "subscription scaling exceeded the linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
         );
     }
 }

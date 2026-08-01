@@ -1,6 +1,19 @@
 use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TestLookupCount(AtomicUsize);
+
+#[cfg(test)]
+impl Clone for TestLookupCount {
+    fn clone(&self) -> Self {
+        Self(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
+}
 
 macro_rules! arena_id {
     ($name:ident) => {
@@ -26,6 +39,19 @@ arena_id!(TaskId);
 arena_id!(RouteId);
 arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
+arena_id!(SubscriptionId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum NamedTypeId {
+    Struct(StructId),
+    Enum(EnumId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExternRef {
+    pub(crate) id: ExternFnId,
+    pub(crate) name: String,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AppSettingExprId {
@@ -230,11 +256,14 @@ pub(crate) struct DeclarationIndex {
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
+    #[cfg(test)]
+    extern_name_lookups: TestLookupCount,
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
     handlers: Vec<HandlerDeclaration>,
     handlers_by_owner_name: HashMap<(HandlerOwner, String), HandlerId>,
+    subscriptions: Vec<Declaration<SubscriptionId>>,
     statements: Vec<StatementDeclaration>,
     tasks: Vec<TaskDeclaration>,
     routes: Vec<RouteDeclaration>,
@@ -254,6 +283,7 @@ pub(crate) struct HandlerDeclaration {
     pub(crate) owner: HandlerOwner,
     pub(crate) name: String,
     pub(crate) statement_roots: Vec<StatementId>,
+    pub(crate) payloads: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -486,7 +516,6 @@ impl DeclarationIndex {
             .iter()
             .map(|palette| palette.name.clone())
             .collect();
-
         let externs = document
             .functions
             .iter()
@@ -509,6 +538,16 @@ impl DeclarationIndex {
         let externs_by_name = externs
             .iter()
             .map(|function| (function.name.clone(), function.declaration.id))
+            .collect();
+
+        let subscriptions = document
+            .subscriptions
+            .iter()
+            .enumerate()
+            .map(|(index, subscription)| Declaration {
+                id: SubscriptionId(index as u32),
+                origin: origins.push(&subscription.span, None),
+            })
             .collect();
 
         let mut views = Vec::new();
@@ -674,6 +713,9 @@ impl DeclarationIndex {
             palettes_by_name,
             externs,
             externs_by_name,
+            #[cfg(test)]
+            extern_name_lookups: TestLookupCount::default(),
+            subscriptions,
             views,
             views_by_site,
             component_calls_by_view,
@@ -701,8 +743,41 @@ impl DeclarationIndex {
         self.app_states[index]
     }
 
+    pub(crate) fn named_type_id(&self, name: &str) -> Option<NamedTypeId> {
+        self.structs_by_name
+            .get(name)
+            .copied()
+            .map(NamedTypeId::Struct)
+            .or_else(|| self.enums_by_name.get(name).copied().map(NamedTypeId::Enum))
+    }
+
+    pub(crate) fn named_type_rust_paths(&self) -> HashMap<NamedTypeId, String> {
+        self.structs
+            .iter()
+            .map(|item| {
+                (
+                    NamedTypeId::Struct(item.declaration.id),
+                    item.rust_path.clone(),
+                )
+            })
+            .chain(self.enums.iter().map(|item| {
+                (
+                    NamedTypeId::Enum(item.declaration.id),
+                    item.rust_name.clone(),
+                )
+            }))
+            .collect()
+    }
+
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
+    }
+
+    pub(crate) fn try_derived(&self, id: DerivedId) -> Option<Declaration<DerivedId>> {
+        self.derived
+            .get(id.0 as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn component(&self, index: usize) -> Declaration<ComponentId> {
@@ -890,12 +965,29 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn extern_decl_by_name(&self, name: &str) -> Option<&ExternDeclaration> {
+        #[cfg(test)]
+        self.extern_name_lookups.0.fetch_add(1, Ordering::Relaxed);
         let id = self.externs_by_name.get(name)?;
         self.externs.get(id.0 as usize)
     }
 
+    #[cfg(test)]
+    pub(crate) fn extern_name_lookup_count(&self) -> usize {
+        self.extern_name_lookups.0.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_extern_param_type_for_test(
+        &mut self,
+        id: ExternFnId,
+        index: usize,
+        ty: Type,
+    ) {
+        self.externs[id.0 as usize].params[index].1 = ty;
     }
 
     pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
@@ -912,7 +1004,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&HandlerDeclaration> {
-        self.handlers.get(id.0 as usize)
+        self.handlers
+            .get(id.0 as usize)
+            .filter(|handler| handler.declaration.id == id)
     }
 
     pub(crate) fn handler_id(&self, owner: HandlerOwner, name: &str) -> Option<HandlerId> {
@@ -968,6 +1062,105 @@ impl DeclarationIndex {
     pub(crate) fn run_site_count(&self) -> usize {
         self.run_sites.len()
     }
+
+    pub(crate) fn checked_extern_decl(
+        &self,
+        id: ExternFnId,
+        span: &Span,
+    ) -> Result<&ExternDeclaration, crate::Error> {
+        self.try_extern_decl(id).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked HIR references an invalid extern declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn checked_handler(
+        &self,
+        id: HandlerId,
+        span: &Span,
+    ) -> Result<&HandlerDeclaration, crate::Error> {
+        self.try_handler(id).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked route references an invalid handler declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
+        self.subscriptions[index]
+    }
+
+    pub(crate) fn try_subscription(&self, index: usize) -> Option<Declaration<SubscriptionId>> {
+        self.subscriptions.get(index).copied()
+    }
+
+    pub(crate) fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
+    }
+
+    pub(crate) fn finalize_checked_handlers(
+        &mut self,
+        document: &Document,
+    ) -> Result<(), crate::Error> {
+        let mut expected = Vec::new();
+        expected.extend(document.handlers.iter().map(|handler| {
+            (
+                HandlerOwner::App,
+                handler.name.clone(),
+                handler
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect::<Vec<_>>(),
+                handler.span.clone(),
+            )
+        }));
+        for (index, component) in document.components.iter().enumerate() {
+            expected.extend(component.handlers.iter().map(|handler| {
+                (
+                    HandlerOwner::Component(ComponentId(index as u32)),
+                    handler.name.clone(),
+                    handler
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect::<Vec<_>>(),
+                    handler.span.clone(),
+                )
+            }));
+        }
+        expected.extend(document.presets.iter().enumerate().map(|(index, preset)| {
+            (
+                HandlerOwner::Preset(index as u32),
+                format!("preset {}", preset.name),
+                Vec::new(),
+                preset.span.clone(),
+            )
+        }));
+        if self.handlers.len() != expected.len() {
+            return Err(crate::Error::new(
+                "E196",
+                &Span::line(1),
+                "checked handler declarations changed during semantic analysis",
+            ));
+        }
+        for (declaration, (owner, name, payloads, span)) in self.handlers.iter_mut().zip(expected) {
+            if declaration.owner != owner || declaration.name != name {
+                return Err(crate::Error::new(
+                    "E196",
+                    &span,
+                    "checked handler identity changed during semantic analysis",
+                ));
+            }
+            declaration.payloads = payloads;
+        }
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1008,6 +1201,11 @@ fn index_handler_declaration(
         owner,
         name: handler.name.clone(),
         statement_roots,
+        payloads: handler
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
     });
 }
 

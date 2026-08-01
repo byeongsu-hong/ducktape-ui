@@ -7,13 +7,14 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     let mut origins = crate::hir::OriginArena::default();
-    let declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
+    let mut declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
     let initializer_analyses = check(
         &mut document,
         &reachable,
         &reachable_handlers,
         &declarations,
     )?;
+    declarations.finalize_checked_handlers(&document)?;
     let facts = without_usage(|| {
         facts::build(&document, &declarations, &mut origins, initializer_analyses)
     })?;
@@ -370,7 +371,13 @@ fn check(
             record_write(&binding, &state.span);
         }
     }
-    infer_subscriptions(document, &states, &mut signatures)?;
+    infer_subscriptions(
+        document,
+        &states,
+        &mut signatures,
+        declarations,
+        &mut initializer_analyses,
+    )?;
     let empty_env = HashMap::new();
     for handler in &document.handlers {
         with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
@@ -785,6 +792,7 @@ use style::*;
 use subscription::*;
 use testing::*;
 use usage::*;
+pub(crate) use view::lazy_hashable;
 use view::*;
 use widgets::*;
 
@@ -799,8 +807,9 @@ pub(crate) use facts::{
     CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
     CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
     CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
-    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator,
-    CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef,
+    CheckedView, CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 
