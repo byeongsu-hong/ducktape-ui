@@ -832,9 +832,9 @@ pub(crate) use facts::{
     CheckedInteractionKind, CheckedKeyedLength, CheckedLocalId, CheckedLocalOwner,
     CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
     CheckedResponsiveLength, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
-    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedTooltip, CheckedUnaryOperator,
-    CheckedValueRef, CheckedView, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole,
-    CheckedViewScope,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedTableLength, CheckedTooltip,
+    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewExprRole, CheckedViewFlow,
+    CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 

@@ -2,30 +2,25 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_table(
-    options: &TableOptions,
+    table: &ResolvedTable,
     columns: &[TableColumn],
-    span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let CheckedViewFlow::Table { rows, item } = &document.program().checked_view(span)?.flow else {
-        return Err(Error::new("E196", span, "table has no checked flow"));
-    };
-    let rows = checked_expr_use_code(document.program(), *rows, env, ValueMode::Owned)?;
-    let checked_item = document.program().checked_facts().local(*item);
-    let item_name = &checked_item.name;
-    let row_type = checked_item.ty.clone();
-    let row_rust = row_type.rust(&document.structs);
+    let program = document.hir();
+    let rows = checked_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
+    let item_name = &table.row.name;
+    let row_rust = table.row.ty.rust(&document.structs);
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),
-        checked_local_binding(document.program(), *item, item_name.clone(), true),
+        checked_local_binding(program, table.row.local, item_name.clone(), true),
     );
     let mut column_codes = Vec::with_capacity(columns.len());
-    for (index, column) in columns.iter().enumerate() {
+    for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
         let header_scope = format!("format!(\"{{}}/header({index})\", {scope})");
         let cell_scope = format!("format!(\"{{}}/row({{}})/col({index})\", {scope}, __row)");
         let header = render_node(&column.header, document, message, env, &header_scope, slot)?;
@@ -40,16 +35,16 @@ pub(in crate::codegen) fn render_table(
         let mut code = format!(
             "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
-        if let Some(width) = &column.width {
+        if let Some(width) = &resolved.width {
             write!(
                 code,
                 ".width(::ui_lang_runtime::bounded_fill_length({}, {}))",
-                length_code(width, env, document)?,
+                resolved_table_length_code(width, program, env)?,
                 columns.len()
             )
             .unwrap();
         }
-        if let Some(align) = column.align_x {
+        if let Some(align) = resolved.align_x {
             let align = match align {
                 InputAlignment::Left => "Left",
                 InputAlignment::Center => "Center",
@@ -57,7 +52,7 @@ pub(in crate::codegen) fn render_table(
             };
             write!(code, ".align_x(::iced::alignment::Horizontal::{align})").unwrap();
         }
-        if let Some(align) = column.align_y {
+        if let Some(align) = resolved.align_y {
             let align = match align {
                 VerticalAlignment::Top => "Top",
                 VerticalAlignment::Center => "Center",
@@ -72,33 +67,30 @@ pub(in crate::codegen) fn render_table(
         "{{ let __table_rows = {rows}; let __table_row_count = __table_rows.len().saturating_add(1); ::iced::widget::table::table(::std::vec![{}], __table_rows.into_iter().enumerate())",
         column_codes.join(", ")
     );
-    if let Some(width) = &options.width {
-        write!(code, ".width({})", length_code(width, env, document)?).unwrap();
+    if let Some(width) = &table.width {
+        write!(
+            code,
+            ".width({})",
+            resolved_table_length_code(width, program, env)?
+        )
+        .unwrap();
     }
     for (value, method, entries) in [
         (
-            &options.padding,
+            table.padding,
             "padding",
             format!("{}usize.max(__table_row_count)", columns.len()),
         ),
-        (&options.padding_x, "padding_x", columns.len().to_string()),
+        (table.padding_x, "padding_x", columns.len().to_string()),
+        (table.padding_y, "padding_y", "__table_row_count".to_owned()),
         (
-            &options.padding_y,
-            "padding_y",
-            "__table_row_count".to_owned(),
-        ),
-        (
-            &options.separator,
+            table.separator,
             "separator",
             format!("{}usize.max(__table_row_count)", columns.len()),
         ),
+        (table.separator_x, "separator_x", columns.len().to_string()),
         (
-            &options.separator_x,
-            "separator_x",
-            columns.len().to_string(),
-        ),
-        (
-            &options.separator_y,
+            table.separator_y,
             "separator_y",
             "__table_row_count".to_owned(),
         ),
@@ -107,12 +99,33 @@ pub(in crate::codegen) fn render_table(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, {entries}))",
-                expr_code(value, env, document, ValueMode::Owned)?,
+                checked_expr_use_code(program, value, env, ValueMode::Owned)?,
             )
             .unwrap();
         }
     }
     Ok(format!("{code}.into() }}"))
+}
+
+fn resolved_table_length_code(
+    length: &ResolvedTableLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedTableLength::Fill => "::iced::Fill".into(),
+        ResolvedTableLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedTableLength::Shrink => "::iced::Shrink".into(),
+        ResolvedTableLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedTableLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -215,7 +228,7 @@ fn resolved_keyed_padding_code(
     {
         return Ok(None);
     }
-    let code = |value: Option<CheckedExprUseId>| {
+    let code = |value: Option<ResolvedExpressionId>| {
         value
             .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
             .transpose()

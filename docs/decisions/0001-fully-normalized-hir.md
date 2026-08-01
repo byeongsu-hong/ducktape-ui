@@ -374,6 +374,16 @@ subtrees. Malformed IDs, post-check list/binding mutation, post-lowering flow
 poisoning, existing reconciliation codegen, and an ignored 4,000-node lower+emit
 budget provide the executable evidence.
 
+Table is a completed structural collection slice. Its checked flow owns the row
+list, typed row local, table width and bounded metrics, and each column's width,
+alignments, and origin. Lowering separates numeric and native-length fixed
+widths, revalidates expression ownership and DAGs, scope, list/row types, local
+role, origin parentage, and static table/column topology, then publishes
+`ResolvedTable`. Rust emission consumes that record and uses source columns only
+for header and cell subtrees. Malformed IDs, post-check expression/static
+mutation, post-lowering AST poisoning, complete configured codegen, and an
+ignored 4,000-table lower+emit budget provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

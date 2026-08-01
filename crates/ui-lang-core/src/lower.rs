@@ -4,8 +4,8 @@ use crate::check::{
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
     CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner,
-    CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjectionKind, CheckedTooltip,
-    CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
+    CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjectionKind, CheckedTableLength,
+    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
     CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
     lazy_hashable, resolve_erased_type,
 };
@@ -39,6 +39,7 @@ mod media;
 mod pin;
 mod responsive;
 mod style;
+mod table;
 mod testing;
 mod tooltip;
 
@@ -53,6 +54,7 @@ pub(crate) use match_view::*;
 pub(crate) use media::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
+pub(crate) use table::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
@@ -1463,6 +1465,7 @@ pub(crate) struct LoweredProgram {
     iterations: HashMap<ViewId, ResolvedIteration>,
     match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
+    tables: HashMap<ViewId, ResolvedTable>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -3052,6 +3055,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn table(&self, id: ViewId) -> Option<&ResolvedTable> {
+        self.tables.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3308,6 +3316,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "keyed column reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_table_for(&self, node: &ViewNode) -> Result<&ResolvedTable, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "table reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "table reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.tables.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "table reached code generation without normalized HIR",
             )
         })
     }
@@ -3661,6 +3695,7 @@ pub(crate) struct Lowerer {
     iterations: HashMap<ViewId, ResolvedIteration>,
     match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
+    tables: HashMap<ViewId, ResolvedTable>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -4382,6 +4417,7 @@ impl Lowerer {
             iterations: HashMap::new(),
             match_views: HashMap::new(),
             lazy_views: HashMap::new(),
+            tables: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4466,6 +4502,7 @@ impl Lowerer {
             iterations: self.iterations,
             match_views: self.match_views,
             lazy_views: self.lazy_views,
+            tables: self.tables,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -8391,7 +8428,15 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Table { columns, .. } => {
+            ViewNode::Table {
+                item,
+                rows,
+                options,
+                columns,
+                span,
+                ..
+            } => {
+                self.lower_table(item, rows, options, columns, span, outer_component)?;
                 for column in columns {
                     self.lower_view(&column.header, outer_component)?;
                     self.lower_view(&column.cell, outer_component)?;
@@ -11305,6 +11350,121 @@ view
     }
 
     #[test]
+    fn normalizes_table_rows_binding_metrics_columns_and_origins() {
+        let source = format!(
+            "app TableHir\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows w=fill p=4.0 sep-x=2.0\n    col w=fill(2) align-x=right align-y=bottom\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let table = program.table(ViewId(0)).unwrap();
+        assert_eq!(table.id, ViewId(0));
+        assert_eq!(table.row.name, "row");
+        assert_eq!(table.row.ty, Type::Named("Item".into()));
+        assert!(matches!(table.width, Some(ResolvedTableLength::Fill)));
+        assert!(table.padding.is_some());
+        assert!(table.separator_x.is_some());
+        assert_eq!(table.columns.len(), 1);
+        assert!(matches!(
+            table.columns[0].width,
+            Some(ResolvedTableLength::FillPortion(2))
+        ));
+        assert_eq!(table.columns[0].align_x, Some(InputAlignment::Right));
+        assert_eq!(
+            program.origin(table.columns[0].origin).parent,
+            Some(table.origin)
+        );
+        assert_eq!(
+            program.checked_facts().expression_use(table.rows).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::TableRows,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_table_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidTableFacts\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows p=4.0\n    col\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::TableRows,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_table_row_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn table_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedTable\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows p=4.0\n    col align-x=right\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-table.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Table { rows, options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be table");
+        };
+        *rows = Expr::List(vec![]);
+        options.padding = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-table.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Table { columns, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be table");
+        };
+        columns[0].align_x = Some(InputAlignment::Left);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn table_codegen_ignores_raw_flow_options_and_column_metadata_after_lowering() {
+        let source = format!(
+            "app LoweredTable\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows w=fill p=4.0\n    col w=fill(2) align-x=right\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-table.ice").unwrap();
+        let ViewNode::Table {
+            item,
+            rows,
+            options,
+            columns,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be table");
+        };
+        *item = "poisoned".into();
+        *rows = Expr::List(vec![]);
+        options.width = Some(LengthValue::Shrink);
+        options.padding = Some(Expr::F64(999.0));
+        columns[0].width = Some(LengthValue::Shrink);
+        columns[0].align_x = Some(InputAlignment::Left);
+        let actual = crate::codegen::generate(&program, "lowered-table.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_if_condition_type_owner_and_scope() {
         let source = format!(
             "app IfHir\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
@@ -11896,6 +12056,37 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized keyed columns lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized table lowering and emission performance contract"]
+    fn performance_contract_four_thousand_tables_lower_and_emit_under_two_seconds() {
+        const TABLES: usize = 4_000;
+        let mut source = format!(
+            "app TableScale\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  col\n"
+        );
+        for index in 0..TABLES {
+            writeln!(
+                source,
+                "    table row_{index} in rows p=4.0\n      col w=fill align-x=left\n        header\n          text \"Name {index}\"\n        cell\n          text row_{index}.name"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "table-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.tables.len(), TABLES);
+        assert_eq!(
+            generated.matches("::iced::widget::table::table(").count(),
+            TABLES
+        );
+        eprintln!("4k normalized tables lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized tables lowered and emitted in {elapsed:?}"
         );
     }
 

@@ -343,6 +343,16 @@ resolved Rust owner and variant names, and arm origins are published as
 `ResolvedMatch`. Normal and flex layout generation consume that record and do
 not reread source patterns, checked flow/facts, or enum and palette declarations.
 
+Table is a completed structural collection HIR slice. Its row list, typed row
+local, table width and bounded metrics, and each column's width, horizontal and
+vertical alignment, and origin are resolved before Rust generation. Numeric
+fixed and native-length fixed widths are distinct HIR variants. Lowering
+validates owner mappings, expression DAGs, scope, list/row types, local
+ownership, origin parentage, and static option/column topology before publishing
+`ResolvedTable`. Rust generation reads that record plus header/cell subtrees and
+does not reread table expressions, metadata, checked flow, or checked local
+facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

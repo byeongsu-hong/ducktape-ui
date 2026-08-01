@@ -246,6 +246,7 @@ pub(crate) enum CheckedViewFlow {
     Table {
         rows: CheckedExprUseId,
         item: CheckedLocalId,
+        layout: CheckedTableLayout,
     },
     PaneGrid {
         static_maximized: Vec<Option<CheckedLocalId>>,
@@ -305,6 +306,39 @@ pub(crate) struct CheckedKeyedLayout {
     pub(crate) padding: CheckedKeyedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
     pub(crate) align: Option<FlexAlignment>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedTableLength {
+    None,
+    Fill,
+    FillPortion(u16),
+    Shrink,
+    Fixed {
+        expression: CheckedExprUseId,
+        source: Type,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedTableColumn {
+    pub(crate) width: CheckedTableLength,
+    pub(crate) align_x: Option<InputAlignment>,
+    pub(crate) align_y: Option<VerticalAlignment>,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedTableLayout {
+    pub(crate) semantic_key: String,
+    pub(crate) width: CheckedTableLength,
+    pub(crate) padding: Option<CheckedExprUseId>,
+    pub(crate) padding_x: Option<CheckedExprUseId>,
+    pub(crate) padding_y: Option<CheckedExprUseId>,
+    pub(crate) separator: Option<CheckedExprUseId>,
+    pub(crate) separator_x: Option<CheckedExprUseId>,
+    pub(crate) separator_y: Option<CheckedExprUseId>,
+    pub(crate) columns: Vec<CheckedTableColumn>,
 }
 
 #[derive(Clone, Debug)]
@@ -422,6 +456,14 @@ pub(crate) enum CheckedViewExprRole {
     KeyedMaxWidth,
     LazyDependency,
     TableRows,
+    TableWidth,
+    TablePadding,
+    TablePaddingX,
+    TablePaddingY,
+    TableSeparator,
+    TableSeparatorX,
+    TableSeparatorY,
+    TableColumnWidth(u32),
     PaneTemplateKey(u32),
     ResponsiveBreakpoint,
     ResponsiveWidthDimension,
@@ -853,6 +895,14 @@ impl CheckedFacts {
     pub(crate) fn corrupt_keyed_item_local(&mut self, view: ViewId, raw: u32) {
         let CheckedViewFlow::Keyed { item, .. } = &mut self.views[view.0 as usize].flow else {
             panic!("test view must be keyed");
+        };
+        *item = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_table_row_local(&mut self, view: ViewId, raw: u32) {
+        let CheckedViewFlow::Table { item, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be a table");
         };
         *item = CheckedLocalId(raw);
     }
@@ -5741,6 +5791,67 @@ impl<'a> FactsBuilder<'a> {
             .transpose()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_table_length(
+        &mut self,
+        view: ViewId,
+        value: &Option<LengthValue>,
+        role: CheckedViewExprRole,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedTableLength, Error> {
+        Ok(match value {
+            None => CheckedTableLength::None,
+            Some(LengthValue::Fill) => CheckedTableLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedTableLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedTableLength::Shrink,
+            Some(LengthValue::Fixed(expression)) => {
+                let expression = self.push_view_expression(
+                    CheckedExprOwner::View { view, role },
+                    expression,
+                    None,
+                    env,
+                    span,
+                    parent,
+                )?;
+                let source = self.facts.expression_use(expression).source.clone();
+                if !matches!(source, Type::F64 | Type::Length) {
+                    return Err(self.invariant(
+                        span,
+                        "table dimension type diverged after semantic checking",
+                    ));
+                }
+                CheckedTableLength::Fixed { expression, source }
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_table_metric(
+        &mut self,
+        view: ViewId,
+        value: &Option<Expr>,
+        role: CheckedViewExprRole,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<Option<CheckedExprUseId>, Error> {
+        value
+            .as_ref()
+            .map(|expression| {
+                self.push_view_expression(
+                    CheckedExprOwner::View { view, role },
+                    expression,
+                    Some(&Type::F64),
+                    env,
+                    span,
+                    parent,
+                )
+            })
+            .transpose()
+    }
+
     fn push_retained_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -6175,6 +6286,7 @@ impl<'a> FactsBuilder<'a> {
             ViewNode::Table {
                 item,
                 rows,
+                options,
                 columns,
                 span,
                 ..
@@ -6206,13 +6318,96 @@ impl<'a> FactsBuilder<'a> {
                     value: (CheckedPathRoot::Local(local), *row_ty),
                 };
                 self.facts.metrics.scope_env_overlays += 1;
-                for column in columns {
+                let width = self.lower_table_length(
+                    view,
+                    &options.width,
+                    CheckedViewExprRole::TableWidth,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let padding = self.lower_table_metric(
+                    view,
+                    &options.padding,
+                    CheckedViewExprRole::TablePadding,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let padding_x = self.lower_table_metric(
+                    view,
+                    &options.padding_x,
+                    CheckedViewExprRole::TablePaddingX,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let padding_y = self.lower_table_metric(
+                    view,
+                    &options.padding_y,
+                    CheckedViewExprRole::TablePaddingY,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let separator = self.lower_table_metric(
+                    view,
+                    &options.separator,
+                    CheckedViewExprRole::TableSeparator,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let separator_x = self.lower_table_metric(
+                    view,
+                    &options.separator_x,
+                    CheckedViewExprRole::TableSeparatorX,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let separator_y = self.lower_table_metric(
+                    view,
+                    &options.separator_y,
+                    CheckedViewExprRole::TableSeparatorY,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let mut checked_columns = Vec::with_capacity(columns.len());
+                for (index, column) in columns.iter().enumerate() {
+                    let column_origin = self.origins.push(&column.span, Some(origin));
+                    let width = self.lower_table_length(
+                        view,
+                        &column.width,
+                        CheckedViewExprRole::TableColumnWidth(index as u32),
+                        env,
+                        &column.span,
+                        column_origin,
+                    )?;
                     self.lower_view_expression_tree(&column.header, env)?;
                     self.lower_view_expression_tree(&column.cell, &scoped)?;
+                    checked_columns.push(CheckedTableColumn {
+                        width,
+                        align_x: column.align_x,
+                        align_y: column.align_y,
+                        origin: column_origin,
+                    });
                 }
                 CheckedViewFlow::Table {
                     rows: rows_use,
                     item: local,
+                    layout: CheckedTableLayout {
+                        semantic_key: crate::ast::table_semantic_key(options, columns),
+                        width,
+                        padding,
+                        padding_x,
+                        padding_y,
+                        separator,
+                        separator_x,
+                        separator_y,
+                        columns: checked_columns,
+                    },
                 }
             }
             ViewNode::PaneGrid {

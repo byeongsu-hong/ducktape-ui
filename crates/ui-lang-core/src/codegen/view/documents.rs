@@ -309,21 +309,10 @@ pub(in crate::codegen) fn render_documents(
                 ))
             }
         }
-        ViewNode::Table {
-            options,
-            columns,
-            span,
-            ..
-        } => render_table(
-            options,
-            columns,
-            span,
-            document,
-            message,
-            env,
-            &child_scope,
-            slot,
-        ),
+        ViewNode::Table { columns, .. } => {
+            let table = document.hir().resolved_table_for(node)?;
+            render_table(table, columns, document, message, env, &child_scope, slot)
+        }
         ViewNode::If { span, .. } | ViewNode::For { span, .. } | ViewNode::Match { span, .. } => {
             Err(Error::new(
                 "E170",

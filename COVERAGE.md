@@ -429,7 +429,8 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn,
+Table, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +494,8 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, If, For,
+and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -637,6 +639,17 @@ owner/variant names and never reopen checker facts or declaration IDs. Malformed
 expression/local/enum IDs fail at the source-mapped arm during lowering;
 post-check and post-lowering AST poisoning, all typed pattern families, and an
 ignored 4,000-node lower+emit contract cover the boundary.
+
+Table has a complete private HIR boundary. Its checked flow owns the stable row
+list, typed row local, table width and metric expressions, and every column's
+width, alignment, and source origin. Fixed numeric and native-length widths are
+distinct resolved variants. Lowering revalidates expression owner mappings and
+DAGs, scope, list/row types, local ownership, column origin parentage, and
+static table/column topology before publishing `ResolvedTable`. Production
+emission consumes that record and checked expression IDs; source columns supply
+only header and cell subtrees. Malformed expression/local IDs, post-check
+expression/static mutation, post-lowering AST poisoning, complete configured
+codegen, and an ignored 4,000-table lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

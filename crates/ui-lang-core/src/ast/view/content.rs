@@ -197,6 +197,43 @@ pub struct TableColumn {
     pub span: Span,
 }
 
+pub(crate) fn table_semantic_key(options: &TableOptions, columns: &[TableColumn]) -> String {
+    fn length_key(length: &Option<LengthValue>) -> String {
+        match length {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed".into(),
+        }
+    }
+
+    let columns = columns
+        .iter()
+        .map(|column| {
+            format!(
+                "{}:{:?}:{:?}",
+                length_key(&column.width),
+                column.align_x,
+                column.align_y
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    format!(
+        "table|width={}|metrics={:?}|columns={columns}",
+        length_key(&options.width),
+        [
+            options.padding.is_some(),
+            options.padding_x.is_some(),
+            options.padding_y.is_some(),
+            options.separator.is_some(),
+            options.separator_x.is_some(),
+            options.separator_y.is_some(),
+        ],
+    )
+}
+
 #[derive(Clone, Debug)]
 pub enum ThemePreset {
     Default,
