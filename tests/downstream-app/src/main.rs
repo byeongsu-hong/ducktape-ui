@@ -18,16 +18,20 @@ mod tests {
             VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
         };
 
-        let items: Vec<u64> = (0..100_000).collect();
+        let items: Vec<String> = (0..100_000)
+            .map(|index| format!("item-{index}"))
+            .collect();
         let config = VirtualListConfig::new(20.0).unwrap().overscan(2);
         let mut state = VirtualListState::new(VirtualListId::new("packaged-virtual-list"));
         state
-            .reconcile(&items, |item| *item, config)
+            .reconcile(&items, Clone::clone, config)
             .expect("packaged keys are unique");
+        let fork = state.fork();
+        assert_ne!(state.id(), fork.id());
         state.apply(
             VirtualListEvent::ViewportChanged { height: 100.0 },
             &items,
-            |item| *item,
+            Clone::clone,
             config,
         );
         assert!(state.scroll_to_item(50_000, items.len(), config));
@@ -40,7 +44,7 @@ mod tests {
             &items,
             config,
             "Packaged results",
-            |item| *item,
+            Clone::clone,
             |item| format!("Item {item}"),
             |index, _, _| iced::widget::text(index).into(),
             |_| (),

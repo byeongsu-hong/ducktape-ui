@@ -313,22 +313,27 @@ optional-slot and theme-contract context.
 
 Fixed-height `VirtualList` is an explicit typed-runtime boundary, not a Core
 coverage claim. Runtime tests cover unique-key reconciliation, reorder/delete,
-empty and out-of-range behavior, mouse focus/selection, focus transfer to sibling
-lists and inputs, child and native-scrollbar event precedence, all six keyboard
-movements, first-layout/remount programmatic scroll, measured fresh-mount and
+empty and out-of-range behavior, owned non-`Copy` keys, mouse focus/selection,
+focus transfer to sibling lists and inputs, actual child-capture and native
+scrollbar touch/mouse precedence, all six keyboard movements,
+first-layout/remount/zero-offset programmatic scroll, measured fresh-mount and
 resize viewport events, touch taps, interactive-child cursor semantics, and
-AccessKit collection name/focus/count plus mounted-item
+AccessKit collection name/focus/count/active-descendant plus mounted-item
 position/size/selected state. Retained typed-key semantic identity stays stable
 across reorder and remains distinct under adversarial key-hash collisions and
 duplicate logical list names; mounted widget state follows the same keys across
-reorder. A 100,000-item CI contract performs full
-reconcile/build/diff/layout/draw/update frames with at most visible+overscan row
-callbacks and an exact mounted child-slot budget. The extracted-crate downstream
-consumer compiles and executes the public runtime and `ducktape-ui` boundary.
+reorder and one-row mounted-window slides. Explicitly forked retained state
+receives a new native and semantic namespace. Release 100,000-item CI contracts
+separately measure unchanged build/diff/layout/draw frames and explicit full
+reconciliation with p50/p95 wall-time and instrumented allocation budgets, at
+most visible+overscan row callbacks, and an exact mounted child-slot budget.
+The extracted-crate downstream consumer compiles and executes the public
+runtime and `ducktape-ui` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
-capture, and the Windows native WGPU job requires the `virtual-list` draw probe
-before accepting the first frame. V1 explicitly excludes variable-height
-measurement and new Ice syntax.
+capture; standalone `virtual-list` package checks cover native and wasm. The
+Windows native WGPU job requires a renderer primitive from a measured mounted
+row subtree before accepting the first frame. V1 explicitly excludes
+variable-height measurement and new Ice syntax.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component

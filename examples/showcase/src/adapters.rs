@@ -89,10 +89,19 @@ pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
 pub type VirtualListEvent = UiVirtualListEvent<u64>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VirtualListState {
     list: UiVirtualListState<u64>,
     items: Arc<[u64]>,
+}
+
+impl Clone for VirtualListState {
+    fn clone(&self) -> Self {
+        Self {
+            list: self.list.update_snapshot(),
+            items: Arc::clone(&self.items),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

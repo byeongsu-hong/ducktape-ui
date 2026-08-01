@@ -7,10 +7,16 @@ mod dynamic_themer;
 mod flex;
 mod qr;
 mod resize_handle;
+#[cfg(feature = "full-runtime")]
 pub mod rich_text_editor;
 mod selectable_text;
 #[doc(hidden)]
+#[cfg(feature = "test-runtime")]
 pub mod testing;
+#[cfg(not(feature = "test-runtime"))]
+#[path = "testing_minimal.rs"]
+pub mod testing;
+#[cfg(feature = "virtual-list")]
 mod virtual_list;
 mod zstack;
 
@@ -19,8 +25,10 @@ pub use dynamic_themer::*;
 pub use flex::*;
 pub use qr::*;
 pub use resize_handle::*;
+#[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use selectable_text::*;
+#[cfg(feature = "virtual-list")]
 pub use virtual_list::*;
 pub use zstack::*;
 
@@ -148,6 +156,7 @@ struct Semantics<Message> {
     selected: Option<bool>,
     position_in_set: Option<usize>,
     size_of_set: Option<usize>,
+    active_descendant: Option<StableId>,
     disabled: bool,
     focus: FocusBehavior,
     focus_id: widget::Id,
@@ -181,6 +190,7 @@ impl<Message> Semantics<Message> {
             selected: None,
             position_in_set: None,
             size_of_set: None,
+            active_descendant: None,
             disabled: false,
             focus,
             focus_id: id.widget_id(),
@@ -348,6 +358,18 @@ where
     /// Sets the total number of items in this semantic collection.
     pub fn size_of_set(mut self, size: usize) -> Self {
         self.semantics.size_of_set = Some(size);
+        self
+    }
+
+    /// Identifies the currently active semantic descendant of this collection.
+    pub fn active_descendant(mut self, id: StableId) -> Self {
+        self.semantics.active_descendant = Some(id);
+        self
+    }
+
+    /// Identifies the active descendant when the item is currently mounted.
+    pub fn active_descendant_maybe(mut self, id: Option<StableId>) -> Self {
+        self.semantics.active_descendant = id;
         self
     }
 
@@ -1115,6 +1137,9 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(size) = semantics.size_of_set {
             node.set_size_of_set(size);
+        }
+        if let Some(active_descendant) = semantics.active_descendant {
+            node.set_active_descendant(active_descendant.node_id());
         }
         if semantics.disabled {
             node.set_disabled();

@@ -162,7 +162,7 @@ drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
-ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true }
+ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true, default-features = false, features = ["virtual-list"] }
 
 [dev-dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }

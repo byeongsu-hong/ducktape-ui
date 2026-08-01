@@ -33,7 +33,9 @@ let list = virtual_list(
 );
 ```
 
-`reconcile` is the explicit data-mutation boundary. Keys must be unique. A
+`reconcile` is the explicit data-mutation boundary. Keys must implement
+`Clone + Eq + Hash` and be unique; owned identifiers such as `String` and
+`PathBuf` do not need application-side interning. A
 selected key follows its item across reordering and selection is cleared if
 that key is deleted. View/layout/draw calls never scan the complete collection:
 the row callback runs only for the visible range plus overscan. The state
@@ -47,18 +49,25 @@ widget measures its native layout and emits `ViewportChanged`; the reducer
 applies that event like any other typed list event. `VirtualListId` is explicit
 and has no default: its readable logical name is paired with a runtime-unique
 namespace so independently mounted lists cannot alias focus, scrolling, or
-AccessKit nodes.
+AccessKit nodes. Neither identity nor retained state implements `Clone`;
+`VirtualListState::fork` explicitly copies data and selection into a fresh
+native and semantic namespace. Value-oriented adapters that must pass state
+through an update reducer use `update_snapshot` to replace that same mount; the
+old snapshot must not remain mounted beside the replacement.
 
 Mouse clicks and touch taps focus the named list without stealing input or
 cursor semantics from interactive row content or its native scrollbar. The
 focused list supports Up, Down, Home, End, PageUp, and PageDown.
 `scroll_to_item` and `scroll_to_key` update retained state; a private revisioned
 operation synchronizes the native scrollable on the next layout, including
-fresh mounts and remounts. AccessKit exports a focusable named `List`, total
+fresh mounts, remounts, and an absolute offset of zero. AccessKit exports a
+focusable named `List`, total
 item count, and only mounted `ListItem` nodes. Item node IDs come from a
 collision-free retained allocation keyed through `Eq + Hash`, not from a key
 hash; they keep identity across reorder and expose one-based position, set size,
-and selected state.
+and selected state. The focused list points `active-descendant` at its selected
+mounted row, so keyboard navigation is announced after the revealed window is
+rebuilt.
 
 Screen readers can focus the collection and use the same list keyboard
 navigation. V1 does not expose offscreen rows as AccessKit nodes and does not
@@ -67,7 +76,16 @@ keyboard or pointer interaction. This mounted-only hierarchy is intentional
 until virtual accessibility child requests have a native Iced contract.
 
 V1 intentionally requires a finite positive fixed row height. It does not
-measure variable-height content, retain interactive controls inside a row,
-support multiple selection, reorder items by drag, or add Ice syntax. TreeView
-and DataGrid can build on this runtime contract; variable-height virtualization
-needs separate measurement and anchoring evidence before admission.
+measure variable-height content, retain controls after their key leaves the
+mounted overscan window, support multiple selection, reorder items by drag, or
+add Ice syntax. Interactive state for keys shared by consecutive mounted
+windows is retained exactly. TreeView and DataGrid can build on this runtime
+contract; variable-height virtualization needs separate measurement and
+anchoring evidence before admission.
+
+The `ducktape-ui` feature enables only the renderer-side
+`ui-lang-runtime/virtual-list` boundary and therefore compiles for
+`wasm32-unknown-unknown`. The full native Ice headless driver remains the
+runtime crate's default `test-runtime` feature. Release CI measures unchanged
+100,000-row frames separately from explicit 100,000-key reconciliation, with
+p50/p95 time and allocation budgets for each path.

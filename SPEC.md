@@ -2044,12 +2044,21 @@ named AccessKit list/item metadata remain runtime behavior. Visible and mounted
 range queries derive from the current item count, measured native viewport, and
 scroll offset. Native layout changes emit the typed `ViewportChanged` event;
 revisioned private operations synchronize programmatic state to the native
-scrollable on first layout and remount without a caller-owned Iced task. An
+scrollable on first layout, remount, and absolute offset zero without a
+caller-owned Iced task. Public keys require `Clone + Eq + Hash`, so owned domain
+identifiers do not require interning. An
 explicit `VirtualListId` combines a readable logical name with a runtime-unique
-namespace, and retained per-key semantic allocations remain distinct even when
+namespace; identity and retained state are not clonable, while explicit `fork`
+copies data into a new namespace instead of aliasing it. `update_snapshot`
+preserves identity only for value-oriented reducer replacement and its old
+snapshot may not remain mounted. Retained
+per-key semantic allocations remain distinct even when
 different keys produce the same hash. Only mounted visible-plus-overscan rows
 become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
-behavior take precedence over row selection. `VirtualList.Frame`
+behavior take precedence over row selection using actual event capture rather
+than cursor shape. Trees for keys in consecutive mounted-window intersections
+remain retained. The focused AccessKit list exposes its selected mounted item as
+the active descendant. `VirtualList.Frame`
 is an Ice composition around an app-owned extern component; there is deliberately
 no `virtual-for` syntax or variable-height measurement in v1. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or

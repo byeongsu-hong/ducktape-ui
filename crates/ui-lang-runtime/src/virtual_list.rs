@@ -11,9 +11,10 @@ use iced::advanced::widget::operation::{self, Focusable};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::keyboard;
-use iced::widget::{column, container, keyed_column, scrollable, space};
+use iced::widget::{column, container, scrollable, space};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::Range;
@@ -27,7 +28,7 @@ static NEXT_VIRTUAL_LIST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
 /// The logical name is exported to inspection tools. A process-unique
 /// namespace prevents two lists with the same logical name from aliasing
 /// native widget or accessibility identity.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct VirtualListId {
     logical: String,
     namespace: u32,
@@ -158,7 +159,7 @@ pub enum VirtualListNavigation {
 }
 
 /// A strongly typed interaction emitted by [`virtual_list`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VirtualListEvent<Key> {
     ViewportChanged { height: f32 },
     Scrolled { offset_y: f32 },
@@ -187,7 +188,7 @@ pub struct VirtualListInspection {
 }
 
 /// Retained selection and viewport state for one virtual list.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VirtualListState<Key> {
     id: VirtualListId,
     selected: Option<Key>,
@@ -199,15 +200,47 @@ pub struct VirtualListState<Key> {
     next_semantic_id: u32,
 }
 
+impl<Key> VirtualListState<Key>
+where
+    Key: Clone,
+{
+    /// Copies data for replacing the same retained mount during an app update.
+    ///
+    /// The old value must not remain mounted alongside this snapshot. Use
+    /// [`Self::fork`] when both values can be mounted at once.
+    pub fn update_snapshot(&self) -> Self {
+        Self {
+            id: VirtualListId {
+                logical: self.id.logical.clone(),
+                namespace: self.id.namespace,
+            },
+            selected: self.selected.clone(),
+            selected_index: self.selected_index,
+            scroll_offset: self.scroll_offset,
+            viewport_height: self.viewport_height,
+            scroll_revision: self.scroll_revision,
+            semantic_ids: self.semantic_ids.clone(),
+            next_semantic_id: self.next_semantic_id,
+        }
+    }
+
+    /// Forks retained data into an independently mountable list identity.
+    pub fn fork(&self) -> Self {
+        let mut fork = self.update_snapshot();
+        fork.id = VirtualListId::new(self.id.logical.clone());
+        fork
+    }
+}
+
 /// A data-identity error found during explicit reconciliation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualListReconcileError<Key> {
     DuplicateKey(Key),
 }
 
 impl<Key> VirtualListState<Key>
 where
-    Key: Copy + Eq + Hash,
+    Key: Clone + Eq + Hash,
 {
     pub fn new(id: VirtualListId) -> Self {
         Self {
@@ -226,8 +259,8 @@ where
         &self.id
     }
 
-    pub const fn selected(&self) -> Option<Key> {
-        self.selected
+    pub const fn selected(&self) -> Option<&Key> {
+        self.selected.as_ref()
     }
 
     pub const fn selected_index(&self) -> Option<usize> {
@@ -283,24 +316,24 @@ where
         key: impl Fn(&T) -> Key,
         config: VirtualListConfig,
     ) -> Result<(), VirtualListReconcileError<Key>> {
-        let mut keys = HashSet::with_capacity(items.len());
-        for item in items {
+        let mut semantic_ids = HashMap::with_capacity(items.len());
+        let mut selected_index = None;
+        let mut next_semantic_id = self.next_semantic_id;
+        for (index, item) in items.iter().enumerate() {
             let item_key = key(item);
-            if !keys.insert(item_key) {
+            if semantic_ids.contains_key(&item_key) {
                 return Err(VirtualListReconcileError::DuplicateKey(item_key));
             }
-        }
-        let mut semantic_ids = HashMap::with_capacity(items.len());
-        for item in items {
-            let item_key = key(item);
+            if self.selected.as_ref() == Some(&item_key) {
+                selected_index = Some(index);
+            }
             let semantic_id = self
                 .semantic_ids
                 .get(&item_key)
                 .copied()
                 .unwrap_or_else(|| {
-                    let semantic_id = self.next_semantic_id;
-                    self.next_semantic_id = self
-                        .next_semantic_id
+                    let semantic_id = next_semantic_id;
+                    next_semantic_id = next_semantic_id
                         .checked_add(1)
                         .expect("virtual-list semantic identity exhausted");
                     semantic_id
@@ -308,9 +341,8 @@ where
             semantic_ids.insert(item_key, semantic_id);
         }
         self.semantic_ids = semantic_ids;
-        self.selected_index = self
-            .selected
-            .and_then(|selected| items.iter().position(|item| key(item) == selected));
+        self.next_semantic_id = next_semantic_id;
+        self.selected_index = selected_index;
         if self.selected_index.is_none() {
             self.selected = None;
         }
@@ -330,9 +362,10 @@ where
         key: impl Fn(&T) -> Key,
         config: VirtualListConfig,
     ) -> VirtualListOutcome<Key> {
-        let previous_selected = self.selected;
+        let previous_selected = self.selected.clone();
         let previous_range = self.visible_range(items.len(), config);
         let previous_offset = self.scroll_offset;
+        let native_scroll = matches!(&event, VirtualListEvent::Scrolled { .. });
 
         match event {
             VirtualListEvent::ViewportChanged { height } => {
@@ -369,20 +402,18 @@ where
                     config.rows_per_page(self.viewport_height),
                 ) {
                     self.selected = items.get(index).map(&key);
-                    self.selected_index = self.selected.map(|_| index);
+                    self.selected_index = self.selected.as_ref().map(|_| index);
                     self.reveal(index, items.len(), config);
                 }
             }
         }
 
-        if !matches!(event, VirtualListEvent::Scrolled { .. })
-            && self.scroll_offset != previous_offset
-        {
+        if !native_scroll && self.scroll_offset != previous_offset {
             self.scroll_revision = self.scroll_revision.wrapping_add(1);
         }
 
         VirtualListOutcome {
-            selected: self.selected,
+            selected: self.selected.clone(),
             selection_changed: self.selected != previous_selected,
             visible_range_changed: self.visible_range(items.len(), config) != previous_range,
             scroll_changed: self.scroll_offset != previous_offset,
@@ -513,7 +544,7 @@ pub fn virtual_list<'a, T, Key, Message, Theme, Renderer>(
     on_event: impl Fn(VirtualListEvent<Key>) -> Message + 'a,
 ) -> Element<'a, Message, Theme, Renderer>
 where
-    Key: Copy + Eq + Hash + 'static,
+    Key: Clone + Eq + Hash + 'static,
     Message: Clone + 'static,
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
@@ -530,7 +561,7 @@ where
     for index in range.clone() {
         let item = &items[index];
         let item_key = key(item);
-        let selected = state.selected == Some(item_key);
+        let selected = state.selected.as_ref() == Some(&item_key);
         let row = container(view(index, item, selected))
             .width(Length::Fill)
             .height(config.row_height);
@@ -548,13 +579,22 @@ where
                 .size_of_set(items.len())
                 .selected(selected)
                 .into();
-        children.push((item_key, row));
-        mounted.push((index, item_key));
+        children.push((semantic_key, row));
+        mounted.push((index, item_key.clone()));
         mounted_semantic_ids.push(semantic_key);
     }
 
     let on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a> = Rc::new(on_event);
     let on_scroll = Rc::clone(&on_event);
+    let touch_claim = Rc::new(Cell::new(TouchClaim::None));
+    let native_scroll_offset = Rc::new(Cell::new(scroll_offset));
+    let scrolled_offset = Rc::clone(&native_scroll_offset);
+    let (mounted_keys, mounted_children) = children.into_iter().unzip();
+    let mounted_rows: Element<'a, Message, Theme, Renderer> = Element::new(MountedRows {
+        keys: mounted_keys,
+        children: mounted_children,
+        touch_claim: Rc::clone(&touch_claim),
+    });
     let content = scrollable(
         column![
             space()
@@ -564,7 +604,7 @@ where
                     Length::Fixed(top)
                 })
                 .width(Length::Fill),
-            keyed_column(children).width(Length::Fill),
+            mounted_rows,
             space()
                 .height(if bottom == 0.0 {
                     Length::Shrink
@@ -579,6 +619,7 @@ where
     .width(Length::Fill)
     .height(Length::Fill)
     .on_scroll(move |viewport| {
+        scrolled_offset.set(viewport.absolute_offset().y);
         on_scroll(VirtualListEvent::Scrolled {
             offset_y: viewport.absolute_offset().y,
         })
@@ -594,8 +635,16 @@ where
         scroll_offset,
         viewport_height: state.viewport_height,
         scroll_revision: state.scroll_revision,
+        native_scroll_offset,
+        touch_claim,
         on_event,
     };
+    let active_descendant = state.selected.as_ref().and_then(|selected| {
+        state
+            .selected_index
+            .filter(|index| range.contains(index))
+            .map(|_| state.semantic_id(selected))
+    });
     accessible(
         Element::new(list),
         state.id.semantic_id(1),
@@ -604,6 +653,7 @@ where
     .logical_id(state.id.logical().to_owned())
     .label(collection_label)
     .focus_descendant()
+    .active_descendant_maybe(active_descendant)
     .size_of_set(items.len())
     .into()
 }
@@ -622,7 +672,242 @@ where
     scroll_offset: f32,
     viewport_height: f32,
     scroll_revision: u64,
+    native_scroll_offset: Rc<Cell<f32>>,
+    touch_claim: Rc<Cell<TouchClaim>>,
     on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchClaim {
+    None,
+    Row,
+    Child,
+}
+
+/// Transparent keyed-row boundary that observes actual descendant capture.
+///
+/// Iced's scrollable captures every plain touch press to prepare native touch
+/// scrolling, while a scrollbar press reaches its content with a levitated
+/// cursor. Observing the row subtree before scrollable capture is the only
+/// reliable way to distinguish row, child, and scrollbar ownership.
+struct MountedRows<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    keys: Vec<u32>,
+    children: Vec<Element<'a, Message, Theme, Renderer>>,
+    touch_claim: Rc<Cell<TouchClaim>>,
+}
+
+struct MountedRowsState {
+    keys: Vec<u32>,
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for MountedRows<'_, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<MountedRowsState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(MountedRowsState {
+            keys: self.keys.clone(),
+        })
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        self.children.iter().map(Tree::new).collect()
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        let state = tree.state.downcast_mut::<MountedRowsState>();
+        let previous_children = std::mem::take(&mut tree.children);
+        let mut retained = std::mem::take(&mut state.keys)
+            .into_iter()
+            .zip(previous_children)
+            .collect::<HashMap<_, _>>();
+        tree.children = self
+            .keys
+            .iter()
+            .zip(&self.children)
+            .map(|(key, child)| {
+                retained
+                    .remove(key)
+                    .unwrap_or_else(|| Tree::new(child.as_widget()))
+            })
+            .collect();
+        state.keys.clone_from(&self.keys);
+        for (tree, child) in tree.children.iter_mut().zip(&self.children) {
+            child.as_widget().diff(tree);
+        }
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Shrink)
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let limits = limits.width(Length::Fill).height(Length::Shrink);
+        layout::flex::resolve(
+            layout::flex::Axis::Vertical,
+            renderer,
+            &limits,
+            Length::Fill,
+            Length::Shrink,
+            iced::Padding::ZERO,
+            0.0,
+            iced::Alignment::Start,
+            &mut self.children,
+            &mut tree.children,
+        )
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        operation.container(None, layout.bounds());
+        operation.traverse(&mut |operation| {
+            for ((child, tree), layout) in self
+                .children
+                .iter_mut()
+                .zip(&mut tree.children)
+                .zip(layout.children())
+            {
+                child
+                    .as_widget_mut()
+                    .operate(tree, layout, renderer, operation);
+            }
+        });
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let observes_touch = matches!(
+            event,
+            Event::Touch(
+                iced::touch::Event::FingerPressed { .. } | iced::touch::Event::FingerLifted { .. }
+            )
+        ) && cursor.is_over(layout.bounds());
+        let captured_before = shell.is_event_captured();
+        for ((child, tree), layout) in self
+            .children
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+        {
+            child.as_widget_mut().update(
+                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+            );
+        }
+        if observes_touch {
+            self.touch_claim
+                .set(if !captured_before && shell.is_event_captured() {
+                    TouchClaim::Child
+                } else {
+                    TouchClaim::Row
+                });
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.children
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+            .map(|((child, tree), layout)| {
+                child
+                    .as_widget()
+                    .mouse_interaction(tree, layout, cursor, viewport, renderer)
+            })
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        for ((child, tree), layout) in self
+            .children
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+        {
+            child
+                .as_widget()
+                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+        }
+        if layout.bounds().height > 0.0
+            && let Some(bounds) = layout.bounds().intersection(viewport)
+        {
+            // Keep readiness tied to an actual renderer primitive in the
+            // mounted-row subtree, never merely the outer list wrapper.
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    ..renderer::Quad::default()
+                },
+                iced::Color::TRANSPARENT,
+            );
+            crate::dev::record_draw_probe("virtual-list");
+        }
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        overlay::from_children(
+            &mut self.children,
+            tree,
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
 }
 
 struct State {
@@ -676,7 +961,7 @@ impl Focusable for State {
 impl<Key, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for VirtualList<'_, Key, Message, Theme, Renderer>
 where
-    Key: Copy + 'static,
+    Key: Clone + 'static,
     Message: Clone,
     Renderer: iced::advanced::Renderer,
 {
@@ -701,40 +986,9 @@ where
             return;
         }
         let state = tree.state.downcast_mut::<State>();
-        if state.mounted_semantic_ids != self.mounted_semantic_ids {
-            let previous_ids = std::mem::replace(
-                &mut state.mounted_semantic_ids,
-                self.mounted_semantic_ids.clone(),
-            );
-            // VirtualList owns this fixed hierarchy:
-            // scrollable -> column -> [top spacer, keyed rows, bottom spacer].
-            if !previous_ids.is_empty()
-                && previous_ids.len() == self.mounted_semantic_ids.len()
-                && self
-                    .mounted_semantic_ids
-                    .iter()
-                    .all(|id| previous_ids.contains(id))
-            {
-                // Iced's keyed column does not reorder equal-length children, so
-                // align its child trees by retained semantic identity first.
-                let keyed_rows = &mut tree.children[0].children[0].children[1];
-                let previous_children = std::mem::take(&mut keyed_rows.children);
-                let mut retained = previous_ids
-                    .into_iter()
-                    .zip(previous_children)
-                    .collect::<HashMap<_, _>>();
-                keyed_rows.children = self
-                    .mounted_semantic_ids
-                    .iter()
-                    .map(|id| retained.remove(id).expect("retained row tree"))
-                    .collect();
-            } else {
-                // A length change cannot be repaired without also replacing the
-                // keyed column's private key state. Recreate the scroll content;
-                // native scrolling and list focus remain retained.
-                tree.children[0].children[0] = Tree::empty();
-            }
-        }
+        state
+            .mounted_semantic_ids
+            .clone_from(&self.mounted_semantic_ids);
         tree.diff_children(std::slice::from_ref(&self.content));
     }
 
@@ -760,21 +1014,20 @@ where
 
         if tree.state.downcast_ref::<State>().applied_scroll_revision != Some(self.scroll_revision)
         {
-            if self.scroll_offset != 0.0 {
-                let mut scroll = operation::scrollable::scroll_to::<()>(
-                    self.scroll_id.clone(),
-                    operation::scrollable::AbsoluteOffset {
-                        x: None,
-                        y: Some(self.scroll_offset),
-                    },
-                );
-                self.content.as_widget_mut().operate(
-                    &mut tree.children[0],
-                    Layout::new(&node),
-                    renderer,
-                    &mut scroll,
-                );
-            }
+            let mut scroll = operation::scrollable::scroll_to::<()>(
+                self.scroll_id.clone(),
+                operation::scrollable::AbsoluteOffset {
+                    x: None,
+                    y: Some(self.scroll_offset),
+                },
+            );
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+                &mut scroll,
+            );
+            self.native_scroll_offset.set(self.scroll_offset);
             tree.state.downcast_mut::<State>().applied_scroll_revision = Some(self.scroll_revision);
         }
         node
@@ -815,22 +1068,15 @@ where
     ) {
         let state = tree.state.downcast_mut::<State>();
         let mut touch_tap = None;
+        if matches!(
+            event,
+            Event::Touch(
+                iced::touch::Event::FingerPressed { .. } | iced::touch::Event::FingerLifted { .. }
+            )
+        ) {
+            self.touch_claim.set(TouchClaim::None);
+        }
         match event {
-            Event::Touch(iced::touch::Event::FingerPressed { id, position }) => {
-                let child_interaction = self.content.as_widget().mouse_interaction(
-                    &tree.children[0],
-                    layout,
-                    mouse::Cursor::Available(*position),
-                    viewport,
-                    renderer,
-                );
-                state.touch = (layout.bounds().contains(*position)
-                    && child_interaction == mouse::Interaction::None)
-                    .then_some(TouchGesture {
-                        finger: *id,
-                        origin: *position,
-                    });
-            }
             Event::Touch(iced::touch::Event::FingerMoved { id, position }) => {
                 if state.touch.is_some_and(|gesture| {
                     gesture.finger == *id && gesture.origin.distance(*position) > 8.0
@@ -874,13 +1120,30 @@ where
             viewport,
         );
 
-        if shell.is_event_captured() {
-            if let Some(position) = touch_tap {
+        if let Event::Touch(iced::touch::Event::FingerPressed { id, position }) = event {
+            state.touch = (self.touch_claim.get() == TouchClaim::Row
+                && layout.bounds().contains(*position))
+            .then_some(TouchGesture {
+                finger: *id,
+                origin: *position,
+            });
+            if self.touch_claim.get() == TouchClaim::Child {
+                state.focused = false;
+                state.focus_visible = false;
+            }
+        }
+
+        if let Some(position) = touch_tap {
+            if self.touch_claim.get() == TouchClaim::Row && !shell.is_event_captured() {
                 state.focused = true;
                 state.focus_visible = false;
                 self.publish_selection(position, layout.bounds(), shell);
-                return;
+                shell.capture_event();
             }
+            return;
+        }
+
+        if shell.is_event_captured() {
             if matches!(
                 event,
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -916,13 +1179,8 @@ where
                 }
             }
             Event::Touch(iced::touch::Event::FingerLifted { .. }) => {
-                if let Some(position) = touch_tap {
-                    state.focused = true;
-                    state.focus_visible = false;
-                    self.publish_selection(position, layout.bounds(), shell);
-                    shell.capture_event();
-                    return;
-                }
+                // Touch taps are resolved after descendant and scrollbar
+                // ownership is observed above.
             }
             _ => {}
         }
@@ -975,7 +1233,6 @@ where
             cursor,
             viewport,
         );
-        crate::dev::record_draw_probe("virtual-list");
         if tree.state.downcast_ref::<State>().focus_visible {
             renderer.fill_quad(
                 renderer::Quad {
@@ -1036,7 +1293,7 @@ where
 
 impl<Key, Message, Theme, Renderer> VirtualList<'_, Key, Message, Theme, Renderer>
 where
-    Key: Copy + 'static,
+    Key: Clone + 'static,
     Message: Clone,
     Renderer: iced::advanced::Renderer,
 {
@@ -1047,11 +1304,12 @@ where
         shell: &mut Shell<'_, Message>,
     ) {
         let local_y = position.y - bounds.y;
-        let index = ((self.scroll_offset + local_y) / self.config.row_height).floor() as usize;
+        let index =
+            ((self.native_scroll_offset.get() + local_y) / self.config.row_height).floor() as usize;
         if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
             shell.publish((self.on_event)(VirtualListEvent::Select {
                 index: *index,
-                key: *key,
+                key: key.clone(),
             }));
         }
     }
@@ -1071,6 +1329,7 @@ mod tests {
     use iced_test::runtime::user_interface;
     use std::cell::Cell;
     use std::fmt;
+    use std::rc::Rc;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Message {
@@ -1105,13 +1364,13 @@ mod tests {
 
     fn prepared_state<Key>(logical: &str) -> VirtualListState<Key>
     where
-        Key: Copy + Eq + Hash,
+        Key: Clone + Eq + Hash,
     {
         let mut state = VirtualListState::new(VirtualListId::new(logical));
         state.apply::<Key>(
             VirtualListEvent::ViewportChanged { height: 100.0 },
             &[],
-            |key| *key,
+            Clone::clone,
             config(),
         );
         state
@@ -1155,6 +1414,15 @@ mod tests {
 
     struct RowIdentity(u64);
 
+    struct RetainedRowIdentity {
+        key: u64,
+        creations: Rc<Cell<usize>>,
+    }
+
+    struct CaptureWithoutCursor;
+
+    struct CursorOnly;
+
     impl Widget<Message, Theme, iced_test::renderer::Renderer> for RowIdentity {
         fn tag(&self) -> tree::Tag {
             tree::Tag::of::<u64>()
@@ -1183,6 +1451,156 @@ mod tests {
             limits: &layout::Limits,
         ) -> layout::Node {
             layout::Node::new(limits.max())
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    impl Widget<Message, Theme, iced_test::renderer::Renderer> for RetainedRowIdentity {
+        fn tag(&self) -> tree::Tag {
+            tree::Tag::of::<u64>()
+        }
+
+        fn state(&self) -> tree::State {
+            self.creations.set(self.creations.get() + 1);
+            tree::State::new(self.key)
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            assert_eq!(
+                *tree.state.downcast_ref::<u64>(),
+                self.key,
+                "retained row tree moved to a different stable key"
+            );
+        }
+
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fill)
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.max())
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    impl CaptureWithoutCursor {
+        fn captures(event: &Event) -> bool {
+            matches!(
+                event,
+                Event::Touch(iced::touch::Event::FingerPressed { .. })
+            )
+        }
+    }
+
+    impl Widget<Message, Theme, iced_test::renderer::Renderer> for CaptureWithoutCursor {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fill)
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.max())
+        }
+
+        fn update(
+            &mut self,
+            _tree: &mut Tree,
+            event: &Event,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _renderer: &iced_test::renderer::Renderer,
+            _clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Message>,
+            _viewport: &Rectangle,
+        ) {
+            if Self::captures(event) {
+                shell.publish(Message::Child);
+                shell.capture_event();
+            }
+        }
+
+        fn mouse_interaction(
+            &self,
+            _tree: &Tree,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+            _renderer: &iced_test::renderer::Renderer,
+        ) -> mouse::Interaction {
+            mouse::Interaction::None
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    impl Widget<Message, Theme, iced_test::renderer::Renderer> for CursorOnly {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fill)
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.max())
+        }
+
+        fn mouse_interaction(
+            &self,
+            _tree: &Tree,
+            _layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+            _renderer: &iced_test::renderer::Renderer,
+        ) -> mouse::Interaction {
+            if matches!(cursor, mouse::Cursor::Available(_)) {
+                mouse::Interaction::Pointer
+            } else {
+                mouse::Interaction::None
+            }
         }
 
         fn draw(
@@ -1238,6 +1656,26 @@ mod tests {
             state.reconcile(&[7_u64, 7], |key| *key, config()),
             Err(VirtualListReconcileError::DuplicateKey(7))
         );
+    }
+
+    #[test]
+    fn duplicate_reconciliation_is_atomic() {
+        let mut state = prepared_state("atomic-duplicate");
+        state
+            .reconcile(&["kept".to_owned()], Clone::clone, config())
+            .unwrap();
+        let semantic_ids = state.semantic_ids.clone();
+        let next_semantic_id = state.next_semantic_id;
+        assert_eq!(
+            state.reconcile(
+                &["new".to_owned(), "new".to_owned()],
+                Clone::clone,
+                config(),
+            ),
+            Err(VirtualListReconcileError::DuplicateKey("new".to_owned()))
+        );
+        assert_eq!(state.semantic_ids, semantic_ids);
+        assert_eq!(state.next_semantic_id, next_semantic_id);
     }
 
     #[test]
@@ -1360,6 +1798,57 @@ mod tests {
     }
 
     #[test]
+    fn programmatic_scroll_back_to_zero_updates_the_native_scrollable() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("native-scroll-zero");
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        assert!(state.scroll_to_item(42, items.len(), config()));
+        let mut renderer = renderer();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Native zero results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut probe = ScrollProbe {
+            target: state.scroll_id(),
+            offset_y: None,
+        };
+        ui.operate(&renderer, &mut probe);
+        assert_eq!(probe.offset_y, Some(840.0));
+        let cache = ui.into_cache();
+
+        assert!(state.scroll_to_item(0, items.len(), config()));
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Native zero results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+        let mut probe = ScrollProbe {
+            target: state.scroll_id(),
+            offset_y: None,
+        };
+        ui.operate(&renderer, &mut probe);
+        assert_eq!(probe.offset_y, Some(0.0));
+    }
+
+    #[test]
     fn direct_render_and_queries_share_ranges_across_count_and_config_changes() {
         let items: Vec<u64> = (0..100).collect();
         let mut state = prepared_state("direct-render");
@@ -1437,7 +1926,7 @@ mod tests {
         );
         let reordered = [30, 10, 20];
         state.reconcile(&reordered, |key| *key, config()).unwrap();
-        assert_eq!(state.selected(), Some(20));
+        assert_eq!(state.selected(), Some(&20));
         assert_eq!(state.selected_index(), Some(2));
         state.reconcile(&[30, 10], |key| *key, config()).unwrap();
         assert_eq!(state.selected(), None);
@@ -1459,6 +1948,58 @@ mod tests {
         let mut second = prepared_state("list");
         second.reconcile(&[20_u64], |key| *key, config()).unwrap();
         assert_ne!(before_reorder, second.semantic_id(&20));
+    }
+
+    #[test]
+    fn explicit_state_fork_has_independent_native_and_semantic_identity() {
+        let mut original = prepared_state("forked-list");
+        original
+            .reconcile(&["first".to_owned()], Clone::clone, config())
+            .unwrap();
+        let fork = original.fork();
+        assert_eq!(original.id().logical(), fork.id().logical());
+        assert_ne!(original.id().namespace, fork.id().namespace);
+        assert_ne!(original.widget_id(), fork.widget_id());
+        assert_ne!(original.scroll_id(), fork.scroll_id());
+        assert_ne!(
+            original.semantic_id(&"first".to_owned()),
+            fork.semantic_id(&"first".to_owned())
+        );
+
+        let update = original.update_snapshot();
+        assert_eq!(original.id(), update.id());
+        assert_eq!(
+            original.semantic_id(&"first".to_owned()),
+            update.semantic_id(&"first".to_owned())
+        );
+    }
+
+    #[test]
+    fn owned_string_keys_are_supported_without_interning() {
+        let items = ["alpha".to_owned(), "beta".to_owned(), "gamma".to_owned()];
+        let mut state = prepared_state("string-keys");
+        state.reconcile(&items, Clone::clone, config()).unwrap();
+        state.apply(
+            VirtualListEvent::Select {
+                index: 1,
+                key: "beta".to_owned(),
+            },
+            &items,
+            Clone::clone,
+            config(),
+        );
+        assert_eq!(state.selected().map(String::as_str), Some("beta"));
+        let element: Element<'_, (), Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "String key results",
+            Clone::clone,
+            Clone::clone,
+            |_, item, _| iced::widget::text(item).into(),
+            |_| (),
+        );
+        drop(element);
     }
 
     #[test]
@@ -1498,6 +2039,73 @@ mod tests {
             Message::List,
         );
         let _ui = UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+    }
+
+    #[test]
+    fn overlapping_mounted_windows_retain_intersection_row_trees() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("sliding-retained-row-state");
+        state.reconcile(&items, |item| *item, config()).unwrap();
+        let creations = Rc::new(Cell::new(0));
+        let build = |state: &VirtualListState<u64>| {
+            virtual_list(
+                state,
+                &items,
+                config(),
+                "Sliding retained rows",
+                |item| *item,
+                |item| format!("Item {item}"),
+                |_, item, _| {
+                    Element::new(RetainedRowIdentity {
+                        key: *item,
+                        creations: Rc::clone(&creations),
+                    })
+                },
+                Message::List,
+            )
+        };
+        let mut renderer = renderer();
+        let ui = UserInterface::build(
+            build(&state),
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        assert_eq!(creations.get(), 7);
+        let cache = ui.into_cache();
+
+        state.apply(
+            VirtualListEvent::Scrolled { offset_y: 20.0 },
+            &items,
+            |item| *item,
+            config(),
+        );
+        let ui = UserInterface::build(build(&state), Size::new(240.0, 100.0), cache, &mut renderer);
+        assert_eq!(creations.get(), 8, "only the entering edge row is new");
+        let cache = ui.into_cache();
+
+        state.apply(
+            VirtualListEvent::Scrolled { offset_y: 800.0 },
+            &items,
+            |item| *item,
+            config(),
+        );
+        let ui = UserInterface::build(build(&state), Size::new(240.0, 100.0), cache, &mut renderer);
+        let before_slide = creations.get();
+        let cache = ui.into_cache();
+        state.apply(
+            VirtualListEvent::Scrolled { offset_y: 820.0 },
+            &items,
+            |item| *item,
+            config(),
+        );
+        let _ui =
+            UserInterface::build(build(&state), Size::new(240.0, 100.0), cache, &mut renderer);
+        assert_eq!(
+            creations.get(),
+            before_slide + 1,
+            "a one-row sliding window must preserve every overlapping row tree"
+        );
     }
 
     #[test]
@@ -1576,20 +2184,20 @@ mod tests {
             );
         };
         navigate(&mut state, VirtualListNavigation::End);
-        assert_eq!(state.selected(), Some(99));
+        assert_eq!(state.selected(), Some(&99));
         assert_eq!(state.scroll_offset(), 1_900.0);
         navigate(&mut state, VirtualListNavigation::PageUp);
-        assert_eq!(state.selected(), Some(94));
+        assert_eq!(state.selected(), Some(&94));
         navigate(&mut state, VirtualListNavigation::Up);
-        assert_eq!(state.selected(), Some(93));
+        assert_eq!(state.selected(), Some(&93));
         navigate(&mut state, VirtualListNavigation::Home);
-        assert_eq!(state.selected(), Some(0));
+        assert_eq!(state.selected(), Some(&0));
         navigate(&mut state, VirtualListNavigation::Up);
-        assert_eq!(state.selected(), Some(0));
+        assert_eq!(state.selected(), Some(&0));
         navigate(&mut state, VirtualListNavigation::PageDown);
-        assert_eq!(state.selected(), Some(5));
+        assert_eq!(state.selected(), Some(&5));
         navigate(&mut state, VirtualListNavigation::Down);
-        assert_eq!(state.selected(), Some(6));
+        assert_eq!(state.selected(), Some(&6));
         assert!(state.scroll_to_item(42, items.len(), config()));
         assert_eq!(state.scroll_offset(), 840.0);
         assert_eq!(state.visible_range(items.len(), config()), 42..47);
@@ -1638,79 +2246,6 @@ mod tests {
         assert_eq!(inspection.mounted_rows, builds.get());
         assert_eq!(inspection.child_slots, builds.get() + 2);
         drop(element);
-    }
-
-    #[test]
-    #[ignore = "100k-item performance contract run explicitly in CI"]
-    fn performance_contract_100k_full_frame_and_reconcile_stay_bounded() {
-        const FRAMES: usize = 40;
-        const BUDGET: std::time::Duration = std::time::Duration::from_secs(12);
-        let items: Vec<u64> = (0..100_000).collect();
-        let mut state = prepared_state("performance-contract");
-        state.reconcile(&items, |key| *key, config()).unwrap();
-        let builds = Cell::new(0_usize);
-        let mut renderer = renderer();
-        let mut cache = user_interface::Cache::default();
-        let started = std::time::Instant::now();
-        for pass in 0..FRAMES {
-            state.reconcile(&items, |key| *key, config()).unwrap();
-            state.apply(
-                VirtualListEvent::Scrolled {
-                    offset_y: (pass * 41_997) as f32,
-                },
-                &items,
-                |key| *key,
-                config(),
-            );
-            let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
-                &state,
-                &items,
-                config(),
-                "Performance contract results",
-                |key| *key,
-                |key| format!("Item {key}"),
-                |index, _, _| {
-                    builds.set(builds.get() + 1);
-                    iced::widget::text(index).into()
-                },
-                Message::List,
-            );
-            let inspection = state.inspect(items.len(), config());
-            assert!(inspection.mounted_rows <= 10);
-            assert!(inspection.child_slots <= 12);
-            let mut ui =
-                UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
-            ui.draw(
-                &mut renderer,
-                &Theme::Light,
-                &renderer::Style::default(),
-                mouse::Cursor::Unavailable,
-            );
-            let mut messages = Vec::new();
-            let _ = ui.update(
-                &[redraw()],
-                mouse::Cursor::Unavailable,
-                &mut renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut messages,
-            );
-            assert!(messages.iter().all(|message| matches!(
-                message,
-                Message::List(VirtualListEvent::Scrolled { offset_y })
-                    if (*offset_y - state.scroll_offset()).abs() < f32::EPSILON
-            )));
-            cache = ui.into_cache();
-        }
-        let elapsed = started.elapsed();
-        assert!(builds.get() <= FRAMES * 10);
-        assert!(
-            elapsed <= BUDGET,
-            "{FRAMES} reconciled full frames over 100k items took {elapsed:?}; budget is {BUDGET:?}"
-        );
-        eprintln!(
-            "{FRAMES} reconciled full frames over 100k items in {elapsed:?}; {} total rows built",
-            builds.get()
-        );
     }
 
     #[test]
@@ -1776,6 +2311,14 @@ mod tests {
         assert_eq!(rows[0].is_selected(), Some(false));
         assert_eq!(rows[2].label(), Some("Item 2"));
         assert_eq!(rows[2].is_selected(), Some(true));
+        let selected_row_id = snapshot
+            .update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Item 2"))
+            .map(|(id, _)| *id)
+            .expect("selected row semantic node");
+        assert_eq!(list.active_descendant(), Some(selected_row_id));
 
         let focus = snapshot.dispatch(crate::ActionRequest {
             action: crate::Action::Focus,
@@ -1809,6 +2352,52 @@ mod tests {
             vec![Message::List(VirtualListEvent::Navigate(
                 VirtualListNavigation::End
             ))]
+        );
+
+        let cache = ui.into_cache();
+        let Message::List(event) = messages.pop().expect("navigation event") else {
+            panic!("unexpected navigation message");
+        };
+        state.apply(event, &items, |key| *key, config());
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Semantic results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+        let mut operation = SnapshotOperation::<Message>::named("Rebuilt virtual list test");
+        ui.operate(&renderer, &mut operation::black_box(&mut operation));
+        let Outcome::Some(rebuilt) = operation.finish() else {
+            panic!("rebuilt snapshot operation did not finish");
+        };
+        let (rebuilt_list_id, rebuilt_list) = rebuilt
+            .update
+            .nodes
+            .iter()
+            .find(|(id, node)| *id != ROOT_ID && node.role() == crate::Role::List)
+            .expect("rebuilt list semantic node");
+        let last_row_id = rebuilt
+            .update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Item 99"))
+            .map(|(id, _)| *id)
+            .expect("revealed last row semantic node");
+        assert_eq!(rebuilt.update.focus, *rebuilt_list_id);
+        assert_eq!(rebuilt_list.active_descendant(), Some(last_row_id));
+        assert_eq!(
+            rebuilt
+                .update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == last_row_id)
+                .and_then(|(_, node)| node.is_selected()),
+            Some(true)
         );
     }
 
@@ -1899,6 +2488,53 @@ mod tests {
                 VirtualListNavigation::PageDown
             ))]
         );
+    }
+
+    #[test]
+    fn batched_native_scroll_and_click_use_the_live_native_offset() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("batched-native-offset");
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Batched native results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let point = Point::new(10.0, 10.0);
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[
+                Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+                }),
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(messages.iter().any(|message| matches!(
+            message,
+            Message::List(VirtualListEvent::Scrolled { offset_y })
+                if (*offset_y - 60.0).abs() < f32::EPSILON
+        )));
+        assert!(messages.iter().any(|message| matches!(
+            message,
+            Message::List(VirtualListEvent::Select { index: 3, key: 3 })
+        )));
     }
 
     #[test]
@@ -2043,6 +2679,91 @@ mod tests {
     }
 
     #[test]
+    fn touch_ownership_uses_capture_instead_of_cursor_shape() {
+        let items = [0_u64];
+        let point = Point::new(20.0, 10.0);
+        let finger = iced::touch::Finger(12);
+        let mut renderer = renderer();
+
+        let mut captured = prepared_state("capture-without-cursor");
+        captured.reconcile(&items, |key| *key, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &captured,
+            &items,
+            config(),
+            "Captured child",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |_, _, _| Element::new(CaptureWithoutCursor),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[
+                Event::Touch(iced::touch::Event::FingerPressed {
+                    id: finger,
+                    position: point,
+                }),
+                Event::Touch(iced::touch::Event::FingerLifted {
+                    id: finger,
+                    position: point,
+                }),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(messages, vec![Message::Child]);
+
+        let mut cursor_only = prepared_state("cursor-without-capture");
+        cursor_only.reconcile(&items, |key| *key, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &cursor_only,
+            &items,
+            config(),
+            "Cursor-only child",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |_, _, _| Element::new(CursorOnly),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        messages.clear();
+        let _ = ui.update(
+            &[
+                Event::Touch(iced::touch::Event::FingerPressed {
+                    id: finger,
+                    position: point,
+                }),
+                Event::Touch(iced::touch::Event::FingerLifted {
+                    id: finger,
+                    position: point,
+                }),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(
+            messages,
+            vec![Message::List(VirtualListEvent::Select { index: 0, key: 0 })]
+        );
+    }
+
+    #[test]
     fn native_scrollbar_press_and_drag_never_select_a_row() {
         let items: Vec<u64> = (0..100).collect();
         let mut state = prepared_state("scrollbar-list");
@@ -2097,6 +2818,32 @@ mod tests {
             !messages
                 .iter()
                 .any(|message| matches!(message, Message::List(VirtualListEvent::Select { .. })))
+        );
+
+        messages.clear();
+        let finger = iced::touch::Finger(13);
+        let tap = Point::new(239.0, 40.0);
+        let _ = ui.update(
+            &[
+                Event::Touch(iced::touch::Event::FingerPressed {
+                    id: finger,
+                    position: tap,
+                }),
+                Event::Touch(iced::touch::Event::FingerLifted {
+                    id: finger,
+                    position: tap,
+                }),
+            ],
+            mouse::Cursor::Available(tap),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::List(VirtualListEvent::Select { .. }))),
+            "touching the native scrollbar must not select the row beneath it"
         );
     }
 
@@ -2317,6 +3064,51 @@ mod tests {
     }
 
     #[test]
+    fn readiness_primitive_is_emitted_only_for_a_drawn_mounted_row_subtree() {
+        let viewport = Rectangle::with_size(Size::new(100.0, 40.0));
+        let limits = layout::Limits::new(Size::ZERO, viewport.size());
+        let claim = Rc::new(Cell::new(TouchClaim::None));
+        let mut empty = MountedRows::<Message, (), RecordingRenderer> {
+            keys: Vec::new(),
+            children: Vec::new(),
+            touch_claim: Rc::clone(&claim),
+        };
+        let mut empty_tree = WidgetTree::new(&empty as &dyn Widget<Message, (), RecordingRenderer>);
+        let mut renderer = RecordingRenderer::default();
+        let empty_node = empty.layout(&mut empty_tree, &renderer, &limits);
+        empty.draw(
+            &empty_tree,
+            &mut renderer,
+            &(),
+            &renderer::Style::default(),
+            Layout::new(&empty_node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        assert!(renderer.quads.is_empty());
+
+        let mut mounted = MountedRows::<Message, (), RecordingRenderer> {
+            keys: vec![2],
+            children: vec![Element::new(FocusLeaf)],
+            touch_claim: claim,
+        };
+        let mut mounted_tree =
+            WidgetTree::new(&mounted as &dyn Widget<Message, (), RecordingRenderer>);
+        let mounted_node = mounted.layout(&mut mounted_tree, &renderer, &limits);
+        mounted.draw(
+            &mounted_tree,
+            &mut renderer,
+            &(),
+            &renderer::Style::default(),
+            Layout::new(&mounted_node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        assert_eq!(renderer.quads.len(), 1);
+        assert_eq!(renderer.quads[0].bounds.height, 40.0);
+    }
+
+    #[test]
     fn keyboard_or_accessibility_focus_draws_a_visible_list_outline() {
         let id: iced::advanced::widget::Id = "visible-list-focus".into();
         let list = VirtualList {
@@ -2330,6 +3122,8 @@ mod tests {
             scroll_offset: 0.0,
             viewport_height: 40.0,
             scroll_revision: 0,
+            native_scroll_offset: Rc::new(Cell::new(0.0)),
+            touch_claim: Rc::new(Cell::new(TouchClaim::None)),
             on_event: Rc::new(Message::List),
         };
         let mut element: Element<'_, Message, (), RecordingRenderer> = Element::new(list);

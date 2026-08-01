@@ -28,7 +28,7 @@ pub fn virtual_list<'a, T, Key, Message>(
     theme: &Theme,
 ) -> Element<'a, Message>
 where
-    Key: Copy + Eq + Hash + 'static,
+    Key: Clone + Eq + Hash + 'static,
     Message: Clone + 'static,
 {
     let theme = *theme;
