@@ -4,7 +4,7 @@ use crate::check::{
     CheckedExprUseId, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
     CheckedProjection, CheckedUnaryOperator, ExprTypeEnv,
 };
-use crate::lower::{ExternFnId, ResolvedArgumentExpression};
+use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
 #[cfg(test)]
@@ -13,14 +13,87 @@ use std::cell::Cell;
 pub(in crate::codegen) trait BindingEnvironment {
     fn get(&self, name: &str) -> Option<&Binding>;
 
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding));
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding>;
+
+    fn snapshot(&self) -> HashMap<String, Binding> {
+        #[cfg(test)]
+        record_binding_env_full_clone();
+        let mut snapshot = HashMap::new();
+        self.visit(&mut |name, binding| {
+            snapshot.insert(name.to_owned(), binding.clone());
+        });
+        snapshot
+    }
+
     fn contains_key(&self, name: &str) -> bool {
         self.get(name).is_some()
+    }
+}
+
+pub(in crate::codegen) struct ScopedBindingEnv<'a> {
+    base: &'a dyn BindingEnvironment,
+    entries: Vec<(String, Binding)>,
+}
+
+impl<'a> ScopedBindingEnv<'a> {
+    pub(in crate::codegen) fn new(base: &'a dyn BindingEnvironment) -> Self {
+        #[cfg(test)]
+        record_binding_env_overlay();
+        Self {
+            base,
+            entries: Vec::new(),
+        }
+    }
+
+    pub(in crate::codegen) fn insert(&mut self, name: String, binding: Binding) {
+        if let Some((_, current)) = self.entries.iter_mut().find(|(key, _)| *key == name) {
+            *current = binding;
+        } else {
+            self.entries.push((name, binding));
+        }
+    }
+}
+
+impl BindingEnvironment for ScopedBindingEnv<'_> {
+    fn get(&self, name: &str) -> Option<&Binding> {
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|(key, binding)| (key == name).then_some(binding))
+            .or_else(|| self.base.get(name))
+    }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
+        self.base.visit(visitor);
+        for (name, binding) in &self.entries {
+            visitor(name, binding);
+        }
+    }
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        self.entries
+            .iter()
+            .find_map(|(name, binding)| name.starts_with(prefix).then_some(binding))
+            .or_else(|| self.base.binding_with_prefix(prefix))
     }
 }
 
 impl BindingEnvironment for HashMap<String, Binding> {
     fn get(&self, name: &str) -> Option<&Binding> {
         HashMap::get(self, name)
+    }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
+        for (name, binding) in self {
+            visitor(name, binding);
+        }
+    }
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        self.iter()
+            .find_map(|(name, binding)| name.starts_with(prefix).then_some(binding))
     }
 }
 
@@ -50,6 +123,18 @@ impl BindingEnvironment for LayeredBindingEnv<'_> {
             self.base.get(name)
         }
     }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
+        self.base.visit(visitor);
+        visitor(self.name, &self.binding);
+    }
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        self.name
+            .starts_with(prefix)
+            .then_some(&self.binding)
+            .or_else(|| self.base.binding_with_prefix(prefix))
+    }
 }
 
 struct BindingTypeEnv<'a>(&'a dyn BindingEnvironment);
@@ -57,6 +142,17 @@ struct BindingTypeEnv<'a>(&'a dyn BindingEnvironment);
 impl ExprTypeEnv for BindingTypeEnv<'_> {
     fn get_type(&self, name: &str) -> Option<&Type> {
         self.0.get(name).map(|binding| &binding.ty)
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.0
+            .visit(&mut |name, binding| visitor(name, &binding.ty));
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.0
+            .binding_with_prefix(prefix)
+            .map(|binding| &binding.ty)
     }
 }
 
@@ -66,6 +162,7 @@ pub(in crate::codegen) struct BindingEnvMetrics {
     pub(in crate::codegen) overlays: usize,
     pub(in crate::codegen) overlay_binding_allocations: usize,
     pub(in crate::codegen) binding_clone_allocations: usize,
+    pub(in crate::codegen) scope_env_full_clones: usize,
 }
 
 #[cfg(test)]
@@ -74,6 +171,7 @@ thread_local! {
         overlays: 0,
         overlay_binding_allocations: 0,
         binding_clone_allocations: 0,
+        scope_env_full_clones: 0,
     }) };
 }
 
@@ -92,6 +190,15 @@ fn record_binding_env_overlay() {
         let mut value = metrics.get();
         value.overlays += 1;
         value.overlay_binding_allocations += 1;
+        metrics.set(value);
+    });
+}
+
+#[cfg(test)]
+fn record_binding_env_full_clone() {
+    BINDING_ENV_METRICS.with(|metrics| {
+        let mut value = metrics.get();
+        value.scope_env_full_clones += 1;
         metrics.set(value);
     });
 }
@@ -120,6 +227,7 @@ enum ExprNodeKind<'a> {
     Bytes(&'a [u8]),
     List(Vec<ExprNode>),
     None,
+    SlotProvided(crate::hir::ComponentSlotId),
     Path(ExprPath<'a>),
     Call {
         target: ExprCallTarget<'a>,
@@ -177,14 +285,21 @@ impl ExprArguments {
         }
     }
 
-    fn binding<'a>(&self, index: usize, context: &'a ExprEmission<'a>) -> Result<&'a str, Error> {
+    fn binding<'a>(
+        &self,
+        index: usize,
+        context: &'a ExprEmission<'a>,
+    ) -> Result<(&'a str, Option<CheckedLocalId>), Error> {
         match self.0.get(index) {
-            Some(ExprArgument::Binding(id)) => Ok(&context
-                .program
-                .expect("checked binding has a lowered program")
-                .checked_facts()
-                .local(*id)
-                .name),
+            Some(ExprArgument::Binding(id)) => Ok((
+                &context
+                    .program
+                    .expect("checked binding has a lowered program")
+                    .checked_facts()
+                    .local(*id)
+                    .name,
+                Some(*id),
+            )),
             Some(ExprArgument::Value(node))
                 if context
                     .ast_expr(*node)
@@ -193,7 +308,7 @@ impl ExprArguments {
                 let Some(Expr::Path(path)) = context.ast_expr(*node) else {
                     unreachable!("guard verified the AST path")
                 };
-                Ok(&path[0])
+                Ok((&path[0], None))
             }
             _ => Err(Error::new(
                 "E196",
@@ -334,6 +449,7 @@ impl<'a> ExprEmission<'a> {
                         ExprNodeKind::List(values.iter().copied().map(ExprNode::Checked).collect())
                     }
                     CheckedExprKind::None => ExprNodeKind::None,
+                    CheckedExprKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
                     CheckedExprKind::Path { root, projections } => {
                         ExprNodeKind::Path(ExprPath::Checked { root, projections })
                     }
@@ -487,6 +603,14 @@ fn expr_node_code(
             expr_node_list_code(&values, env, context)?
         ),
         ExprNodeKind::None => "::std::option::Option::None".into(),
+        ExprNodeKind::SlotProvided(slot) => {
+            let slot = context
+                .program
+                .expect("checked slot expression has a lowered program")
+                .component_slot_name(slot)?;
+            env.contains_key(&format!("\0slot-provided:{slot}"))
+                .to_string()
+        }
         ExprNodeKind::Path(ExprPath::Ast(path)) => {
             if let [contract, palette] = path
                 && document
@@ -1490,7 +1614,7 @@ fn expr_builtin_group_3(
             let Type::Animation(inner) = context.ty(args.value(0)?, env)? else {
                 unreachable!("checker requires animation")
             };
-            let binding = args.binding(1, context)?;
+            let (binding, binding_id) = args.binding(1, context)?;
             let projection_env = LayeredBindingEnv::new(
                 env,
                 binding,
@@ -1503,6 +1627,7 @@ fn expr_builtin_group_3(
                     ty: *inner,
                     local: true,
                     state: None,
+                    owner: binding_id.map(BindingOwner::Local),
                 },
             );
             let projection =
@@ -2201,35 +2326,83 @@ fn checked_path_code(
     let (mut code, mut ty, root_local) = match root {
         CheckedPathRoot::Value(value_ref) => {
             let value = program.checked_facts().value_by_ref(*value_ref);
+            let origin = program.origin(value.origin);
+            let span = Span {
+                line: origin.line,
+                column: origin.column,
+            };
             let binding = env.get(&value.name).ok_or_else(|| {
                 Error::new(
                     "E196",
-                    &Span::line(1),
+                    &span,
                     format!(
                         "normalized value `{}` is absent from emission scope",
                         value.name
                     ),
                 )
             })?;
+            if binding.owner != Some(BindingOwner::Value(*value_ref)) {
+                return Err(Error::new(
+                    "E196",
+                    &span,
+                    format!(
+                        "normalized value `{}` resolved to a mismatched emission owner",
+                        value.name
+                    ),
+                ));
+            }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
         CheckedPathRoot::Local(id) => {
             let local = program.checked_facts().local(*id);
+            let origin = program.origin(local.origin);
+            let span = Span {
+                line: origin.line,
+                column: origin.column,
+            };
             let binding = env.get(&local.name).ok_or_else(|| {
                 Error::new(
                     "E196",
-                    &Span::line(1),
+                    &span,
                     format!(
                         "normalized local `{}` is absent from emission scope",
                         local.name
                     ),
                 )
             })?;
+            if binding.owner != Some(BindingOwner::Local(*id)) {
+                return Err(Error::new(
+                    "E196",
+                    &span,
+                    format!(
+                        "normalized local `{}` resolved to a mismatched emission owner",
+                        local.name
+                    ),
+                ));
+            }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
         CheckedPathRoot::EnumVariant(id) => {
-            let variant = program.declarations().enum_variant_decl(*id);
-            let owner = program.declarations().enum_decl(id.owner);
+            let variant = program
+                .declarations()
+                .try_enum_variant_decl(*id)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        &Span::line(1),
+                        "checked path references an invalid enum variant ID",
+                    )
+                })?;
+            let owner = program
+                .declarations()
+                .try_enum_decl(id.owner)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        &Span::line(1),
+                        "checked path references an invalid enum ID",
+                    )
+                })?;
             return Ok(format!("{}::{}", owner.rust_name, pascal(&variant.name)));
         }
         CheckedPathRoot::Palette(id) => {
@@ -2475,21 +2648,6 @@ pub(in crate::codegen) fn checked_expr_use_code(
             }
         }
     })
-}
-
-pub(in crate::codegen) fn resolved_argument_code(
-    program: &LoweredProgram,
-    argument: &ResolvedArgumentExpression,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    match argument {
-        ResolvedArgumentExpression::Supplied(expression) => {
-            expr_code(expression, env, program.document(), ValueMode::Borrowed)
-        }
-        ResolvedArgumentExpression::Default(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Borrowed)
-        }
-    }
 }
 
 pub(in crate::codegen) fn clamped_f32_code(

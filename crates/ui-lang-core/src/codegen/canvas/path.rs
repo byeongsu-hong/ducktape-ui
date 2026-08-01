@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn canvas_path_code(
     segments: &[CanvasPathSegment],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let mut code = String::from("::iced::widget::canvas::Path::new(|__path| {");

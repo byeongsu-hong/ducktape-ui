@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::codegen) fn append_slider_styles(
     code: &mut String,
     styles: &SliderStyleSet,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let custom = styles
@@ -54,7 +54,7 @@ pub(in crate::codegen) fn append_slider_styles(
 pub(in crate::codegen) fn append_slider_style_fields(
     code: &mut String,
     style: &SliderStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     for (background, field) in [
@@ -134,7 +134,7 @@ pub(in crate::codegen) fn append_slider_style_fields(
 pub(in crate::codegen) fn append_tooltip_style(
     code: &mut String,
     options: &TooltipOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let radius = radius_code(
@@ -253,7 +253,7 @@ pub(in crate::codegen) fn append_tooltip_style(
 pub(in crate::codegen) fn append_progress_options(
     code: &mut String,
     options: &ProgressOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let radius = radius_code(
@@ -337,7 +337,7 @@ pub(in crate::codegen) fn append_progress_options(
 pub(in crate::codegen) fn append_rule_options(
     code: &mut String,
     options: &RuleOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let radius = radius_code(

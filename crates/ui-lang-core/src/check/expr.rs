@@ -38,14 +38,84 @@ struct ActiveExprTypeAnalysis {
 pub(crate) trait ExprTypeEnv {
     fn get_type(&self, name: &str) -> Option<&Type>;
 
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type));
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type>;
+
     fn contains_type(&self, name: &str) -> bool {
         self.get_type(name).is_some()
+    }
+
+    fn snapshot(&self) -> HashMap<String, Type> {
+        super::view::record_view_env_full_clone();
+        let mut snapshot = HashMap::new();
+        self.visit_types(&mut |name, ty| {
+            snapshot.insert(name.to_owned(), ty.clone());
+        });
+        snapshot
     }
 }
 
 impl ExprTypeEnv for HashMap<String, Type> {
     fn get_type(&self, name: &str) -> Option<&Type> {
         self.get(name)
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        for (name, ty) in self {
+            visitor(name, ty);
+        }
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.iter()
+            .find_map(|(name, ty)| name.starts_with(prefix).then_some(ty))
+    }
+}
+
+pub(crate) struct ScopedTypeEnv<'a> {
+    base: &'a dyn ExprTypeEnv,
+    entries: Vec<(String, Type)>,
+}
+
+impl<'a> ScopedTypeEnv<'a> {
+    pub(crate) fn new(base: &'a dyn ExprTypeEnv) -> Self {
+        Self {
+            base,
+            entries: Vec::new(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, name: String, ty: Type) {
+        if let Some((_, current)) = self.entries.iter_mut().find(|(key, _)| *key == name) {
+            *current = ty;
+        } else {
+            self.entries.push((name, ty));
+        }
+    }
+}
+
+impl ExprTypeEnv for ScopedTypeEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|(key, ty)| (key == name).then_some(ty))
+            .or_else(|| self.base.get_type(name))
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.base.visit_types(visitor);
+        for (name, ty) in &self.entries {
+            visitor(name, ty);
+        }
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.entries
+            .iter()
+            .find_map(|(name, ty)| name.starts_with(prefix).then_some(ty))
+            .or_else(|| self.base.type_with_prefix(prefix))
     }
 }
 
@@ -73,6 +143,18 @@ impl ExprTypeEnv for LayeredTypeEnv<'_> {
         } else {
             self.base.get_type(name)
         }
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.base.visit_types(visitor);
+        visitor(self.name, &self.ty);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.name
+            .starts_with(prefix)
+            .then_some(&self.ty)
+            .or_else(|| self.base.type_with_prefix(prefix))
     }
 }
 

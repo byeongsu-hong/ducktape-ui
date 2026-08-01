@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn check_id(
     id: &Option<Id>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     ids: &mut HashSet<String>,
     span: &Span,

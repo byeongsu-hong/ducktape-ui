@@ -4,7 +4,7 @@ pub(super) fn identify_rendered(
     rendered: String,
     id: Option<&Id>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     scope: &str,
 ) -> Result<String, Error> {
@@ -20,7 +20,7 @@ pub(super) fn identify_rendered(
 pub(super) fn rendered_child_scope(
     id: Option<&Id>,
     scope: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     id.map_or_else(
@@ -32,7 +32,7 @@ pub(super) fn rendered_child_scope(
 pub(in crate::codegen) fn component_slot_context(
     slots: &[ResolvedSlot],
     document: &RenderDocument<'_>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     parent: Option<&SlotContext>,
 ) -> Result<Option<SlotContext>, Error> {
     let mut entries = Vec::new();
@@ -44,7 +44,7 @@ pub(in crate::codegen) fn component_slot_context(
             entries.push(SlotContent {
                 name: slot.name.clone(),
                 node: content.clone(),
-                env: env.clone(),
+                env: env.snapshot(),
             });
         }
     }
@@ -58,7 +58,7 @@ pub(in crate::codegen) fn render_node_if_present(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
@@ -72,9 +72,10 @@ pub(in crate::codegen) fn render_node_if_present(
 fn node_is_omitted(
     node: &ViewNode,
     document: &RenderDocument<'_>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     slot: Option<&SlotContext>,
 ) -> Result<bool, Error> {
+    document.program().validate_checked_view(node)?;
     let omitted = match node {
         ViewNode::Slot { name, .. } => {
             let Some((content, parent)) = slot.and_then(|slot| {
@@ -158,10 +159,11 @@ pub(in crate::codegen) fn render_node(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
+    document.program().validate_checked_view(node)?;
     let rendered = if let Some(rendered) =
         render_foundation(node, document, message, env, scope, slot)?
     {

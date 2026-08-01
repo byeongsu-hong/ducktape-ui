@@ -1,5 +1,8 @@
 use super::*;
-use crate::codegen::{BindingEnvMetrics, binding_env_metrics, reset_binding_env_metrics};
+use crate::codegen::{
+    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_expr_use_code, checked_state_env,
+    reset_binding_env_metrics,
+};
 
 #[test]
 fn keeps_the_aot_view_and_wraps_only_its_rendered_root_for_dev_readiness() {
@@ -844,6 +847,178 @@ derived
     assert!(
         large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
         "full projection compile/codegen scaling exceeded the linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
+    );
+}
+
+#[test]
+#[ignore = "explicit 500/4000 retained view-expression allocation and codegen contract"]
+fn performance_contract_four_thousand_component_arguments_are_linear() {
+    use std::fmt::Write as _;
+    use std::time::Instant;
+
+    fn measure(calls: usize) -> (crate::check::CheckedFactMetrics, std::time::Duration, usize) {
+        let mut source = String::from(
+            r#"app ViewFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  base = 1
+component Label(value:i64)
+  text value
+view
+  col
+"#,
+        );
+        for index in 0..calls {
+            writeln!(source, "    Label value=(base + {index})").unwrap();
+        }
+
+        let started = Instant::now();
+        let program = crate::lower::lower(crate::analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "view_facts.ice").unwrap();
+        (
+            program.checked_facts().metrics(),
+            started.elapsed(),
+            generated.len(),
+        )
+    }
+
+    let (small, small_elapsed, small_output) = measure(500);
+    let (large, large_elapsed, large_output) = measure(4_000);
+    assert_eq!(small.view_analysis_passes, 500);
+    assert_eq!(large.view_analysis_passes, 4_000);
+    assert_eq!(large.expression_uses - 1, (small.expression_uses - 1) * 8);
+    assert_eq!(large.expressions - 1, (small.expressions - 1) * 8);
+    assert_eq!(
+        large.type_analysis_nodes - 1,
+        (small.type_analysis_nodes - 1) * 8
+    );
+    assert_eq!(large.type_scope_env_full_clones, 0);
+    assert_eq!(large.scope_env_full_clones, 0);
+    assert!(large_output > small_output * 7);
+    eprintln!("500 component arguments in {small_elapsed:?}; 4k in {large_elapsed:?}");
+    assert!(
+        large_elapsed.as_secs_f64() < 8.0,
+        "4k retained component arguments completed full codegen in {large_elapsed:?}"
+    );
+    assert!(
+        large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
+        "retained component argument scaling exceeded the linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
+    );
+}
+
+#[test]
+fn checked_expression_emission_rejects_a_name_match_with_the_wrong_owner() {
+    let source = r#"app OwnerMismatch
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+component Label(value:i64)
+  text value
+view
+  Label value=count
+"#;
+    let program = crate::lower::lower(crate::analyze(source).unwrap()).unwrap();
+    let call = program
+        .component_call(program.document().view.span())
+        .unwrap();
+    let expression = call.arguments[0].expression;
+    let mut env = checked_state_env(&program, "self");
+    env.get_mut("count").unwrap().owner = None;
+
+    let error = checked_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
+    assert_eq!(error.code, "E196");
+    assert!(error.message.contains("mismatched emission owner"));
+}
+
+#[test]
+#[ignore = "explicit 500/4000 lexical view-scope allocation contract"]
+fn performance_contract_four_thousand_sibling_scopes_borrow_large_environments() {
+    use std::fmt::Write as _;
+    use std::time::Instant;
+
+    fn measure(
+        siblings: usize,
+    ) -> (
+        crate::check::CheckedFactMetrics,
+        BindingEnvMetrics,
+        std::time::Duration,
+    ) {
+        let mut source = String::from(
+            r#"app ScopedSiblings
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items:[i64] = [1]
+"#,
+        );
+        for index in 0..siblings {
+            writeln!(source, "  filler_{index} = {index}").unwrap();
+        }
+        source.push_str("view\n  col\n");
+        for _ in 0..siblings {
+            source.push_str("    for item in items\n      text item\n");
+        }
+
+        let program = crate::lower::lower(crate::analyze(&source).unwrap()).unwrap();
+        reset_binding_env_metrics();
+        let started = Instant::now();
+        crate::codegen::generate(&program, "scoped-siblings.ice").unwrap();
+        (
+            program.checked_facts().metrics(),
+            binding_env_metrics(),
+            started.elapsed(),
+        )
+    }
+
+    let (small_facts, small_codegen, small_elapsed) = measure(500);
+    let (large_facts, large_codegen, large_elapsed) = measure(4_000);
+    assert_eq!(small_facts.view_scope_env_overlays, 500);
+    assert_eq!(large_facts.view_scope_env_overlays, 4_000);
+    assert_eq!(small_facts.view_scope_env_full_clones, 0);
+    assert_eq!(large_facts.view_scope_env_full_clones, 0);
+    assert_eq!(small_codegen.overlays, 500);
+    assert_eq!(large_codegen.overlays, 4_000);
+    assert_eq!(small_codegen.scope_env_full_clones, 0);
+    assert_eq!(large_codegen.scope_env_full_clones, 0);
+    assert!(
+        large_codegen.binding_clone_allocations <= small_codegen.binding_clone_allocations * 9 + 32,
+        "binding clones must remain linear: 500={}, 4k={}",
+        small_codegen.binding_clone_allocations,
+        large_codegen.binding_clone_allocations,
+    );
+    eprintln!(
+        "500 sibling scopes in {small_elapsed:?} with {} binding clones; 4k in {large_elapsed:?} with {} binding clones",
+        small_codegen.binding_clone_allocations, large_codegen.binding_clone_allocations,
+    );
+    assert!(
+        large_elapsed.as_secs_f64() < 20.0,
+        "4k sibling scopes completed in {large_elapsed:?}"
     );
 }
 

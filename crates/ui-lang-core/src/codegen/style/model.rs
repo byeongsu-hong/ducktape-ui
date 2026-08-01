@@ -69,7 +69,7 @@ pub(in crate::codegen) fn container_style_value(style: &ResolvedStyle) -> Option
 pub(in crate::codegen) fn button_style_code(
     style: &ResolvedStyle,
     typed: &ButtonStyleSet,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let has_utilities = style.background.is_some()
@@ -227,7 +227,7 @@ pub(in crate::codegen) fn button_style_code(
 fn append_button_status_style(
     code: &mut String,
     style: &ButtonStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     append_surface_style_overrides(code, &style.options, env, document)?;
@@ -288,7 +288,7 @@ pub(in crate::codegen) fn resolved_theme_color(color: &ResolvedThemeColor) -> St
 
 pub(in crate::codegen) fn resolved_theme_preset_code(
     preset: &ResolvedThemePreset,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
     Ok(match preset {
@@ -307,7 +307,7 @@ pub(in crate::codegen) fn resolved_theme_preset_code(
 
 pub(in crate::codegen) fn resolved_theme_factory_code(
     factory: &ResolvedThemeFactory,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
     let function = program.extern_function(factory.function);
@@ -317,7 +317,7 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
 
 pub(in crate::codegen) fn resolved_background_code(
     background: &ResolvedBackground,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &RenderDocument<'_>,
 ) -> Result<String, Error> {
     Ok(match background {
@@ -351,7 +351,7 @@ pub(in crate::codegen) fn qr_data_code(
     payload: &Expr,
     correction: Option<QrCorrection>,
     version: Option<QrVersion>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let module = "::iced::widget::qr_code";

@@ -4,7 +4,7 @@ pub(in crate::codegen) fn custom_style_call_code(
     style: &ExternCall,
     kind: ExternKind,
     leading_args: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let function = find_extern_function(document, &style.function, kind)
@@ -16,7 +16,7 @@ pub(in crate::codegen) fn custom_style_call_code(
 pub(in crate::codegen) fn append_f32_fields<'a>(
     code: &mut String,
     fields: impl IntoIterator<Item = (&'a Option<Expr>, &'a str)>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     for (value, field) in fields {
@@ -51,7 +51,7 @@ pub(in crate::codegen) fn text_wrapping_code(wrapping: TextWrapping) -> &'static
 
 pub(in crate::codegen) fn text_line_height_code(
     line_height: &TextLineHeight,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     match line_height {
@@ -250,7 +250,7 @@ pub(in crate::codegen) fn controlled_state_name(
 pub(in crate::codegen) fn id_code(
     id: &Id,
     scope: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     if let Some(key) = &id.key {
@@ -269,7 +269,7 @@ pub(in crate::codegen) fn accessibility_key_code(
     kind: &str,
     span: &Span,
     scope: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     id.map_or_else(
@@ -284,7 +284,7 @@ pub(in crate::codegen) fn accessibility_key_code(
 pub(in crate::codegen) fn accessibility_code(
     options: &AccessibilityOptions,
     default_label: impl FnOnce() -> String,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(String, String), Error> {
     let label = options
@@ -305,7 +305,7 @@ pub(in crate::codegen) fn accessibility_code(
 
 pub(in crate::codegen) fn widget_target_code(
     target: &WidgetTarget,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let constructor = if component_context(env).is_none()
@@ -323,7 +323,7 @@ pub(in crate::codegen) fn widget_target_code(
 
 pub(in crate::codegen) fn widget_target_path_code(
     target: &WidgetTarget,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     if let Some((_, context)) = component_context(env) {
@@ -354,7 +354,7 @@ pub(in crate::codegen) fn widget_target_path_code(
 
 pub(in crate::codegen) fn widget_selector_code(
     selector: &WidgetSelector,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(String, Option<&'static str>), Error> {
     match selector {

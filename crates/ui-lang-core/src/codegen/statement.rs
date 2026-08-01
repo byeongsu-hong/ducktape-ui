@@ -113,6 +113,7 @@ pub(in crate::codegen) fn generate_statements(
                         ty,
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 );
             }

@@ -1,5 +1,8 @@
 use crate::ast::*;
-use crate::check::{controlled_editor_bindings, controlled_state_bindings, expr_type};
+use crate::check::{
+    CheckedLocalId, CheckedMatchPattern, CheckedValueRef, CheckedViewFlow,
+    controlled_editor_bindings, controlled_state_bindings, expr_type,
+};
 use crate::lower::{
     ComponentOutputRoute, ComponentScope, ComponentStorage, LoweredProgram,
     ResolvedAppThemeSelection, ResolvedBackground, ResolvedEventRoute, ResolvedPaletteSelection,
@@ -118,77 +121,140 @@ fn resolve_render_source_markers(
     output
 }
 
-fn reconciliation_scope<'a>(public_scope: &'a str, env: &'a HashMap<String, Binding>) -> &'a str {
+fn reconciliation_scope<'a>(public_scope: &'a str, env: &'a dyn BindingEnvironment) -> &'a str {
     env.get(RECONCILIATION_SCOPE_BINDING)
         .map_or(public_scope, |binding| binding.code.as_str())
+}
+
+fn reconciliation_scope_binding(code: String) -> Binding {
+    Binding {
+        code,
+        ty: Type::Str,
+        local: true,
+        state: None,
+        owner: None,
+    }
+}
+
+fn component_state_scopes(env: &dyn BindingEnvironment) -> Vec<String> {
+    let mut scopes = Vec::new();
+    env.visit(&mut |_, binding| {
+        if let Some(StateBinding::Component { scope, .. }) = &binding.state {
+            scopes.push(scope.clone());
+        }
+    });
+    scopes
 }
 
 fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
     env.insert(
         RECONCILIATION_SCOPE_BINDING.into(),
-        Binding {
-            code,
-            ty: Type::Str,
-            local: true,
-            state: None,
-        },
+        reconciliation_scope_binding(code),
     );
 }
 
-fn match_pattern_code(pattern: &MatchPattern) -> String {
-    match pattern {
-        MatchPattern::Some(binding) => {
-            format!("::std::option::Option::Some({binding})")
-        }
-        MatchPattern::None => "::std::option::Option::None".into(),
-        MatchPattern::Ok(binding) => format!("::std::result::Result::Ok({binding})"),
-        MatchPattern::Err(binding) => format!("::std::result::Result::Err({binding})"),
-        MatchPattern::Enum {
-            enum_name,
-            variant,
-            binding,
-        } => {
-            let enum_name = generated_named_rust(enum_name);
-            binding.as_ref().map_or_else(
-                || format!("{enum_name}::{}", pascal(variant)),
-                |binding| format!("{enum_name}::{}({binding})", pascal(variant)),
-            )
-        }
-        MatchPattern::Wildcard => "_".into(),
+fn checked_local_binding(
+    program: &LoweredProgram,
+    local_id: CheckedLocalId,
+    code: String,
+    is_local: bool,
+) -> Binding {
+    let local = program.checked_facts().local(local_id);
+    Binding {
+        code,
+        ty: local.ty.clone(),
+        local: is_local,
+        state: None,
+        owner: Some(BindingOwner::Local(local_id)),
     }
 }
 
-fn match_pattern_binding(
-    pattern: &MatchPattern,
+fn checked_match_pattern_code(
+    program: &LoweredProgram,
+    pattern: &CheckedMatchPattern,
+    binding: Option<CheckedLocalId>,
     value_ty: &Type,
-    document: &Document,
-) -> Option<(String, Type)> {
-    match (pattern, value_ty) {
-        (MatchPattern::Some(binding), Type::Option(inner)) => {
-            Some((binding.clone(), inner.as_ref().clone()))
+    span: &Span,
+) -> Result<String, Error> {
+    let binding_name = binding.map(|binding| {
+        program
+            .checked_facts()
+            .local(binding)
+            .name
+            .as_str()
+            .to_owned()
+    });
+    Ok(match pattern {
+        CheckedMatchPattern::Some => format!(
+            "::std::option::Option::Some({})",
+            binding_name.ok_or_else(|| Error::new(
+                "E196",
+                span,
+                "checked some pattern has no payload local",
+            ))?
+        ),
+        CheckedMatchPattern::None => "::std::option::Option::None".into(),
+        CheckedMatchPattern::Ok => format!(
+            "::std::result::Result::Ok({})",
+            binding_name.ok_or_else(|| Error::new(
+                "E196",
+                span,
+                "checked ok pattern has no payload local",
+            ))?
+        ),
+        CheckedMatchPattern::Err => format!(
+            "::std::result::Result::Err({})",
+            binding_name.ok_or_else(|| Error::new(
+                "E196",
+                span,
+                "checked err pattern has no payload local",
+            ))?
+        ),
+        CheckedMatchPattern::Enum(id) => {
+            let owner = program
+                .declarations()
+                .try_enum_decl(id.owner)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        span,
+                        "checked match pattern references an invalid enum ID",
+                    )
+                })?;
+            let variant = program
+                .declarations()
+                .try_enum_variant_decl(*id)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        span,
+                        "checked match pattern references an invalid enum variant ID",
+                    )
+                })?;
+            binding_name.map_or_else(
+                || format!("{}::{}", owner.rust_name, pascal(&variant.name)),
+                |binding| format!("{}::{}({binding})", owner.rust_name, pascal(&variant.name)),
+            )
         }
-        (MatchPattern::Ok(binding), Type::Result(output, _)) => {
-            Some((binding.clone(), output.as_ref().clone()))
+        CheckedMatchPattern::Palette(id) => {
+            let Type::Palette(contract) = value_ty else {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "checked palette pattern has a non-palette value type",
+                ));
+            };
+            let palette = program.declarations().palette_name(*id).ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    span,
+                    "checked palette pattern references an invalid palette ID",
+                )
+            })?;
+            format!("{}::{}", generated_named_rust(contract), pascal(palette))
         }
-        (MatchPattern::Err(binding), Type::Result(_, error)) => {
-            Some((binding.clone(), error.as_ref().clone()))
-        }
-        (
-            MatchPattern::Enum {
-                enum_name,
-                variant,
-                binding: Some(binding),
-            },
-            Type::Named(name),
-        ) if enum_name == name => document
-            .enums
-            .iter()
-            .find(|item| item.name == *enum_name)
-            .and_then(|item| item.variants.iter().find(|item| item.name == *variant))
-            .and_then(|variant| variant.payload.clone())
-            .map(|payload| (binding.clone(), payload)),
-        _ => None,
-    }
+        CheckedMatchPattern::Wildcard => "_".into(),
+    })
 }
 
 pub(in crate::codegen) fn find_extern_function<'a>(
@@ -255,7 +321,7 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
 
 fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Error> {
     let document = program.document();
-    let env = state_env(document, "self");
+    let env = checked_state_env(program, "self");
     for derived in program.derived() {
         let value = checked_expr_use_code(program, derived.initializer, &env, ValueMode::Owned)?;
         writeln!(out, "{}", source_marker(&derived.span)).unwrap();
@@ -304,7 +370,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_system_types(&mut out, document);
     generate_widget_selector_types(&mut out, document);
     generate_canvas_types(&mut out, document);
-    generate_pane_types(&mut out, document)?;
+    generate_pane_types(&mut out, program)?;
     let theme = program.theme();
     let token_count = theme.contract.tokens.len();
     writeln!(

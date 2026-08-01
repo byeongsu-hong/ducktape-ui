@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn check_canvas_commands(
     commands: &[CanvasCommand],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
 ) -> Result<(), Error> {
     for command in commands {
@@ -240,7 +240,7 @@ pub(in crate::check) fn check_canvas_commands(
                         "canvas for expects a list expression",
                     ));
                 };
-                let mut child_env = env.clone();
+                let mut child_env = ScopedTypeEnv::new(env);
                 child_env.insert(item.clone(), *inner);
                 check_canvas_commands(commands, &child_env, document)?;
             }
@@ -251,7 +251,7 @@ pub(in crate::check) fn check_canvas_commands(
 
 pub(in crate::check) fn check_canvas_path(
     segments: &[CanvasPathSegment],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -386,7 +386,7 @@ pub(in crate::check) fn check_canvas_path(
 
 pub(in crate::check) fn check_canvas_paint(
     paint: &CanvasPaint,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -401,7 +401,7 @@ pub(in crate::check) fn check_canvas_paint(
 
 pub(in crate::check) fn check_canvas_stroke(
     stroke: &CanvasStroke,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -428,7 +428,7 @@ pub(in crate::check) fn check_canvas_stroke(
 
 pub(in crate::check) fn check_canvas_radius(
     radius: &CanvasRadius,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -449,7 +449,7 @@ pub(in crate::check) fn check_canvas_radius(
 
 pub(in crate::check) fn check_canvas_number(
     value: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
     label: &str,

@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_content_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -177,7 +177,7 @@ pub(in crate::check) fn infer_content_group(
             record_read(binding, span);
             record_write(binding, span);
             check_id(id, env, document, ids, span)?;
-            let Some(binding_ty) = env.get(binding) else {
+            let Some(binding_ty) = env.get_type(binding) else {
                 return Err(Error::new(
                     "E120",
                     span,

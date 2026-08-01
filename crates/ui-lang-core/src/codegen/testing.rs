@@ -12,7 +12,7 @@ pub(in crate::codegen) fn generate_test_mounts(
         let Some(mount) = &test.mount else {
             continue;
         };
-        let mut env = state_env(document, "self");
+        let mut env = checked_state_env(program, "self");
         if document.daemon {
             env.insert(
                 "window".into(),
@@ -21,6 +21,10 @@ pub(in crate::codegen) fn generate_test_mounts(
                     ty: Type::WindowId,
                     local: true,
                     state: None,
+                    owner: program
+                        .checked_facts()
+                        .daemon_window_local()
+                        .map(BindingOwner::Local),
                 },
             );
         }
@@ -764,6 +768,7 @@ fn test_env(
                 ty: Type::WindowId,
                 local: true,
                 state: None,
+                owner: None,
             },
         );
     }
@@ -778,6 +783,7 @@ fn test_env(
                 ty: Type::TestTarget,
                 local: true,
                 state: None,
+                owner: None,
             },
         );
     }

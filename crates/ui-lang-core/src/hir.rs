@@ -18,6 +18,8 @@ arena_id!(EnumId);
 arena_id!(PaletteId);
 arena_id!(ExternFnId);
 arena_id!(OriginId);
+arena_id!(ViewId);
+arena_id!(ComponentCallId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -178,13 +180,19 @@ impl OriginArena {
 struct ComponentDeclarations {
     declaration: Declaration<ComponentId>,
     params: Vec<Declaration<ComponentParamId>>,
+    slots: Vec<Declaration<ComponentSlotId>>,
     states: Vec<Declaration<ComponentStateId>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SourceSite {
+    line: usize,
+    column: usize,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeclarationIndex {
     app_states: Vec<Declaration<AppStateId>>,
-    app_states_by_name: HashMap<String, AppStateId>,
     derived: Vec<Declaration<DerivedId>>,
     components: Vec<ComponentDeclarations>,
     components_by_name: HashMap<String, ComponentId>,
@@ -195,9 +203,13 @@ pub(crate) struct DeclarationIndex {
     enums_by_name: HashMap<String, EnumId>,
     enum_variants_by_owner: HashMap<EnumId, HashMap<String, EnumVariantId>>,
     palettes: Vec<Declaration<PaletteId>>,
+    palette_names: Vec<String>,
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
+    views: Vec<Declaration<ViewId>>,
+    views_by_site: HashMap<SourceSite, ViewId>,
+    component_calls_by_view: HashMap<ViewId, ComponentCallId>,
 }
 
 impl DeclarationIndex {
@@ -211,13 +223,6 @@ impl DeclarationIndex {
                 origin: origins.push(&state.span, None),
             })
             .collect::<Vec<_>>();
-        let app_states_by_name = document
-            .states
-            .iter()
-            .zip(&app_states)
-            .map(|(state, declaration)| (state.name.clone(), declaration.id))
-            .collect();
-
         let derived = document
             .derived
             .iter()
@@ -246,6 +251,17 @@ impl DeclarationIndex {
                         origin: origins.push(&component.span, Some(origin)),
                     })
                     .collect();
+                let slots = declared_slots(&component.root)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, span)| Declaration {
+                        id: ComponentSlotId {
+                            component: id,
+                            index: index as u32,
+                        },
+                        origin: origins.push(span, Some(origin)),
+                    })
+                    .collect();
                 let states = component
                     .states
                     .iter()
@@ -261,6 +277,7 @@ impl DeclarationIndex {
                 ComponentDeclarations {
                     declaration: Declaration { id, origin },
                     params,
+                    slots,
                     states,
                 }
             })
@@ -383,6 +400,11 @@ impl DeclarationIndex {
             .zip(&palettes)
             .map(|(palette, declaration)| (palette.name.clone(), declaration.id))
             .collect();
+        let palette_names = document
+            .palettes
+            .iter()
+            .map(|palette| palette.name.clone())
+            .collect();
 
         let externs = document
             .functions
@@ -408,9 +430,40 @@ impl DeclarationIndex {
             .map(|function| (function.name.clone(), function.declaration.id))
             .collect();
 
+        let mut views = Vec::new();
+        let mut views_by_site = HashMap::new();
+        let mut component_calls_by_view = HashMap::new();
+        for (index, component) in document.components.iter().enumerate() {
+            index_view_declarations(
+                &component.root,
+                Some(components[index].declaration.origin),
+                origins,
+                &mut views,
+                &mut views_by_site,
+                &mut component_calls_by_view,
+            );
+        }
+        index_view_declarations(
+            &document.view,
+            None,
+            origins,
+            &mut views,
+            &mut views_by_site,
+            &mut component_calls_by_view,
+        );
+        for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+            index_view_declarations(
+                mount,
+                None,
+                origins,
+                &mut views,
+                &mut views_by_site,
+                &mut component_calls_by_view,
+            );
+        }
+
         Self {
             app_states,
-            app_states_by_name,
             derived,
             components,
             components_by_name,
@@ -421,18 +474,18 @@ impl DeclarationIndex {
             enums_by_name,
             enum_variants_by_owner,
             palettes,
+            palette_names,
             palettes_by_name,
             externs,
             externs_by_name,
+            views,
+            views_by_site,
+            component_calls_by_view,
         }
     }
 
     pub(crate) fn app_state(&self, index: usize) -> Declaration<AppStateId> {
         self.app_states[index]
-    }
-
-    pub(crate) fn app_state_ids(&self) -> HashMap<String, AppStateId> {
-        self.app_states_by_name.clone()
     }
 
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
@@ -445,6 +498,10 @@ impl DeclarationIndex {
 
     pub(crate) fn component_ids(&self) -> HashMap<String, ComponentId> {
         self.components_by_name.clone()
+    }
+
+    pub(crate) fn component_id(&self, name: &str) -> Option<ComponentId> {
+        self.components_by_name.get(name).copied()
     }
 
     pub(crate) fn component_param(
@@ -461,6 +518,31 @@ impl DeclarationIndex {
         index: usize,
     ) -> Declaration<ComponentStateId> {
         self.components[component.0 as usize].states[index]
+    }
+
+    pub(crate) fn component_slot(
+        &self,
+        component: ComponentId,
+        index: usize,
+    ) -> Declaration<ComponentSlotId> {
+        self.components[component.0 as usize].slots[index]
+    }
+
+    pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
+        self.views[id.0 as usize]
+    }
+
+    pub(crate) fn view_id(&self, span: &Span) -> Option<ViewId> {
+        self.views_by_site
+            .get(&SourceSite {
+                line: span.line,
+                column: span.column,
+            })
+            .copied()
+    }
+
+    pub(crate) fn component_call_id(&self, view: ViewId) -> Option<ComponentCallId> {
+        self.component_calls_by_view.get(&view).copied()
     }
 
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
@@ -489,6 +571,10 @@ impl DeclarationIndex {
         &self.enums[id.0 as usize]
     }
 
+    pub(crate) fn try_enum_decl(&self, id: EnumId) -> Option<&EnumDeclaration> {
+        self.enums.get(id.0 as usize)
+    }
+
     pub(crate) fn enum_variant(
         &self,
         owner: EnumId,
@@ -505,12 +591,26 @@ impl DeclarationIndex {
         &self.enums[id.owner.0 as usize].variants[id.index as usize]
     }
 
+    pub(crate) fn try_enum_variant_decl(
+        &self,
+        id: EnumVariantId,
+    ) -> Option<&EnumVariantDeclaration> {
+        self.enums
+            .get(id.owner.0 as usize)?
+            .variants
+            .get(id.index as usize)
+    }
+
     pub(crate) fn palette(&self, index: usize) -> Declaration<PaletteId> {
         self.palettes[index]
     }
 
     pub(crate) fn palette_id(&self, name: &str) -> Option<PaletteId> {
         self.palettes_by_name.get(name).copied()
+    }
+
+    pub(crate) fn palette_name(&self, id: PaletteId) -> Option<&str> {
+        self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
     pub(crate) fn extern_fn(&self, index: usize) -> Declaration<ExternFnId> {
@@ -524,5 +624,143 @@ impl DeclarationIndex {
 
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
+    }
+}
+
+fn declared_slots(node: &ViewNode) -> Vec<&Span> {
+    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<&'a Span>) {
+        if let ViewNode::Slot { span, .. } = node {
+            output.push(span);
+        }
+        for child in view_children(node) {
+            collect(child, output);
+        }
+    }
+
+    let mut output = Vec::new();
+    collect(node, &mut output);
+    output
+}
+
+fn index_view_declarations(
+    node: &ViewNode,
+    parent: Option<OriginId>,
+    origins: &mut OriginArena,
+    views: &mut Vec<Declaration<ViewId>>,
+    views_by_site: &mut HashMap<SourceSite, ViewId>,
+    component_calls_by_view: &mut HashMap<ViewId, ComponentCallId>,
+) {
+    let id = ViewId(views.len() as u32);
+    let origin = origins.push(node.span(), parent);
+    views.push(Declaration { id, origin });
+    views_by_site.insert(
+        SourceSite {
+            line: node.span().line,
+            column: node.span().column,
+        },
+        id,
+    );
+    if matches!(node, ViewNode::Component { .. }) {
+        let call = ComponentCallId(component_calls_by_view.len() as u32);
+        component_calls_by_view.insert(id, call);
+    }
+    for child in view_children(node) {
+        index_view_declarations(
+            child,
+            Some(origin),
+            origins,
+            views,
+            views_by_site,
+            component_calls_by_view,
+        );
+    }
+}
+
+pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
+    match node {
+        ViewNode::Layout { children, .. }
+        | ViewNode::If { children, .. }
+        | ViewNode::For { children, .. } => children.iter().collect(),
+        ViewNode::Match { arms, .. } => arms.iter().flat_map(|arm| arm.children.iter()).collect(),
+        ViewNode::Button {
+            content: Some(content),
+            ..
+        }
+        | ViewNode::MouseArea { content, .. }
+        | ViewNode::ResizeHandle { content, .. }
+        | ViewNode::Container { content, .. }
+        | ViewNode::Theme { content, .. }
+        | ViewNode::Float { content, .. }
+        | ViewNode::Pin { content, .. }
+        | ViewNode::Sensor { content, .. }
+        | ViewNode::KeyedColumn { child: content, .. }
+        | ViewNode::Lazy { child: content, .. } => vec![content],
+        ViewNode::Tooltip { content, tip, .. } => vec![content, tip],
+        ViewNode::Overlay { content, layer, .. } => vec![content, layer],
+        ViewNode::PaneGrid {
+            panes, templates, ..
+        } => panes
+            .iter()
+            .flat_map(PaneView::nodes)
+            .chain(templates.iter().flat_map(|template| template.pane.nodes()))
+            .collect(),
+        ViewNode::Table { columns, .. } => columns
+            .iter()
+            .flat_map(|column| [&column.header, &column.cell])
+            .collect(),
+        ViewNode::Component { slots, .. } => {
+            slots.iter().map(|slot| slot.content.as_ref()).collect()
+        }
+        ViewNode::Responsive { content, .. } => match content {
+            ResponsiveContent::Breakpoint { narrow, wide, .. } => vec![narrow, wide],
+            ResponsiveContent::Size { content, .. } => vec![content],
+        },
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn view_kind(node: &ViewNode) -> &'static str {
+    match node {
+        ViewNode::Layout { .. } => "layout",
+        ViewNode::Container { .. } => "container",
+        ViewNode::Overlay { .. } => "overlay",
+        ViewNode::PaneGrid { .. } => "pane-grid",
+        ViewNode::Text { .. } => "text",
+        ViewNode::RichText { .. } => "rich-text",
+        ViewNode::Input { .. } => "input",
+        ViewNode::Button { .. } => "button",
+        ViewNode::Checkbox { .. } => "checkbox",
+        ViewNode::Toggler { .. } => "toggler",
+        ViewNode::Slider { .. } => "slider",
+        ViewNode::Progress { .. } => "progress",
+        ViewNode::Radio { .. } => "radio",
+        ViewNode::PickList { .. } => "pick-list",
+        ViewNode::ComboBox { .. } => "combo-box",
+        ViewNode::Rule { .. } => "rule",
+        ViewNode::QrCode { .. } => "qr-code",
+        ViewNode::Space { .. } => "space",
+        ViewNode::If { .. } => "if",
+        ViewNode::Match { .. } => "match",
+        ViewNode::For { .. } => "for",
+        ViewNode::KeyedColumn { .. } => "keyed-column",
+        ViewNode::Lazy { .. } => "lazy",
+        ViewNode::Markdown { .. } => "markdown",
+        ViewNode::TextEditor { .. } => "text-editor",
+        ViewNode::Table { .. } => "table",
+        ViewNode::Component { .. } => "component",
+        ViewNode::Slot { .. } => "slot",
+        ViewNode::ExternComponent { .. } => "extern-component",
+        ViewNode::Themer { .. } => "themer",
+        ViewNode::Shader { .. } => "shader",
+        ViewNode::Media { .. } => "media",
+        ViewNode::Tooltip { .. } => "tooltip",
+        ViewNode::MouseArea { .. } => "mouse-area",
+        ViewNode::ResizeHandle { .. } => "resize-handle",
+        ViewNode::Canvas { .. } => "canvas",
+        ViewNode::Theme { .. } => "theme",
+        ViewNode::Float { .. } => "float",
+        ViewNode::Pin { .. } => "pin",
+        ViewNode::Sensor { .. } => "sensor",
+        ViewNode::Responsive { .. } => "responsive",
     }
 }

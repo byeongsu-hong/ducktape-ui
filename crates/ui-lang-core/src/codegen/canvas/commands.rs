@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn canvas_commands_code(
     commands: &[CanvasCommand],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let mut code = String::new();
@@ -332,7 +332,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     return Err(Error::new("E190", span, "canvas for expects a list"));
                 };
                 let items = expr_code(items, env, document, ValueMode::Borrowed)?;
-                let mut child_env = env.clone();
+                let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item.clone(),
                     Binding {
@@ -340,6 +340,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                         ty: *inner,
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 );
                 write!(

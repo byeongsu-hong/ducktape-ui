@@ -4,7 +4,7 @@ pub(in crate::codegen) fn render_structure(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
@@ -51,7 +51,7 @@ pub(in crate::codegen) fn render_structure(
         } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
             let scale = clamped_f32_code(scale, "f32::EPSILON", "f32::MAX", env, document)?;
-            let mut translate_env = env.clone();
+            let mut translate_env = ScopedBindingEnv::new(env);
             for (name, code) in [
                 ("original_x", "(__original.x as f64)"),
                 ("original_y", "(__original.y as f64)"),
@@ -69,6 +69,7 @@ pub(in crate::codegen) fn render_structure(
                         ty: Type::F64,
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }
@@ -164,45 +165,74 @@ pub(in crate::codegen) fn render_structure(
             content,
             width,
             height,
+            span,
             ..
         } => {
             let builder = match content {
-                ResponsiveContent::Breakpoint {
-                    breakpoint,
-                    narrow,
-                    wide,
-                } => {
+                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                    let CheckedViewFlow::ResponsiveBreakpoint { breakpoint } =
+                        &document.program().checked_view(span)?.flow
+                    else {
+                        return Err(Error::new(
+                            "E196",
+                            span,
+                            "responsive breakpoint has no checked flow",
+                        ));
+                    };
+                    let breakpoint = checked_expr_use_code(
+                        document.program(),
+                        *breakpoint,
+                        env,
+                        ValueMode::Owned,
+                    )?;
                     let breakpoint =
-                        clamped_f32_code(breakpoint, "f32::EPSILON", "f32::MAX", env, document)?;
+                        format!("(({breakpoint}) as f32).max(f32::EPSILON).min(f32::MAX)");
                     let narrow = render_node(narrow, document, message, env, &child_scope, slot)?;
                     let wide = render_node(wide, document, message, env, &child_scope, slot)?;
                     format!(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }}"
                     )
                 }
-                ResponsiveContent::Size {
-                    width,
-                    height,
-                    content,
-                } => {
-                    let mut child_env = env.clone();
+                ResponsiveContent::Size { content, .. } => {
+                    let CheckedViewFlow::ResponsiveSize { width, height } =
+                        &document.program().checked_view(span)?.flow
+                    else {
+                        return Err(Error::new(
+                            "E196",
+                            span,
+                            "responsive size has no checked flow",
+                        ));
+                    };
+                    let width_name = document
+                        .program()
+                        .checked_facts()
+                        .local(*width)
+                        .name
+                        .clone();
+                    let height_name = document
+                        .program()
+                        .checked_facts()
+                        .local(*height)
+                        .name
+                        .clone();
+                    let mut child_env = ScopedBindingEnv::new(env);
                     child_env.insert(
-                        width.clone(),
-                        Binding {
-                            code: "(__size.width as f64)".into(),
-                            ty: Type::F64,
-                            local: true,
-                            state: None,
-                        },
+                        width_name,
+                        checked_local_binding(
+                            document.program(),
+                            *width,
+                            "(__size.width as f64)".into(),
+                            true,
+                        ),
                     );
                     child_env.insert(
-                        height.clone(),
-                        Binding {
-                            code: "(__size.height as f64)".into(),
-                            ty: Type::F64,
-                            local: true,
-                            state: None,
-                        },
+                        height_name,
+                        checked_local_binding(
+                            document.program(),
+                            *height,
+                            "(__size.height as f64)".into(),
+                            true,
+                        ),
                     );
                     let content =
                         render_node(content, document, message, &child_env, &child_scope, slot)?;
@@ -216,17 +246,11 @@ pub(in crate::codegen) fn render_structure(
             Ok(format!("{code}.into()"))
         }
         ViewNode::KeyedColumn {
-            item,
-            items,
-            key,
             options,
             child,
             span,
             ..
         } => render_keyed_column(
-            item,
-            items,
-            key,
             options,
             child,
             span,
@@ -236,24 +260,23 @@ pub(in crate::codegen) fn render_structure(
             &child_scope,
             slot,
         ),
-        ViewNode::Lazy {
-            dependency,
-            binding,
-            child,
-            span,
-            ..
-        } => {
-            let dependency_type = expr_type(dependency, &env_types(env), document, span)?;
-            let dependency = expr_code(dependency, env, document, ValueMode::Owned)?;
+        ViewNode::Lazy { child, span, .. } => {
+            let CheckedViewFlow::Lazy {
+                dependency,
+                binding,
+            } = &document.program().checked_view(span)?.flow
+            else {
+                return Err(Error::new("E196", span, "lazy view has no checked flow"));
+            };
+            let checked_binding = document.program().checked_facts().local(*binding);
+            let binding_name = &checked_binding.name;
+            let dependency_type = checked_binding.ty.clone();
+            let dependency =
+                checked_expr_use_code(document.program(), *dependency, env, ValueMode::Owned)?;
             let mut child_env = HashMap::new();
             child_env.insert(
-                binding.clone(),
-                Binding {
-                    code: binding.clone(),
-                    ty: dependency_type.clone(),
-                    local: false,
-                    state: None,
-                },
+                binding_name.clone(),
+                checked_local_binding(document.program(), *binding, binding_name.clone(), false),
             );
             let child = render_node(
                 child,
@@ -265,7 +288,7 @@ pub(in crate::codegen) fn render_structure(
             )?;
             let dependency_rust = dependency_type.rust(&document.structs);
             Ok(format!(
-                "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
+                "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))
         }
         _ => return Ok(None),

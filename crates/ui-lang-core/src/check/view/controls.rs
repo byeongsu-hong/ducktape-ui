@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_controls_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -402,7 +402,7 @@ pub(in crate::check) fn infer_controls_group(
         } => {
             record_read(state, span);
             check_id(id, env, document, ids, span)?;
-            let Some(Type::Combo(option_type)) = env.get(state) else {
+            let Some(Type::Combo(option_type)) = env.get_type(state) else {
                 return Err(Error::new(
                     "E129",
                     span,

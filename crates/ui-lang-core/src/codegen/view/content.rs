@@ -4,7 +4,7 @@ pub(in crate::codegen) fn render_content(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
@@ -123,14 +123,18 @@ pub(in crate::codegen) fn render_content(
                 component_env.insert(
                     argument.name.clone(),
                     Binding {
-                        code: resolved_argument_code(
+                        code: checked_expr_use_code(
                             document.program(),
-                            &argument.expression,
+                            argument.expression,
                             value_env,
+                            ValueMode::Borrowed,
                         )?,
                         ty: argument.ty.clone(),
                         local: false,
                         state,
+                        owner: Some(BindingOwner::Value(CheckedValueRef::ComponentParam(
+                            argument.param,
+                        ))),
                     },
                 );
             }
@@ -144,6 +148,7 @@ pub(in crate::codegen) fn render_content(
                         ty: output.clone(),
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }
@@ -187,6 +192,7 @@ pub(in crate::codegen) fn render_content(
                         ty: Type::Unit,
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }
@@ -202,6 +208,7 @@ pub(in crate::codegen) fn render_content(
                         ty: Type::Bool,
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }
@@ -239,27 +246,34 @@ pub(in crate::codegen) fn render_content(
                                 name: state.name.clone(),
                                 scope: scope_binding.clone(),
                             }),
+                            owner: Some(BindingOwner::Value(CheckedValueRef::ComponentState(
+                                state.id,
+                            ))),
                         },
                     );
                 }
-                component_env.insert(
-                    component_context_key(name),
+                insert_component_context(
+                    &mut component_env,
+                    name,
                     Binding {
                         code: scope_binding.clone(),
                         ty: Type::Unit,
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }
             if !call.events.is_empty() && call.storage == ComponentStorage::Stateless {
-                component_env.insert(
-                    component_context_key(name),
+                insert_component_context(
+                    &mut component_env,
+                    name,
                     Binding {
                         code: component_scope.clone(),
                         ty: Type::Unit,
                         local: true,
                         state: None,
+                        owner: None,
                     },
                 );
             }

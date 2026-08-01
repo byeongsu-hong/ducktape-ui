@@ -12,6 +12,7 @@ fn handler_param_binding(param: &HandlerParam) -> Binding {
         ty: param.ty.clone(),
         local: false,
         state: None,
+        owner: None,
     }
 }
 
@@ -31,6 +32,7 @@ pub(in crate::codegen) fn generate_theme(
                 ty: Type::WindowId,
                 local: true,
                 state: None,
+                owner: None,
             },
         );
     }
@@ -606,14 +608,16 @@ pub(in crate::codegen) fn generate_update(
                         ty: state.ty.clone(),
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 );
             }
             for param in &handler.params {
                 env.insert(param.name.clone(), handler_param_binding(param));
             }
-            env.insert(
-                component_context_key(&component.name),
+            insert_component_context(
+                &mut env,
+                &component.name,
                 Binding {
                     code: if future.is_some() {
                         "__route_scope".into()
@@ -623,6 +627,7 @@ pub(in crate::codegen) fn generate_update(
                     ty: Type::Unit,
                     local: true,
                     state: None,
+                    owner: None,
                 },
             );
             let has_task = generate_statements(

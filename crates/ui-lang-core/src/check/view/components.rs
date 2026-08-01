@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_components_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -54,7 +54,8 @@ pub(in crate::check) fn infer_components_group(
                     };
                     return Err(Error::new("E123", span, message).hint(hint));
                 }
-                let actual = expr_type(&arg.value, env, document, span)?;
+                let actual =
+                    retained_component_argument_type(&arg.value, env, document, span, name, prop)?;
                 require_type(&actual, &param.ty, span)?;
             }
             if let Some(missing) = component

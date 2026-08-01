@@ -16,7 +16,7 @@ pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> 
 
 pub(in crate::codegen) fn u32_code(
     expr: &Expr,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(format!(
@@ -28,7 +28,7 @@ pub(in crate::codegen) fn u32_code(
 pub(in crate::codegen) fn route_code(
     route: &Route,
     payload: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {
@@ -72,7 +72,7 @@ pub(in crate::codegen) fn route_code(
 pub(in crate::codegen) fn ordered_route_code(
     route: &Route,
     payloads: &[&str],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {
@@ -109,7 +109,7 @@ fn named_component_emission_code(
     route: &Route,
     payloads: &[&str],
     ordered: bool,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Option<Result<String, Error>> {
     if route.handler != "emit" {
@@ -141,7 +141,7 @@ fn named_component_emission_code(
 
 fn local_route<'a>(
     route: &Route,
-    env: &'a HashMap<String, Binding>,
+    env: &'a dyn BindingEnvironment,
     document: &Document,
 ) -> Option<(&'a str, &'a Binding)> {
     component_context(env).filter(|(component, _)| {
@@ -158,7 +158,7 @@ fn local_route<'a>(
 pub(in crate::codegen) fn route_callback_with_code(
     route: &Route,
     pattern: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     render: impl FnOnce(&HashMap<String, Binding>) -> Result<String, Error>,
 ) -> Result<String, Error> {
@@ -168,13 +168,7 @@ pub(in crate::codegen) fn route_callback_with_code(
     if let Some((_, scope)) = &local {
         captures.push((scope.clone(), "__route_scope".into()));
     }
-    let mut state_scopes = env
-        .values()
-        .filter_map(|binding| match &binding.state {
-            Some(StateBinding::Component { scope, .. }) => Some(scope.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut state_scopes = component_state_scopes(env);
     state_scopes.sort();
     state_scopes.dedup();
     for scope in state_scopes {
@@ -182,7 +176,7 @@ pub(in crate::codegen) fn route_callback_with_code(
             captures.push((scope, format!("__route_state_scope_{}", captures.len())));
         }
     }
-    let mut callback_env = env.clone();
+    let mut callback_env = env.snapshot();
     if let Some((component, _)) = &local {
         callback_env
             .get_mut(&component_context_key(component))
@@ -217,7 +211,7 @@ pub(in crate::codegen) fn route_callback_code(
     route: &Route,
     pattern: &str,
     payload: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {
@@ -230,7 +224,7 @@ pub(in crate::codegen) fn ordered_route_callback_code(
     route: &Route,
     pattern: &str,
     payloads: &[&str],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {

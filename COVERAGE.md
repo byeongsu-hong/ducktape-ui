@@ -393,6 +393,30 @@ verify physical paths and parent origins. Metrics assert one checker analysis
 per initializer, direct arena lookup, zero full environment clones, and exact
 linear growth from 500 to 4,000 repeated `animation.project` scopes.
 
+Component-call arguments and lexical view flows share the checked expression
+arena and stable `ComponentCallId`/`ViewId` declarations. Every call fact fixes
+each argument as supplied or defaulted and retains the corresponding
+`CheckedExprUseId`; raw supplied/default mutations fail with `E196`, and bind
+capability is recovered only from the checked root. Checked flows cover ordinary and flex `if`/`for`/typed `match`,
+keyed lists, lazy dependencies, table rows, pane-template keys and maximized
+bindings, responsive breakpoints and size bindings, and daemon window locals.
+Match patterns retain resolved option/result cases, enum-variant or palette IDs,
+and payload locals; `provided(Slot)` retains a component-slot ID. HIR snapshots
+and role assertions
+cover those nodes. Production emission validates raw view kind/child topology
+against stable checked IDs and validates every checked value/local lookup
+against the binding's semantic owner ID, so name-only matches cannot cross
+scopes. Post-check AST mutation tests prove the migrated emitters do not reread
+expressions or patterns; malformed match payload/enum IDs fail with
+source-mapped `E196`, imported fixtures verify physical paths and origin parents, and
+compile/diagnostic fixtures exercise production Rust plus lexical-scope
+rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
+one analysis per supplied argument, exact borrowed-overlay growth, linear
+binding allocations, zero full scope clones, and debug-build wall-time budgets.
+Handlers, tasks, canvas
+locals, settings, tests, and expression-bearing widget options remain outside
+this slice.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

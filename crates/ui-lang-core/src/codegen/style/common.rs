@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn length_code(
     length: &LengthValue,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(match length {
@@ -25,7 +25,7 @@ pub(in crate::codegen) fn length_code(
 pub(in crate::codegen) fn append_dimensions(
     code: &mut String,
     dimensions: [&Option<LengthValue>; 2],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
@@ -38,7 +38,7 @@ pub(in crate::codegen) fn append_dimensions(
 
 pub(in crate::codegen) fn typed_padding_code(
     padding: &PaddingOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<Option<String>, Error> {
     if padding.all.is_none()
@@ -71,7 +71,7 @@ pub(in crate::codegen) fn typed_padding_code(
 pub(in crate::codegen) fn radius_code(
     uniform: Option<&Expr>,
     corners: [Option<&Expr>; 4],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<Option<String>, Error> {
     if uniform.is_none() && corners.iter().all(Option::is_none) {
@@ -99,7 +99,7 @@ pub(in crate::codegen) fn radius_code(
 pub(in crate::codegen) fn append_float_style(
     code: &mut String,
     style: &FloatStyleOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let radius = radius_code(
@@ -149,7 +149,7 @@ pub(in crate::codegen) fn append_float_style(
 
 pub(in crate::codegen) fn background_code(
     background: &BackgroundValue,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     match background {
@@ -181,7 +181,7 @@ pub(in crate::codegen) fn container_surface_style_value(
     utilities: &ResolvedStyle,
     options: &ContainerStyleOptions,
     custom: Option<&ExternCall>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<Option<String>, Error> {
     let has_typed_style = options.background.is_some()
@@ -271,7 +271,7 @@ pub(in crate::codegen) fn append_container_utility_overrides(
 pub(in crate::codegen) fn append_surface_style_overrides(
     code: &mut String,
     options: &ContainerStyleOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(background) = &options.background {

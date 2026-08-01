@@ -669,7 +669,7 @@ pub(in crate::check) fn infer_runs(
 pub(in crate::check) fn infer_route(
     route: &Route,
     payload: Option<Type>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
@@ -685,7 +685,7 @@ pub(in crate::check) fn infer_route(
 pub(in crate::check) fn infer_component_event_route(
     route: &Route,
     payloads: &[Type],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
@@ -717,7 +717,7 @@ impl RoutePayloads<'_> {
 fn infer_route_with_payloads(
     route: &Route,
     payloads: RoutePayloads<'_>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
@@ -881,7 +881,7 @@ fn infer_route_with_payloads(
 pub(in crate::check) fn infer_ordered_payload_route(
     route: &Route,
     payloads: &[Type],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     label: &str,

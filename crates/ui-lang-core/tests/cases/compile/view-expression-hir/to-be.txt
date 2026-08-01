@@ -1,0 +1,9 @@
+let __text_value = (self.prefix).to_string()
+for (__ice_index, row) in self.items.iter().cloned().enumerate()
+::std::option::Option::Some(label) =>
+for keyed_row in self.items.iter()
+::iced::widget::lazy((self.choice.clone()
+move |(__row, table_row): (usize, crate::backend::Item)
+__IcePaneWork::PaneItem(__pane_key)
+__pane_maximized
+(__size.width as f64)

@@ -3,8 +3,8 @@ use super::*;
 pub(in crate::codegen) fn canvas_update_code(
     options: &CanvasOptions,
     events: &[CanvasEvent],
-    env: &HashMap<String, Binding>,
-    canvas_env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
+    canvas_env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
     use_cache: bool,
@@ -145,7 +145,7 @@ pub(in crate::codegen) fn canvas_update_code(
         .then_some("__cursor.is_over(__bounds) && ")
         .unwrap_or_default();
         let payloads = canvas_event_payload_types(&event.source);
-        let mut event_env = canvas_env.clone();
+        let mut event_env = ScopedBindingEnv::new(canvas_env);
         for (binding, ty) in event.bindings.iter().zip(payloads) {
             event_env.insert(
                 binding.clone(),
@@ -154,6 +154,7 @@ pub(in crate::codegen) fn canvas_update_code(
                     ty,
                     local: false,
                     state: None,
+                    owner: None,
                 },
             );
         }
@@ -317,7 +318,7 @@ pub(in crate::codegen) fn canvas_event_payload_types(source: &SubscriptionSource
 pub(in crate::codegen) fn canvas_event_route_code(
     source: &SubscriptionSource,
     route: &Route,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     message: &str,
 ) -> Result<String, Error> {

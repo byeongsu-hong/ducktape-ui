@@ -5,6 +5,7 @@ pub(in crate::codegen) struct Binding {
     pub(in crate::codegen) ty: Type,
     pub(in crate::codegen) local: bool,
     pub(in crate::codegen) state: Option<StateBinding>,
+    pub(in crate::codegen) owner: Option<BindingOwner>,
 }
 
 impl Clone for Binding {
@@ -16,8 +17,15 @@ impl Clone for Binding {
             ty: self.ty.clone(),
             local: self.local,
             state: self.state.clone(),
+            owner: self.owner,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::codegen) enum BindingOwner {
+    Value(CheckedValueRef),
+    Local(CheckedLocalId),
 }
 
 #[derive(Clone)]
@@ -50,6 +58,7 @@ pub(in crate::codegen) enum ValueMode {
 }
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";
+const COMPONENT_CONTEXT_INDEX: &str = "\0component-context";
 const COMPONENT_OUTPUT_PREFIX: &str = "\0component-output:";
 const COMPONENT_EVENT_PREFIX: &str = "\0component-event:";
 
@@ -58,21 +67,37 @@ pub(in crate::codegen) fn component_context_key(component: &str) -> String {
 }
 
 pub(in crate::codegen) fn component_context(
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
 ) -> Option<(&str, &Binding)> {
-    env.iter().find_map(|(name, binding)| {
-        name.strip_prefix(COMPONENT_CONTEXT_PREFIX)
-            .map(|component| (component, binding))
-    })
+    let component = env.get(COMPONENT_CONTEXT_INDEX)?.code.as_str();
+    env.get(&component_context_key(component))
+        .map(|binding| (component, binding))
+}
+
+pub(in crate::codegen) fn insert_component_context(
+    env: &mut HashMap<String, Binding>,
+    component: &str,
+    binding: Binding,
+) {
+    env.insert(
+        COMPONENT_CONTEXT_INDEX.into(),
+        Binding {
+            code: component.to_owned(),
+            ty: Type::Unit,
+            local: true,
+            state: None,
+            owner: None,
+        },
+    );
+    env.insert(component_context_key(component), binding);
 }
 
 pub(in crate::codegen) fn component_output_key(component: &str) -> String {
     format!("{COMPONENT_OUTPUT_PREFIX}{component}")
 }
 
-pub(in crate::codegen) fn component_output(env: &HashMap<String, Binding>) -> Option<&Binding> {
-    env.iter()
-        .find_map(|(name, binding)| name.starts_with(COMPONENT_OUTPUT_PREFIX).then_some(binding))
+pub(in crate::codegen) fn component_output(env: &dyn BindingEnvironment) -> Option<&Binding> {
+    env.binding_with_prefix(COMPONENT_OUTPUT_PREFIX)
 }
 
 pub(in crate::codegen) fn component_event_key(component: &str, event: &str) -> String {
@@ -80,7 +105,7 @@ pub(in crate::codegen) fn component_event_key(component: &str, event: &str) -> S
 }
 
 pub(in crate::codegen) fn component_event<'a>(
-    env: &'a HashMap<String, Binding>,
+    env: &'a dyn BindingEnvironment,
     component: &str,
     event: &str,
 ) -> Option<&'a Binding> {
@@ -201,6 +226,7 @@ pub(in crate::codegen) fn state_env(document: &Document, name: &str) -> HashMap<
                     ty: state.ty.clone(),
                     local: false,
                     state: Some(StateBinding::App(state.name.clone())),
+                    owner: None,
                 },
             )
         })
@@ -213,16 +239,54 @@ pub(in crate::codegen) fn state_env(document: &Document, name: &str) -> HashMap<
                 ty: derived.ty.clone(),
                 local: true,
                 state: None,
+                owner: None,
             },
         )
     }));
     env
 }
 
-pub(in crate::codegen) fn env_types(env: &HashMap<String, Binding>) -> HashMap<String, Type> {
-    env.iter()
-        .map(|(name, binding)| (name.clone(), binding.ty.clone()))
-        .collect()
+pub(in crate::codegen) fn checked_state_env(
+    program: &LoweredProgram,
+    name: &str,
+) -> HashMap<String, Binding> {
+    let mut env = program
+        .app_states()
+        .iter()
+        .map(|state| {
+            (
+                state.name.clone(),
+                Binding {
+                    code: format!("{name}.{}", state.name),
+                    ty: state.ty.clone(),
+                    local: false,
+                    state: Some(StateBinding::App(state.name.clone())),
+                    owner: Some(BindingOwner::Value(CheckedValueRef::AppState(state.id))),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    env.extend(program.derived().iter().map(|derived| {
+        (
+            derived.name.clone(),
+            Binding {
+                code: format!("Self::{}({name})", derived_method(&derived.name)),
+                ty: derived.ty.clone(),
+                local: true,
+                state: None,
+                owner: Some(BindingOwner::Value(CheckedValueRef::Derived(derived.id))),
+            },
+        )
+    }));
+    env
+}
+
+pub(in crate::codegen) fn env_types(env: &dyn BindingEnvironment) -> HashMap<String, Type> {
+    let mut types = HashMap::new();
+    env.visit(&mut |name, binding| {
+        types.insert(name.to_owned(), binding.ty.clone());
+    });
+    types
 }
 
 pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {

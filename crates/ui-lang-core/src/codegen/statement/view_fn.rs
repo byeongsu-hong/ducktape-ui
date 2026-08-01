@@ -13,7 +13,7 @@ pub(in crate::codegen) fn generate_view(
         .filter(|component| component.storage == ComponentStorage::Mounted)
         .map(|component| component_state_field(&component.name))
         .collect::<Vec<_>>();
-    let mut env = state_env(document, "self");
+    let mut env = checked_state_env(program, "self");
     if document.daemon {
         env.insert(
             "window".into(),
@@ -22,6 +22,10 @@ pub(in crate::codegen) fn generate_view(
                 ty: Type::WindowId,
                 local: true,
                 state: None,
+                owner: program
+                    .checked_facts()
+                    .daemon_window_local()
+                    .map(BindingOwner::Local),
             },
         );
     }

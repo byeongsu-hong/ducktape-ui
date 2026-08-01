@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_media_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -374,7 +374,7 @@ pub(in crate::check) fn infer_media_group(
                 .iter()
                 .map(|item| item.name.as_str())
                 .collect::<HashSet<_>>();
-            let mut canvas_env = env.clone();
+            let mut canvas_env = scoped_view_env(env);
             let mut local_types = HashMap::new();
             for local in locals {
                 if matches!(
@@ -387,7 +387,7 @@ pub(in crate::check) fn infer_media_group(
                         format!("canvas state name `{}` is reserved", local.name),
                     ));
                 }
-                if env.contains_key(&local.name) {
+                if env.contains_type(&local.name) {
                     return Err(Error::new(
                         "E190",
                         &local.span,
@@ -512,9 +512,9 @@ pub(in crate::check) fn infer_media_group(
                         ),
                     ));
                 }
-                let mut event_env = canvas_env.clone();
+                let mut event_env = scoped_view_env(&canvas_env);
                 for (binding, ty) in event.bindings.iter().zip(&payloads) {
-                    if event_env.contains_key(binding) {
+                    if event_env.contains_type(binding) {
                         return Err(Error::new(
                             "E190",
                             &event.span,
