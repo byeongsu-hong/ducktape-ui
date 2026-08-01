@@ -13,6 +13,47 @@ pub struct FloatStyleOptions {
     pub radius_bottom_left: Option<Expr>,
 }
 
+pub(crate) fn float_expression_roots<'a>(
+    scale: &'a Expr,
+    x: &'a Expr,
+    y: &'a Expr,
+    style: &'a FloatStyleOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![scale, x, y];
+    roots.extend(
+        [
+            &style.shadow_x,
+            &style.shadow_y,
+            &style.shadow_blur,
+            &style.radius,
+            &style.radius_top_left,
+            &style.radius_top_right,
+            &style.radius_bottom_right,
+            &style.radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn float_semantic_key(style: &FloatStyleOptions) -> String {
+    format!(
+        "float|shadow={:?}|fields={:?}",
+        style.shadow_color,
+        [
+            style.shadow_x.is_some(),
+            style.shadow_y.is_some(),
+            style.shadow_blur.is_some(),
+            style.radius.is_some(),
+            style.radius_top_left.is_some(),
+            style.radius_top_right.is_some(),
+            style.radius_bottom_right.is_some(),
+            style.radius_bottom_left.is_some(),
+        ]
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MarkdownOptions {
     pub text_size: Option<Expr>,

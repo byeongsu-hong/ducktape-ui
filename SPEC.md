@@ -286,6 +286,15 @@ anticipation, and delay expression IDs. Rust generation consumes those records
 exclusively and does not reread raw routes, route expressions, handler names,
 cursor or Sensor options, or payload topology.
 
+Float is a completed structural-wrapper HIR slice. Scale, translation, shadow,
+and radius operands have stable checked expression IDs. Eight typed geometry
+locals represent the original bounds and viewport bounds available only inside
+the translation callback. Lowering freezes style-field and shadow-color
+topology, resolves the color to a theme-token ID, validates the geometry-local
+roles and expression scopes, and publishes `ResolvedFloat`. Rust generation
+does not reread Float expressions, style options, color spellings, or source
+theme-token order.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

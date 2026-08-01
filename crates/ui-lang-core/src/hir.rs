@@ -96,6 +96,12 @@ pub(crate) struct TooltipExpressionId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FloatExpressionId {
+    pub(crate) float: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct InteractionExpressionId {
     pub(crate) widget: ViewId,
     pub(crate) index: u32,

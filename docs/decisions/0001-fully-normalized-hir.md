@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, and Sensor therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, and Float therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -308,6 +308,17 @@ consumption before publishing `ResolvedSensor`. Its emitter consumes only that
 record and checked expression IDs. Post-check expression mutation, static
 drift, post-lowering option/route poisoning, component routes, and an ignored
 4,000-node lower+emit budget provide the executable evidence.
+
+Float is a completed structural-wrapper slice. Its checked expression arena
+owns scale, translation, shadow, and radius operands, while eight typed view
+locals model the original and viewport geometry visible only to the translation
+callback. The static contract freezes shadow-color identity and style-field
+presence. Lowering revalidates expression DAGs, exact local roles and scope,
+theme-token IDs, and complete arena consumption before publishing
+`ResolvedFloat`. Rust emission consumes only that record and checked IDs; the
+old raw Float style emitter has been removed. Expression/static mutation,
+post-lowering AST/theme poisoning, malformed IDs, and an ignored 4,000-node
+lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

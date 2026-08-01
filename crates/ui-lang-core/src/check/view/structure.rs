@@ -47,6 +47,7 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
+            let float_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             require_type(&expr_type(scale, env, document, span)?, &Type::F64, span)?;
             let mut translate_env = scoped_view_env(env);
@@ -67,6 +68,7 @@ pub(in crate::check) fn infer_structure_group(
             }
             require_f32_literal_range(scale, f64::EPSILON, None, "float scale", span)?;
             check_float_style_options(style, env, document, span)?;
+            retain_float_analyses(span, float_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Pin {

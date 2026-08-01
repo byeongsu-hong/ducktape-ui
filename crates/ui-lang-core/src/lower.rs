@@ -5,8 +5,8 @@ use crate::check::{
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
     CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMedia,
     CheckedPathRoot, CheckedProjectionKind, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable,
-    resolve_erased_type,
+    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
+    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
@@ -16,16 +16,17 @@ pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
     CanvasExpressionId, CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId,
     ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
-    ExternRef, HandlerId, HandlerOwner, InteractionExpressionId, InteractionRouteId,
-    MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId,
-    RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId,
-    TooltipExpressionId, ViewId,
+    ExternRef, FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId,
+    InteractionRouteId, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId,
+    PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
+    TestTargetId, TooltipExpressionId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod canvas;
+mod float;
 mod interaction;
 mod media;
 mod style;
@@ -33,6 +34,7 @@ mod testing;
 mod tooltip;
 
 pub(crate) use canvas::*;
+pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use media::*;
 
@@ -1437,6 +1439,7 @@ pub(crate) struct LoweredProgram {
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
+    floats: HashMap<ViewId, ResolvedFloat>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -2986,6 +2989,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn float(&self, id: ViewId) -> Option<&ResolvedFloat> {
+        self.floats.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3108,6 +3116,32 @@ impl LoweredProgram {
             ));
         };
         Ok(sensor)
+    }
+
+    pub(crate) fn resolved_float_for(&self, node: &ViewNode) -> Result<&ResolvedFloat, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "float reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "float reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.floats.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "float reached code generation without normalized HIR",
+            )
+        })
     }
 
     fn resolved_interaction_for(
@@ -3367,6 +3401,7 @@ pub(crate) struct Lowerer {
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
+    floats: HashMap<ViewId, ResolvedFloat>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -3435,6 +3470,7 @@ struct ViewWidgetExpressionPolicy<'a> {
     use_id: CheckedExprUseId,
     span: &'a Span,
     canvas_locals: bool,
+    own_view_locals: bool,
     family: &'static str,
 }
 
@@ -3499,7 +3535,7 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
                 let mut found = false;
                 while let Some(id) = current {
                     if id == view {
-                        found = true;
+                        found = id != self.view || self.own_view_locals;
                         break;
                     }
                     current = self.lowerer.facts.view(id).parent;
@@ -4079,6 +4115,7 @@ impl Lowerer {
             canvases: HashMap::new(),
             media: HashMap::new(),
             tooltips: HashMap::new(),
+            floats: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4155,6 +4192,7 @@ impl Lowerer {
             canvases: self.canvases,
             media: self.media,
             tooltips: self.tooltips,
+            floats: self.floats,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -7928,6 +7966,18 @@ impl Lowerer {
                 self.lower_sensor(options, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
+            ViewNode::Float {
+                scale,
+                x,
+                y,
+                style,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_float(scale, x, y, style, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -7979,7 +8029,6 @@ impl Lowerer {
             }
             | ViewNode::Container { content, .. }
             | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
             | ViewNode::Pin { content, .. }
             | ViewNode::KeyedColumn { child: content, .. }
             | ViewNode::Lazy { child: content, .. } => {
@@ -9930,6 +9979,39 @@ view
     }
 
     #[test]
+    fn malformed_checked_float_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidFloatFacts\n{THEME}view\n  float scale=1.0 x=original_x y=viewport_y\n    text \"Floating\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Float(FloatExpressionId {
+                float: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+
+        let mut invalid_geometry = analyze(&source).unwrap();
+        invalid_geometry
+            .facts
+            .corrupt_float_geometry_local(ViewId(0), 0, u32::MAX);
+        let error = lower(invalid_geometry).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("geometry local ID"));
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -10317,6 +10399,104 @@ view
     }
 
     #[test]
+    fn normalizes_float_geometry_style_color_and_expression_owners() {
+        let source = format!(
+            "app FloatHir\n{THEME}state\n  shift = 2.0\nview\n  float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0\n    text \"Floating\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let float = program.float(ViewId(0)).unwrap();
+
+        assert_eq!(float.id, ViewId(0));
+        assert_eq!(float.geometry.len(), 8);
+        assert_eq!(
+            float.shadow_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(program.theme().native_tokens.primary),
+                opacity: Some(50),
+            })
+        );
+        for expression in [float.scale, float.x, float.y] {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, Type::F64);
+            assert_eq!(expression.destination, Type::F64);
+        }
+        assert!(float.shadow_x.is_some());
+        assert!(float.shadow_y.is_some());
+        assert!(float.shadow_blur.is_some());
+        assert!(float.radius.all.is_some());
+        assert!(float.radius.top_left.is_some());
+        assert_eq!(program.origin(float.origin).line, 15);
+    }
+
+    #[test]
+    fn float_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedFloat\n{THEME}state\n  shift = 2.0\nview\n  float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 r=8.0\n    text \"Floating\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-float.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Float {
+            scale, x, y, style, ..
+        } = &mut changed_expressions.document.view
+        else {
+            panic!("fixture root must be a float");
+        };
+        *scale = Expr::F64(99.0);
+        *x = Expr::F64(99.0);
+        *y = Expr::F64(99.0);
+        style.shadow_x = Some(Expr::F64(99.0));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-float.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Float { style, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a float");
+        };
+        style.shadow_color = Some("danger".into());
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn float_codegen_ignores_raw_options_and_theme_order_after_lowering() {
+        let source = format!(
+            "app LoweredFloat\n{THEME}state\n  shift = 2.0\nview\n  float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 r=8.0\n    text \"Floating\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-float.ice").unwrap();
+
+        let ViewNode::Float {
+            scale, x, y, style, ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a float");
+        };
+        *scale = Expr::F64(99.0);
+        *x = Expr::F64(99.0);
+        *y = Expr::F64(99.0);
+        style.shadow_color = Some("danger".into());
+        style.shadow_x = Some(Expr::F64(99.0));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(2, 3);
+
+        let actual = crate::codegen::generate(&program, "lowered-float.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -10492,6 +10672,32 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized sensors lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized float lowering and emission performance contract"]
+    fn performance_contract_four_thousand_floats_lower_and_emit_under_two_seconds() {
+        const FLOATS: usize = 4_000;
+        let mut source = format!("app FloatScale\n{THEME}view\n  col\n");
+        for index in 0..FLOATS {
+            writeln!(
+                source,
+                "    float scale=1.0 x=original_x y=viewport_y shadow=primary/25 shadow-blur=4.0 r=8.0\n      text \"Floating {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "float-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.floats.len(), FLOATS);
+        assert_eq!(generated.matches("::iced::widget::float(").count(), FLOATS);
+        eprintln!("4k normalized floats lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized floats lowered and emitted in {elapsed:?}"
         );
     }
 
