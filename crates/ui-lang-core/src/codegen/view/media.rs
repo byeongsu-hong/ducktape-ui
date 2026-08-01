@@ -18,212 +18,10 @@ pub(in crate::codegen) fn render_media(
     };
     let child_scope = rendered_child_scope(id, scope, env, document)?;
     let rendered = match node {
-        ViewNode::Media {
-            kind,
-            source,
-            options,
-            span,
-            ..
-        } => {
-            let source_type = expr_type(source, &env_types(env), document, span)?;
-            let source_mode =
-                if *kind == MediaKind::Svg && options.svg_memory && source_type == Type::Str {
-                    ValueMode::Borrowed
-                } else {
-                    ValueMode::Owned
-                };
-            let source = expr_code(source, env, document, source_mode)?;
-            let mut code = match kind {
-                MediaKind::Image => format!("::iced::widget::image({source})"),
-                MediaKind::Viewer if source_type == Type::Str => format!(
-                    "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path({source}))"
-                ),
-                MediaKind::Viewer => format!("::iced::widget::image::viewer({source})"),
-                MediaKind::Svg if options.svg_memory && source_type == Type::Bytes => format!(
-                    "::iced::widget::svg(::iced::widget::svg::Handle::from_memory({source}))"
-                ),
-                MediaKind::Svg if options.svg_memory => format!(
-                    "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(({source}).as_bytes().to_vec()))"
-                ),
-                MediaKind::Svg => format!("::iced::widget::svg({source})"),
-            };
-            append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
-            if let Some(fit) = &options.fit {
-                write!(
-                    code,
-                    ".content_fit({})",
-                    expr_code(fit, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(rotation) = &options.rotation {
-                write!(
-                    code,
-                    ".rotation({})",
-                    expr_code(rotation, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(opacity) = &options.opacity {
-                write!(
-                    code,
-                    ".opacity({})",
-                    clamped_f32_code(opacity, "0.0", "1.0", env, document)?
-                )
-                .unwrap();
-            }
-            if *kind == MediaKind::Svg {
-                let custom = options
-                    .svg_style
-                    .as_ref()
-                    .map(|style| {
-                        custom_style_call_code(
-                            style,
-                            ExternKind::SvgStyle,
-                            "__theme, __status",
-                            env,
-                            document,
-                        )
-                    })
-                    .transpose()?;
-                let has_colors = options.svg_color.is_some() || options.svg_hover_color.is_some();
-                if !has_colors {
-                    if let Some(custom) = custom {
-                        write!(code, ".style(move |__theme, __status| {custom})").unwrap();
-                    }
-                } else {
-                    let base = custom
-                        .unwrap_or_else(|| "::iced::widget::svg::Style::default()".to_owned());
-                    let idle = options
-                        .svg_color
-                        .as_ref()
-                        .map(|color| format!("Some({})", theme_color(document, color)));
-                    let hovered = match &options.svg_hover_color {
-                        Some(Some(color)) => {
-                            Some(format!("Some({})", theme_color(document, color)))
-                        }
-                        Some(None) => Some("None".to_owned()),
-                        None => idle.clone(),
-                    };
-                    let exhaustive = idle.is_some() && hovered.is_some();
-                    write!(
-                        code,
-                        ".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{"
-                    )
-                    .unwrap();
-                    if let Some(idle) = idle {
-                        write!(
-                            code,
-                            " ::iced::widget::svg::Status::Idle => __style.color = {idle},"
-                        )
-                        .unwrap();
-                    }
-                    if let Some(hovered) = hovered {
-                        write!(
-                            code,
-                            " ::iced::widget::svg::Status::Hovered => __style.color = {hovered},"
-                        )
-                        .unwrap();
-                    }
-                    if !exhaustive {
-                        code.push_str(" _ => {}");
-                    }
-                    code.push_str(" } __style })");
-                }
-            }
-            if let Some(filter) = options.filter {
-                let filter = match filter {
-                    ImageFilter::Linear => "Linear",
-                    ImageFilter::Nearest => "Nearest",
-                };
-                write!(
-                    code,
-                    ".filter_method(::iced::widget::image::FilterMethod::{filter})"
-                )
-                .unwrap();
-            }
-            if let Some(padding) = &options.padding {
-                write!(
-                    code,
-                    ".padding({})",
-                    clamped_f32_code(padding, "0.0", "f32::MAX", env, document)?
-                )
-                .unwrap();
-            }
-            if *kind == MediaKind::Viewer
-                && (options.min_scale.is_some() || options.max_scale.is_some())
-            {
-                let min = options.min_scale.as_ref().map_or_else(
-                    || Ok("0.25".into()),
-                    |value| expr_code(value, env, document, ValueMode::Owned),
-                )?;
-                let max = options.max_scale.as_ref().map_or_else(
-                    || Ok("10.0".into()),
-                    |value| expr_code(value, env, document, ValueMode::Owned),
-                )?;
-                code = format!(
-                    "{{ let (__viewer_min_scale, __viewer_max_scale) = ::ui_lang_runtime::viewer_scale_bounds({min}, {max}); {code}.min_scale(__viewer_min_scale).max_scale(__viewer_max_scale) }}"
-                );
-            }
-            if let Some(step) = &options.scale_step {
-                write!(
-                    code,
-                    ".scale_step({})",
-                    clamped_f32_code(step, "f32::EPSILON", "f32::MAX", env, document)?
-                )
-                .unwrap();
-            }
-            if let Some(scale) = &options.scale {
-                write!(
-                    code,
-                    ".scale({})",
-                    clamped_f32_code(scale, "f32::EPSILON", "f32::MAX", env, document)?
-                )
-                .unwrap();
-            }
-            if let Some(expand) = &options.expand {
-                write!(
-                    code,
-                    ".expand({})",
-                    expr_code(expand, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(radius) = radius_code(
-                options.radius.as_ref(),
-                [
-                    options.radius_top_left.as_ref(),
-                    options.radius_top_right.as_ref(),
-                    options.radius_bottom_right.as_ref(),
-                    options.radius_bottom_left.as_ref(),
-                ],
-                env,
-                document,
-            )? {
-                write!(code, ".border_radius({radius})").unwrap();
-            }
-            if let Some([x, y, width, height]) = &options.crop {
-                write!(
-                    code,
-                    ".crop(::iced::Rectangle {{ x: {}, y: {}, width: {}, height: {} }})",
-                    u32_code(x, env, document)?,
-                    u32_code(y, env, document)?,
-                    u32_code(width, env, document)?,
-                    u32_code(height, env, document)?,
-                )
-                .unwrap();
-            }
-            if options.accessibility.label.is_some() {
-                let accessibility_key =
-                    accessibility_key_code(None, "media", span, scope, env, document)?;
-                let (label, description) =
-                    accessibility_code(&options.accessibility, String::new, env, document)?;
-                Ok(format!(
-                    "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).logical_id(__a11y_key.clone()).label({label}){description}.into() }}"
-                ))
-            } else {
-                Ok(format!("{code}.into()"))
-            }
+        ViewNode::Media { .. } => {
+            let hir = document.hir();
+            let resolved = hir.resolved_media_for(node)?;
+            render_resolved_media(resolved, hir, env, scope)
         }
         ViewNode::Tooltip {
             options,
@@ -384,4 +182,311 @@ pub(in crate::codegen) fn render_media(
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
+}
+
+fn render_resolved_media(
+    media: &ResolvedMedia,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let options = &media.options;
+    let source_mode = if media.kind == ResolvedMediaKind::Svg
+        && options.svg_memory
+        && media.source_type == Type::Str
+    {
+        ValueMode::Borrowed
+    } else {
+        ValueMode::Owned
+    };
+    let source = checked_expr_use_code(program, media.source, env, source_mode)?;
+    let mut code = match media.kind {
+        ResolvedMediaKind::Image => format!("::iced::widget::image({source})"),
+        ResolvedMediaKind::Viewer if media.source_type == Type::Str => format!(
+            "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path({source}))"
+        ),
+        ResolvedMediaKind::Viewer => format!("::iced::widget::image::viewer({source})"),
+        ResolvedMediaKind::Svg if options.svg_memory && media.source_type == Type::Bytes => {
+            format!("::iced::widget::svg(::iced::widget::svg::Handle::from_memory({source}))")
+        }
+        ResolvedMediaKind::Svg if options.svg_memory => format!(
+            "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(({source}).as_bytes().to_vec()))"
+        ),
+        ResolvedMediaKind::Svg => format!("::iced::widget::svg({source})"),
+    };
+    append_resolved_media_dimensions(&mut code, [&options.width, &options.height], program, env)?;
+    if let Some(fit) = options.fit {
+        write!(
+            code,
+            ".content_fit({})",
+            checked_expr_use_code(program, fit, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(rotation) = options.rotation {
+        write!(
+            code,
+            ".rotation({})",
+            checked_expr_use_code(program, rotation, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(opacity) = options.opacity {
+        write!(
+            code,
+            ".opacity({})",
+            resolved_media_clamped_f32(opacity, "0.0", "1.0", program, env)?
+        )
+        .unwrap();
+    }
+    if media.kind == ResolvedMediaKind::Svg {
+        let custom = options
+            .svg_style
+            .as_ref()
+            .map(|style| resolved_media_svg_style(style, program, env))
+            .transpose()?;
+        if let Some(colors) = &options.svg_colors {
+            let base = custom.unwrap_or_else(|| "::iced::widget::svg::Style::default()".into());
+            let idle = colors
+                .idle
+                .as_ref()
+                .map(|color| format!("Some({})", resolved_theme_color(color)));
+            let hovered = colors.hovered.as_ref().map(|color| {
+                color.as_ref().map_or_else(
+                    || "None".into(),
+                    |color| format!("Some({})", resolved_theme_color(color)),
+                )
+            });
+            let exhaustive = idle.is_some() && hovered.is_some();
+            write!(
+                code,
+                ".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{"
+            )
+            .unwrap();
+            if let Some(idle) = idle {
+                write!(
+                    code,
+                    " ::iced::widget::svg::Status::Idle => __style.color = {idle},"
+                )
+                .unwrap();
+            }
+            if let Some(hovered) = hovered {
+                write!(
+                    code,
+                    " ::iced::widget::svg::Status::Hovered => __style.color = {hovered},"
+                )
+                .unwrap();
+            }
+            if !exhaustive {
+                code.push_str(" _ => {}");
+            }
+            code.push_str(" } __style })");
+        } else if let Some(custom) = custom {
+            write!(code, ".style(move |__theme, __status| {custom})").unwrap();
+        }
+    }
+    if let Some(filter) = options.filter {
+        let filter = match filter {
+            ResolvedMediaFilter::Linear => "Linear",
+            ResolvedMediaFilter::Nearest => "Nearest",
+        };
+        write!(
+            code,
+            ".filter_method(::iced::widget::image::FilterMethod::{filter})"
+        )
+        .unwrap();
+    }
+    if let Some(padding) = options.padding {
+        write!(
+            code,
+            ".padding({})",
+            resolved_media_clamped_f32(padding, "0.0", "f32::MAX", program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(bounds) = &options.scale_bounds {
+        let minimum = resolved_media_scale_bound(&bounds.minimum, program, env)?;
+        let maximum = resolved_media_scale_bound(&bounds.maximum, program, env)?;
+        code = format!(
+            "{{ let (__viewer_min_scale, __viewer_max_scale) = ::ui_lang_runtime::viewer_scale_bounds({minimum}, {maximum}); {code}.min_scale(__viewer_min_scale).max_scale(__viewer_max_scale) }}"
+        );
+    }
+    if let Some(step) = options.scale_step {
+        write!(
+            code,
+            ".scale_step({})",
+            resolved_media_clamped_f32(step, "f32::EPSILON", "f32::MAX", program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(scale) = options.scale {
+        write!(
+            code,
+            ".scale({})",
+            resolved_media_clamped_f32(scale, "f32::EPSILON", "f32::MAX", program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(expand) = options.expand {
+        write!(
+            code,
+            ".expand({})",
+            checked_expr_use_code(program, expand, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(radius) = resolved_media_radius(&options.radius, program, env)? {
+        write!(code, ".border_radius({radius})").unwrap();
+    }
+    if let Some([x, y, width, height]) = options.crop {
+        write!(
+            code,
+            ".crop(::iced::Rectangle {{ x: {}, y: {}, width: {}, height: {} }})",
+            resolved_media_u32(x, program, env)?,
+            resolved_media_u32(y, program, env)?,
+            resolved_media_u32(width, program, env)?,
+            resolved_media_u32(height, program, env)?,
+        )
+        .unwrap();
+    }
+    if let Some(label) = options.accessibility_label {
+        let origin = program.origin(media.origin);
+        let span = Span {
+            line: media.reconciliation_line,
+            column: origin.column,
+        };
+        let reconciliation_scope = reconciliation_scope(scope, env);
+        let accessibility_key = format!(
+            "format!(\"{{}}/@media:{}\", {reconciliation_scope})",
+            span.line
+        );
+        let label = checked_expr_use_code(program, label, env, ValueMode::Owned)?;
+        let description = options
+            .accessibility_description
+            .map(|description| {
+                checked_expr_use_code(program, description, env, ValueMode::Owned)
+                    .map(|value| format!(".description({value})"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        Ok(format!(
+            "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).logical_id(__a11y_key.clone()).label({label}){description}.into() }}"
+        ))
+    } else {
+        Ok(format!("{code}.into()"))
+    }
+}
+
+fn append_resolved_media_dimensions(
+    code: &mut String,
+    dimensions: [&Option<ResolvedMediaLength>; 2],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<(), Error> {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        let Some(length) = length else { continue };
+        let value = match length {
+            ResolvedMediaLength::Fill => "::iced::Fill".into(),
+            ResolvedMediaLength::FillPortion(portion) => {
+                format!("::iced::Length::FillPortion({portion})")
+            }
+            ResolvedMediaLength::Shrink => "::iced::Shrink".into(),
+            ResolvedMediaLength::Fixed { expression, source } => {
+                let value = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+                if *source == Type::Length {
+                    value
+                } else {
+                    format!("{value} as f32")
+                }
+            }
+        };
+        write!(code, ".{method}({value})").unwrap();
+    }
+    Ok(())
+}
+
+fn resolved_media_svg_style(
+    style: &ResolvedMediaSvgStyle,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let function = program.extern_function(style.function);
+    let arguments = style
+        .arguments
+        .iter()
+        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?;
+    let suffix = if arguments.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", arguments.join(", "))
+    };
+    Ok(format!("{}(__theme, __status{suffix})", function.rust_path))
+}
+
+fn resolved_media_clamped_f32(
+    expression: ResolvedExpressionId,
+    minimum: &str,
+    maximum: &str,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
+}
+
+fn resolved_media_scale_bound(
+    bound: &ResolvedMediaScaleBound,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    match bound {
+        ResolvedMediaScaleBound::Default(value) => Ok(format!("{value:?}")),
+        ResolvedMediaScaleBound::Expression(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+        }
+    }
+}
+
+fn resolved_media_radius(
+    radius: &ResolvedMediaRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let all = radius
+        .all
+        .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corner = |value: Option<ResolvedExpressionId>| {
+        value
+            .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let top_left = corner(radius.top_left)?.unwrap_or_else(|| all.clone());
+    let top_right = corner(radius.top_right)?.unwrap_or_else(|| all.clone());
+    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| all.clone());
+    let bottom_left = corner(radius.bottom_left)?.unwrap_or(all);
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
+    )))
+}
+
+fn resolved_media_u32(
+    expression: ResolvedExpressionId,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(format!(
+        "({}).clamp(0, u32::MAX as i64) as u32",
+        checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+    ))
 }

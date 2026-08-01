@@ -393,7 +393,7 @@ text/background colors and gradient stops carry token IDs and optional opacity.
 Structured tests cover dynamic palettes, app and nested factories, ordered
 alpha palettes, token opacity, gradients, invalid post-check mutations, and
 namespaced factory/recipe physical origins. Direct expression-bearing native
-widget style blocks and other non-Canvas view color fields remain in the later
+widget style blocks and other non-Canvas/non-Media view color fields remain in the later
 expression/view HIR slice; their presence is not counted as a completed
 AST-free style migration.
 
@@ -428,7 +428,7 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
-Expression-bearing widget options remain outside this slice.
+Expression-bearing widget options other than the completed Media family remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -491,7 +491,7 @@ handler injection, wrong-role/cycle/wrong-kind/same-signature identity swap,
 invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
-Remaining expression-bearing widget options remain open HIR slices.
+Remaining non-Media expression-bearing widget options remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -507,6 +507,21 @@ re-analysis. Structural snapshots, malformed-ID handling, post-check static
 mutation, post-lowering raw-AST poisoning, and existing interaction/IME/path
 generation tests cover the boundary. An ignored 4,000-command lower+emit
 contract completes in under two seconds in a debug test build.
+
+Image, SVG, and viewer Media views have a complete private HIR boundary. Stable
+Media expression owners retain source, accessibility, fixed dimensions,
+transforms, SVG style arguments, radius, crop, padding, and viewer scale
+operands. Static semantic keys freeze kind, option presence, filters, memory
+mode, color spellings, explicit hover-none behavior, and style call topology.
+Lowering revalidates complete arena consumption, expression ownership and DAGs,
+view scope, exact SVG style extern identity/signature, source and length types,
+viewer defaults, and theme-token IDs. Production emission consumes only
+`ResolvedMedia` and checked expression IDs, with no raw Media option/expression
+read, type re-analysis, extern-name lookup, or token-position recovery.
+Structural snapshots, malformed IDs, post-check expression/static mutation,
+post-lowering AST/theme poisoning, existing full Media generation fixtures, and
+an ignored 4,000-node lower+emit contract under two seconds provide the
+evidence.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

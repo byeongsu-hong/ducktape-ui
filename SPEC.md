@@ -200,7 +200,7 @@ contracts retain declaration order, palettes retain complete token-ordered RGBA
 tables, and app or nested theme selections retain resolved built-in/factory and
 static/dynamic palette choices. Lowering still resolves source component and
 recipe names. Expression-bearing native widget status blocks and other direct
-non-Canvas view color fields remain AST-backed as part of the expression/view
+non-Canvas/non-Media view color fields remain AST-backed as part of the expression/view
 migration, so this slice does not claim that all style-related AST has gone.
 Each later slice must remove its prior backend path when it adds normalized
 nodes.
@@ -253,6 +253,17 @@ frozen by semantic keys, so post-check structural changes fail with source-mappe
 `E196`. Rust emission consumes only `ResolvedCanvas` records and checked
 expression IDs; it does not inspect raw Canvas declarations, infer operand types,
 or recover fonts and theme-token positions from the source `Document`.
+
+Image, SVG, and viewer Media views are a completed vertical HIR slice. Each
+Media view owns a stable expression partition for its source, accessibility,
+dimensions, transforms, SVG style arguments, radius, crop, padding, and viewer
+scale options. Lowering freezes the Media kind and option topology, retains the
+checked source type, folds viewer scale defaults, resolves filters and SVG style
+externs to semantic IDs, and resolves SVG colors to theme-token IDs while
+preserving explicit `hover=none`. Rust emission consumes only `ResolvedMedia`
+and checked expression IDs; it does not reread Media expressions or options,
+infer source or length types, rediscover SVG style externs, or recover token
+positions from the source `Document`.
 
 The Rust adapter is one manifest-relative include:
 

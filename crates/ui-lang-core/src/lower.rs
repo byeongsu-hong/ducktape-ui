@@ -3,7 +3,7 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedLocalId, CheckedLocalOwner, CheckedPathRoot, CheckedProjectionKind,
+    CheckedLocalId, CheckedLocalOwner, CheckedMedia, CheckedPathRoot, CheckedProjectionKind,
     CheckedUnaryOperator, CheckedValueRef, CheckedViewScope, ContextualBuiltin,
     canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
@@ -15,19 +15,21 @@ pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
     CanvasExpressionId, CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId,
     ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
-    ExternRef, HandlerId, HandlerOwner, NamedTypeId, NamedWindowId, OriginArena, OriginId,
-    PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
-    TestTargetId, ViewId,
+    ExternRef, HandlerId, HandlerOwner, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena,
+    OriginId, PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
+    TestStepId, TestTargetId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod canvas;
+mod media;
 mod style;
 mod testing;
 
 pub(crate) use canvas::*;
+pub(crate) use media::*;
 
 pub(crate) use style::*;
 
@@ -1427,6 +1429,7 @@ pub(crate) struct LoweredProgram {
     subscriptions: Vec<ResolvedSubscription>,
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    media: HashMap<ViewId, ResolvedMedia>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -2964,6 +2967,11 @@ impl LoweredProgram {
         self.canvases.get(&id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
+        self.media.get(&id)
+    }
+
     pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
         let span = node.span();
         let id = self.declarations.view_id(span).ok_or_else(|| {
@@ -2986,6 +2994,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "canvas reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_media_for(&self, node: &ViewNode) -> Result<&ResolvedMedia, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "media reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "media reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.media.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "media reached code generation without normalized HIR",
             )
         })
     }
@@ -3215,6 +3249,7 @@ pub(crate) struct Lowerer {
     app_handlers: Vec<HandlerId>,
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    media: HashMap<ViewId, ResolvedMedia>,
 }
 
 #[derive(Default)]
@@ -3273,6 +3308,167 @@ trait CheckedExpressionOwnerPolicy {
     fn local_type(&self, local: CheckedLocalId) -> Result<Type, Error>;
     fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error>;
     fn palette_type(&self, palette: PaletteId) -> Result<Type, Error>;
+}
+
+struct ViewWidgetExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    view: ViewId,
+    scope: CheckedViewScope,
+    use_id: CheckedExprUseId,
+    span: &'a Span,
+    canvas_locals: bool,
+    family: &'static str,
+}
+
+impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                format!("{} expression references an invalid value ID", self.family),
+            )
+        })?;
+        let allowed = match (self.scope, value) {
+            (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::AppState(_))
+            | (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::Derived(_)) => {
+                true
+            }
+            (CheckedViewScope::Component(component), CheckedValueRef::ComponentParam(id)) => {
+                id.component == component
+            }
+            (CheckedViewScope::Component(component), CheckedValueRef::ComponentState(id)) => {
+                id.component == component
+            }
+            _ => false,
+        };
+        if !allowed {
+            return Err(self.lowerer.invariant(
+                self.span,
+                format!("{} expression value belongs to another scope", self.family),
+            ));
+        }
+        Ok(checked.ty.clone())
+    }
+
+    fn local_type(&self, local: CheckedLocalId) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_local(local).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                format!("{} expression references an invalid local ID", self.family),
+            )
+        })?;
+        let canvas_local = self.canvas_locals
+            && match checked.owner {
+                CheckedLocalOwner::CanvasState(id) => id.canvas == self.view,
+                CheckedLocalOwner::CanvasWidth(canvas)
+                | CheckedLocalOwner::CanvasHeight(canvas) => canvas == self.view,
+                CheckedLocalOwner::CanvasCommandItem(id) => id.canvas == self.view,
+                CheckedLocalOwner::CanvasEventBinding { event, .. } => event.canvas == self.view,
+                _ => false,
+            };
+        let allowed = match checked.owner {
+            CheckedLocalOwner::ExpressionBinding { expression, .. } => expression == self.use_id,
+            CheckedLocalOwner::View { view, .. } => {
+                let mut current = Some(self.view);
+                let mut found = false;
+                while let Some(id) = current {
+                    if id == view {
+                        found = true;
+                        break;
+                    }
+                    current = self.lowerer.facts.view(id).parent;
+                }
+                found
+            }
+            _ => canvas_local,
+        };
+        if !allowed {
+            return Err(self.lowerer.invariant(
+                self.span,
+                format!("{} expression local belongs to another scope", self.family),
+            ));
+        }
+        Ok(checked.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    format!("{} expression references an invalid slot ID", self.family),
+                )
+            })?;
+        if self.scope != CheckedViewScope::Component(slot.component) {
+            return Err(self.lowerer.invariant(
+                self.span,
+                format!(
+                    "{} expression slot belongs to another component",
+                    self.family
+                ),
+            ));
+        }
+        Ok(Type::Bool)
+    }
+
+    fn palette_type(&self, palette: PaletteId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .palette_name(palette)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    format!(
+                        "{} expression references an invalid palette ID",
+                        self.family
+                    ),
+                )
+            })?;
+        let expression = self.lowerer.facts.expression_use(self.use_id);
+        match &expression.source {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                format!(
+                    "{} palette expression has no retained contract type",
+                    self.family
+                ),
+            )),
+        }
+    }
+}
+
+fn checked_expression_coercion_is_valid(
+    source: &Type,
+    destination: &Type,
+    coercion: &CheckedInitializerCoercion,
+) -> bool {
+    match coercion {
+        CheckedInitializerCoercion::None => source == destination,
+        CheckedInitializerCoercion::ListToCombo { element } => {
+            source == &Type::List(Box::new(element.clone()))
+                && destination == &Type::Combo(Box::new(element.clone()))
+        }
+        CheckedInitializerCoercion::ValueToAnimation { value } => {
+            source == value && destination == &Type::Animation(Box::new(value.clone()))
+        }
+        CheckedInitializerCoercion::StrToMarkdown => {
+            source == &Type::Str && destination == &Type::Markdown
+        }
+        CheckedInitializerCoercion::StrToEditor => {
+            source == &Type::Str && destination == &Type::Editor
+        }
+    }
 }
 
 struct AppSettingExpressionPolicy<'a> {
@@ -3763,6 +3959,7 @@ impl Lowerer {
             app_handlers: Vec::new(),
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
+            media: HashMap::new(),
         }
     }
 
@@ -3836,6 +4033,7 @@ impl Lowerer {
             subscriptions,
             tests,
             canvases: self.canvases,
+            media: self.media,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -7561,6 +7759,15 @@ impl Lowerer {
     ) -> Result<(), Error> {
         self.lower_view_style(node)?;
         match node {
+            ViewNode::Media {
+                kind,
+                source,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_media(*kind, source, options, span, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -9497,6 +9704,192 @@ view
             error.message
         );
         assert_eq!(error.line, 13);
+    }
+
+    #[test]
+    fn malformed_checked_media_expression_id_does_not_panic() {
+        let source =
+            format!("app InvalidMediaFacts\n{THEME}view\n  image \"photo.png\" opacity=0.8\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Media(MediaExpressionId {
+                media: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
+    fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-media.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Media {
+            source: source_expr,
+            options,
+            ..
+        } = &mut changed_expressions.document.view
+        else {
+            panic!("fixture root must be media");
+        };
+        *source_expr = Expr::Str("poisoned.png".into());
+        options.opacity = Some(Expr::F64(0.1));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-media.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("poisoned.png"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Media { kind, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be media");
+        };
+        *kind = MediaKind::Viewer;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn media_codegen_ignores_raw_options_and_theme_token_order_after_lowering() {
+        let source = format!(
+            "app LoweredMedia\n{THEME}state\n  path = \"icon.svg\"\n  alpha = 0.8\nview\n  svg path color=fg hover=primary opacity=alpha\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-media.ice").unwrap();
+
+        let ViewNode::Media {
+            kind,
+            source,
+            options,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be media");
+        };
+        *kind = MediaKind::Viewer;
+        *source = Expr::Str("poisoned.png".into());
+        options.opacity = Some(Expr::F64(0.1));
+        options.svg_color = Some("danger".into());
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+
+        let actual = crate::codegen::generate(&program, "lowered-media.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("poisoned.png"));
+    }
+
+    #[test]
+    fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
+        let source = format!(
+            "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let image = program.media(ViewId(1)).unwrap();
+        assert_eq!(image.id, ViewId(1));
+        assert_eq!(image.kind, ResolvedMediaKind::Image);
+        assert_eq!(image.source_type, Type::Str);
+        assert!(matches!(
+            image.options.width,
+            Some(ResolvedMediaLength::Fill)
+        ));
+        assert!(matches!(
+            image.options.height,
+            Some(ResolvedMediaLength::Fixed {
+                source: Type::F64,
+                ..
+            })
+        ));
+        assert_eq!(image.options.filter, Some(ResolvedMediaFilter::Nearest));
+        assert!(image.options.crop.is_some());
+
+        let viewer = program.media(ViewId(2)).unwrap();
+        assert_eq!(viewer.kind, ResolvedMediaKind::Viewer);
+        let bounds = viewer.options.scale_bounds.as_ref().unwrap();
+        assert!(matches!(
+            bounds.minimum,
+            ResolvedMediaScaleBound::Expression(_)
+        ));
+        assert!(matches!(
+            bounds.maximum,
+            ResolvedMediaScaleBound::Default(value) if value == 10.0
+        ));
+        assert!(viewer.options.padding.is_some());
+        assert!(viewer.options.scale_step.is_some());
+
+        let svg = program.media(ViewId(3)).unwrap();
+        assert_eq!(svg.kind, ResolvedMediaKind::Svg);
+        let colors = svg.options.svg_colors.as_ref().unwrap();
+        assert!(matches!(
+            colors.idle,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 1, .. }),
+                opacity: None,
+            })
+        ));
+        assert!(matches!(colors.hovered, Some(None)));
+        let style = svg.options.svg_style.as_ref().unwrap();
+        assert_eq!(program.extern_function(style.function).name, "dynamic_svg");
+        assert_eq!(style.arguments.len(), 1);
+        assert!(svg.options.opacity.is_some());
+        assert_eq!(
+            program
+                .facts
+                .expression_use_by_owner(CheckedExprOwner::Media(MediaExpressionId {
+                    media: ViewId(3),
+                    index: 0,
+                })),
+            Some(svg.source)
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized media lowering and emission performance contract"]
+    fn performance_contract_four_thousand_media_nodes_lower_and_emit_under_two_seconds() {
+        const MEDIA: usize = 4_000;
+        let mut source = format!("app MediaScale\n{THEME}view\n  col\n");
+        for index in 0..MEDIA {
+            writeln!(
+                source,
+                "    image \"photo-{index}.png\" w=fill h=48.0 opacity=0.8 filter=nearest"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "media-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.media.len(), MEDIA);
+        assert_eq!(generated.matches("::iced::widget::image(").count(), MEDIA);
+        eprintln!("4k normalized media nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized media nodes lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

@@ -398,151 +398,6 @@ impl CanvasOperands {
     }
 }
 
-struct CanvasExpressionPolicy<'a> {
-    lowerer: &'a Lowerer,
-    canvas: ViewId,
-    scope: CheckedViewScope,
-    use_id: CheckedExprUseId,
-    span: &'a Span,
-}
-
-impl CheckedExpressionOwnerPolicy for CanvasExpressionPolicy<'_> {
-    fn use_id(&self) -> CheckedExprUseId {
-        self.use_id
-    }
-
-    fn span(&self) -> &Span {
-        self.span
-    }
-
-    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
-        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
-            self.lowerer.invariant(
-                self.span,
-                "canvas expression references an invalid value ID",
-            )
-        })?;
-        let allowed = match (self.scope, value) {
-            (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::AppState(_))
-            | (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::Derived(_)) => {
-                true
-            }
-            (CheckedViewScope::Component(component), CheckedValueRef::ComponentParam(id)) => {
-                id.component == component
-            }
-            (CheckedViewScope::Component(component), CheckedValueRef::ComponentState(id)) => {
-                id.component == component
-            }
-            _ => false,
-        };
-        if !allowed {
-            return Err(self.lowerer.invariant(
-                self.span,
-                "canvas expression value belongs to another scope",
-            ));
-        }
-        Ok(checked.ty.clone())
-    }
-
-    fn local_type(&self, local: CheckedLocalId) -> Result<Type, Error> {
-        let checked = self.lowerer.facts.try_local(local).ok_or_else(|| {
-            self.lowerer.invariant(
-                self.span,
-                "canvas expression references an invalid local ID",
-            )
-        })?;
-        let allowed = match checked.owner {
-            CheckedLocalOwner::ExpressionBinding { expression, .. } => expression == self.use_id,
-            CheckedLocalOwner::CanvasState(id) => id.canvas == self.canvas,
-            CheckedLocalOwner::CanvasWidth(canvas) | CheckedLocalOwner::CanvasHeight(canvas) => {
-                canvas == self.canvas
-            }
-            CheckedLocalOwner::CanvasCommandItem(id) => id.canvas == self.canvas,
-            CheckedLocalOwner::CanvasEventBinding { event, .. } => event.canvas == self.canvas,
-            CheckedLocalOwner::View { view, .. } => {
-                let mut current = Some(self.canvas);
-                let mut found = false;
-                while let Some(id) = current {
-                    if id == view {
-                        found = true;
-                        break;
-                    }
-                    current = self.lowerer.facts.view(id).parent;
-                }
-                found
-            }
-            _ => false,
-        };
-        if !allowed {
-            return Err(self.lowerer.invariant(
-                self.span,
-                "canvas expression local belongs to another scope",
-            ));
-        }
-        Ok(checked.ty.clone())
-    }
-
-    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
-        self.lowerer
-            .declarations
-            .try_component_slot(slot)
-            .ok_or_else(|| {
-                self.lowerer
-                    .invariant(self.span, "canvas expression references an invalid slot ID")
-            })?;
-        if self.scope != CheckedViewScope::Component(slot.component) {
-            return Err(self.lowerer.invariant(
-                self.span,
-                "canvas expression slot belongs to another component",
-            ));
-        }
-        Ok(Type::Bool)
-    }
-
-    fn palette_type(&self, palette: PaletteId) -> Result<Type, Error> {
-        self.lowerer
-            .declarations
-            .palette_name(palette)
-            .ok_or_else(|| {
-                self.lowerer.invariant(
-                    self.span,
-                    "canvas expression references an invalid palette ID",
-                )
-            })?;
-        let expression = self.lowerer.facts.expression_use(self.use_id);
-        match &expression.source {
-            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
-            _ => Err(self.lowerer.invariant(
-                self.span,
-                "canvas palette expression has no retained contract type",
-            )),
-        }
-    }
-}
-
-fn canvas_coercion_is_valid(
-    source: &Type,
-    destination: &Type,
-    coercion: &CheckedInitializerCoercion,
-) -> bool {
-    match coercion {
-        CheckedInitializerCoercion::None => source == destination,
-        CheckedInitializerCoercion::ListToCombo { element } => {
-            source == &Type::List(Box::new(element.clone()))
-                && destination == &Type::Combo(Box::new(element.clone()))
-        }
-        CheckedInitializerCoercion::ValueToAnimation { value } => {
-            source == value && destination == &Type::Animation(Box::new(value.clone()))
-        }
-        CheckedInitializerCoercion::StrToMarkdown => {
-            source == &Type::Str && destination == &Type::Markdown
-        }
-        CheckedInitializerCoercion::StrToEditor => {
-            source == &Type::Str && destination == &Type::Editor
-        }
-    }
-}
-
 impl Lowerer {
     pub(super) fn lower_canvas(
         &mut self,
@@ -859,12 +714,14 @@ impl Lowerer {
             if expression.owner != owner {
                 return Err(self.invariant(span, "canvas expression owner mapping diverged"));
             }
-            let policy = CanvasExpressionPolicy {
+            let policy = ViewWidgetExpressionPolicy {
                 lowerer: self,
-                canvas,
+                view: canvas,
                 scope,
                 use_id,
                 span,
+                canvas_locals: true,
+                family: "canvas",
             };
             let root_scope = graph.root_scope();
             let source = self.validate_checked_expression_node(
@@ -874,7 +731,7 @@ impl Lowerer {
                 root_scope,
             )?;
             if source != expression.source
-                || !canvas_coercion_is_valid(
+                || !checked_expression_coercion_is_valid(
                     &expression.source,
                     &expression.destination,
                     &expression.coercion,

@@ -108,14 +108,14 @@ nested gradients, token references, and opacity are resolved before their
 migrated emitters run.
 
 This is deliberately not a claim that every style-shaped AST node has been
-migrated. Expression-bearing native widget status blocks and direct non-Canvas
+migrated. Expression-bearing native widget status blocks and direct non-Canvas/non-Media
 view color fields remain AST-backed with the expression/view family.
 Palette enum paths inside the general expression emitter also remain in that
 family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors and widget options
+The remaining expression-backed native styles/colors and non-Media widget options
 therefore remain open implementation slices; this
 status does not satisfy the migration-complete criteria below. Migrated handler
 and application-setting generation uses the shared origin arena directly for
@@ -261,6 +261,19 @@ and theme-token positions from `Document`. Corrupt graph IDs and post-check
 static mutations fail with source-mapped `E196`; post-lowering raw Canvas and
 theme-token mutations cannot affect generated Rust. Structural snapshots and an
 ignored 4,000-command lower+emit budget complete the executable evidence.
+
+Image, SVG, and viewer Media views are now a completed vertical slice. Stable
+Media expression owners partition every dynamic source and option operand.
+Checked semantic keys freeze kind, option presence, memory mode, filters,
+colors, explicit hover-none behavior, and SVG style call topology. Lowering
+retains source and fixed-length types, folds viewer scale defaults, resolves
+theme colors and exact SVG style extern IDs, and publishes private
+`ResolvedMedia` records. The backend no longer reads raw Media expressions or
+options, repeats type inference, rediscovers SVG style externs, or recovers
+theme-token positions from `Document`. Static post-check drift and corrupt
+expression graphs fail with source-mapped `E196`; post-lowering Media AST and
+theme-token mutations cannot affect output. Structural, mutation, production
+generation, and ignored 4,000-node lower+emit tests provide the evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,
