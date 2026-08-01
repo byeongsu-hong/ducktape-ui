@@ -290,6 +290,9 @@ jobs:
       - name: Draw first frame through Vulkan
         if: matrix.label == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" "${{ matrix.helper }}" "${{ matrix.executable }}"
+      - name: Overlap cargo ice dev with cargo check
+        if: matrix.label == 'Linux'
+        run: timeout 360s xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" scripts/generated-output-overlap-smoke.sh
       - name: Draw first frame through native GPU backend
         if: matrix.label != 'Linux'
         shell: bash
