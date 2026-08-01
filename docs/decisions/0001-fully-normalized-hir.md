@@ -115,11 +115,11 @@ family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors, canvas locals, other
-application settings, tests, and remaining widget options therefore remain
-open implementation slices; this status does not satisfy the
-migration-complete criteria below. Migrated handler generation uses the shared
-origin arena directly for imported and root source markers.
+The remaining expression-backed native styles/colors, canvas locals, tests, and
+remaining widget options therefore remain open implementation slices; this
+status does not satisfy the migration-complete criteria below. Migrated handler
+and application-setting generation uses the shared origin arena directly for
+imported and root source markers.
 
 The checker now also preserves the first expression-family facts in a private,
 owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
@@ -160,7 +160,7 @@ validates raw view kind/children against the stable checked topology. Invalid
 owner, topology, match binding, and enum IDs therefore fail with source-mapped
 `E196`. Imported expressions retain physical locations and parent chains;
 missing, duplicate, or leftover authoritative analyses also fail with `E196`.
-Canvas/settings/test expressions and expression-bearing widget options
+Canvas/test expressions and expression-bearing widget options
 remain later slices, so the full-HIR completion criteria remain open.
 
 Handler bodies are now a completed production HIR slice. One deterministic
@@ -199,6 +199,34 @@ checker glob imports are rejected. This is a conservative lexical migration
 ratchet, not a Rust semantic resolver or completion claim. The selected ledger
 must reach zero, and ordinary semantic review must confirm that no unrepresented
 boundary remains before HIR is complete.
+
+Application and daemon settings are now normalized as one complete vertical
+slice. `AppSettingExprId` and `NamedWindowId` identify the retained title,
+theme, palette, background, foreground, scale, theme-factory arguments, and
+ordered named windows. The checker hands one authoritative analysis per
+expression to fact construction; dynamic theme and palette classification is
+recovered from those facts, not from source spelling. A typed current-window
+local supplies daemon callback scope. The HIR also owns renderer and executor
+choices, ordered font assets, the exact default-font
+family/weight/stretch/style and declaration origin, common application settings, a folded
+runtime-default primary window, every common and platform-specific window
+field, icon metadata, and physical origins. Checked facts retain the complete
+static setting topology and program kind; lowering rejects any post-check
+static mutation with a source-mapped `E196`, including parser-invariant bypasses
+such as absolute asset paths or duplicate windows. Renderer, executor, app
+fields, fonts, window fields, icons, and platform subfields retain their exact
+declaration origins for generated Rust diagnostics. Rust emission for this family no
+longer accepts `AppSettings`/`WindowSettings`, rereads a setting expression, or
+calls checker/type-inference helpers. Missing, extra, or reclassified retained
+facts fail with `E196`; post-check expression mutation cannot change output. A
+shared visited-set graph validator checks retained expression IDs, ownership,
+topology, and types exactly once per reachable node. Settings contribute only
+their owner policy (app state, derived state, expression bindings, and the
+daemon-window local), so later HIR slices can reuse the same graph contract
+without copying a settings-specific semantic checker.
+Structured snapshots, imported extern/origin and direct source-marker tests,
+the existing complete application/window compile surface, and a 5,000 named
+window lowering contract are the executable evidence.
 
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and

@@ -83,7 +83,20 @@ pub(in crate::codegen) fn font_preset_code(
 }
 
 pub(in crate::codegen) fn font_decl_code(font: &FontDecl) -> String {
-    let family = match &font.family {
+    font_value_code(&font.family, font.weight, font.stretch, font.style)
+}
+
+pub(in crate::codegen) fn resolved_default_font_code(font: &ResolvedDefaultFont) -> String {
+    font_value_code(&font.family, font.weight, font.stretch, font.style)
+}
+
+fn font_value_code(
+    family: &FontFamily,
+    weight: FontWeight,
+    stretch: FontStretch,
+    style: FontStyle,
+) -> String {
+    let family = match family {
         FontFamily::Named(name) => format!("::iced::font::Family::Name({})", rust_string(name)),
         FontFamily::Serif => "::iced::font::Family::Serif".into(),
         FontFamily::SansSerif => "::iced::font::Family::SansSerif".into(),
@@ -91,7 +104,7 @@ pub(in crate::codegen) fn font_decl_code(font: &FontDecl) -> String {
         FontFamily::Fantasy => "::iced::font::Family::Fantasy".into(),
         FontFamily::Monospace => "::iced::font::Family::Monospace".into(),
     };
-    let weight = match font.weight {
+    let weight = match weight {
         FontWeight::Thin => "Thin",
         FontWeight::ExtraLight => "ExtraLight",
         FontWeight::Light => "Light",
@@ -102,7 +115,7 @@ pub(in crate::codegen) fn font_decl_code(font: &FontDecl) -> String {
         FontWeight::ExtraBold => "ExtraBold",
         FontWeight::Black => "Black",
     };
-    let stretch = match font.stretch {
+    let stretch = match stretch {
         FontStretch::UltraCondensed => "UltraCondensed",
         FontStretch::ExtraCondensed => "ExtraCondensed",
         FontStretch::Condensed => "Condensed",
@@ -113,7 +126,7 @@ pub(in crate::codegen) fn font_decl_code(font: &FontDecl) -> String {
         FontStretch::ExtraExpanded => "ExtraExpanded",
         FontStretch::UltraExpanded => "UltraExpanded",
     };
-    let style = match font.style {
+    let style = match style {
         FontStyle::Normal => "Normal",
         FontStyle::Italic => "Italic",
         FontStyle::Oblique => "Oblique",
@@ -121,15 +134,6 @@ pub(in crate::codegen) fn font_decl_code(font: &FontDecl) -> String {
     format!(
         "::iced::Font {{ family: {family}, weight: ::iced::font::Weight::{weight}, stretch: ::iced::font::Stretch::{stretch}, style: ::iced::font::Style::{style} }}"
     )
-}
-
-pub(in crate::codegen) fn app_default_font_code(document: &Document) -> String {
-    document
-        .fonts
-        .iter()
-        .find(|font| font.default)
-        .map(font_decl_code)
-        .unwrap_or_else(|| "::iced::Font::DEFAULT".into())
 }
 
 pub(in crate::codegen) fn styled_font_code(
@@ -140,7 +144,7 @@ pub(in crate::codegen) fn styled_font_code(
     let base = match font {
         Some(font) => Some(font_preset_code(font, document)?),
         None if style.font_monospace => Some("::iced::Font::MONOSPACE".into()),
-        None if style.font_weight.is_some() => Some(app_default_font_code(document)),
+        None if style.font_weight.is_some() => Some("Self::default_font()".into()),
         None => None,
     };
     Ok(base.map(|font| match style.font_weight {

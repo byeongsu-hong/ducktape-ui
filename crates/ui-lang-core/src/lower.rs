@@ -1,15 +1,20 @@
 use crate::ast::*;
 use crate::check::{
-    CheckedComponentArgumentSource, CheckedExprUseId, CheckedFacts, CheckedValueRef,
+    BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
+    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner,
+    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
+    CheckedPathRoot, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
+    ContextualBuiltin, canonical_builtin_type, field_type, resolve_erased_type,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
-    AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, ExternFnId, HandlerId, HandlerOwner, OriginArena, OriginId,
-    PaletteId, RouteId, RunSiteId, StatementId, TaskId,
+    AppSettingExprId, AppSettingsId, AppStateId, ComponentCallId, ComponentEventId, ComponentId,
+    ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, HandlerId,
+    HandlerOwner, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId, RunSiteId, StatementId,
+    TaskId,
 };
 use crate::{CheckedDocument, Error};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod style;
@@ -115,6 +120,32 @@ pub(crate) struct ResolvedHandler {
     pub(crate) origin: OriginId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProgramKind {
+    Application,
+    Daemon,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedRendererSelection {
+    Default,
+    Custom { path: String, origin: OriginId },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedExecutorSelection {
+    Default,
+    Custom { path: String, origin: OriginId },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAppExpression {
+    pub(crate) id: AppSettingExprId,
+    pub(crate) expression: CheckedExprUseId,
+    pub(crate) origin: OriginId,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedHandlerParam {
@@ -130,6 +161,13 @@ pub(crate) struct ResolvedStatement {
     pub(crate) kind: ResolvedStatementKind,
     pub(crate) task: Option<TaskId>,
     pub(crate) is_final: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedFontAsset {
+    pub(crate) path: String,
     pub(crate) origin: OriginId,
 }
 
@@ -267,6 +305,48 @@ pub(crate) enum ResolvedTaskSource {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+pub(crate) struct ResolvedDefaultFont {
+    pub(crate) family: FontFamily,
+    pub(crate) weight: FontWeight,
+    pub(crate) stretch: FontStretch,
+    pub(crate) style: FontStyle,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWindowIcon {
+    pub(crate) path: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) byte_len: usize,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ResolvedWindowPosition {
+    Default,
+    Centered,
+    Specific(f64, f64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedWindowLevel {
+    Normal,
+    AlwaysOnBottom,
+    AlwaysOnTop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedWindowCorner {
+    Default,
+    DoNotRound,
+    Round,
+    RoundSmall,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
 pub(crate) enum ResolvedTaskTransform {
     Map {
         task: TaskId,
@@ -316,6 +396,15 @@ pub(crate) struct ResolvedRoute {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+pub(crate) struct ResolvedLinuxWindowSettings {
+    pub(crate) application_id: Option<String>,
+    pub(crate) override_redirect: Option<bool>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
 pub(crate) enum ResolvedRouteTarget {
     App {
         handler: HandlerId,
@@ -326,6 +415,17 @@ pub(crate) enum ResolvedRouteTarget {
         handler: HandlerId,
         name: String,
     },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWindowsWindowSettings {
+    pub(crate) drag_and_drop: Option<bool>,
+    pub(crate) skip_taskbar: Option<bool>,
+    pub(crate) undecorated_shadow: Option<bool>,
+    pub(crate) corner: Option<ResolvedWindowCorner>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
 }
 
 #[allow(dead_code)]
@@ -561,6 +661,85 @@ pub(crate) enum ResolvedWindowOperation {
     },
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedMacosWindowSettings {
+    pub(crate) title_hidden: Option<bool>,
+    pub(crate) titlebar_transparent: Option<bool>,
+    pub(crate) fullsize_content_view: Option<bool>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWasmWindowSettings {
+    pub(crate) target: Option<Option<String>>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWindowSettings {
+    pub(crate) size: Option<(f64, f64)>,
+    pub(crate) maximized: Option<bool>,
+    pub(crate) fullscreen: Option<bool>,
+    pub(crate) position: Option<ResolvedWindowPosition>,
+    pub(crate) min_size: Option<(f64, f64)>,
+    pub(crate) max_size: Option<(f64, f64)>,
+    pub(crate) visible: Option<bool>,
+    pub(crate) resizable: Option<bool>,
+    pub(crate) closeable: Option<bool>,
+    pub(crate) minimizable: Option<bool>,
+    pub(crate) decorations: Option<bool>,
+    pub(crate) transparent: Option<bool>,
+    pub(crate) blur: Option<bool>,
+    pub(crate) level: Option<ResolvedWindowLevel>,
+    pub(crate) icon: Option<ResolvedWindowIcon>,
+    pub(crate) exit_on_close_request: Option<bool>,
+    pub(crate) linux: Option<ResolvedLinuxWindowSettings>,
+    pub(crate) windows: Option<ResolvedWindowsWindowSettings>,
+    pub(crate) macos: Option<ResolvedMacosWindowSettings>,
+    pub(crate) wasm: Option<ResolvedWasmWindowSettings>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedNamedWindow {
+    pub(crate) id: NamedWindowId,
+    pub(crate) name: String,
+    pub(crate) settings: ResolvedWindowSettings,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAppSettings {
+    pub(crate) settings_id: AppSettingsId,
+    pub(crate) app_name: String,
+    pub(crate) kind: ProgramKind,
+    pub(crate) callback_window: Option<CheckedLocalId>,
+    pub(crate) title: Option<ResolvedAppExpression>,
+    pub(crate) background: Option<ResolvedAppExpression>,
+    pub(crate) text_color: Option<ResolvedAppExpression>,
+    pub(crate) id: Option<String>,
+    pub(crate) executor: ResolvedExecutorSelection,
+    pub(crate) renderer: ResolvedRendererSelection,
+    pub(crate) fonts: Vec<ResolvedFontAsset>,
+    pub(crate) default_font: Option<ResolvedDefaultFont>,
+    pub(crate) default_text_size: Option<f64>,
+    pub(crate) antialiasing: Option<bool>,
+    pub(crate) vsync: Option<bool>,
+    pub(crate) scale_factor: Option<ResolvedAppExpression>,
+    pub(crate) primary_window: ResolvedWindowSettings,
+    pub(crate) named_windows: Vec<ResolvedNamedWindow>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedAnimationEasing {
     Builtin(String),
@@ -735,6 +914,7 @@ pub(crate) struct LoweredProgram {
     document: Document,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
+    settings: ResolvedAppSettings,
     app_states: Vec<AppStateContract>,
     derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
@@ -2235,11 +2415,7 @@ impl LoweredProgram {
     }
 
     pub(crate) fn app_name(&self) -> &str {
-        &self.document.app
-    }
-
-    pub(crate) fn is_daemon(&self) -> bool {
-        self.document.daemon
+        &self.settings.app_name
     }
 
     pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
@@ -2253,6 +2429,10 @@ impl LoweredProgram {
 
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
         &self.declarations
+    }
+
+    pub(crate) fn settings(&self) -> &ResolvedAppSettings {
+        &self.settings
     }
 
     pub(crate) fn app_states(&self) -> &[AppStateContract] {
@@ -2461,6 +2641,229 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
 }
 
+#[derive(Default)]
+struct CheckedExpressionGraph {
+    visiting: HashSet<CheckedExprId>,
+    validated: HashSet<(CheckedExprId, usize)>,
+    node_owners: HashMap<CheckedExprId, CheckedExprUseId>,
+    scopes: Vec<CheckedExpressionScope>,
+}
+
+struct CheckedExpressionScope {
+    parent: Option<usize>,
+    binding: Option<CheckedLocalId>,
+}
+
+impl CheckedExpressionGraph {
+    fn root_scope(&mut self) -> usize {
+        if self.scopes.is_empty() {
+            self.scopes.push(CheckedExpressionScope {
+                parent: None,
+                binding: None,
+            });
+        }
+        0
+    }
+
+    fn scoped_binding(&mut self, parent: usize, binding: CheckedLocalId) -> usize {
+        let id = self.scopes.len();
+        self.scopes.push(CheckedExpressionScope {
+            parent: Some(parent),
+            binding: Some(binding),
+        });
+        id
+    }
+
+    fn contains_binding(&self, mut scope: usize, binding: CheckedLocalId) -> bool {
+        loop {
+            let Some(current) = self.scopes.get(scope) else {
+                return false;
+            };
+            if current.binding == Some(binding) {
+                return true;
+            }
+            let Some(parent) = current.parent else {
+                return false;
+            };
+            scope = parent;
+        }
+    }
+}
+
+trait CheckedExpressionOwnerPolicy {
+    fn use_id(&self) -> CheckedExprUseId;
+    fn span(&self) -> &Span;
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error>;
+    fn local_type(&self, local: CheckedLocalId) -> Result<Type, Error>;
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error>;
+    fn palette_type(&self, palette: PaletteId) -> Result<Type, Error>;
+}
+
+struct AppSettingExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    use_id: CheckedExprUseId,
+    span: &'a Span,
+}
+
+impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "app setting path references an invalid value ID")
+        })?;
+        match value {
+            CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
+            CheckedValueRef::ComponentParam(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_param(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "app setting path references an invalid component parameter ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting path cannot reference a component parameter",
+                ))
+            }
+            CheckedValueRef::ComponentState(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_state(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "app setting path references an invalid component state ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting path cannot reference component state",
+                ))
+            }
+        }
+    }
+
+    fn local_type(&self, id: CheckedLocalId) -> Result<Type, Error> {
+        let local = self.lowerer.facts.try_local(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "app setting expression references an invalid local ID",
+            )
+        })?;
+        match local.owner {
+            CheckedLocalOwner::AppSettingDaemonWindow => {
+                let callback_owns_local = self
+                    .lowerer
+                    .facts
+                    .try_expression_use(self.use_id)
+                    .is_some_and(|expression| {
+                        matches!(
+                            expression.owner,
+                            CheckedExprOwner::AppSetting(
+                                AppSettingExprId::Title
+                                    | AppSettingExprId::Theme
+                                    | AppSettingExprId::ThemeFactoryArgument(_)
+                                    | AppSettingExprId::Palette
+                                    | AppSettingExprId::ScaleFactor
+                            )
+                        )
+                    });
+                if local.ty != Type::WindowId
+                    || local.name != "window"
+                    || !callback_owns_local
+                    || !self
+                        .lowerer
+                        .facts
+                        .app_settings()
+                        .is_some_and(|settings| settings.daemon)
+                    || self.lowerer.facts.app_setting_daemon_window_local() != Some(id)
+                {
+                    return Err(self.lowerer.invariant(
+                        self.span,
+                        "app setting daemon-window local has inconsistent topology",
+                    ));
+                }
+            }
+            CheckedLocalOwner::ExpressionBinding { expression, .. }
+                if expression == self.use_id => {}
+            CheckedLocalOwner::ExpressionBinding { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression binding belongs to another expression use",
+                ));
+            }
+            CheckedLocalOwner::View { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a view local",
+                ));
+            }
+            CheckedLocalOwner::HandlerParam { .. }
+            | CheckedLocalOwner::StatementLet(_)
+            | CheckedLocalOwner::TaskTransform { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a handler local",
+                ));
+            }
+        }
+        Ok(local.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "app setting expression references an invalid slot ID",
+                )
+            })?;
+        Err(self.lowerer.invariant(
+            self.span,
+            "app setting expression cannot reference a component slot",
+        ))
+    }
+
+    fn palette_type(&self, id: PaletteId) -> Result<Type, Error> {
+        self.lowerer.declarations.palette_name(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "app setting path references an invalid palette ID",
+            )
+        })?;
+        let expression = self
+            .lowerer
+            .facts
+            .try_expression_use(self.use_id)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "app setting path has an invalid expression-use ID",
+                )
+            })?;
+        match &expression.destination {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                "app setting palette path has no checked theme-contract type",
+            )),
+        }
+    }
+}
+
 impl Lowerer {
     fn new(checked: CheckedDocument) -> Self {
         let CheckedDocument {
@@ -2497,6 +2900,7 @@ impl Lowerer {
         {
             return Err(self.invariant_at_origin(origin, message));
         }
+        let settings = self.lower_app_settings()?;
         self.lower_style_program()?;
         let app_states = self.lower_app_states()?;
         let derived = self.lower_derived()?;
@@ -2532,6 +2936,7 @@ impl Lowerer {
             document: self.document,
             facts: self.facts,
             declarations: self.declarations,
+            settings,
             app_states,
             derived,
             components: self.components,
@@ -2543,6 +2948,1219 @@ impl Lowerer {
             styles,
             origins: self.origins,
         })
+    }
+
+    fn lower_app_settings(&mut self) -> Result<ResolvedAppSettings, Error> {
+        self.validate_app_setting_expression_shape()?;
+        self.validate_app_setting_expression_graphs()?;
+        let checked = self.facts.app_settings().cloned().ok_or_else(|| {
+            self.invariant(
+                &self.document.settings.span,
+                "application settings are missing their authoritative checked snapshot",
+            )
+        })?;
+        self.validate_checked_app_settings(&checked)?;
+        let source = checked.source;
+        let declaration = self.declarations.app_settings();
+        let default_font = checked.default_font.map(|font| ResolvedDefaultFont {
+            family: font.family,
+            weight: font.weight,
+            stretch: font.stretch,
+            style: font.style,
+            origin: self.push_origin(&font.span, Some(declaration.origin)),
+        });
+        let title = source
+            .title
+            .as_ref()
+            .map(|source| {
+                self.checked_app_setting_expression(AppSettingExprId::Title, &source.span)
+            })
+            .transpose()?;
+        let background = source
+            .background
+            .as_ref()
+            .map(|source| {
+                self.checked_app_setting_expression(AppSettingExprId::Background, &source.span)
+            })
+            .transpose()?;
+        let text_color = source
+            .text_color
+            .as_ref()
+            .map(|source| {
+                self.checked_app_setting_expression(AppSettingExprId::TextColor, &source.span)
+            })
+            .transpose()?;
+        let scale_factor = source
+            .scale_factor
+            .as_ref()
+            .map(|source| {
+                self.checked_app_setting_expression(AppSettingExprId::ScaleFactor, &source.span)
+            })
+            .transpose()?;
+        let primary_window = self.lower_window_settings(source.window.as_ref(), declaration.origin);
+        let named_windows = source
+            .windows
+            .iter()
+            .enumerate()
+            .map(|(index, window)| {
+                let origin = self.push_origin(&window.span, Some(declaration.origin));
+                ResolvedNamedWindow {
+                    id: NamedWindowId(index as u32),
+                    name: window.name.clone(),
+                    settings: self.lower_window_settings(Some(&window.settings), origin),
+                    origin,
+                }
+            })
+            .collect();
+        let field_origins: HashMap<String, OriginId> = source
+            .setting_spans
+            .iter()
+            .map(|(name, span)| {
+                (
+                    name.clone(),
+                    self.push_origin(span, Some(declaration.origin)),
+                )
+            })
+            .collect();
+        Ok(ResolvedAppSettings {
+            settings_id: declaration.id,
+            app_name: checked.app_name,
+            kind: if checked.daemon {
+                ProgramKind::Daemon
+            } else {
+                ProgramKind::Application
+            },
+            callback_window: self.facts.app_setting_daemon_window_local(),
+            title,
+            background,
+            text_color,
+            id: source.id,
+            executor: source
+                .executor
+                .map_or(ResolvedExecutorSelection::Default, |path| {
+                    ResolvedExecutorSelection::Custom {
+                        path,
+                        origin: field_origins["executor"],
+                    }
+                }),
+            renderer: source
+                .renderer
+                .map_or(ResolvedRendererSelection::Default, |path| {
+                    ResolvedRendererSelection::Custom {
+                        path,
+                        origin: field_origins["renderer"],
+                    }
+                }),
+            fonts: source
+                .fonts
+                .iter()
+                .map(|font| ResolvedFontAsset {
+                    path: font.path.clone(),
+                    origin: self.push_origin(&font.span, Some(declaration.origin)),
+                })
+                .collect(),
+            default_font,
+            default_text_size: source.default_text_size,
+            antialiasing: source.antialiasing,
+            vsync: source.vsync,
+            scale_factor,
+            primary_window,
+            named_windows,
+            field_origins,
+            origin: declaration.origin,
+        })
+    }
+
+    fn validate_checked_app_settings(
+        &self,
+        checked: &crate::check::CheckedAppSettings,
+    ) -> Result<(), Error> {
+        let settings = &checked.source;
+        if self.document.app != checked.app_name {
+            return Err(self.invariant(
+                &settings.span,
+                "application identity changed after semantic analysis",
+            ));
+        }
+        if self.document.daemon != checked.daemon {
+            return Err(self.invariant(
+                &settings.span,
+                "application kind changed after semantic analysis",
+            ));
+        }
+        let current = &self.document.settings;
+        let static_fields_match = current.id == settings.id
+            && current.executor == settings.executor
+            && current.renderer == settings.renderer
+            && current.fonts == settings.fonts
+            && current.default_text_size == settings.default_text_size
+            && current.antialiasing == settings.antialiasing
+            && current.vsync == settings.vsync
+            && current.window == settings.window
+            && current.windows == settings.windows;
+        let mut current_default_fonts = self.document.fonts.iter().filter(|font| font.default);
+        let current_default_font = current_default_fonts.next();
+        let duplicate_default_font = current_default_fonts.next();
+        let default_font_changed = duplicate_default_font.is_some()
+            || current_default_font != checked.default_font.as_ref();
+        if !static_fields_match || default_font_changed {
+            let span = first_changed_static_setting_span(current, settings)
+                .or_else(|| duplicate_default_font.map(|font| &font.span))
+                .or_else(|| current_default_font.map(|font| &font.span))
+                .or_else(|| checked.default_font.as_ref().map(|font| &font.span))
+                .unwrap_or(&settings.span);
+            return Err(self.invariant(
+                span,
+                "static application settings changed after semantic analysis",
+            ));
+        }
+        if settings
+            .default_text_size
+            .is_some_and(|value| !valid_positive_f32(value))
+        {
+            return Err(self.invariant(
+                &settings.span,
+                "checked application text size is outside its normalized range",
+            ));
+        }
+        let mut names = std::collections::HashSet::new();
+        for window in &settings.windows {
+            if !names.insert(window.name.as_str()) {
+                return Err(self.invariant(
+                    &window.span,
+                    "checked application settings contain a duplicate named window",
+                ));
+            }
+            self.validate_checked_window_settings(&window.settings, &window.span)?;
+        }
+        if let Some(window) = &settings.window {
+            self.validate_checked_window_settings(window, &window.span)?;
+        }
+        Ok(())
+    }
+
+    fn validate_checked_window_settings(
+        &self,
+        settings: &WindowSettings,
+        span: &Span,
+    ) -> Result<(), Error> {
+        for size in [settings.size, settings.min_size, settings.max_size]
+            .into_iter()
+            .flatten()
+        {
+            if !valid_positive_f32(size.0) || !valid_positive_f32(size.1) {
+                return Err(
+                    self.invariant(span, "checked window size is outside its normalized range")
+                );
+            }
+        }
+        if let Some(WindowPosition::Specific(x, y)) = settings.position
+            && (!valid_f32(x) || !valid_f32(y))
+        {
+            return Err(self.invariant(
+                span,
+                "checked window position is outside its normalized range",
+            ));
+        }
+        if let (Some(min), Some(max)) = (settings.min_size, settings.max_size)
+            && (min.0 > max.0 || min.1 > max.1)
+        {
+            return Err(self.invariant(span, "checked window min-size exceeds max-size"));
+        }
+        if let Some(icon) = &settings.icon {
+            let expected = (icon.width as usize)
+                .checked_mul(icon.height as usize)
+                .and_then(|pixels| pixels.checked_mul(4));
+            if icon.width == 0 || icon.height == 0 || expected != Some(icon.byte_len) {
+                return Err(self.invariant(
+                    &icon.span,
+                    "checked window icon dimensions do not match its byte length",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_app_setting_expression_shape(&self) -> Result<(), Error> {
+        use std::collections::HashSet;
+
+        let source = &self
+            .facts
+            .app_settings()
+            .ok_or_else(|| {
+                self.invariant(
+                    &self.document.settings.span,
+                    "application settings are missing their authoritative checked snapshot",
+                )
+            })?
+            .source;
+        let mut expected = HashSet::new();
+        for (id, setting) in [
+            (AppSettingExprId::Title, &source.title),
+            (AppSettingExprId::Palette, &source.palette),
+            (AppSettingExprId::Background, &source.background),
+            (AppSettingExprId::TextColor, &source.text_color),
+            (AppSettingExprId::ScaleFactor, &source.scale_factor),
+        ] {
+            if setting.is_some() {
+                expected.insert(id);
+            }
+        }
+        if let Some(checked) = self.facts.app_theme_factory() {
+            let Some(AppExpression {
+                value: Expr::Call { name, args },
+                ..
+            }) = source.theme.as_ref()
+            else {
+                return Err(self.invariant(
+                    &source.span,
+                    "checked app theme factory has no source factory call",
+                ));
+            };
+            let declaration = self
+                .declarations
+                .try_extern_decl(checked.function)
+                .ok_or_else(|| {
+                    self.invariant(
+                        &source.span,
+                        "app theme factory references an invalid extern ID",
+                    )
+                })?;
+            if declaration.kind != ExternKind::Theme
+                || declaration.name != *name
+                || declaration.params.len() != args.len()
+                || checked.arguments as usize != args.len()
+            {
+                return Err(self.invariant(
+                    &source.span,
+                    "app theme factory does not match its authoritative checked facts",
+                ));
+            }
+            expected.extend(
+                (0..args.len()).map(|index| AppSettingExprId::ThemeFactoryArgument(index as u32)),
+            );
+        } else if source.theme.is_some() {
+            expected.insert(AppSettingExprId::Theme);
+        }
+        let actual_entries = self
+            .facts
+            .expression_uses()
+            .iter()
+            .filter_map(|expression| match expression.owner {
+                CheckedExprOwner::AppSetting(id) => Some(id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let actual = actual_entries.iter().copied().collect::<HashSet<_>>();
+        if actual != expected || actual_entries.len() != expected.len() {
+            return Err(self.invariant(
+                &source.span,
+                "app setting expression facts do not match the checked source shape",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_app_setting_expression_graphs(&self) -> Result<(), Error> {
+        let checked = self.facts.app_settings().ok_or_else(|| {
+            self.invariant(
+                &self.document.settings.span,
+                "application settings are missing their authoritative checked snapshot",
+            )
+        })?;
+        let mut graph = CheckedExpressionGraph::default();
+        for expression in self.facts.expression_uses() {
+            let CheckedExprOwner::AppSetting(setting) = expression.owner else {
+                continue;
+            };
+            let span = self.app_setting_expression_span(&checked.source, setting)?;
+            let use_id = self
+                .facts
+                .expression_use_by_owner(expression.owner)
+                .ok_or_else(|| {
+                    self.invariant(span, "app setting has no checked expression owner mapping")
+                })?;
+            if !self
+                .facts
+                .try_expression_use(use_id)
+                .is_some_and(|mapped| std::ptr::eq(mapped, expression))
+            {
+                return Err(self.invariant(
+                    span,
+                    "app setting expression owner maps to a different retained use",
+                ));
+            }
+            let expected = self.app_setting_expected_type(setting, expression, span)?;
+            let policy = AppSettingExpressionPolicy {
+                lowerer: self,
+                use_id,
+                span,
+            };
+            self.validate_checked_expression_use_graph(expression, &expected, &policy, &mut graph)?;
+        }
+        Ok(())
+    }
+
+    fn validate_checked_expression_use_graph(
+        &self,
+        expression: &crate::check::CheckedExprUse,
+        expected: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &mut CheckedExpressionGraph,
+    ) -> Result<(), Error> {
+        if expression.source != *expected
+            || expression.destination != *expected
+            || expression.coercion != CheckedInitializerCoercion::None
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression use type contract changed after semantic analysis",
+            ));
+        }
+        let scope = graph.root_scope();
+        let root = self.validate_checked_expression_node(expression.root, policy, graph, scope)?;
+        if root != expression.source {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression root type does not match its retained use",
+            ));
+        }
+        Ok(())
+    }
+
+    fn app_setting_expression_span<'b>(
+        &self,
+        source: &'b AppSettings,
+        id: AppSettingExprId,
+    ) -> Result<&'b Span, Error> {
+        let setting = match id {
+            AppSettingExprId::Title => source.title.as_ref(),
+            AppSettingExprId::Theme | AppSettingExprId::ThemeFactoryArgument(_) => {
+                source.theme.as_ref()
+            }
+            AppSettingExprId::Palette => source.palette.as_ref(),
+            AppSettingExprId::Background => source.background.as_ref(),
+            AppSettingExprId::TextColor => source.text_color.as_ref(),
+            AppSettingExprId::ScaleFactor => source.scale_factor.as_ref(),
+        };
+        setting.map(|setting| &setting.span).ok_or_else(|| {
+            self.invariant(
+                &source.span,
+                "app setting expression owner has no checked source setting",
+            )
+        })
+    }
+
+    fn app_setting_expected_type(
+        &self,
+        id: AppSettingExprId,
+        expression: &crate::check::CheckedExprUse,
+        span: &Span,
+    ) -> Result<Type, Error> {
+        Ok(match id {
+            AppSettingExprId::Title
+            | AppSettingExprId::Theme
+            | AppSettingExprId::Background
+            | AppSettingExprId::TextColor => Type::Str,
+            AppSettingExprId::ScaleFactor => Type::F64,
+            AppSettingExprId::Palette => match &expression.destination {
+                Type::Palette(contract) => Type::Palette(contract.clone()),
+                _ => {
+                    return Err(self.invariant(
+                        span,
+                        "app palette expression lost its checked theme-contract type",
+                    ));
+                }
+            },
+            AppSettingExprId::ThemeFactoryArgument(index) => {
+                let factory = self.facts.app_theme_factory().ok_or_else(|| {
+                    self.invariant(span, "app theme argument has no checked factory")
+                })?;
+                let declaration = self
+                    .declarations
+                    .try_extern_decl(factory.function)
+                    .ok_or_else(|| {
+                        self.invariant(span, "app theme factory references an invalid extern ID")
+                    })?;
+                declaration
+                    .params
+                    .get(index as usize)
+                    .map(|(_, ty)| ty.clone())
+                    .ok_or_else(|| {
+                        self.invariant(span, "app theme argument has an invalid parameter index")
+                    })?
+            }
+        })
+    }
+
+    fn validate_checked_expression_node(
+        &self,
+        id: CheckedExprId,
+        policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &mut CheckedExpressionGraph,
+        scope: usize,
+    ) -> Result<Type, Error> {
+        if let Some(owner) = graph.node_owners.insert(id, policy.use_id())
+            && owner != policy.use_id()
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression node is shared by different retained expression uses",
+            ));
+        }
+        let expression = self.facts.try_expression(id).cloned().ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "expression use references an invalid checked expression ID",
+            )
+        })?;
+        if graph.validated.contains(&(id, scope)) {
+            return Ok(expression.ty);
+        }
+        if !graph.visiting.insert(id) {
+            return Err(self.invariant(policy.span(), "checked expression graph contains a cycle"));
+        }
+
+        let inferred = match &expression.kind {
+            CheckedExprKind::Bool(_) => Type::Bool,
+            CheckedExprKind::I64(_) => Type::I64,
+            CheckedExprKind::F64(_) => Type::F64,
+            CheckedExprKind::Str(_) => Type::Str,
+            CheckedExprKind::Bytes(_) => Type::Bytes,
+            CheckedExprKind::List(values) => {
+                let Type::List(item) = &expression.ty else {
+                    return Err(self
+                        .invariant(policy.span(), "checked list expression has a non-list type"));
+                };
+                for value in values {
+                    let value_ty =
+                        self.validate_checked_expression_node(*value, policy, graph, scope)?;
+                    if value_ty != **item {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked list item type does not match its list type",
+                        ));
+                    }
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::None => {
+                if !matches!(expression.ty, Type::Option(_)) {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked none expression has a non-optional type",
+                    ));
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::SlotProvided(slot) => policy.slot_type(*slot)?,
+            CheckedExprKind::Path { root, projections } => {
+                let mut current = self.validate_checked_path_root(root, policy, graph, scope)?;
+                for projection in projections {
+                    if projection.input != current {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked projection input does not match its preceding value",
+                        ));
+                    }
+                    let expected = match projection.kind {
+                        CheckedProjectionKind::Struct(field_id) => {
+                            let field = self
+                                .declarations
+                                .try_struct_field_decl(field_id)
+                                .ok_or_else(|| {
+                                    self.invariant(
+                                        policy.span(),
+                                        "checked projection references an invalid struct field ID",
+                                    )
+                                })?;
+                            let owner = self
+                                .declarations
+                                .try_struct_decl(field_id.owner)
+                                .ok_or_else(|| {
+                                    self.invariant(
+                                        policy.span(),
+                                        "checked projection references an invalid struct ID",
+                                    )
+                                })?;
+                            if current != Type::Named(owner.name.clone())
+                                || field.name != projection.field
+                            {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked struct projection topology is inconsistent",
+                                ));
+                            }
+                            field.ty.clone()
+                        }
+                        CheckedProjectionKind::OptionalWidgetTarget => {
+                            if current != Type::Option(Box::new(Type::WidgetTarget)) {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked optional widget projection has the wrong input type",
+                                ));
+                            }
+                            field_type(&current, &projection.field, &self.document, policy.span())
+                                .map_err(|_| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked optional widget projection is invalid",
+                                )
+                            })?
+                        }
+                        CheckedProjectionKind::Native => {
+                            if matches!(current, Type::Named(_)) {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked named projection lost its struct field ID",
+                                ));
+                            }
+                            field_type(&current, &projection.field, &self.document, policy.span())
+                                .map_err(|_| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked native projection is invalid",
+                                )
+                            })?
+                        }
+                    };
+                    if projection.output != expected {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked projection output type is inconsistent",
+                        ));
+                    }
+                    current = expected;
+                }
+                current
+            }
+            CheckedExprKind::Call { target, arguments } => {
+                let mut argument_types = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    argument_types.push(match argument {
+                        CheckedCallArgument::Value(value) => self
+                            .facts
+                            .try_expression(*value)
+                            .map(|expression| expression.ty.clone())
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked call references an invalid expression ID",
+                                )
+                            })?,
+                        CheckedCallArgument::Binding(local) => policy.local_type(*local)?,
+                    });
+                }
+                let scoped_bindings = self.checked_expression_argument_scopes(
+                    target,
+                    arguments,
+                    &argument_types,
+                    &expression.ty,
+                    policy,
+                )?;
+                for (index, argument) in arguments.iter().enumerate() {
+                    let CheckedCallArgument::Value(value) = argument else {
+                        continue;
+                    };
+                    let argument_scope = match scoped_bindings[index] {
+                        Some(binding) => graph.scoped_binding(scope, binding),
+                        None => scope,
+                    };
+                    self.validate_checked_expression_node(*value, policy, graph, argument_scope)?;
+                }
+                self.validate_checked_expression_call(
+                    target,
+                    arguments,
+                    &argument_types,
+                    &expression.ty,
+                    policy,
+                )?;
+                expression.ty.clone()
+            }
+            CheckedExprKind::Unary { operator, value } => {
+                let value = self.validate_checked_expression_node(*value, policy, graph, scope)?;
+                match operator {
+                    CheckedUnaryOperator::BooleanNot
+                        if value == Type::Bool && expression.ty == Type::Bool => {}
+                    CheckedUnaryOperator::NumericNegation(operand)
+                        if value == *operand && expression.ty == *operand => {}
+                    _ => {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked unary expression type contract is inconsistent",
+                        ));
+                    }
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let left = self.validate_checked_expression_node(*left, policy, graph, scope)?;
+                let right = self.validate_checked_expression_node(*right, policy, graph, scope)?;
+                let valid = match operator {
+                    CheckedBinaryOperator::Boolean(op) => {
+                        matches!(op, BinaryOp::And | BinaryOp::Or)
+                            && left == Type::Bool
+                            && right == Type::Bool
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Equality { op, operand } => {
+                        matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                            && left == *operand
+                            && right == *operand
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Ordering { op, operand } => {
+                        matches!(
+                            op,
+                            BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+                        ) && left == *operand
+                            && right == *operand
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Arithmetic { op, operand } => {
+                        matches!(
+                            op,
+                            BinaryOp::Add
+                                | BinaryOp::Sub
+                                | BinaryOp::Mul
+                                | BinaryOp::Div
+                                | BinaryOp::Rem
+                        ) && left == *operand
+                            && right == *operand
+                            && expression.ty == *operand
+                    }
+                };
+                if !valid {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked binary expression type contract is inconsistent",
+                    ));
+                }
+                expression.ty.clone()
+            }
+        };
+        if inferred != expression.ty {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression kind does not match its retained type",
+            ));
+        }
+        graph.visiting.remove(&id);
+        graph.validated.insert((id, scope));
+        Ok(expression.ty)
+    }
+
+    fn validate_checked_path_root(
+        &self,
+        root: &CheckedPathRoot,
+        policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &CheckedExpressionGraph,
+        scope: usize,
+    ) -> Result<Type, Error> {
+        match root {
+            CheckedPathRoot::Value(value) => policy.value_type(*value),
+            CheckedPathRoot::Local(local) => {
+                let ty = policy.local_type(*local)?;
+                if self.facts.try_local(*local).is_some_and(|local| {
+                    matches!(local.owner, CheckedLocalOwner::ExpressionBinding { .. })
+                }) && !graph.contains_binding(scope, *local)
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked expression binding is outside its lexical scoped-value body",
+                    ));
+                }
+                Ok(ty)
+            }
+            CheckedPathRoot::EnumVariant(id) => {
+                let variant = self
+                    .declarations
+                    .try_enum_variant_decl(*id)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            policy.span(),
+                            "checked path references an invalid enum variant ID",
+                        )
+                    })?;
+                if variant.payload.is_some() {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked path uses a payload enum variant without a call",
+                    ));
+                }
+                let owner = self.declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                    self.invariant(policy.span(), "checked path references an invalid enum ID")
+                })?;
+                Ok(Type::Named(owner.name.clone()))
+            }
+            CheckedPathRoot::Palette(id) => policy.palette_type(*id),
+        }
+    }
+
+    fn validate_checked_expression_binding(
+        &self,
+        id: CheckedLocalId,
+        arguments: &[CheckedCallArgument],
+        policy: &impl CheckedExpressionOwnerPolicy,
+        expected_body: usize,
+    ) -> Result<Type, Error> {
+        let ty = policy.local_type(id)?;
+        let local = self.facts.try_local(id).ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "checked expression binding references an invalid local ID",
+            )
+        })?;
+        let CheckedLocalOwner::ExpressionBinding {
+            expression,
+            body_argument,
+        } = local.owner
+        else {
+            return Err(self.invariant(
+                policy.span(),
+                "checked call binding is not an expression binding",
+            ));
+        };
+        if expression != policy.use_id()
+            || body_argument != expected_body
+            || !matches!(
+                arguments.get(body_argument),
+                Some(CheckedCallArgument::Value(_))
+            )
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked call binding has an invalid body-argument topology",
+            ));
+        }
+        Ok(ty)
+    }
+
+    fn checked_expression_argument_scopes(
+        &self,
+        target: &CheckedCallTarget,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Vec<Option<CheckedLocalId>>, Error> {
+        let mut scoped_bindings = vec![None; arguments.len()];
+        let CheckedCallTarget::Builtin(id) = target else {
+            return Ok(scoped_bindings);
+        };
+        let name = self.facts.try_builtin(*id).ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "checked call references an invalid builtin ID",
+            )
+        })?;
+        let Some(builtin) = ContextualBuiltin::from_name(name) else {
+            return Ok(scoped_bindings);
+        };
+        let contexts = builtin
+            .argument_contexts(output, argument_types)
+            .map_err(|message| self.invariant(policy.span(), message))?;
+        if contexts.len() != arguments.len() {
+            return Err(self.invariant(
+                policy.span(),
+                "checked builtin call has an invalid argument count",
+            ));
+        }
+        for (index, context) in contexts.iter().enumerate() {
+            let BuiltinArgumentContext::ScopedValue { binding, .. } = context else {
+                continue;
+            };
+            let Some(CheckedCallArgument::Binding(local)) = arguments.get(*binding) else {
+                return Err(self.invariant(
+                    policy.span(),
+                    "checked builtin scoped value has no binding argument",
+                ));
+            };
+            self.validate_checked_expression_binding(*local, arguments, policy, index)?;
+            scoped_bindings[index] = Some(*local);
+        }
+        Ok(scoped_bindings)
+    }
+
+    fn validate_checked_expression_call(
+        &self,
+        target: &CheckedCallTarget,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<(), Error> {
+        match target {
+            CheckedCallTarget::Extern(id) => {
+                let function = self.declarations.try_extern_decl(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked call references an invalid extern ID",
+                    )
+                })?;
+                if arguments
+                    .iter()
+                    .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+                    || function.params.len() != argument_types.len()
+                    || function
+                        .params
+                        .iter()
+                        .map(|(_, ty)| ty)
+                        .ne(argument_types.iter())
+                    || function.output != *output
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked extern call has an inconsistent retained signature",
+                    ));
+                }
+            }
+            CheckedCallTarget::EnumVariant(id) => {
+                let variant = self
+                    .declarations
+                    .try_enum_variant_decl(*id)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            policy.span(),
+                            "checked call references an invalid enum variant ID",
+                        )
+                    })?;
+                let owner = self.declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                    self.invariant(policy.span(), "checked call references an invalid enum ID")
+                })?;
+                if arguments.len() != 1
+                    || !matches!(arguments[0], CheckedCallArgument::Value(_))
+                    || variant.payload.as_ref() != argument_types.first()
+                    || *output != Type::Named(owner.name.clone())
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked enum call has an inconsistent retained signature",
+                    ));
+                }
+            }
+            CheckedCallTarget::Builtin(id) => {
+                let name = self.facts.try_builtin(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked call references an invalid builtin ID",
+                    )
+                })?;
+                self.validate_checked_builtin_call(
+                    name,
+                    arguments,
+                    argument_types,
+                    output,
+                    policy,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_checked_builtin_call(
+        &self,
+        name: &str,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<(), Error> {
+        if let Some(builtin) = ContextualBuiltin::from_name(name) {
+            let contexts = builtin
+                .argument_contexts(output, argument_types)
+                .map_err(|message| self.invariant(policy.span(), message))?;
+            if contexts.len() != arguments.len() {
+                return Err(self.invariant(
+                    policy.span(),
+                    "checked builtin call has an invalid argument count",
+                ));
+            }
+            for (index, ((argument, actual), context)) in arguments
+                .iter()
+                .zip(argument_types)
+                .zip(&contexts)
+                .enumerate()
+            {
+                match context {
+                    BuiltinArgumentContext::Value { expected } => {
+                        if !matches!(argument, CheckedCallArgument::Value(_))
+                            || expected.as_ref().is_some_and(|expected| expected != actual)
+                        {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin value argument has an inconsistent retained signature",
+                            ));
+                        }
+                    }
+                    BuiltinArgumentContext::Binding { ty, body } => {
+                        let CheckedCallArgument::Binding(local) = argument else {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin binding argument has an inconsistent retained signature",
+                            ));
+                        };
+                        if actual != ty {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin binding type is inconsistent",
+                            ));
+                        }
+                        self.validate_checked_expression_binding(*local, arguments, policy, *body)?;
+                    }
+                    BuiltinArgumentContext::ScopedValue { expected, binding } => {
+                        if !matches!(argument, CheckedCallArgument::Value(_))
+                            || expected.as_ref().is_some_and(|expected| expected != actual)
+                        {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin scoped value has an inconsistent retained signature",
+                            ));
+                        }
+                        let Some(CheckedCallArgument::Binding(local)) = arguments.get(*binding)
+                        else {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin scoped value has no binding argument",
+                            ));
+                        };
+                        self.validate_checked_expression_binding(*local, arguments, policy, index)?;
+                    }
+                }
+            }
+        } else if arguments
+            .iter()
+            .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "non-contextual checked builtin contains a binding argument",
+            ));
+        }
+
+        let mut env = HashMap::new();
+        let mut source_arguments = Vec::with_capacity(arguments.len());
+        for (index, (argument, ty)) in arguments.iter().zip(argument_types).enumerate() {
+            source_arguments.push(
+                self.checked_builtin_contract_argument(argument, ty, index, &mut env, policy)?,
+            );
+        }
+        let canonical =
+            canonical_builtin_type(name, &source_arguments, &env, &self.document, policy.span())
+                .map_err(|error| {
+                    self.invariant(
+                        policy.span(),
+                        format!(
+                            "checked builtin call `{name}` violates its canonical contract: {}",
+                            error.message
+                        ),
+                    )
+                })?;
+        if resolve_erased_type(&canonical) != *output {
+            return Err(self.invariant(
+                policy.span(),
+                "checked builtin output type is inconsistent with its canonical contract",
+            ));
+        }
+        Ok(())
+    }
+
+    fn checked_builtin_contract_argument(
+        &self,
+        argument: &CheckedCallArgument,
+        ty: &Type,
+        index: usize,
+        env: &mut HashMap<String, Type>,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Expr, Error> {
+        match argument {
+            CheckedCallArgument::Value(id) => {
+                if let Some(literal) = self.checked_builtin_literal(*id) {
+                    return Ok(literal);
+                }
+                let name = format!("__checked_builtin_argument_{index}");
+                env.insert(name.clone(), ty.clone());
+                Ok(Expr::Path(vec![name]))
+            }
+            CheckedCallArgument::Binding(id) => {
+                let local = self.facts.try_local(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked builtin binding references an invalid local ID",
+                    )
+                })?;
+                Ok(Expr::Path(vec![local.name.clone()]))
+            }
+        }
+    }
+
+    fn checked_builtin_literal(&self, id: CheckedExprId) -> Option<Expr> {
+        let expression = self.facts.try_expression(id)?;
+        Some(match &expression.kind {
+            CheckedExprKind::Bool(value) => Expr::Bool(*value),
+            CheckedExprKind::I64(value) => Expr::I64(*value),
+            CheckedExprKind::F64(value) => Expr::F64(*value),
+            CheckedExprKind::Str(value) => Expr::Str(value.clone()),
+            CheckedExprKind::Bytes(value) => Expr::Bytes(value.clone()),
+            CheckedExprKind::Unary {
+                operator: CheckedUnaryOperator::NumericNegation(_),
+                value,
+            } => Expr::Unary {
+                op: UnaryOp::Neg,
+                value: Box::new(self.checked_builtin_literal(*value)?),
+            },
+            _ => return None,
+        })
+    }
+
+    fn checked_app_setting_expression(
+        &self,
+        id: AppSettingExprId,
+        span: &Span,
+    ) -> Result<ResolvedAppExpression, Error> {
+        let declaration = self
+            .declarations
+            .app_setting_expression(id)
+            .ok_or_else(|| self.invariant(span, "app setting has no stable HIR ID"))?;
+        let owner = crate::check::CheckedExprOwner::AppSetting(id);
+        let expression = self
+            .facts
+            .expression_use_by_owner(owner)
+            .ok_or_else(|| self.invariant(span, "app setting has no checked expression"))?;
+        let expression_fact = self.facts.try_expression_use(expression).ok_or_else(|| {
+            self.invariant(
+                span,
+                "app setting references an invalid checked expression ID",
+            )
+        })?;
+        if expression_fact.owner != owner {
+            return Err(self.invariant(
+                span,
+                "app setting references a mismatched checked expression owner",
+            ));
+        }
+        if self.facts.try_expression(expression_fact.root).is_none() {
+            return Err(self.invariant(
+                span,
+                "app setting references an invalid checked expression root ID",
+            ));
+        }
+        Ok(ResolvedAppExpression {
+            id,
+            expression,
+            origin: declaration.origin,
+        })
+    }
+
+    fn lower_window_settings(
+        &mut self,
+        source: Option<&WindowSettings>,
+        parent: OriginId,
+    ) -> ResolvedWindowSettings {
+        let default = WindowSettings::default();
+        let source = source.unwrap_or(&default);
+        let origin = self.push_origin(&source.span, Some(parent));
+        let field_origins = source
+            .setting_spans
+            .iter()
+            .map(|(name, span)| (name.clone(), self.push_origin(span, Some(origin))))
+            .collect();
+        ResolvedWindowSettings {
+            size: source.size,
+            maximized: source.maximized,
+            fullscreen: source.fullscreen,
+            position: source.position.map(|position| match position {
+                WindowPosition::Default => ResolvedWindowPosition::Default,
+                WindowPosition::Centered => ResolvedWindowPosition::Centered,
+                WindowPosition::Specific(x, y) => ResolvedWindowPosition::Specific(x, y),
+            }),
+            min_size: source.min_size,
+            max_size: source.max_size,
+            visible: source.visible,
+            resizable: source.resizable,
+            closeable: source.closeable,
+            minimizable: source.minimizable,
+            decorations: source.decorations,
+            transparent: source.transparent,
+            blur: source.blur,
+            level: source.level.map(|level| match level {
+                WindowLevel::Normal => ResolvedWindowLevel::Normal,
+                WindowLevel::AlwaysOnBottom => ResolvedWindowLevel::AlwaysOnBottom,
+                WindowLevel::AlwaysOnTop => ResolvedWindowLevel::AlwaysOnTop,
+            }),
+            icon: source.icon.as_ref().map(|icon| ResolvedWindowIcon {
+                path: icon.path.clone(),
+                width: icon.width,
+                height: icon.height,
+                byte_len: icon.byte_len,
+                origin: self.push_origin(&icon.span, Some(origin)),
+            }),
+            exit_on_close_request: source.exit_on_close_request,
+            linux: source.linux.as_ref().map(|settings| {
+                let platform_origin = self.push_origin(&settings.span, Some(origin));
+                ResolvedLinuxWindowSettings {
+                    application_id: settings.application_id.clone(),
+                    override_redirect: settings.override_redirect,
+                    field_origins: self
+                        .lower_setting_origins(&settings.setting_spans, platform_origin),
+                    origin: platform_origin,
+                }
+            }),
+            windows: source.windows.as_ref().map(|settings| {
+                let platform_origin = self.push_origin(&settings.span, Some(origin));
+                ResolvedWindowsWindowSettings {
+                    drag_and_drop: settings.drag_and_drop,
+                    skip_taskbar: settings.skip_taskbar,
+                    undecorated_shadow: settings.undecorated_shadow,
+                    corner: settings.corner.map(|corner| match corner {
+                        WindowCorner::Default => ResolvedWindowCorner::Default,
+                        WindowCorner::DoNotRound => ResolvedWindowCorner::DoNotRound,
+                        WindowCorner::Round => ResolvedWindowCorner::Round,
+                        WindowCorner::RoundSmall => ResolvedWindowCorner::RoundSmall,
+                    }),
+                    field_origins: self
+                        .lower_setting_origins(&settings.setting_spans, platform_origin),
+                    origin: platform_origin,
+                }
+            }),
+            macos: source.macos.as_ref().map(|settings| {
+                let platform_origin = self.push_origin(&settings.span, Some(origin));
+                ResolvedMacosWindowSettings {
+                    title_hidden: settings.title_hidden,
+                    titlebar_transparent: settings.titlebar_transparent,
+                    fullsize_content_view: settings.fullsize_content_view,
+                    field_origins: self
+                        .lower_setting_origins(&settings.setting_spans, platform_origin),
+                    origin: platform_origin,
+                }
+            }),
+            wasm: source.wasm.as_ref().map(|settings| {
+                let platform_origin = self.push_origin(&settings.span, Some(origin));
+                ResolvedWasmWindowSettings {
+                    target: settings.target.clone(),
+                    field_origins: self
+                        .lower_setting_origins(&settings.setting_spans, platform_origin),
+                    origin: platform_origin,
+                }
+            }),
+            field_origins,
+            origin,
+        }
+    }
+
+    fn lower_setting_origins(
+        &mut self,
+        spans: &std::collections::BTreeMap<String, Span>,
+        parent: OriginId,
+    ) -> HashMap<String, OriginId> {
+        spans
+            .iter()
+            .map(|(name, span)| (name.clone(), self.push_origin(span, Some(parent))))
+            .collect()
     }
 
     fn lower_app_states(&self) -> Result<Vec<AppStateContract>, Error> {
@@ -4809,6 +6427,234 @@ fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
     output
 }
 
+fn valid_f32(value: f64) -> bool {
+    value.is_finite() && value.abs() <= f32::MAX as f64
+}
+
+fn valid_positive_f32(value: f64) -> bool {
+    value > 0.0 && valid_f32(value)
+}
+
+fn first_changed_static_setting_span<'a>(
+    current: &'a AppSettings,
+    expected: &'a AppSettings,
+) -> Option<&'a Span> {
+    for (name, changed) in [
+        ("id", current.id != expected.id),
+        ("executor", current.executor != expected.executor),
+        ("renderer", current.renderer != expected.renderer),
+        (
+            "text-size",
+            current.default_text_size != expected.default_text_size,
+        ),
+        (
+            "antialiasing",
+            current.antialiasing != expected.antialiasing,
+        ),
+        ("vsync", current.vsync != expected.vsync),
+    ] {
+        if changed {
+            return current
+                .setting_spans
+                .get(name)
+                .or_else(|| expected.setting_spans.get(name));
+        }
+    }
+    if current.fonts != expected.fonts {
+        return current
+            .fonts
+            .iter()
+            .zip(&expected.fonts)
+            .find_map(|(current, expected)| (current != expected).then_some(&current.span))
+            .or_else(|| {
+                current
+                    .fonts
+                    .get(expected.fonts.len())
+                    .map(|font| &font.span)
+            })
+            .or_else(|| {
+                expected
+                    .fonts
+                    .get(current.fonts.len())
+                    .map(|font| &font.span)
+            });
+    }
+    if current.window != expected.window {
+        return changed_window_span(current.window.as_ref(), expected.window.as_ref());
+    }
+    if current.windows != expected.windows {
+        return current
+            .windows
+            .iter()
+            .zip(&expected.windows)
+            .find_map(|(current, expected)| {
+                if current.name != expected.name {
+                    Some(&current.span)
+                } else if current.settings != expected.settings {
+                    changed_window_span(Some(&current.settings), Some(&expected.settings))
+                        .or(Some(&current.span))
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                current
+                    .windows
+                    .get(expected.windows.len())
+                    .map(|window| &window.span)
+            })
+            .or_else(|| {
+                expected
+                    .windows
+                    .get(current.windows.len())
+                    .map(|window| &window.span)
+            });
+    }
+    None
+}
+
+fn changed_window_span<'a>(
+    current: Option<&'a WindowSettings>,
+    expected: Option<&'a WindowSettings>,
+) -> Option<&'a Span> {
+    let (current, expected) = match (current, expected) {
+        (Some(current), Some(expected)) => (current, expected),
+        (Some(current), None) => return Some(&current.span),
+        (None, Some(expected)) => return Some(&expected.span),
+        (None, None) => return None,
+    };
+    for (name, changed) in [
+        ("size", current.size != expected.size),
+        ("maximized", current.maximized != expected.maximized),
+        ("fullscreen", current.fullscreen != expected.fullscreen),
+        ("position", current.position != expected.position),
+        ("min-size", current.min_size != expected.min_size),
+        ("max-size", current.max_size != expected.max_size),
+        ("visible", current.visible != expected.visible),
+        ("resizable", current.resizable != expected.resizable),
+        ("closeable", current.closeable != expected.closeable),
+        ("minimizable", current.minimizable != expected.minimizable),
+        ("decorations", current.decorations != expected.decorations),
+        ("transparent", current.transparent != expected.transparent),
+        ("blur", current.blur != expected.blur),
+        ("level", current.level != expected.level),
+        (
+            "exit-on-close",
+            current.exit_on_close_request != expected.exit_on_close_request,
+        ),
+    ] {
+        if changed {
+            return current
+                .setting_spans
+                .get(name)
+                .or_else(|| expected.setting_spans.get(name));
+        }
+    }
+    if current.icon != expected.icon {
+        return current
+            .icon
+            .as_ref()
+            .map(|icon| &icon.span)
+            .or_else(|| expected.icon.as_ref().map(|icon| &icon.span));
+    }
+    match (current.linux.as_ref(), expected.linux.as_ref()) {
+        (Some(current), Some(expected)) if current != expected => {
+            for (name, changed) in [
+                ("app-id", current.application_id != expected.application_id),
+                (
+                    "override-redirect",
+                    current.override_redirect != expected.override_redirect,
+                ),
+            ] {
+                if changed {
+                    return current
+                        .setting_spans
+                        .get(name)
+                        .or_else(|| expected.setting_spans.get(name));
+                }
+            }
+            return Some(&current.span);
+        }
+        (Some(current), None) => return Some(&current.span),
+        (None, Some(expected)) => return Some(&expected.span),
+        _ => {}
+    }
+    match (current.windows.as_ref(), expected.windows.as_ref()) {
+        (Some(current), Some(expected)) if current != expected => {
+            for (name, changed) in [
+                (
+                    "drag-and-drop",
+                    current.drag_and_drop != expected.drag_and_drop,
+                ),
+                (
+                    "skip-taskbar",
+                    current.skip_taskbar != expected.skip_taskbar,
+                ),
+                (
+                    "undecorated-shadow",
+                    current.undecorated_shadow != expected.undecorated_shadow,
+                ),
+                ("corner", current.corner != expected.corner),
+            ] {
+                if changed {
+                    return current
+                        .setting_spans
+                        .get(name)
+                        .or_else(|| expected.setting_spans.get(name));
+                }
+            }
+            return Some(&current.span);
+        }
+        (Some(current), None) => return Some(&current.span),
+        (None, Some(expected)) => return Some(&expected.span),
+        _ => {}
+    }
+    match (current.macos.as_ref(), expected.macos.as_ref()) {
+        (Some(current), Some(expected)) if current != expected => {
+            for (name, changed) in [
+                (
+                    "title-hidden",
+                    current.title_hidden != expected.title_hidden,
+                ),
+                (
+                    "titlebar-transparent",
+                    current.titlebar_transparent != expected.titlebar_transparent,
+                ),
+                (
+                    "fullsize-content-view",
+                    current.fullsize_content_view != expected.fullsize_content_view,
+                ),
+            ] {
+                if changed {
+                    return current
+                        .setting_spans
+                        .get(name)
+                        .or_else(|| expected.setting_spans.get(name));
+                }
+            }
+            return Some(&current.span);
+        }
+        (Some(current), None) => return Some(&current.span),
+        (None, Some(expected)) => return Some(&expected.span),
+        _ => {}
+    }
+    match (current.wasm.as_ref(), expected.wasm.as_ref()) {
+        (Some(current), Some(expected)) if current != expected => {
+            if current.target != expected.target {
+                return current
+                    .setting_spans
+                    .get("target")
+                    .or_else(|| expected.setting_spans.get("target"));
+            }
+            return Some(&current.span);
+        }
+        (Some(current), None) => return Some(&current.span),
+        (None, Some(expected)) => return Some(&expected.span),
+        _ => {}
+    }
+    Some(&current.span)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6178,6 +8024,476 @@ view
     }
 
     #[test]
+    fn snapshots_complete_application_settings_hir_and_ignores_post_check_expression_mutations() {
+        let source = r#"daemon Configured
+  title describe(window)
+  theme native_theme(window, dark)
+  palette active_palette
+  bg background
+  fg foreground
+  id "dev.example.configured"
+  executor iced::executor::Default
+  renderer crate::backend::Renderer
+  font "assets/Brand.ttf"
+  text-size 15
+  antialiasing false
+  vsync false
+  scale scale_for(window)
+  window dashboard
+    size 960 720
+    position centered
+    visible false
+    level always-on-top
+    exit-on-close false
+    platform windows
+      skip-taskbar true
+      corner round-small
+  window child
+    min-size 320 240
+    max-size 1920 1080
+extern crate::backend
+  sync describe(id:window-id) -> str
+  sync scale_for(id:window-id) -> f64
+  theme native_theme(id:window-id, dark:bool)
+font brand family="Brand Sans" weight=semibold stretch=semi-expanded style=italic default=true
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette light for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+palette dark for AppTheme
+  bg #ffffff
+  fg #000000
+  primary #666666
+  danger #cc0000
+state
+  dark = false
+  active_palette:palette[AppTheme] = AppTheme.light
+  background = "000000"
+  foreground = "ffffff"
+view
+  text describe(window)
+"#;
+        let mut checked = analyze(source).unwrap();
+        checked.document.settings.title.as_mut().unwrap().value = Expr::Bool(false);
+        let Expr::Call { args, .. } = &mut checked.document.settings.theme.as_mut().unwrap().value
+        else {
+            panic!("fixture theme must be a factory call");
+        };
+        args[0] = Expr::Bool(false);
+        args[1] = Expr::Str("mutated".into());
+        checked.document.settings.palette.as_mut().unwrap().value = Expr::Bool(false);
+        checked.document.settings.background.as_mut().unwrap().value = Expr::Bool(false);
+        checked.document.settings.text_color.as_mut().unwrap().value = Expr::Bool(false);
+        checked
+            .document
+            .settings
+            .scale_factor
+            .as_mut()
+            .unwrap()
+            .value = Expr::Str("mutated".into());
+
+        let mut program = lower(checked).unwrap();
+        let settings = program.settings();
+        assert_eq!(settings.settings_id, AppSettingsId);
+        assert_eq!(settings.kind, ProgramKind::Daemon);
+        assert!(matches!(
+            &settings.renderer,
+            ResolvedRendererSelection::Custom { path, .. }
+                if path == "crate::backend::Renderer"
+        ));
+        assert!(matches!(
+            &settings.executor,
+            ResolvedExecutorSelection::Custom { path, .. }
+                if path == "iced::executor::Default"
+        ));
+        assert_eq!(settings.fonts.len(), 1);
+        let default_font = settings.default_font.as_ref().unwrap();
+        assert!(matches!(
+            &default_font.family,
+            FontFamily::Named(name) if name == "Brand Sans"
+        ));
+        assert_eq!(default_font.weight, FontWeight::Semibold);
+        assert_eq!(default_font.stretch, FontStretch::SemiExpanded);
+        assert_eq!(default_font.style, FontStyle::Italic);
+        assert_eq!(settings.named_windows.len(), 2);
+        assert_eq!(settings.named_windows[0].id, NamedWindowId(0));
+        assert_eq!(settings.named_windows[0].name, "dashboard");
+        assert_eq!(
+            settings.named_windows[0].settings.size,
+            Some((960.0, 720.0))
+        );
+        assert_eq!(
+            settings.named_windows[0].settings.position,
+            Some(ResolvedWindowPosition::Centered)
+        );
+        assert_eq!(
+            settings.named_windows[0].settings.level,
+            Some(ResolvedWindowLevel::AlwaysOnTop)
+        );
+        assert_eq!(settings.named_windows[0].settings.visible, Some(false));
+        assert_eq!(
+            settings.named_windows[0]
+                .settings
+                .windows
+                .as_ref()
+                .and_then(|platform| platform.corner),
+            Some(ResolvedWindowCorner::RoundSmall)
+        );
+        assert!(matches!(
+            program.theme().active_palette,
+            ResolvedPaletteSelection::Dynamic(_)
+        ));
+        let ResolvedAppThemeSelection::Factory(factory) = &program.theme().app_theme else {
+            panic!("app theme must retain its checked factory classification");
+        };
+        assert_eq!(
+            program.extern_function(factory.function).name,
+            "native_theme"
+        );
+        assert_eq!(factory.arguments.len(), 2);
+        let metrics = program.checked_facts().metrics();
+        assert_eq!(metrics.app_setting_analysis_passes, 7);
+        assert_eq!(metrics.type_scope_env_full_clones, 0);
+        assert_eq!(metrics.scope_env_full_clones, 0);
+        assert_eq!(
+            program
+                .checked_facts()
+                .app_setting_daemon_window_local_count(),
+            1,
+            "all daemon callbacks share one typed current-window local"
+        );
+
+        program.document.settings = AppSettings::default();
+        program.document.daemon = false;
+        program.document.states.clear();
+        program.document.derived.clear();
+        program.document.fonts.clear();
+        let generated = crate::codegen::generate(&program, "configured.ice").unwrap();
+        for expected in [
+            "crate::backend::describe(window)",
+            "crate::backend::native_theme(window, self.dark)",
+            "crate::backend::scale_for(window)",
+            "match self.active_palette",
+            "self.background",
+            "self.foreground",
+            "fn __window_0()",
+            "fn __window_1()",
+            "type __IceRenderer = crate::backend::Renderer",
+            "::iced::daemon(Self::__boot, Self::__update, Self::__view)",
+            ".executor::<iced::executor::Default>()",
+            ".font(include_bytes!(\"assets/Brand.ttf\").as_slice())",
+            "id: ::std::option::Option::Some(\"dev.example.configured\".to_owned())",
+            "default_text_size: ::iced::Pixels(15 as f32)",
+            "antialiasing: false",
+            "vsync: false",
+            "size: ::iced::Size::new(960 as f32, 720 as f32)",
+            "visible: false",
+            "level: ::iced::window::Level::AlwaysOnTop",
+            "family: ::iced::font::Family::Name(\"Brand Sans\")",
+            "weight: ::iced::font::Weight::Semibold",
+            "stretch: ::iced::font::Stretch::SemiExpanded",
+            "style: ::iced::font::Style::Italic",
+        ] {
+            assert!(
+                generated.contains(expected),
+                "missing checked setting output: {expected}"
+            );
+        }
+        assert!(!generated.contains("mutated"));
+    }
+
+    #[test]
+    fn rejects_application_setting_fact_shape_mutations_with_e196() {
+        let source = format!(
+            "app Settings\n  title title\n  theme native_theme(dark)\nextern crate::backend\n  theme native_theme(dark:bool)\n{THEME}state\n  title = \"Title\"\n  dark = false\nview\n  text title\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.title = None;
+        let Expr::Call { name, .. } = &mut checked.document.settings.theme.as_mut().unwrap().value
+        else {
+            panic!("fixture theme must be a factory call");
+        };
+        *name = "missing".into();
+        assert!(lower(checked).is_ok());
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .remove_app_setting_expression(AppSettingExprId::Title);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked expression"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.remove_app_settings();
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("authoritative checked snapshot"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_app_theme_factory_id();
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid extern ID"));
+
+        let window_source = format!(
+            "app Settings\n  window detail\n    min-size 320 240\n    max-size 1920 1080\n{THEME}view\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&window_source).unwrap();
+        checked.document.settings.windows[0].settings.min_size = Some((2000.0, 1200.0));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("changed after semantic analysis"));
+        assert_eq!(error.line, 3);
+    }
+
+    #[test]
+    fn daemon_theme_factory_without_title_uses_one_shared_typed_window_scope() {
+        let source = format!(
+            "daemon OnlyTheme\n  theme native_theme(window)\nextern crate::backend\n  theme native_theme(id:window-id)\n{THEME}view\n  text \"ready\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        assert!(program.settings().callback_window.is_some());
+        assert_eq!(
+            program
+                .checked_facts()
+                .app_setting_daemon_window_local_count(),
+            1
+        );
+        let generated = crate::codegen::generate(&program, "only_theme.ice").unwrap();
+        assert!(generated.contains("crate::backend::native_theme(window)"));
+
+        let mut corrupted = analyze(&source).unwrap();
+        corrupted.facts.corrupt_app_setting_daemon_window_owner();
+        let error = lower(corrupted).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("cannot reference a view local"));
+    }
+
+    #[test]
+    fn application_settings_accept_derived_values_across_every_dynamic_callback() {
+        let source = format!(
+            "app DerivedSettings\n  title computed_title\n  theme computed_theme\n  palette computed_palette\n  bg computed_background\n  fg computed_foreground\n  scale computed_scale\n{THEME}state\n  base_title = \"Title\"\n  base_theme = \"app\"\n  base_palette:palette[AppTheme] = AppTheme.app\n  base_background = \"000000\"\n  base_foreground = \"ffffff\"\n  base_scale = 1.25\nderived\n  computed_title = trim(base_title)\n  computed_theme = base_theme\n  computed_palette = base_palette\n  computed_background = base_background\n  computed_foreground = base_foreground\n  computed_scale = base_scale\nview\n  text computed_title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let metrics = program.checked_facts().metrics();
+        assert_eq!(metrics.app_setting_analysis_passes, 6);
+        assert_eq!(metrics.type_scope_env_full_clones, 0);
+        assert_eq!(metrics.scope_env_full_clones, 0);
+        let generated = crate::codegen::generate(&program, "derived_settings.ice").unwrap();
+        for name in [
+            "computed_title",
+            "computed_theme",
+            "computed_palette",
+            "computed_background",
+            "computed_foreground",
+            "computed_scale",
+        ] {
+            assert!(
+                generated.contains(&format!("Self::__ice_derived_{name}(self)")),
+                "missing derived setting binding `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_different_valid_builtin_id_in_an_app_setting_expression() {
+        let source = format!(
+            "app BuiltinContract\n  title trim(title)\n{THEME}state\n  title = \"Title\"\n  document:editor = editor(\"Body\")\nview\n  text editor_text(document)\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_builtin_target(AppSettingExprId::Title, "editor");
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("canonical contract"));
+    }
+
+    #[test]
+    fn qualified_builtin_contract_does_not_resolve_a_same_name_sync_extern() {
+        let source = format!(
+            "app QualifiedBuiltin\n  title builtin::trim(title)\nextern crate::backend\n  sync trim(value:str) -> bool\n{THEME}state\n  title = \" Title \"\nview\n  text title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "qualified_builtin.ice").unwrap();
+        assert!(generated.contains(".trim().to_owned()"));
+    }
+
+    #[test]
+    fn rejects_a_contextual_builtin_binding_with_the_wrong_body_topology() {
+        let source = format!(
+            "app BindingContract\n  scale animation.project(progress, sample, sample)\n{THEME}state\n  progress:animation[f64] = 0.0\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_binding_body_argument(AppSettingExprId::ScaleFactor, 0);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("body-argument topology"));
+    }
+
+    #[test]
+    fn rejects_a_sibling_contextual_builtin_binding_reference_during_lowering() {
+        let source = format!(
+            "app BindingScope\n  scale animation.project(first, left, left) + animation.project(second, right, right)\n{THEME}state\n  first:animation[f64] = 0.0\n  second:animation[f64] = 0.0\nview\n  text \"ready\"\n"
+        );
+        assert!(lower(analyze(&source).unwrap()).is_ok());
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_sibling_scoped_binding_reference(AppSettingExprId::ScaleFactor);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(
+            error
+                .message
+                .contains("outside its lexical scoped-value body")
+        );
+    }
+
+    #[test]
+    fn rejects_every_static_application_setting_topology_mutation_with_e196() {
+        let source = format!(
+            "daemon StaticSettings\n  id \"dev.example.original\"\n  executor iced::executor::Default\n  renderer crate::Renderer\n  font \"assets/one.ttf\"\n  font \"assets/two.ttf\"\n  text-size 14\n  antialiasing true\n  vsync true\n  window primary\n    icon-rgba \"assets/icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.original\"\n  window child\n    size 640 480\nfont brand family=serif weight=bold default=true\n{THEME}view\n  text \"ready\"\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.daemon = false;
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 1));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.renderer = Some("crate::Other".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 4));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.executor = Some("crate::Other".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 3));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.fonts[0].path = "/absolute/font.ttf".into();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 5));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.fonts[1].path = "assets/one.ttf".into();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 6));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.windows[1].name = "primary".into();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 14));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.windows[0]
+            .settings
+            .icon
+            .as_mut()
+            .unwrap()
+            .path = "/absolute/icon.rgba".into();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 11));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.windows[0]
+            .settings
+            .linux
+            .as_mut()
+            .unwrap()
+            .application_id = Some("changed".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 13));
+
+        fn reject_default_font_mutation(
+            source: &str,
+            mutate: impl FnOnce(&mut FontDecl),
+            expected_line: usize,
+        ) {
+            let mut checked = analyze(source).unwrap();
+            mutate(&mut checked.document.fonts[0]);
+            let error = lower(checked).unwrap_err();
+            assert_eq!((error.code, error.line), ("E196", expected_line));
+            assert!(error.message.contains("changed after semantic analysis"));
+        }
+
+        reject_default_font_mutation(&source, |font| font.family = FontFamily::Monospace, 16);
+        reject_default_font_mutation(&source, |font| font.weight = FontWeight::Thin, 16);
+        reject_default_font_mutation(
+            &source,
+            |font| font.stretch = FontStretch::UltraExpanded,
+            16,
+        );
+        reject_default_font_mutation(&source, |font| font.style = FontStyle::Oblique, 16);
+        reject_default_font_mutation(&source, |font| font.span = Span::line(999), 999);
+    }
+
+    #[test]
+    fn rejects_invalid_app_setting_expression_descendants_and_palette_ids_with_e196() {
+        let binary_source = format!(
+            "app InvalidSettingExpr\n  scale 1.0 + factor\n{THEME}state\n  factor = 1.0\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&binary_source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_binary_child(AppSettingExprId::ScaleFactor);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(
+            error
+                .message
+                .contains("expression descendant ID is outside its arena")
+        );
+
+        let palette_source =
+            format!("app InvalidPalette\n  palette AppTheme.app\n{THEME}view\n  text \"ready\"\n");
+        let mut checked = analyze(&palette_source).unwrap();
+        checked.facts.corrupt_app_setting_palette_id();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(
+            error
+                .message
+                .contains("expression declaration ID is outside its arena")
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit repeated named-window HIR performance contract"]
+    fn performance_contract_five_thousand_named_windows_lower_linearly() {
+        const WINDOWS: usize = 5_000;
+        let mut source = String::from("daemon WindowPerf\n");
+        for index in 0..WINDOWS {
+            writeln!(source, "  window window_{index}\n    size 640 480").unwrap();
+        }
+        source.push_str(THEME);
+        source.push_str("view\n  text \"ready\"\n");
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.settings().named_windows.len(), WINDOWS);
+        for (index, window) in program.settings().named_windows.iter().enumerate() {
+            assert_eq!(window.id, NamedWindowId(index as u32));
+        }
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "5k named windows lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn rejects_a_checked_component_call_that_cannot_be_resolved() {
         let source = format!("app Demo\n{THEME}component Card()\n  text \"Card\"\nview\n  Card\n");
         let mut checked = analyze(&source).unwrap();
@@ -6514,7 +8830,7 @@ view
         assert_eq!(theme.palettes[0].colors[4].rgba, [244, 244, 244, 128]);
         assert!(matches!(
             theme.active_palette,
-            ResolvedPaletteSelection::Dynamic(Expr::Path(_))
+            ResolvedPaletteSelection::Dynamic(_)
         ));
         let ResolvedAppThemeSelection::Factory(factory) = &theme.app_theme else {
             panic!("app theme factory must be resolved");
@@ -6737,6 +9053,97 @@ view
                 opacity: None,
             })
         );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_setting_dependencies_keep_origins_and_generated_source_markers() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-setting-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("settings.ice");
+        fs::write(
+            &root,
+            format!(
+                "daemon ImportedSettings\n  title tools::describe(window)\n  theme tools::native_theme(window)\n  scale tools::scale(window)\n  id \"dev.example.imported\"\n  executor iced::executor::Default\n  renderer crate::backend::Renderer\n  font \"brand.ttf\"\n  window primary\n    icon-rgba \"icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.imported\"\nfont brand family=\"Brand Sans\" weight=semibold stretch=semi-expanded style=italic default=true\nuse \"settings.ice\" as tools\n{THEME}view\n  text tools::describe(window)\n"
+            ),
+        )
+        .unwrap();
+        fs::write(directory.join("brand.ttf"), b"font").unwrap();
+        fs::write(directory.join("icon.rgba"), [0_u8, 0, 0, 0]).unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  sync describe(id:window-id) -> str\n  sync scale(id:window-id) -> f64\n  theme native_theme(id:window-id)\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedAppThemeSelection::Factory(factory) = &program.theme().app_theme else {
+            panic!("imported app theme must be a resolved factory");
+        };
+        let function = program.extern_function(factory.function);
+        assert_eq!(function.name, "tools::native_theme");
+        assert_eq!(
+            program.origin(function.declaration.origin).path.as_deref(),
+            Some(imported.as_path())
+        );
+        let title = program.settings().title.as_ref().unwrap();
+        assert_eq!(
+            program.origin(title.origin).path.as_deref(),
+            Some(root.as_path())
+        );
+        assert_eq!(program.origin(title.origin).line, 2);
+        let title_root = program.checked_facts().expression(
+            program
+                .checked_facts()
+                .expression_use(title.expression)
+                .root,
+        );
+        let crate::check::CheckedExprKind::Call {
+            target: crate::check::CheckedCallTarget::Extern(function),
+            ..
+        } = title_root.kind
+        else {
+            panic!("title must retain its imported extern target ID");
+        };
+        assert_eq!(program.extern_function(function).name, "tools::describe");
+
+        let generated = crate::codegen::generate(&program, &root.display().to_string()).unwrap();
+        let encoded_root = root
+            .display()
+            .to_string()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_root}\nfn __title")));
+        for (line, fragment) in [
+            (5, "id: ::std::option::Option::Some"),
+            (6, ".executor::<iced::executor::Default>()"),
+            (7, "type __IceRenderer = crate::backend::Renderer"),
+            (8, ".font(include_bytes!"),
+            (10, "icon: ::std::option::Option::Some"),
+            (12, "__platform.application_id"),
+            (13, "#[must_use]\npub fn default_font"),
+        ] {
+            assert!(
+                generated.contains(&format!(
+                    "// __ICE_SOURCE {line} 1 {encoded_root}\n{fragment}"
+                )),
+                "static setting `{fragment}` must retain its exact source declaration"
+            );
+        }
+        assert!(generated.contains("crate::backend::describe(window)"));
+        assert!(generated.contains("crate::backend::native_theme(window)"));
+        assert!(generated.contains("crate::backend::scale(window)"));
 
         fs::remove_dir_all(directory).unwrap();
     }

@@ -25,6 +25,18 @@ arena_id!(StatementId);
 arena_id!(TaskId);
 arena_id!(RouteId);
 arena_id!(RunSiteId);
+arena_id!(NamedWindowId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AppSettingExprId {
+    Title,
+    Theme,
+    ThemeFactoryArgument(u32),
+    Palette,
+    Background,
+    TextColor,
+    ScaleFactor,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -201,6 +213,8 @@ struct SourceSite {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeclarationIndex {
+    app_settings: Declaration<AppSettingsId>,
+    app_setting_expressions: HashMap<AppSettingExprId, Declaration<AppSettingExprId>>,
     app_states: Vec<Declaration<AppStateId>>,
     derived: Vec<Declaration<DerivedId>>,
     components: Vec<ComponentDeclarations>,
@@ -275,6 +289,9 @@ pub(crate) struct RunSiteDeclaration {
     pub(crate) statement: StatementId,
     pub(crate) mode: FutureMode,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct AppSettingsId;
 
 impl DeclarationIndex {
     pub(crate) fn build(document: &Document, origins: &mut OriginArena) -> Self {
@@ -592,7 +609,56 @@ impl DeclarationIndex {
             })
             .collect();
 
+        let app_settings = Declaration {
+            id: AppSettingsId,
+            origin: origins.push(&document.settings.span, None),
+        };
+        let mut app_setting_expressions = HashMap::new();
+        let mut push_app_expression = |id: AppSettingExprId, expression: &AppExpression| {
+            app_setting_expressions.insert(
+                id,
+                Declaration {
+                    id,
+                    origin: origins.push(&expression.span, Some(app_settings.origin)),
+                },
+            );
+        };
+        if let Some(expression) = &document.settings.title {
+            push_app_expression(AppSettingExprId::Title, expression);
+        }
+        if let Some(expression) = &document.settings.theme {
+            push_app_expression(AppSettingExprId::Theme, expression);
+            if let Expr::Call { name, args } = &expression.value
+                && document
+                    .functions
+                    .iter()
+                    .any(|function| function.name == *name && function.kind == ExternKind::Theme)
+            {
+                for (index, _) in args.iter().enumerate() {
+                    push_app_expression(
+                        AppSettingExprId::ThemeFactoryArgument(index as u32),
+                        expression,
+                    );
+                }
+            }
+        }
+        for (id, expression) in [
+            (AppSettingExprId::Palette, &document.settings.palette),
+            (AppSettingExprId::Background, &document.settings.background),
+            (AppSettingExprId::TextColor, &document.settings.text_color),
+            (
+                AppSettingExprId::ScaleFactor,
+                &document.settings.scale_factor,
+            ),
+        ] {
+            if let Some(expression) = expression {
+                push_app_expression(id, expression);
+            }
+        }
+
         Self {
+            app_settings,
+            app_setting_expressions,
             app_states,
             derived,
             components,
@@ -618,6 +684,17 @@ impl DeclarationIndex {
             routes,
             run_sites,
         }
+    }
+
+    pub(crate) fn app_settings(&self) -> Declaration<AppSettingsId> {
+        self.app_settings
+    }
+
+    pub(crate) fn app_setting_expression(
+        &self,
+        id: AppSettingExprId,
+    ) -> Option<Declaration<AppSettingExprId>> {
+        self.app_setting_expressions.get(&id).copied()
     }
 
     pub(crate) fn app_state(&self, index: usize) -> Declaration<AppStateId> {
@@ -648,12 +725,36 @@ impl DeclarationIndex {
         self.components[component.0 as usize].params[index]
     }
 
+    pub(crate) fn try_component_param(
+        &self,
+        id: ComponentParamId,
+    ) -> Option<Declaration<ComponentParamId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .params
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
+    }
+
     pub(crate) fn component_state(
         &self,
         component: ComponentId,
         index: usize,
     ) -> Declaration<ComponentStateId> {
         self.components[component.0 as usize].states[index]
+    }
+
+    pub(crate) fn try_component_state(
+        &self,
+        id: ComponentStateId,
+    ) -> Option<Declaration<ComponentStateId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .states
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn component_slot(
@@ -673,6 +774,7 @@ impl DeclarationIndex {
             .slots
             .get(id.index as usize)
             .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
@@ -697,6 +799,12 @@ impl DeclarationIndex {
         self.structs.get(id.0 as usize)
     }
 
+    pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {
+        self.structs
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
+    }
+
     pub(crate) fn struct_field(
         &self,
         owner: StructId,
@@ -717,6 +825,7 @@ impl DeclarationIndex {
             .get(id.owner.0 as usize)?
             .fields
             .get(id.index as usize)
+            .filter(|field| field.declaration.id == id)
     }
 
     pub(crate) fn enum_decl_by_name(&self, name: &str) -> Option<&EnumDeclaration> {
@@ -729,7 +838,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_enum_decl(&self, id: EnumId) -> Option<&EnumDeclaration> {
-        self.enums.get(id.0 as usize)
+        self.enums
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
     }
 
     pub(crate) fn enum_variant(
@@ -756,6 +867,7 @@ impl DeclarationIndex {
             .get(id.owner.0 as usize)?
             .variants
             .get(id.index as usize)
+            .filter(|variant| variant.declaration.id == id)
     }
 
     pub(crate) fn palette(&self, index: usize) -> Declaration<PaletteId> {
@@ -767,6 +879,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn palette_name(&self, id: PaletteId) -> Option<&str> {
+        self.palettes
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.id == id)?;
         self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
@@ -784,9 +899,10 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
-        self.externs.get(id.0 as usize)
+        self.externs
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
     }
-
     pub(crate) fn handlers(&self) -> &[HandlerDeclaration] {
         &self.handlers
     }

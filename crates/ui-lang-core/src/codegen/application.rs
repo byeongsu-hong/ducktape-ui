@@ -20,11 +20,11 @@ pub(in crate::codegen) fn generate_theme(
     out: &mut String,
     program: &LoweredProgram,
 ) -> Result<(), Error> {
-    let document = program.document();
+    let settings = program.settings();
     let theme = program.theme();
-    let state_env = state_env(document, "self");
+    let state_env = checked_state_env(program, "self");
     let mut callback_env = state_env.clone();
-    if document.daemon {
+    if settings.kind == ProgramKind::Daemon {
         callback_env.insert(
             "window".into(),
             Binding {
@@ -32,11 +32,11 @@ pub(in crate::codegen) fn generate_theme(
                 ty: Type::WindowId,
                 local: true,
                 state: None,
-                owner: None,
+                owner: settings.callback_window.map(BindingOwner::Local),
             },
         );
     }
-    let callback_arg = if document.daemon {
+    let callback_arg = if settings.kind == ProgramKind::Daemon {
         ", window: ::iced::window::Id"
     } else {
         ""
@@ -61,8 +61,14 @@ pub(in crate::codegen) fn generate_theme(
             rust_string(&palette.name)
         )
     };
+    writeln!(
+        out,
+        "{}",
+        source_marker_for_origin(program, theme.active_palette_origin)
+    )
+    .unwrap();
     writeln!(out, "fn __palette(&self{callback_arg}) -> __IcePalette {{").unwrap();
-    if document.daemon {
+    if settings.kind == ProgramKind::Daemon {
         writeln!(out, "let _ = &window;").unwrap();
     }
     match &theme.active_palette {
@@ -70,7 +76,12 @@ pub(in crate::codegen) fn generate_theme(
             writeln!(out, "{}", palette_code(&theme.palettes[id.0 as usize])).unwrap();
         }
         ResolvedPaletteSelection::Dynamic(expression) => {
-            let value = expr_code(expression, &callback_env, document, ValueMode::Owned)?;
+            let value = checked_expr_use_code(
+                program,
+                expression.expression,
+                &callback_env,
+                ValueMode::Owned,
+            )?;
             let contract = generated_named_rust(&theme.contract.name);
             writeln!(out, "match {value} {{").unwrap();
             for palette in &theme.palettes {
@@ -85,11 +96,15 @@ pub(in crate::codegen) fn generate_theme(
             writeln!(out, "}}").unwrap();
         }
     }
-    writeln!(out, "}}").unwrap();
+    writeln!(out, "}}\n{SOURCE_MARKER_END}").unwrap();
 
     let palette_field =
         |token: crate::lower::ThemeTokenId| format!("__ice_palette.colors[{}]", token.index);
-    let callback_value = if document.daemon { "window" } else { "" };
+    let callback_value = if settings.kind == ProgramKind::Daemon {
+        "window"
+    } else {
+        ""
+    };
     writeln!(
         out,
         "fn __app_theme(__ice_palette: __IcePalette) -> ::iced::Theme {{"
@@ -98,7 +113,7 @@ pub(in crate::codegen) fn generate_theme(
     writeln!(
         out,
         "::iced::Theme::custom(::std::format!(\"{}/{{}}\", __ice_palette.name), ::iced::theme::Palette {{",
-        document.app,
+        settings.app_name,
     )
     .unwrap();
     writeln!(
@@ -133,6 +148,12 @@ pub(in crate::codegen) fn generate_theme(
     )
     .unwrap();
     writeln!(out, "}})\n}}").unwrap();
+    writeln!(
+        out,
+        "{}",
+        source_marker_for_origin(program, theme.app_theme_origin)
+    )
+    .unwrap();
     writeln!(out, "fn __theme(&self{callback_arg}) -> ::iced::Theme {{").unwrap();
     match &theme.app_theme {
         ResolvedAppThemeSelection::App => {
@@ -152,12 +173,17 @@ pub(in crate::codegen) fn generate_theme(
             writeln!(
                 out,
                 "{}",
-                resolved_theme_factory_code(factory, &callback_env, program)?
+                resolved_app_theme_factory_code(factory, &callback_env, program)?
             )
             .unwrap();
         }
         ResolvedAppThemeSelection::Dynamic(expression) => {
-            let value = expr_code(expression, &callback_env, document, ValueMode::Owned)?;
+            let value = checked_expr_use_code(
+                program,
+                expression.expression,
+                &callback_env,
+                ValueMode::Owned,
+            )?;
             writeln!(out, "match ({value}).as_str() {{").unwrap();
             writeln!(
                 out,
@@ -175,33 +201,43 @@ pub(in crate::codegen) fn generate_theme(
             .unwrap();
         }
     }
-    writeln!(out, "}}").unwrap();
-    if let Some(setting) = &document.settings.title {
-        let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
+    writeln!(out, "}}\n{SOURCE_MARKER_END}").unwrap();
+    if let Some(setting) = &settings.title {
+        let value =
+            checked_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
+        writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
-            "fn __title(&self{callback_arg}) -> ::std::string::String {{ {value} }}"
+            "fn __title(&self{callback_arg}) -> ::std::string::String {{ {value} }}\n{SOURCE_MARKER_END}"
         )
         .unwrap();
     }
-    if document.settings.background.is_some() || document.settings.text_color.is_some() {
+    if settings.background.is_some() || settings.text_color.is_some() {
         writeln!(out, "fn __style(&self, __theme: &::iced::Theme) -> ::iced::theme::Style {{ let mut __style = ::iced::theme::Base::base(__theme);").unwrap();
         for (setting, field) in [
-            (&document.settings.background, "background_color"),
-            (&document.settings.text_color, "text_color"),
+            (&settings.background, "background_color"),
+            (&settings.text_color, "text_color"),
         ] {
             if let Some(setting) = setting {
-                let value = expr_code(&setting.value, &state_env, document, ValueMode::Owned)?;
-                writeln!(out, "__style.{field} = ({value}).parse::<::iced::Color>().unwrap_or(__style.{field});").unwrap();
+                let value = checked_expr_use_code(
+                    program,
+                    setting.expression,
+                    &state_env,
+                    ValueMode::Owned,
+                )?;
+                writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+                writeln!(out, "__style.{field} = ({value}).parse::<::iced::Color>().unwrap_or(__style.{field});\n{SOURCE_MARKER_END}").unwrap();
             }
         }
         writeln!(out, "__style }}").unwrap();
     }
-    if let Some(setting) = &document.settings.scale_factor {
-        let value = expr_code(&setting.value, &callback_env, document, ValueMode::Owned)?;
+    if let Some(setting) = &settings.scale_factor {
+        let value =
+            checked_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
+        writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
-            "fn __scale_factor(&self{callback_arg}) -> f32 {{ (({value}) as f32).max(f32::EPSILON).min(f32::MAX) }}"
+            "fn __scale_factor(&self{callback_arg}) -> f32 {{ (({value}) as f32).max(f32::EPSILON).min(f32::MAX) }}\n{SOURCE_MARKER_END}"
         )
         .unwrap();
     }
@@ -213,7 +249,6 @@ pub(in crate::codegen) fn generate_boot(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
     let accessibility_root = rust_string(program.app_name());
     writeln!(out, "fn __state() -> Self {{").unwrap();
     for (node, test_only) in document_pane_grids(program) {
@@ -263,13 +298,13 @@ pub(in crate::codegen) fn generate_boot(
         }
     }
     writeln!(out, "Self {{").unwrap();
-    let accessibility_bridge = if document.daemon {
+    let accessibility_bridge = if program.settings().kind == ProgramKind::Daemon {
         "::ui_lang_runtime::Bridge::without_native_adapter()"
     } else {
         "::ui_lang_runtime::Bridge::new()"
     };
     writeln!(out, "__ice_accessibility: {accessibility_bridge},").unwrap();
-    if !document.daemon {
+    if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_initial: ::std::option::Option::None,\n#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_pending: ::std::vec::Vec::new(),"
@@ -330,7 +365,7 @@ pub(in crate::codegen) fn generate_boot(
         .find(|handler| handler.name == "mount")
         .map_or(&[][..], |handler| handler.statements.as_slice());
     generate_initial_task_method(out, program, message, "__boot_task", mount)?;
-    if document.daemon {
+    if program.settings().kind == ProgramKind::Daemon {
         writeln!(
             out,
             "fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\nlet task = state.__boot_task();\n(state, task)\n}}"
@@ -351,7 +386,8 @@ pub(in crate::codegen) fn generate_presets(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let accessibility_root = rust_string(program.app_name());
+    let settings = program.settings();
+    let accessibility_root = rust_string(&program.settings().app_name);
     for (index, preset) in program.preset_handlers().enumerate() {
         let task_name = format!("__preset_task_{index}");
         generate_initial_task_method(out, program, message, &task_name, &preset.statements)?;
@@ -360,7 +396,7 @@ pub(in crate::codegen) fn generate_presets(
             "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();"
         )
         .unwrap();
-        if program.is_daemon() {
+        if settings.kind == ProgramKind::Daemon {
             writeln!(out, "let task = state.{task_name}();\n(state, task)\n}}").unwrap();
         } else {
             writeln!(
@@ -371,7 +407,7 @@ pub(in crate::codegen) fn generate_presets(
             .unwrap();
         }
     }
-    if !program.is_daemon() {
+    if settings.kind == ProgramKind::Application {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_initial_task(&mut self) -> ::iced::Task<{message}> {{\nmatch self.__ice_accessibility_initial.take() {{\n::std::option::Option::Some(0) => self.__boot_task(),"
@@ -443,21 +479,9 @@ pub(in crate::codegen) fn generate_update(
     } else {
         ""
     };
-    let windows_show = document
-        .settings
-        .window
-        .as_ref()
-        .is_none_or(|settings| settings.visible != Some(false));
-    let windows_fullscreen = document
-        .settings
-        .window
-        .as_ref()
-        .is_some_and(|settings| settings.fullscreen == Some(true));
-    let windows_maximized = document
-        .settings
-        .window
-        .as_ref()
-        .is_some_and(|settings| settings.maximized == Some(true));
+    let windows_show = program.settings().primary_window.visible != Some(false);
+    let windows_fullscreen = program.settings().primary_window.fullscreen == Some(true);
+    let windows_maximized = program.settings().primary_window.maximized == Some(true);
     let windows_restore: String = if !windows_show {
         "::iced::Task::none()".into()
     } else if windows_fullscreen {
@@ -472,7 +496,7 @@ pub(in crate::codegen) fn generate_update(
         "#[allow(clippy::assign_op_pattern)]\nfn __update(&mut self, message: {message}) -> ::iced::Task<{message}> {{"
     )
     .unwrap();
-    if !document.daemon {
+    if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\nif !self.__ice_accessibility.is_attached() && !matches!(&message, {message}::__AccessibilityNativeWindow(_)) {{\nself.__ice_accessibility_pending.push(message);\nreturn ::iced::Task::none();\n}}"
@@ -484,7 +508,7 @@ pub(in crate::codegen) fn generate_update(
         "{task_binding}match message {{\n{message}::__AccessibilitySnapshot(__snapshot) => {{ self.__ice_accessibility.update(*__snapshot); return ::iced::Task::none(); }},\n{message}::__AccessibilityAction(__request) => {{ let __refresh = matches!(__request.action, ::ui_lang_runtime::Action::Focus); let __task = self.__ice_accessibility.dispatch(__request); return if __refresh {{ __task.chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))) }} else {{ __task }}; }},\n{message}::__AccessibilityWindow(__id, __event) => {{ self.__ice_accessibility.window_event(__id, __event); return ::iced::Task::none(); }},"
     )
     .unwrap();
-    if document.daemon {
+    if program.settings().kind == ProgramKind::Daemon {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\n{message}::__AccessibilityNativeWindow(_) => {{ return ::iced::Task::none(); }},"
@@ -750,7 +774,7 @@ pub(in crate::codegen) fn generate_update(
     if needs_extern_noop(document) {
         writeln!(out, "{message}::__ExternNoop => ::iced::Task::none(),").unwrap();
     }
-    if has_animations(document) {
+    if has_animations(program) {
         writeln!(
             out,
             "{message}::__AnimationFrame => return ::iced::Task::none(),"
@@ -761,7 +785,7 @@ pub(in crate::codegen) fn generate_update(
         writeln!(out, "}}\n}}").unwrap();
         return Ok(());
     }
-    if document.daemon {
+    if program.settings().kind == ProgramKind::Daemon {
         writeln!(out, "}};\n__task\n}}").unwrap();
     } else {
         writeln!(

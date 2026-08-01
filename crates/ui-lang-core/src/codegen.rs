@@ -34,6 +34,10 @@ fn source_marker_origin(program: &LoweredProgram, origin: crate::hir::OriginId) 
     }
 }
 
+fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
+    source_marker_origin(program, origin)
+}
+
 fn source_mapped_expression(
     code: String,
     span: &Span,
@@ -351,16 +355,19 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         rust_string(source_path)
     )
     .unwrap();
-    writeln!(
-        out,
-        "type __IceRenderer = {}; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;",
-        document
-            .settings
-            .renderer
-            .as_deref()
-            .unwrap_or("::iced::Renderer")
-    )
-    .unwrap();
+    match &program.settings().renderer {
+        ResolvedRendererSelection::Default => writeln!(
+            out,
+            "type __IceRenderer = ::iced::Renderer; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;"
+        )
+        .unwrap(),
+        ResolvedRendererSelection::Custom { path, origin } => writeln!(
+            out,
+            "{}\ntype __IceRenderer = {path}; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;\n{SOURCE_MARKER_END}",
+            source_marker_for_origin(program, *origin)
+        )
+        .unwrap(),
+    }
     generate_keyboard_types(&mut out, document);
     generate_system_types(&mut out, document);
     generate_widget_selector_types(&mut out, document);
@@ -476,7 +483,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
-    if !document.daemon {
+    if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\npub(crate) __ice_accessibility_initial: ::std::option::Option<usize>,\n#[cfg(all(target_os = \"windows\", not(test)))]\npub(crate) __ice_accessibility_pending: ::std::vec::Vec<{message}>,"
@@ -636,7 +643,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     if needs_extern_noop(document) {
         writeln!(out, "__ExternNoop,").unwrap();
     }
-    if has_animations(document) {
+    if has_animations(program) {
         writeln!(out, "__AnimationFrame,").unwrap();
     }
     for (node, test_only) in document_pane_grids(program) {
@@ -677,37 +684,48 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_extern_probes(&mut out, document);
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
-    writeln!(
-        out,
-        "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}",
-        app_default_font_code(document)
-    )
-    .unwrap();
+    let app_settings = program.settings();
+    if let Some(font) = &app_settings.default_font {
+        writeln!(out, "{}", source_marker_for_origin(program, font.origin)).unwrap();
+        writeln!(
+            out,
+            "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}\n{SOURCE_MARKER_END}",
+            resolved_default_font_code(font)
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "#[must_use]\npub fn default_font() -> ::iced::Font {{ ::iced::Font::DEFAULT }}"
+        )
+        .unwrap();
+    }
     generate_derived(&mut out, program)?;
-    generate_named_windows(&mut out, document, source_path);
+    generate_named_windows(&mut out, program, app_settings, source_path);
     let subscription = ".subscription(Self::__subscription)";
-    let default_font = document
-        .fonts
-        .iter()
-        .find(|font| font.default)
-        .map_or("", |_| ".default_font(Self::default_font())");
-    let title = document
-        .settings
+    let default_font = if app_settings.default_font.is_some() {
+        ".default_font(Self::default_font())"
+    } else {
+        ""
+    };
+    let title = app_settings
         .title
         .as_ref()
         .map_or("", |_| ".title(Self::__title)");
-    let settings = app_settings_code(&document.settings);
-    let fonts = font_assets_code(&document.settings, source_path);
-    let window = if document.daemon {
+    let settings = app_settings_code(program, app_settings);
+    let fonts = font_assets_code(program, app_settings, source_path);
+    let window = if app_settings.kind == ProgramKind::Daemon {
         String::new()
     } else {
-        window_settings_code(document.settings.window.as_ref(), source_path)
+        window_settings_code(program, &app_settings.primary_window, source_path)
     };
-    let executor = document
-        .settings
-        .executor
-        .as_ref()
-        .map_or_else(String::new, |executor| format!(".executor::<{executor}>()"));
+    let executor = match &app_settings.executor {
+        ResolvedExecutorSelection::Default => String::new(),
+        ResolvedExecutorSelection::Custom { path, origin } => format!(
+            "\n{}\n.executor::<{path}>()\n{SOURCE_MARKER_END}\n",
+            source_marker_for_origin(program, *origin)
+        ),
+    };
     let presets = if document.presets.is_empty() {
         String::new()
     } else {
@@ -725,23 +743,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                 .join(", ")
         )
     };
-    let scale_factor = document
-        .settings
+    let scale_factor = app_settings
         .scale_factor
         .as_ref()
         .map_or("", |_| ".scale_factor(Self::__scale_factor)");
-    let style = if document.settings.background.is_some() || document.settings.text_color.is_some()
-    {
+    let style = if app_settings.background.is_some() || app_settings.text_color.is_some() {
         ".style(Self::__style)"
     } else {
         ""
     };
-    let root = if document.daemon {
+    let root = if app_settings.kind == ProgramKind::Daemon {
         "::iced::daemon(Self::__boot, Self::__update, Self::__view)"
     } else {
         "::iced::application(Self::__boot, Self::__update, Self::__view)"
     };
-    let program_kind = if document.daemon {
+    let program_kind = if app_settings.kind == ProgramKind::Daemon {
         "::iced::Daemon"
     } else {
         "::iced::Application"
@@ -762,7 +778,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_boot(&mut out, program, &message)?;
     generate_presets(&mut out, program, &message)?;
     generate_update(&mut out, program, &message)?;
-    generate_subscription(&mut out, document, &message)?;
+    generate_subscription(
+        &mut out,
+        document,
+        app_settings,
+        has_animations(program),
+        &message,
+    )?;
     generate_view(&mut out, program, &message)?;
     generate_test_mounts(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();

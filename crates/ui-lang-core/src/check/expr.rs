@@ -522,6 +522,22 @@ fn expr_type_uncached(
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
+    expr_type_uncached_with_call_resolution(expr, env, document, span, CallResolution::Source)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallResolution {
+    Source,
+    BuiltinOnly,
+}
+
+fn expr_type_uncached_with_call_resolution(
+    expr: &Expr,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+    call_resolution: CallResolution,
+) -> Result<Type, Error> {
     match expr {
         Expr::Bool(_) => Ok(Type::Bool),
         Expr::I64(_) => Ok(Type::I64),
@@ -583,7 +599,7 @@ fn expr_type_uncached(
             Ok(ty)
         }
         Expr::Call { name, args } => {
-            if unqualified_name(name) == "provided" {
+            if call_resolution == CallResolution::Source && unqualified_name(name) == "provided" {
                 let [Expr::Path(path)] = args.as_slice() else {
                     return Err(Error::new(
                         "E152",
@@ -608,7 +624,8 @@ fn expr_type_uncached(
                 }
                 return Ok(Type::Bool);
             }
-            if let Some((enum_name, variant_name)) = name.split_once('.')
+            if call_resolution == CallResolution::Source
+                && let Some((enum_name, variant_name)) = name.split_once('.')
                 && let Some((_, variant)) = ui_enum_variant(document, enum_name, variant_name)
             {
                 let Some(payload) = &variant.payload else {
@@ -628,10 +645,11 @@ fn expr_type_uncached(
                 require_type(&expr_type(&args[0], env, document, span)?, payload, span)?;
                 return Ok(Type::Named(enum_name.to_owned()));
             }
-            if let Some(function) = document
-                .functions
-                .iter()
-                .find(|function| function.name == *name && function.kind == ExternKind::Sync)
+            if call_resolution == CallResolution::Source
+                && let Some(function) = document
+                    .functions
+                    .iter()
+                    .find(|function| function.name == *name && function.kind == ExternKind::Sync)
             {
                 check_call_args(function, args, env, document, span)?;
                 return Ok(function.output.clone());
@@ -2299,6 +2317,11 @@ fn expr_type_uncached(
                     }
                     Ok(Type::Image)
                 }
+                _ if call_resolution == CallResolution::BuiltinOnly => Err(Error::new(
+                    "E152",
+                    span,
+                    format!("unknown built-in function `{name}`"),
+                )),
                 _ => {
                     let function = extern_function(document, name, ExternKind::Sync, span)?;
                     check_call_args(function, args, env, document, span)?;
@@ -2522,6 +2545,25 @@ fn expr_type_uncached(
             }
         }
     }
+}
+
+pub(crate) fn canonical_builtin_type(
+    name: &str,
+    args: &[Expr],
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+) -> Result<Type, Error> {
+    expr_type_uncached_with_call_resolution(
+        &Expr::Call {
+            name: name.to_owned(),
+            args: args.to_vec(),
+        },
+        env,
+        document,
+        span,
+        CallResolution::BuiltinOnly,
+    )
 }
 
 fn check_contextual_builtin(
@@ -2752,8 +2794,8 @@ pub(in crate::check) fn contains_ui_enum(ty: &Type, document: &Document) -> bool
     }
 }
 
-mod fields;
-mod signature;
+pub(crate) mod fields;
+pub(crate) mod signature;
 mod validation;
 
 pub(super) use fields::*;

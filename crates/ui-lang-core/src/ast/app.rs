@@ -134,7 +134,7 @@ pub struct Preset {
     pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AppSettings {
     pub title: Option<AppExpression>,
     pub theme: Option<AppExpression>,
@@ -151,6 +151,32 @@ pub struct AppSettings {
     pub scale_factor: Option<AppExpression>,
     pub window: Option<WindowSettings>,
     pub windows: Vec<NamedWindow>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            title: None,
+            theme: None,
+            palette: None,
+            background: None,
+            text_color: None,
+            id: None,
+            executor: None,
+            renderer: None,
+            fonts: Vec::new(),
+            default_text_size: None,
+            antialiasing: None,
+            vsync: None,
+            scale_factor: None,
+            window: None,
+            windows: Vec::new(),
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -159,19 +185,20 @@ pub struct AppExpression {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NamedWindow {
     pub name: String,
     pub settings: WindowSettings,
+    pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FontAsset {
     pub path: String,
     pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WindowSettings {
     pub size: Option<(f64, f64)>,
     pub maximized: Option<bool>,
@@ -193,35 +220,120 @@ pub struct WindowSettings {
     pub windows: Option<WindowsWindowSettings>,
     pub macos: Option<MacosWindowSettings>,
     pub wasm: Option<WasmWindowSettings>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            size: None,
+            maximized: None,
+            fullscreen: None,
+            position: None,
+            min_size: None,
+            max_size: None,
+            visible: None,
+            resizable: None,
+            closeable: None,
+            minimizable: None,
+            decorations: None,
+            transparent: None,
+            blur: None,
+            level: None,
+            icon: None,
+            exit_on_close_request: None,
+            linux: None,
+            windows: None,
+            macos: None,
+            wasm: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct LinuxWindowSettings {
     pub application_id: Option<String>,
     pub override_redirect: Option<bool>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+impl Default for LinuxWindowSettings {
+    fn default() -> Self {
+        Self {
+            application_id: None,
+            override_redirect: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct WindowsWindowSettings {
     pub drag_and_drop: Option<bool>,
     pub skip_taskbar: Option<bool>,
     pub undecorated_shadow: Option<bool>,
     pub corner: Option<WindowCorner>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+impl Default for WindowsWindowSettings {
+    fn default() -> Self {
+        Self {
+            drag_and_drop: None,
+            skip_taskbar: None,
+            undecorated_shadow: None,
+            corner: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MacosWindowSettings {
     pub title_hidden: Option<bool>,
     pub titlebar_transparent: Option<bool>,
     pub fullsize_content_view: Option<bool>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+impl Default for MacosWindowSettings {
+    fn default() -> Self {
+        Self {
+            title_hidden: None,
+            titlebar_transparent: None,
+            fullsize_content_view: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct WasmWindowSettings {
     pub target: Option<Option<String>>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl Default for WasmWindowSettings {
+    fn default() -> Self {
+        Self {
+            target: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowCorner {
     Default,
     DoNotRound,
@@ -229,7 +341,7 @@ pub enum WindowCorner {
     RoundSmall,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowIcon {
     pub path: String,
     pub width: u32,
@@ -238,21 +350,21 @@ pub struct WindowIcon {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WindowPosition {
     Default,
     Centered,
     Specific(f64, f64),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowLevel {
     Normal,
     AlwaysOnBottom,
     AlwaysOnTop,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FontDecl {
     pub name: String,
     pub family: FontFamily,
@@ -263,7 +375,7 @@ pub struct FontDecl {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FontFamily {
     Named(String),
     Serif,
@@ -273,7 +385,7 @@ pub enum FontFamily {
     Monospace,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontWeight {
     Thin,
     ExtraLight,
@@ -286,7 +398,7 @@ pub enum FontWeight {
     Black,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontStretch {
     UltraCondensed,
     ExtraCondensed,
@@ -299,7 +411,7 @@ pub enum FontStretch {
     UltraExpanded,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontStyle {
     Normal,
     Italic,

@@ -315,6 +315,21 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
     Ok(format!("{}({args})", function.rust_path))
 }
 
+pub(in crate::codegen) fn resolved_app_theme_factory_code(
+    factory: &ResolvedAppThemeFactory,
+    env: &HashMap<String, Binding>,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let function = program.extern_function(factory.function);
+    let args = factory
+        .arguments
+        .iter()
+        .map(|argument| checked_expr_use_code(program, argument.expression, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(format!("{}({args})", function.rust_path))
+}
+
 pub(in crate::codegen) fn resolved_background_code(
     background: &ResolvedBackground,
     env: &dyn BindingEnvironment,

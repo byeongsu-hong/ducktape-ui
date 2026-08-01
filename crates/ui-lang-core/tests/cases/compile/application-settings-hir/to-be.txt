@@ -1,0 +1,16 @@
+type __IceRenderer = crate::backend::Renderer
+fn __title(&self, window: ::iced::window::Id)
+crate::backend::describe(window)
+crate::backend::native_theme(window, self.dark)
+match self.active_palette
+self.background
+self.foreground
+fn __scale_factor(&self, window: ::iced::window::Id)
+crate::backend::scale_for(window)
+fn __window_0() -> ::iced::window::Settings
+size: ::iced::Size::new(960 as f32, 720 as f32)
+visible: false
+level: ::iced::window::Level::AlwaysOnTop
+__platform.skip_taskbar = true
+CornerPreference::RoundSmall
+.executor::<iced::executor::Default>()

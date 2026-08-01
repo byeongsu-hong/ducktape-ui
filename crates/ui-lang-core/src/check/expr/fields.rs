@@ -42,7 +42,7 @@ pub(in crate::check) fn contains_target(ty: &Type) -> bool {
     }
 }
 
-pub(in crate::check) fn field_type(
+pub(crate) fn field_type(
     ty: &Type,
     field: &str,
     document: &Document,
