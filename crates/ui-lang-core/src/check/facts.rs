@@ -456,6 +456,7 @@ pub(crate) struct CheckedFacts {
     builtins: Vec<String>,
     app_theme_factory: Option<CheckedAppThemeFactory>,
     app_settings: Option<CheckedAppSettings>,
+    app_setting_daemon_window_local: Option<CheckedLocalId>,
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
@@ -581,10 +582,7 @@ impl CheckedFacts {
     }
 
     pub(crate) fn app_setting_daemon_window_local(&self) -> Option<CheckedLocalId> {
-        self.locals
-            .iter()
-            .position(|local| matches!(local.owner, CheckedLocalOwner::AppSettingDaemonWindow))
-            .map(|index| CheckedLocalId(index as u32))
+        self.app_setting_daemon_window_local
     }
 
     pub(crate) fn views(&self) -> &[CheckedView] {
@@ -739,6 +737,54 @@ impl CheckedFacts {
             unreachable!();
         };
         *body_argument = replacement;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_sibling_scoped_binding_reference(
+        &mut self,
+        setting: AppSettingExprId,
+    ) {
+        let expression_use = self.expression_uses_by_owner[&CheckedExprOwner::AppSetting(setting)];
+        let root = self.expression_uses[expression_use.0 as usize].root;
+        let (left, right) = match self.expressions[root.0 as usize].kind {
+            CheckedExprKind::Binary { left, right, .. } => (left, right),
+            _ => panic!("app-setting fixture root must be binary"),
+        };
+        let left_binding = match &self.expressions[left.0 as usize].kind {
+            CheckedExprKind::Call { arguments, .. } => arguments
+                .iter()
+                .find_map(|argument| match argument {
+                    CheckedCallArgument::Binding(local) => Some(*local),
+                    CheckedCallArgument::Value(_) => None,
+                })
+                .expect("left call must contain a scoped binding"),
+            _ => panic!("left binary child must be a call"),
+        };
+        let (right_binding, right_arguments) = match &self.expressions[right.0 as usize].kind {
+            CheckedExprKind::Call { arguments, .. } => (
+                arguments
+                    .iter()
+                    .find_map(|argument| match argument {
+                        CheckedCallArgument::Binding(local) => Some(*local),
+                        CheckedCallArgument::Value(_) => None,
+                    })
+                    .expect("right call must contain a scoped binding"),
+                arguments.clone(),
+            ),
+            _ => panic!("right binary child must be a call"),
+        };
+        let CheckedLocalOwner::ExpressionBinding { body_argument, .. } =
+            self.locals[right_binding.0 as usize].owner
+        else {
+            panic!("right call binding must retain its body argument");
+        };
+        let CheckedCallArgument::Value(right_body) = right_arguments[body_argument] else {
+            panic!("right scoped body must be a value expression");
+        };
+        self.expressions[right_body.0 as usize].kind = CheckedExprKind::Path {
+            root: CheckedPathRoot::Local(left_binding),
+            projections: Vec::new(),
+        };
     }
 
     #[cfg(test)]
@@ -1564,6 +1610,17 @@ impl<'a> FactsBuilder<'a> {
                 &self.document.settings.span,
                 self.declarations.app_settings().origin,
             );
+            if self
+                .facts
+                .app_setting_daemon_window_local
+                .replace(local)
+                .is_some()
+            {
+                return Err(self.invariant(
+                    &self.document.settings.span,
+                    "duplicate app-setting daemon-window local",
+                ));
+            }
             callback_env.insert(
                 "window".into(),
                 CheckedPathRoot::Local(local),

@@ -4,7 +4,7 @@ use crate::check::{
     CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner,
     CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
     CheckedPathRoot, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
-    ContextualBuiltin, builtin_call_type, field_type, resolve_erased_type,
+    ContextualBuiltin, canonical_builtin_type, field_type, resolve_erased_type,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -2644,8 +2644,50 @@ pub(crate) struct Lowerer {
 #[derive(Default)]
 struct CheckedExpressionGraph {
     visiting: HashSet<CheckedExprId>,
-    validated: HashSet<CheckedExprId>,
+    validated: HashSet<(CheckedExprId, usize)>,
     node_owners: HashMap<CheckedExprId, CheckedExprUseId>,
+    scopes: Vec<CheckedExpressionScope>,
+}
+
+struct CheckedExpressionScope {
+    parent: Option<usize>,
+    binding: Option<CheckedLocalId>,
+}
+
+impl CheckedExpressionGraph {
+    fn root_scope(&mut self) -> usize {
+        if self.scopes.is_empty() {
+            self.scopes.push(CheckedExpressionScope {
+                parent: None,
+                binding: None,
+            });
+        }
+        0
+    }
+
+    fn scoped_binding(&mut self, parent: usize, binding: CheckedLocalId) -> usize {
+        let id = self.scopes.len();
+        self.scopes.push(CheckedExpressionScope {
+            parent: Some(parent),
+            binding: Some(binding),
+        });
+        id
+    }
+
+    fn contains_binding(&self, mut scope: usize, binding: CheckedLocalId) -> bool {
+        loop {
+            let Some(current) = self.scopes.get(scope) else {
+                return false;
+            };
+            if current.binding == Some(binding) {
+                return true;
+            }
+            let Some(parent) = current.parent else {
+                return false;
+            };
+            scope = parent;
+        }
+    }
 }
 
 trait CheckedExpressionOwnerPolicy {
@@ -3275,7 +3317,8 @@ impl Lowerer {
                 "checked expression use type contract changed after semantic analysis",
             ));
         }
-        let root = self.validate_checked_expression_node(expression.root, policy, graph)?;
+        let scope = graph.root_scope();
+        let root = self.validate_checked_expression_node(expression.root, policy, graph, scope)?;
         if root != expression.source {
             return Err(self.invariant(
                 policy.span(),
@@ -3355,6 +3398,7 @@ impl Lowerer {
         id: CheckedExprId,
         policy: &impl CheckedExpressionOwnerPolicy,
         graph: &mut CheckedExpressionGraph,
+        scope: usize,
     ) -> Result<Type, Error> {
         if let Some(owner) = graph.node_owners.insert(id, policy.use_id())
             && owner != policy.use_id()
@@ -3370,7 +3414,7 @@ impl Lowerer {
                 "expression use references an invalid checked expression ID",
             )
         })?;
-        if graph.validated.contains(&id) {
+        if graph.validated.contains(&(id, scope)) {
             return Ok(expression.ty);
         }
         if !graph.visiting.insert(id) {
@@ -3389,7 +3433,8 @@ impl Lowerer {
                         .invariant(policy.span(), "checked list expression has a non-list type"));
                 };
                 for value in values {
-                    let value_ty = self.validate_checked_expression_node(*value, policy, graph)?;
+                    let value_ty =
+                        self.validate_checked_expression_node(*value, policy, graph, scope)?;
                     if value_ty != **item {
                         return Err(self.invariant(
                             policy.span(),
@@ -3410,7 +3455,7 @@ impl Lowerer {
             }
             CheckedExprKind::SlotProvided(slot) => policy.slot_type(*slot)?,
             CheckedExprKind::Path { root, projections } => {
-                let mut current = self.validate_checked_path_root(root, policy)?;
+                let mut current = self.validate_checked_path_root(root, policy, graph, scope)?;
                 for projection in projections {
                     if projection.input != current {
                         return Err(self.invariant(
@@ -3493,11 +3538,35 @@ impl Lowerer {
                 let mut argument_types = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     argument_types.push(match argument {
-                        CheckedCallArgument::Value(value) => {
-                            self.validate_checked_expression_node(*value, policy, graph)?
-                        }
+                        CheckedCallArgument::Value(value) => self
+                            .facts
+                            .try_expression(*value)
+                            .map(|expression| expression.ty.clone())
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked call references an invalid expression ID",
+                                )
+                            })?,
                         CheckedCallArgument::Binding(local) => policy.local_type(*local)?,
                     });
+                }
+                let scoped_bindings = self.checked_expression_argument_scopes(
+                    target,
+                    arguments,
+                    &argument_types,
+                    &expression.ty,
+                    policy,
+                )?;
+                for (index, argument) in arguments.iter().enumerate() {
+                    let CheckedCallArgument::Value(value) = argument else {
+                        continue;
+                    };
+                    let argument_scope = match scoped_bindings[index] {
+                        Some(binding) => graph.scoped_binding(scope, binding),
+                        None => scope,
+                    };
+                    self.validate_checked_expression_node(*value, policy, graph, argument_scope)?;
                 }
                 self.validate_checked_expression_call(
                     target,
@@ -3509,7 +3578,7 @@ impl Lowerer {
                 expression.ty.clone()
             }
             CheckedExprKind::Unary { operator, value } => {
-                let value = self.validate_checked_expression_node(*value, policy, graph)?;
+                let value = self.validate_checked_expression_node(*value, policy, graph, scope)?;
                 match operator {
                     CheckedUnaryOperator::BooleanNot
                         if value == Type::Bool && expression.ty == Type::Bool => {}
@@ -3529,8 +3598,8 @@ impl Lowerer {
                 left,
                 right,
             } => {
-                let left = self.validate_checked_expression_node(*left, policy, graph)?;
-                let right = self.validate_checked_expression_node(*right, policy, graph)?;
+                let left = self.validate_checked_expression_node(*left, policy, graph, scope)?;
+                let right = self.validate_checked_expression_node(*right, policy, graph, scope)?;
                 let valid = match operator {
                     CheckedBinaryOperator::Boolean(op) => {
                         matches!(op, BinaryOp::And | BinaryOp::Or)
@@ -3581,7 +3650,7 @@ impl Lowerer {
             ));
         }
         graph.visiting.remove(&id);
-        graph.validated.insert(id);
+        graph.validated.insert((id, scope));
         Ok(expression.ty)
     }
 
@@ -3589,10 +3658,24 @@ impl Lowerer {
         &self,
         root: &CheckedPathRoot,
         policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &CheckedExpressionGraph,
+        scope: usize,
     ) -> Result<Type, Error> {
         match root {
             CheckedPathRoot::Value(value) => policy.value_type(*value),
-            CheckedPathRoot::Local(local) => policy.local_type(*local),
+            CheckedPathRoot::Local(local) => {
+                let ty = policy.local_type(*local)?;
+                if self.facts.try_local(*local).is_some_and(|local| {
+                    matches!(local.owner, CheckedLocalOwner::ExpressionBinding { .. })
+                }) && !graph.contains_binding(scope, *local)
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked expression binding is outside its lexical scoped-value body",
+                    ));
+                }
+                Ok(ty)
+            }
             CheckedPathRoot::EnumVariant(id) => {
                 let variant = self
                     .declarations
@@ -3655,6 +3738,52 @@ impl Lowerer {
             ));
         }
         Ok(ty)
+    }
+
+    fn checked_expression_argument_scopes(
+        &self,
+        target: &CheckedCallTarget,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Vec<Option<CheckedLocalId>>, Error> {
+        let mut scoped_bindings = vec![None; arguments.len()];
+        let CheckedCallTarget::Builtin(id) = target else {
+            return Ok(scoped_bindings);
+        };
+        let name = self.facts.try_builtin(*id).ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "checked call references an invalid builtin ID",
+            )
+        })?;
+        let Some(builtin) = ContextualBuiltin::from_name(name) else {
+            return Ok(scoped_bindings);
+        };
+        let contexts = builtin
+            .argument_contexts(output, argument_types)
+            .map_err(|message| self.invariant(policy.span(), message))?;
+        if contexts.len() != arguments.len() {
+            return Err(self.invariant(
+                policy.span(),
+                "checked builtin call has an invalid argument count",
+            ));
+        }
+        for (index, context) in contexts.iter().enumerate() {
+            let BuiltinArgumentContext::ScopedValue { binding, .. } = context else {
+                continue;
+            };
+            let Some(CheckedCallArgument::Binding(local)) = arguments.get(*binding) else {
+                return Err(self.invariant(
+                    policy.span(),
+                    "checked builtin scoped value has no binding argument",
+                ));
+            };
+            self.validate_checked_expression_binding(*local, arguments, policy, index)?;
+            scoped_bindings[index] = Some(*local);
+        }
+        Ok(scoped_bindings)
     }
 
     fn validate_checked_expression_call(
@@ -3821,7 +3950,7 @@ impl Lowerer {
             );
         }
         let canonical =
-            builtin_call_type(name, &source_arguments, &env, &self.document, policy.span())
+            canonical_builtin_type(name, &source_arguments, &env, &self.document, policy.span())
                 .map_err(|error| {
                     self.invariant(
                         policy.span(),
@@ -8188,6 +8317,16 @@ view
     }
 
     #[test]
+    fn qualified_builtin_contract_does_not_resolve_a_same_name_sync_extern() {
+        let source = format!(
+            "app QualifiedBuiltin\n  title builtin::trim(title)\nextern crate::backend\n  sync trim(value:str) -> bool\n{THEME}state\n  title = \" Title \"\nview\n  text title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "qualified_builtin.ice").unwrap();
+        assert!(generated.contains(".trim().to_owned()"));
+    }
+
+    #[test]
     fn rejects_a_contextual_builtin_binding_with_the_wrong_body_topology() {
         let source = format!(
             "app BindingContract\n  scale animation.project(progress, sample, sample)\n{THEME}state\n  progress:animation[f64] = 0.0\nview\n  text \"ready\"\n"
@@ -8199,6 +8338,26 @@ view
         let error = lower(checked).unwrap_err();
         assert_eq!((error.code, error.line), ("E196", 2));
         assert!(error.message.contains("body-argument topology"));
+    }
+
+    #[test]
+    fn rejects_a_sibling_contextual_builtin_binding_reference_during_lowering() {
+        let source = format!(
+            "app BindingScope\n  scale animation.project(first, left, left) + animation.project(second, right, right)\n{THEME}state\n  first:animation[f64] = 0.0\n  second:animation[f64] = 0.0\nview\n  text \"ready\"\n"
+        );
+        assert!(lower(analyze(&source).unwrap()).is_ok());
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_sibling_scoped_binding_reference(AppSettingExprId::ScaleFactor);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(
+            error
+                .message
+                .contains("outside its lexical scoped-value body")
+        );
     }
 
     #[test]
@@ -8291,7 +8450,11 @@ view
             .corrupt_app_setting_binary_child(AppSettingExprId::ScaleFactor);
         let error = lower(checked).unwrap_err();
         assert_eq!((error.code, error.line), ("E196", 2));
-        assert!(error.message.contains("invalid checked expression ID"));
+        assert!(
+            error
+                .message
+                .contains("expression descendant ID is outside its arena")
+        );
 
         let palette_source =
             format!("app InvalidPalette\n  palette AppTheme.app\n{THEME}view\n  text \"ready\"\n");
@@ -8299,7 +8462,11 @@ view
         checked.facts.corrupt_app_setting_palette_id();
         let error = lower(checked).unwrap_err();
         assert_eq!((error.code, error.line), ("E196", 2));
-        assert!(error.message.contains("invalid palette ID"));
+        assert!(
+            error
+                .message
+                .contains("expression declaration ID is outside its arena")
+        );
     }
 
     #[test]
