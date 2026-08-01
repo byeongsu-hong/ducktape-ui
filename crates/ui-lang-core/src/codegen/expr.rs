@@ -2640,10 +2640,9 @@ pub(in crate::codegen) fn checked_expr_use_code_at(
     expression_use: CheckedExprUseId,
     env: &dyn BindingEnvironment,
     mode: ValueMode,
-    span: &Span,
+    _span: &Span,
 ) -> Result<String, Error> {
     let facts = program.checked_facts();
-    facts.validate_expression_use(expression_use, program.declarations(), span)?;
     let expression_use = facts.expression_use(expression_use);
     let context = ExprEmission::for_checked(program);
     let code = expr_node_code(ExprNode::Checked(expression_use.root), env, &context, mode)?;
