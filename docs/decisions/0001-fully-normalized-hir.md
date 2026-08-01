@@ -108,18 +108,19 @@ nested gradients, token references, and opacity are resolved before their
 migrated emitters run.
 
 This is deliberately not a claim that every style-shaped AST node has been
-migrated. Expression-bearing native widget status blocks and direct non-Canvas/non-Media
-view color fields remain AST-backed with the expression/view family.
+migrated. Expression-bearing native widget status blocks and direct
+non-Canvas/non-Media/non-Tooltip view color fields remain AST-backed with the
+expression/view family.
 Palette enum paths inside the general expression emitter also remain in that
 family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors and non-Media widget options
-therefore remain open implementation slices; this
-status does not satisfy the migration-complete criteria below. Migrated handler
-and application-setting generation uses the shared origin arena directly for
-imported and root source markers.
+The remaining expression-backed native styles/colors and widget options outside
+Media, Tooltip, MouseArea, and ResizeHandle therefore remain open implementation
+slices; this status does not satisfy the migration-complete criteria below.
+Migrated handler and application-setting generation uses the shared origin arena
+directly for imported and root source markers.
 
 The checker now also preserves the first expression-family facts in a private,
 owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
@@ -274,6 +275,27 @@ theme-token positions from `Document`. Static post-check drift and corrupt
 expression graphs fail with source-mapped `E196`; post-lowering Media AST and
 theme-token mutations cannot affect output. Structural, mutation, production
 generation, and ignored 4,000-node lower+emit tests provide the evidence.
+
+Tooltip is now a completed vertical slice. Deterministic Tooltip expression
+owners retain geometry, timing, custom-style arguments, gradients, borders,
+radii, shadows, and pixel snapping. Checked facts freeze position, option and
+style topology, exact container-style extern identity, and theme-color
+spellings; lowering resolves those colors to token IDs and publishes a private
+`ResolvedTooltip`. Rust emission reads only that record and checked expression
+IDs. Post-check expression mutation is ignored, static drift fails with `E196`,
+post-lowering raw options and theme-token order cannot change output, and the
+4,000-node lower+emit contract remains below two seconds.
+
+MouseArea and ResizeHandle are completed interaction-wrapper slices. Stable
+interaction expression and route IDs retain every handler, component output,
+named component event, route argument, payload index/type, cursor choice, and
+source origin. Lowering validates exact view scope, target identity, ordered
+payload contracts, component callback context, expression DAGs, and complete
+arena consumption before publishing `ResolvedMouseArea` and
+`ResolvedResizeHandle`. Their emitters no longer inspect raw options, routes,
+route expressions, or handler names. App and component route generation,
+post-check/static mutation, malformed IDs, post-lowering poisoning, and a
+4,000-node lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

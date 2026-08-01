@@ -30,129 +30,17 @@ pub(in crate::codegen) fn render_media(
             let resolved = hir.resolved_tooltip_for(node)?;
             render_resolved_tooltip(resolved, hir, message, env, content, tip)
         }
-        ViewNode::MouseArea {
-            options, content, ..
-        } => {
+        ViewNode::MouseArea { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
-            );
-            for (route, method) in [
-                (&options.press, "on_press"),
-                (&options.release, "on_release"),
-                (&options.double_click, "on_double_click"),
-                (&options.right_press, "on_right_press"),
-                (&options.right_release, "on_right_release"),
-                (&options.middle_press, "on_middle_press"),
-                (&options.middle_release, "on_middle_release"),
-                (&options.enter, "on_enter"),
-                (&options.exit, "on_exit"),
-            ] {
-                if let Some(route) = route {
-                    write!(
-                        code,
-                        ".{method}({})",
-                        route_code(route, "", env, document, message)?
-                    )
-                    .unwrap();
-                }
-            }
-            if let Some(route) = &options.move_route {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__point",
-                    &["__point.x as f64", "__point.y as f64"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_move({callback})").unwrap();
-            }
-            if let Some(route) = &options.scroll {
-                let callback = route_callback_with_code(
-                    route,
-                    "__delta",
-                    env,
-                    document,
-                    |callback_env| {
-                        let lines = ordered_route_code(
-                            route,
-                            &["__x as f64", "__y as f64", "false"],
-                            callback_env,
-                            document,
-                            message,
-                        )?;
-                        let pixels = ordered_route_code(
-                            route,
-                            &["__x as f64", "__y as f64", "true"],
-                            callback_env,
-                            document,
-                            message,
-                        )?;
-                        Ok(format!(
-                            "match __delta {{ ::iced::mouse::ScrollDelta::Lines {{ x: __x, y: __y }} => {lines}, ::iced::mouse::ScrollDelta::Pixels {{ x: __x, y: __y }} => {pixels} }}"
-                        ))
-                    },
-                )?;
-                write!(code, ".on_scroll({callback})").unwrap();
-            }
-            if let Some(interaction) = options.interaction {
-                write!(
-                    code,
-                    ".interaction(::iced::mouse::Interaction::{})",
-                    mouse_interaction_code(interaction)
-                )
-                .unwrap();
-            } else if let Some(interaction) = &options.interaction_expr {
-                write!(
-                    code,
-                    ".interaction({})",
-                    expr_code(interaction, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let hir = document.hir();
+            let resolved = hir.resolved_mouse_area_for(node)?;
+            render_resolved_mouse_area(resolved, hir, message, env, content)
         }
-        ViewNode::ResizeHandle {
-            options, content, ..
-        } => {
+        ViewNode::ResizeHandle { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __resize_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::resize_handle(__resize_content)"
-            );
-            if let Some(route) = &options.drag {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__dx, __dy",
-                    &["__dx", "__dy"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_drag({callback})").unwrap();
-            }
-            for (route, method) in [
-                (&options.press, "on_press"),
-                (&options.release, "on_release"),
-            ] {
-                if let Some(route) = route {
-                    write!(
-                        code,
-                        ".{method}({})",
-                        route_code(route, "", env, document, message)?
-                    )
-                    .unwrap();
-                }
-            }
-            if let Some(interaction) = options.interaction {
-                write!(
-                    code,
-                    ".interaction(::iced::mouse::Interaction::{})",
-                    mouse_interaction_code(interaction)
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let hir = document.hir();
+            let resolved = hir.resolved_resize_handle_for(node)?;
+            render_resolved_resize_handle(resolved, hir, message, env, content)
         }
         ViewNode::Canvas { .. } => {
             let hir = document.hir();
@@ -163,6 +51,135 @@ pub(in crate::codegen) fn render_media(
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
+}
+
+fn render_resolved_mouse_area(
+    mouse: &ResolvedMouseArea,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let mut code = format!(
+        "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
+    );
+    for (route, method) in [
+        (&mouse.press, "on_press"),
+        (&mouse.release, "on_release"),
+        (&mouse.double_click, "on_double_click"),
+        (&mouse.right_press, "on_right_press"),
+        (&mouse.right_release, "on_right_release"),
+        (&mouse.middle_press, "on_middle_press"),
+        (&mouse.middle_release, "on_middle_release"),
+        (&mouse.enter, "on_enter"),
+        (&mouse.exit, "on_exit"),
+    ] {
+        if let Some(route) = route {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_interaction_route_code(route, &[], env, program, message)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(route) = &mouse.move_route {
+        let callback = resolved_interaction_route_callback_code(
+            route,
+            "__point",
+            &["__point.x as f64", "__point.y as f64"],
+            env,
+            program,
+            message,
+        )?;
+        write!(code, ".on_move({callback})").unwrap();
+    }
+    if let Some(route) = &mouse.scroll {
+        let callback = resolved_interaction_route_callback_with_code(
+            route,
+            "__delta",
+            env,
+            program,
+            |callback_env| {
+                let lines = resolved_interaction_route_code(
+                    route,
+                    &["__x as f64", "__y as f64", "false"],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                let pixels = resolved_interaction_route_code(
+                    route,
+                    &["__x as f64", "__y as f64", "true"],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                Ok(format!(
+                    "match __delta {{ ::iced::mouse::ScrollDelta::Lines {{ x: __x, y: __y }} => {lines}, ::iced::mouse::ScrollDelta::Pixels {{ x: __x, y: __y }} => {pixels} }}"
+                ))
+            },
+        )?;
+        write!(code, ".on_scroll({callback})").unwrap();
+    }
+    if let Some(interaction) = mouse.interaction {
+        write!(
+            code,
+            ".interaction(::iced::mouse::Interaction::{})",
+            mouse_interaction_code(interaction)
+        )
+        .unwrap();
+    } else if let Some(interaction) = mouse.interaction_expression {
+        write!(
+            code,
+            ".interaction({})",
+            checked_expr_use_code(program, interaction, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    Ok(format!("{code}.into() }}"))
+}
+
+fn render_resolved_resize_handle(
+    handle: &ResolvedResizeHandle,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let mut code = format!(
+        "{{ let __resize_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::resize_handle(__resize_content)"
+    );
+    if let Some(route) = &handle.drag {
+        let callback = resolved_interaction_route_callback_code(
+            route,
+            "__dx, __dy",
+            &["__dx", "__dy"],
+            env,
+            program,
+            message,
+        )?;
+        write!(code, ".on_drag({callback})").unwrap();
+    }
+    for (route, method) in [(&handle.press, "on_press"), (&handle.release, "on_release")] {
+        if let Some(route) = route {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_interaction_route_code(route, &[], env, program, message)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(interaction) = handle.interaction {
+        write!(
+            code,
+            ".interaction(::iced::mouse::Interaction::{})",
+            mouse_interaction_code(interaction)
+        )
+        .unwrap();
+    }
+    Ok(format!("{code}.into() }}"))
 }
 
 fn render_resolved_tooltip(

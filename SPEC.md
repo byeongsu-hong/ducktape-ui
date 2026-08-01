@@ -200,8 +200,9 @@ contracts retain declaration order, palettes retain complete token-ordered RGBA
 tables, and app or nested theme selections retain resolved built-in/factory and
 static/dynamic palette choices. Lowering still resolves source component and
 recipe names. Expression-bearing native widget status blocks and other direct
-non-Canvas/non-Media view color fields remain AST-backed as part of the expression/view
-migration, so this slice does not claim that all style-related AST has gone.
+non-Canvas/non-Media/non-Tooltip view color fields remain AST-backed as part of
+the expression/view migration, so this slice does not claim that all
+style-related AST has gone.
 Each later slice must remove its prior backend path when it adds normalized
 nodes.
 
@@ -264,6 +265,24 @@ preserving explicit `hover=none`. Rust emission consumes only `ResolvedMedia`
 and checked expression IDs; it does not reread Media expressions or options,
 infer source or length types, rediscover SVG style externs, or recover token
 positions from the source `Document`.
+
+Tooltip is a completed vertical HIR slice. Each Tooltip owns a deterministic
+expression partition covering geometry, timing, custom-style arguments,
+gradients, border and radius values, shadow fields, and pixel snapping.
+Lowering freezes position and option topology, resolves the exact
+container-style extern and all theme colors, and emits a private
+`ResolvedTooltip`. Rust generation consumes only that record and checked
+expression IDs; it does not reread Tooltip options, expressions, style names,
+or source theme-token order.
+
+MouseArea and ResizeHandle are completed interaction-wrapper HIR slices. Each
+view owns stable interaction-expression and route IDs. Checked route facts fix
+the handler, component output or named event target, argument kinds, ordered
+payload source types, and origin. Lowering resolves every target and payload
+index, validates component scope and expression graphs, and publishes
+`ResolvedMouseArea` or `ResolvedResizeHandle`. Rust generation consumes those
+records exclusively and does not reread raw routes, route expressions, handler
+names, cursor options, or payload topology.
 
 The Rust adapter is one manifest-relative include:
 

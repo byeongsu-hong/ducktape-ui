@@ -259,6 +259,47 @@ view
 }
 
 #[test]
+fn lowers_normalized_interaction_component_outputs_and_named_events() {
+    let source = r#"app InteractionComponents
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+component PointerSurface(active:bool) -> bool
+  emits
+    moved(f64, f64)
+  col
+    mouse press=emit(active) move=emit(moved, _, _) cursor=pointer
+      text "Pointer"
+    resize-handle drag=emit(moved, _, _) cursor=resize-horizontal
+      text "Resize"
+on changed(next)
+on moved(x, y)
+view
+  PointerSurface active=active -> changed _
+    events
+      moved -> moved _ _
+"#;
+    let generated = compile(source, "interaction-components.ice").unwrap();
+    assert!(generated.contains("__InteractionComponentsMessage::Changed(__value))(self.active)"));
+    assert!(generated.contains(
+        "__InteractionComponentsMessage::Moved(__event_0, __event_1))(__point.x as f64, __point.y as f64)"
+    ));
+    assert!(
+        generated
+            .contains("__InteractionComponentsMessage::Moved(__event_0, __event_1))(__dx, __dy)")
+    );
+}
+
+#[test]
 fn lowers_borrowed_component_svg_memory_source() {
     let source = r#"app Media
 theme contract AppTheme
