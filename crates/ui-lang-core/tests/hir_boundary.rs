@@ -162,6 +162,40 @@ fn root_imports_do_not_hide_new_ast_or_checker_uses() {
 }
 
 #[test]
+fn grouped_and_nested_ast_alias_uses_change_the_inventory() {
+    let ast_types = probe_ast_types();
+    let before = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::{ast::{Document as Doc, expr::{Expr as Expression}}}; fn emit() {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    let after = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::{ast::{Document as Doc, expr::{Expr as Expression}}}; fn emit(_: Doc, _: Option<Expression>) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    let before_count = section_count(
+        &before,
+        "source AST semantic reference",
+        "src/codegen/probe.rs",
+    );
+    let after_count = section_count(
+        &after,
+        "source AST semantic reference",
+        "src/codegen/probe.rs",
+    );
+    assert_eq!(after_count, before_count + 2);
+    assert_ne!(before, after);
+    assert!(section(&after, "source AST import").contains("probe.rs"));
+}
+
+#[test]
 fn production_filter_excludes_both_test_module_shapes() {
     assert!(!is_production_codegen_path(Path::new(
         "src/codegen/tests.rs"

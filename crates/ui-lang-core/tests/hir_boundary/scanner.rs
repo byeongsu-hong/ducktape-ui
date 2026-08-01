@@ -19,6 +19,12 @@ struct Occurrence {
     normalized_item: String,
 }
 
+#[derive(Default)]
+struct AstUseMarkers {
+    module_indices: BTreeSet<usize>,
+    aliases: BTreeSet<String>,
+}
+
 const CATEGORIES: &[&str] = &[
     "source AST import",
     "source AST semantic reference",
@@ -99,9 +105,10 @@ pub(super) fn inventory(
     for file in files {
         let tokens = lex(&file.source);
         let items = item_ranges(&tokens);
+        let ast_uses = ast_use_markers(&tokens, &items);
         for index in 0..tokens.len() {
             let text = tokens[index].text.as_str();
-            if ast_import_at(&tokens, index) {
+            if ast_import_at(&tokens, index) || ast_uses.module_indices.contains(&index) {
                 record(
                     &mut by_category,
                     "source AST import",
@@ -111,7 +118,9 @@ pub(super) fn inventory(
                     index,
                 );
             }
-            if ast_types.contains(text) && !qualified_by_non_ast_path(&tokens, index) {
+            if (ast_types.contains(text) || ast_uses.aliases.contains(text))
+                && !qualified_by_non_ast_path(&tokens, index)
+            {
                 record(
                     &mut by_category,
                     "source AST semantic reference",
@@ -267,22 +276,9 @@ fn checker_symbols(files: &[SourceFile]) -> Result<BTreeSet<String>, String> {
         let tokens = lex(&file.source);
         for (start, end) in item_ranges(&tokens) {
             let item = &tokens[start..end];
-            let Some(use_index) = item.iter().position(|token| token.text == "use") else {
+            let Some(check) = rooted_use_module(item, "check") else {
                 continue;
             };
-            let Some(check) = item
-                .windows(3)
-                .position(|tokens| token_texts(tokens) == ["crate", "::", "check"])
-            else {
-                continue;
-            };
-            if use_index > check
-                || item[..use_index]
-                    .iter()
-                    .any(|token| matches!(token.text.as_str(), "{" | ";"))
-            {
-                continue;
-            }
             if item.iter().skip(check + 3).any(|token| token.text == "*") {
                 return Err(format!(
                     "{} uses a checker glob import; list checker symbols explicitly",
@@ -306,6 +302,106 @@ fn checker_symbols(files: &[SourceFile]) -> Result<BTreeSet<String>, String> {
         }
     }
     Ok(symbols)
+}
+
+fn ast_use_markers(tokens: &[Token], items: &[(usize, usize)]) -> AstUseMarkers {
+    let mut markers = AstUseMarkers::default();
+    for (start, end) in items {
+        let item = &tokens[*start..*end];
+        let Some(use_index) = item.iter().position(|token| token.text == "use") else {
+            continue;
+        };
+        if item[..use_index]
+            .iter()
+            .any(|token| matches!(token.text.as_str(), "{" | ";"))
+        {
+            continue;
+        }
+        let mut index = use_index + 1;
+        collect_ast_use_tree(item, &mut index, &[], *start, &mut markers);
+    }
+    markers
+}
+
+fn collect_ast_use_tree(
+    tokens: &[Token],
+    index: &mut usize,
+    inherited_path: &[String],
+    absolute_start: usize,
+    markers: &mut AstUseMarkers,
+) {
+    let mut path = inherited_path.to_vec();
+    while *index < tokens.len() {
+        match tokens[*index].text.as_str() {
+            "{" => {
+                *index += 1;
+                while *index < tokens.len() && tokens[*index].text != "}" {
+                    collect_ast_use_tree(tokens, index, &path, absolute_start, markers);
+                    if tokens.get(*index).is_some_and(|token| token.text != "}") {
+                        *index += 1;
+                    }
+                }
+                if tokens.get(*index).is_some_and(|token| token.text == "}") {
+                    *index += 1;
+                }
+                return;
+            }
+            "*" => {
+                *index += 1;
+                return;
+            }
+            "," | "}" | ";" => return,
+            _ if !is_identifier(&tokens[*index].text) => {
+                *index += 1;
+                return;
+            }
+            _ => {}
+        }
+
+        let segment_index = *index;
+        path.push(tokens[*index].text.clone());
+        if path.len() == 2 && path[0] == "crate" && path[1] == "ast" {
+            markers
+                .module_indices
+                .insert(absolute_start + segment_index);
+        }
+        *index += 1;
+
+        if tokens.get(*index).is_some_and(|token| token.text == "as") {
+            *index += 1;
+            if let Some(alias) = tokens.get(*index)
+                && is_ast_path(&path)
+                && is_identifier(&alias.text)
+                && alias.text != "_"
+            {
+                markers.aliases.insert(alias.text.clone());
+            }
+            *index += usize::from(*index < tokens.len());
+            return;
+        }
+        if tokens.get(*index).is_some_and(|token| token.text == "::") {
+            *index += 1;
+            continue;
+        }
+        return;
+    }
+}
+
+fn is_ast_path(path: &[String]) -> bool {
+    path.first().is_some_and(|segment| segment == "crate")
+        && path.get(1).is_some_and(|segment| segment == "ast")
+}
+
+fn rooted_use_module(tokens: &[Token], module: &str) -> Option<usize> {
+    let use_index = tokens.iter().position(|token| token.text == "use")?;
+    let module_index = tokens
+        .windows(3)
+        .position(|tokens| token_texts(tokens) == ["crate", "::", module])?;
+    (use_index < module_index
+        && !tokens[..use_index]
+            .iter()
+            .any(|token| matches!(token.text.as_str(), "{" | ";")))
+    .then_some(module_index)
 }
 
 fn item_ranges(tokens: &[Token]) -> Vec<(usize, usize)> {
@@ -404,10 +500,10 @@ fn is_identifier(value: &str) -> bool {
     value
         .chars()
         .next()
-        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        .is_some_and(|first| first == '_' || first.is_alphabetic())
         && value
             .chars()
-            .all(|character| character == '_' || character.is_ascii_alphanumeric())
+            .all(|character| character == '_' || character.is_alphanumeric())
 }
 
 fn fnv1a_128(bytes: &[u8]) -> u128 {

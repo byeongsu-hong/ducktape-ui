@@ -421,8 +421,9 @@ remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
 escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
 Rust scanner removes comments and literals, handles lifetime, mutable,
-by-value, container, and qualified type references, and fingerprints each
-occurrence from its normalized containing item and call-site context. The
+by-value, container, and qualified type references, tracks exact aliases from
+grouped and nested AST imports, and fingerprints each occurrence from its
+normalized containing item and call-site context. The
 reviewed occurrence counts may not grow as later HIR slices delete their old
 paths, and every fingerprint change requires explicit review; completion still
 requires every selected count to reach zero. Mutation probes guard the scanner's

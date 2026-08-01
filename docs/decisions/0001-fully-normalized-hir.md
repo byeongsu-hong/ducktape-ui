@@ -173,6 +173,7 @@ comments and literals before it records normalized containing-item and
 call-site fingerprints, so same-file delete/add swaps change the reviewed
 ledger while identifier prefixes do not become false AST matches. It also
 tracks the symbols behind the existing AST glob and grouped checker imports;
+exact aliases from grouped and nested AST imports are tracked per file, while
 checker glob imports are rejected. This is a conservative lexical migration
 ratchet, not a Rust semantic resolver or completion claim. The selected ledger
 must reach zero, and ordinary semantic review must confirm that no unrepresented
