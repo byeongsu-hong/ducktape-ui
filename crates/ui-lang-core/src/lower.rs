@@ -1,57 +1,20 @@
 use crate::ast::*;
 use crate::check::CheckedFacts;
+use crate::hir::Origin;
+pub(crate) use crate::hir::{
+    AppStateId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId,
+    DeclarationIndex, ExternFnId, OriginArena, OriginId, PaletteId,
+};
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 mod style;
 
 pub(crate) use style::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ComponentCallId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentParamId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentEventId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct ComponentSlotId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentStateId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct AppStateId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct OriginId(u32);
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Origin {
-    path: Option<PathBuf>,
-    line: usize,
-    column: usize,
-    parent: Option<OriginId>,
-}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -91,9 +54,9 @@ struct ComponentSlotContract {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentStateContract {
-    id: ComponentStateId,
+    pub(crate) id: ComponentStateId,
     pub(crate) source: State,
-    origin: OriginId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,12 +233,12 @@ struct CallSite {
 pub(crate) struct LoweredProgram {
     document: Document,
     facts: CheckedFacts,
+    declarations: DeclarationIndex,
     components: Vec<ComponentContract>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgram,
-    origins: Vec<Origin>,
-    source_origins: Vec<(PathBuf, usize)>,
+    origins: OriginArena,
 }
 
 impl LoweredProgram {
@@ -333,15 +296,13 @@ impl LoweredProgram {
         &self.document.functions[id.0 as usize]
     }
 
-    #[cfg(test)]
-    fn origin(&self, id: OriginId) -> &Origin {
-        &self.origins[id.0 as usize]
+    #[allow(dead_code)]
+    pub(crate) fn origin(&self, id: OriginId) -> &Origin {
+        self.origins.get(id)
     }
 
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
-        self.source_origins
-            .get(merged_line.checked_sub(1)?)
-            .map(|(path, line)| (path.as_path(), *line))
+        self.origins.source_origin(merged_line)
     }
 }
 
@@ -352,14 +313,14 @@ pub(crate) fn lower(checked: CheckedDocument) -> Result<LoweredProgram, Error> {
 struct Lowerer {
     document: Document,
     facts: CheckedFacts,
-    source_origins: Vec<(PathBuf, usize)>,
+    declarations: DeclarationIndex,
+    origins: OriginArena,
     components: Vec<ComponentContract>,
     component_indexes: Vec<ComponentIndex>,
     component_ids: HashMap<String, ComponentId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgramBuilder,
-    origins: Vec<Origin>,
     app_states: HashMap<String, AppStateId>,
 }
 
@@ -368,26 +329,23 @@ impl Lowerer {
         let CheckedDocument {
             document,
             facts,
-            source_origins,
+            declarations,
+            origins,
             ..
         } = checked;
-        let app_states = document
-            .states
-            .iter()
-            .enumerate()
-            .map(|(index, state)| (state.name.clone(), AppStateId(index as u32)))
-            .collect();
+        let app_states = declarations.app_state_ids();
+        let component_ids = declarations.component_ids();
         Self {
             document,
             facts,
-            source_origins,
+            declarations,
+            origins,
             components: Vec::new(),
             component_indexes: Vec::new(),
-            component_ids: HashMap::new(),
+            component_ids,
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
             styles: StyleProgramBuilder::default(),
-            origins: Vec::new(),
             app_states,
         }
     }
@@ -424,40 +382,26 @@ impl Lowerer {
         Ok(LoweredProgram {
             document: self.document,
             facts: self.facts,
+            declarations: self.declarations,
             components: self.components,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
             styles,
             origins: self.origins,
-            source_origins: self.source_origins,
         })
     }
 
     fn index_components(&mut self) -> Result<(), Error> {
         let source_components = self.document.components.clone();
-        for (index, component) in source_components.iter().enumerate() {
-            let id = ComponentId(index as u32);
-            if self
-                .component_ids
-                .insert(component.name.clone(), id)
-                .is_some()
-            {
-                return Err(self.invariant(
-                    &component.span,
-                    format!("duplicate checked component `{}`", component.name),
-                ));
-            }
-        }
         for (index, component) in source_components.into_iter().enumerate() {
-            let id = ComponentId(index as u32);
-            let origin = self.push_origin(&component.span, None);
+            let declaration = self.declarations.component(index);
+            let id = declaration.id;
+            let origin = declaration.origin;
             let mut params = Vec::with_capacity(component.params.len());
             for (index, param) in component.params.iter().enumerate() {
+                let declaration = self.declarations.component_param(id, index);
                 params.push(ComponentParamContract {
-                    id: ComponentParamId {
-                        component: id,
-                        index: index as u32,
-                    },
+                    id: declaration.id,
                     name: param.name.clone(),
                     ty: param.ty.clone(),
                     capability: if param.bind {
@@ -466,7 +410,7 @@ impl Lowerer {
                         ParamCapability::Read
                     },
                     default: param.default.clone(),
-                    origin: self.push_origin(&component.span, Some(origin)),
+                    origin: declaration.origin,
                 });
             }
             let events: Vec<ComponentEventContract> = component
@@ -500,13 +444,13 @@ impl Lowerer {
                 .states
                 .iter()
                 .enumerate()
-                .map(|(index, state)| ComponentStateContract {
-                    id: ComponentStateId {
-                        component: id,
-                        index: index as u32,
-                    },
-                    source: state.clone(),
-                    origin: self.push_origin(&state.span, Some(origin)),
+                .map(|(index, state)| {
+                    let declaration = self.declarations.component_state(id, index);
+                    ComponentStateContract {
+                        id: declaration.id,
+                        source: state.clone(),
+                        origin: declaration.origin,
+                    }
                 })
                 .collect::<Vec<_>>();
             let stateful = !states.is_empty() || !component.handlers.is_empty();
@@ -927,20 +871,7 @@ impl Lowerer {
     }
 
     fn push_origin(&mut self, span: &Span, parent: Option<OriginId>) -> OriginId {
-        let (path, line) = self
-            .source_origins
-            .get(span.line.saturating_sub(1))
-            .map_or((None, span.line), |(path, line)| {
-                (Some(path.clone()), *line)
-            });
-        let id = OriginId(self.origins.len() as u32);
-        self.origins.push(Origin {
-            path,
-            line,
-            column: span.column,
-            parent,
-        });
-        id
+        self.origins.push(span, parent)
     }
 
     fn invariant(&self, span: &Span, message: impl Into<String>) -> Error {

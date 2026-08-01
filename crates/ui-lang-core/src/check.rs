@@ -7,7 +7,9 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     check(&mut document, &reachable, &reachable_handlers)?;
-    let facts = without_usage(|| facts::build(&document))?;
+    let mut origins = crate::hir::OriginArena::default();
+    let declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
+    let facts = without_usage(|| facts::build(&document, &declarations, &mut origins))?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(unreachable_handler_warnings(
         &document,
@@ -32,6 +34,8 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     Ok(CheckedDocument::new(
         document,
         facts,
+        declarations,
+        origins,
         warnings,
         reachable,
         reachable_handlers.app,

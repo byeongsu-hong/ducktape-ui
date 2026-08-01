@@ -36,6 +36,49 @@ thread_local! {
     static ACTIVE_EXPR_TYPE_ANALYSIS: RefCell<Option<ActiveExprTypeAnalysis>> = const { RefCell::new(None) };
 }
 
+struct ExprTypeAnalysisGuard {
+    active: bool,
+}
+
+impl ExprTypeAnalysisGuard {
+    fn start() -> Self {
+        ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+            let mut active = active.borrow_mut();
+            assert!(
+                active.is_none(),
+                "expression type analysis must not be nested"
+            );
+            *active = Some(ActiveExprTypeAnalysis::default());
+        });
+        Self { active: true }
+    }
+
+    fn finish(mut self) -> ActiveExprTypeAnalysis {
+        let analysis = take_active_expr_type_analysis();
+        self.active = false;
+        analysis
+    }
+}
+
+impl Drop for ExprTypeAnalysisGuard {
+    fn drop(&mut self) {
+        if self.active {
+            ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+                active.borrow_mut().take();
+            });
+        }
+    }
+}
+
+fn take_active_expr_type_analysis() -> ActiveExprTypeAnalysis {
+    ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        active
+            .borrow_mut()
+            .take()
+            .expect("expression type analysis must remain active")
+    })
+}
+
 fn expr_key(expr: &Expr) -> usize {
     std::ptr::from_ref(expr).addr()
 }
@@ -46,24 +89,13 @@ pub(crate) fn analyze_expr_types(
     document: &Document,
     span: &Span,
 ) -> Result<ExprTypeAnalysis, Error> {
-    ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
-        let mut active = active.borrow_mut();
-        assert!(
-            active.is_none(),
-            "expression type analysis must not be nested"
-        );
-        *active = Some(ActiveExprTypeAnalysis::default());
-    });
+    let guard = ExprTypeAnalysisGuard::start();
 
     let result = expr_type(expr, env, document, span);
     let result = result.and_then(|_| complete_expr_type_analysis(expr, env, document, span));
-    let active = ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
-        active
-            .borrow_mut()
-            .take()
-            .expect("expression type analysis must remain active")
-    });
+    let mut active = guard.finish();
     result?;
+    refine_expr_type_evidence(expr, document, &mut active.types);
     Ok(ExprTypeAnalysis {
         metrics: ExprTypeAnalysisMetrics {
             queries: active.queries,
@@ -72,6 +104,89 @@ pub(crate) fn analyze_expr_types(
         },
         types: active.types,
     })
+}
+
+fn refine_expr_type_evidence(
+    expr: &Expr,
+    document: &Document,
+    types: &mut HashMap<usize, Type>,
+) -> Type {
+    let children = match expr {
+        Expr::List(values) => values
+            .iter()
+            .map(|value| refine_expr_type_evidence(value, document, types))
+            .collect::<Vec<_>>(),
+        Expr::Call { name, .. } if unqualified_name(name) == "provided" => Vec::new(),
+        Expr::Call { name, args }
+            if contextual_builtin_call(name, document)
+                == Some(ContextualBuiltin::AnimationProject) =>
+        {
+            args.iter()
+                .enumerate()
+                .filter(|(index, _)| *index != 1)
+                .map(|(_, argument)| refine_expr_type_evidence(argument, document, types))
+                .collect()
+        }
+        Expr::Call { args, .. } => args
+            .iter()
+            .map(|argument| refine_expr_type_evidence(argument, document, types))
+            .collect(),
+        Expr::Unary { value, .. } => vec![refine_expr_type_evidence(value, document, types)],
+        Expr::Binary { left, right, .. } => vec![
+            refine_expr_type_evidence(left, document, types),
+            refine_expr_type_evidence(right, document, types),
+        ],
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None
+        | Expr::Path(_) => Vec::new(),
+    };
+    let inferred = types
+        .get(&expr_key(expr))
+        .cloned()
+        .expect("completed expression analysis records every expression node");
+    let refined = match expr {
+        Expr::List(_) => Type::List(Box::new(
+            children.iter().fold(Type::Unknown, |evidence, ty| {
+                unify_type_evidence(&evidence, ty)
+            }),
+        )),
+        Expr::Call { name, .. } => match contextual_builtin_call(name, document) {
+            Some(ContextualBuiltin::Some) => children
+                .first()
+                .map(|ty| Type::Option(Box::new(ty.clone())))
+                .unwrap_or(inferred),
+            Some(ContextualBuiltin::Ok) => children
+                .first()
+                .map(|ty| Type::Result(Box::new(ty.clone()), Box::new(Type::Unknown)))
+                .unwrap_or(inferred),
+            Some(ContextualBuiltin::Err) => children
+                .first()
+                .map(|ty| Type::Result(Box::new(Type::Unknown), Box::new(ty.clone())))
+                .unwrap_or(inferred),
+            Some(ContextualBuiltin::DebugTimeWith) => children.get(1).cloned().unwrap_or(inferred),
+            _ => inferred,
+        },
+        _ => inferred,
+    };
+    types.insert(expr_key(expr), refined.clone());
+    refined
+}
+
+fn contextual_builtin_call(name: &str, document: &Document) -> Option<ContextualBuiltin> {
+    if document
+        .functions
+        .iter()
+        .any(|function| function.name == name && function.kind == ExternKind::Sync)
+    {
+        None
+    } else {
+        ContextualBuiltin::from_name(unqualified_name(name))
+    }
 }
 
 fn complete_expr_type_analysis(
@@ -87,7 +202,7 @@ fn complete_expr_type_analysis(
             }
         }
         Expr::Call { name, args }
-            if ContextualBuiltin::from_name(unqualified_name(name))
+            if contextual_builtin_call(name, document)
                 == Some(ContextualBuiltin::AnimationProject) =>
         {
             complete_expr_type_analysis(&args[0], env, document, span)?;
@@ -189,10 +304,11 @@ fn expr_type_uncached(
             let Some(first) = values.first() else {
                 return Ok(Type::List(Box::new(Type::Unknown)));
             };
-            let ty = expr_type(first, env, document, span)?;
+            let mut ty = expr_type(first, env, document, span)?;
             for value in &values[1..] {
                 let actual = expr_type(value, env, document, span)?;
                 require_type(&actual, &ty, span)?;
+                ty = unify_type_evidence(&ty, &actual);
             }
             Ok(Type::List(Box::new(ty)))
         }
@@ -1072,25 +1188,6 @@ fn expr_type_uncached(
                     )?;
                     Ok(Type::Size)
                 }
-                "debug.time_with" => {
-                    if args.len() != 2 {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            "debug.time_with expects a name and one value",
-                        ));
-                    }
-                    require_type(&expr_type(&args[0], env, document, span)?, &Type::Str, span)?;
-                    let output = expr_type(&args[1], env, document, span)?;
-                    if contains_debug_span(&output) {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            "debug.time_with cannot move debug span state",
-                        ));
-                    }
-                    Ok(output)
-                }
                 "image.downgrade" => {
                     check_builtin_args(name, args, &[Type::ImageAllocation], env, document, span)?;
                     Ok(Type::ImageMemory)
@@ -1861,32 +1958,6 @@ fn expr_type_uncached(
                     )?;
                     Ok(Type::Option(Box::new(Type::Str)))
                 }
-                "len" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "len expects one argument"));
-                    }
-                    match expr_type(&args[0], env, document, span)? {
-                        Type::List(_) | Type::Str | Type::Bytes => Ok(Type::I64),
-                        actual => Err(Error::new(
-                            "E152",
-                            span,
-                            format!("len does not accept `{}`", actual.display()),
-                        )),
-                    }
-                }
-                "empty" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "empty expects one argument"));
-                    }
-                    match expr_type(&args[0], env, document, span)? {
-                        Type::List(_) | Type::Str | Type::Bytes => Ok(Type::Bool),
-                        actual => Err(Error::new(
-                            "E152",
-                            span,
-                            format!("empty does not accept `{}`", actual.display()),
-                        )),
-                    }
-                }
                 "trim" => {
                     if args.len() != 1 {
                         return Err(Error::new("E152", span, "trim expects one argument"));
@@ -2254,6 +2325,53 @@ fn check_contextual_builtin(
             )?;
             Ok(Type::Bool)
         }
+        ContextualBuiltin::DebugTimeWith => {
+            if args.len() != 2 {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    "debug.time_with expects a name and one value",
+                ));
+            }
+            require_type(&expr_type(&args[0], env, document, span)?, &Type::Str, span)?;
+            let output = expr_type(&args[1], env, document, span)?;
+            if contains_debug_span(&output) {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    "debug.time_with cannot move debug span state",
+                ));
+            }
+            Ok(output)
+        }
+        ContextualBuiltin::Empty | ContextualBuiltin::Len => {
+            let name = if builtin == ContextualBuiltin::Len {
+                "len"
+            } else {
+                "empty"
+            };
+            if args.len() != 1 {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    format!("{name} expects one argument"),
+                ));
+            }
+            match expr_type(&args[0], env, document, span)? {
+                Type::List(_) | Type::Str | Type::Bytes => {
+                    Ok(if builtin == ContextualBuiltin::Len {
+                        Type::I64
+                    } else {
+                        Type::Bool
+                    })
+                }
+                actual => Err(Error::new(
+                    "E152",
+                    span,
+                    format!("{name} does not accept `{}`", actual.display()),
+                )),
+            }
+        }
         ContextualBuiltin::LinearAddStops => {
             check_builtin_args(
                 "linear.add_stops",
@@ -2436,5 +2554,23 @@ fn checked_integer_arithmetic(left: i64, op: BinaryOp, right: i64) -> Option<i64
         BinaryOp::Div => left.checked_div(right),
         BinaryOp::Rem => left.checked_rem(right),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod analysis_context_tests {
+    use super::*;
+
+    #[test]
+    fn panic_unwind_releases_the_thread_local_analysis_context() {
+        let panic = std::panic::catch_unwind(|| {
+            let _guard = ExprTypeAnalysisGuard::start();
+            panic!("synthetic expression-analysis panic");
+        });
+        assert!(panic.is_err());
+
+        let guard = ExprTypeAnalysisGuard::start();
+        let analysis = guard.finish();
+        assert!(analysis.types.is_empty());
     }
 }

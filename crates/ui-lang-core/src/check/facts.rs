@@ -1,11 +1,15 @@
 use super::expr::{
     BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, analyze_expr_types, field_type,
+    resolve_erased_type, unify_type_evidence,
 };
 use super::*;
+use crate::hir::{
+    AppStateId, ComponentId, ComponentParamId, ComponentStateId, DeclarationIndex, DerivedId,
+    EnumVariantId, ExternFnId, OriginArena, OriginId, PaletteId, StructFieldId, TestId,
+};
 use crate::unqualified_name;
 #[cfg(test)]
 use std::cell::Cell;
-use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedExprId(u32);
@@ -23,63 +27,29 @@ pub(crate) struct CheckedLocalId(u32);
 pub(crate) struct CheckedViewId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedOriginId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedBuiltinId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExternFnId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedStructId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedStructFieldId {
-    owner: CheckedStructId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedEnumId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedEnumVariantId {
-    owner: CheckedEnumId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedPaletteId(u32);
-
-#[derive(Clone, Debug)]
-pub(crate) struct CheckedOrigin {
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) line: usize,
-    pub(crate) column: usize,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueScope {
     App,
-    Component(u32),
+    Component(ComponentId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CheckedValueKind {
-    AppState { index: u32 },
-    Derived { index: u32 },
-    ComponentParam { component: u32, index: u32 },
-    ComponentState { component: u32, index: u32 },
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CheckedValueRef {
+    AppState(AppStateId),
+    Derived(DerivedId),
+    ComponentParam(ComponentParamId),
+    ComponentState(ComponentStateId),
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedValue {
     pub(crate) name: String,
     pub(crate) ty: Type,
-    pub(crate) kind: CheckedValueKind,
+    pub(crate) id: CheckedValueRef,
     pub(crate) initializer: Option<CheckedExprUseId>,
-    pub(crate) origin: CheckedOriginId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -88,14 +58,14 @@ pub(crate) struct CheckedLocal {
     pub(crate) ty: Type,
     pub(crate) owner: CheckedExprUseId,
     pub(crate) body_argument: usize,
-    pub(crate) origin: CheckedOriginId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedViewScope {
     App,
-    Component(u32),
-    Test(u32),
+    Component(ComponentId),
+    Test(TestId),
 }
 
 #[derive(Clone, Debug)]
@@ -104,33 +74,44 @@ pub(crate) struct CheckedView {
     pub(crate) scope: CheckedViewScope,
     pub(crate) parent: Option<CheckedViewId>,
     pub(crate) children: Vec<CheckedViewId>,
-    pub(crate) origin: CheckedOriginId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedExprOwner {
-    Value(CheckedValueId),
+    Value(CheckedValueRef),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedInitializerCoercion {
+    None,
+    ListToCombo { element: Type },
+    ValueToAnimation { value: Type },
+    StrToMarkdown,
+    StrToEditor,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedExprUse {
     pub(crate) owner: CheckedExprOwner,
     pub(crate) root: CheckedExprId,
-    pub(crate) expected: Type,
-    pub(crate) origin: CheckedOriginId,
+    pub(crate) source: Type,
+    pub(crate) destination: Type,
+    pub(crate) coercion: CheckedInitializerCoercion,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedPathRoot {
-    Value(CheckedValueId),
+    Value(CheckedValueRef),
     Local(CheckedLocalId),
-    EnumVariant(CheckedEnumVariantId),
-    Palette(CheckedPaletteId),
+    EnumVariant(EnumVariantId),
+    Palette(PaletteId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedProjectionKind {
-    Struct(CheckedStructFieldId),
+    Struct(StructFieldId),
     Native,
     OptionalWidgetTarget,
 }
@@ -146,8 +127,8 @@ pub(crate) struct CheckedProjection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedCallTarget {
     Builtin(CheckedBuiltinId),
-    Extern(CheckedExternFnId),
-    EnumVariant(CheckedEnumVariantId),
+    Extern(ExternFnId),
+    EnumVariant(EnumVariantId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,7 +183,7 @@ pub(crate) enum CheckedExprKind {
 pub(crate) struct CheckedExpr {
     pub(crate) ty: Type,
     pub(crate) kind: CheckedExprKind,
-    pub(crate) origin: CheckedOriginId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -217,6 +198,8 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) type_analysis_cache_hits: usize,
     pub(crate) declaration_lookups: usize,
     pub(crate) builtin_intern_lookups: usize,
+    pub(crate) scope_env_builds: usize,
+    pub(crate) scope_env_entries: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -227,7 +210,6 @@ pub(crate) struct CheckedFacts {
     expression_uses: Vec<CheckedExprUse>,
     expressions: Vec<CheckedExpr>,
     builtins: Vec<String>,
-    origins: Vec<CheckedOrigin>,
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: Cell<usize>,
@@ -276,11 +258,6 @@ impl CheckedFacts {
         &self.builtins[id.0 as usize]
     }
 
-    pub(crate) fn origin(&self, id: CheckedOriginId) -> &CheckedOrigin {
-        self.record_lookup();
-        &self.origins[id.0 as usize]
-    }
-
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
     }
@@ -302,126 +279,70 @@ impl CheckedFacts {
 
     #[cfg(not(test))]
     fn record_lookup(&self) {}
-
-    pub(crate) fn remap_origins(&mut self, origins: &[(PathBuf, usize)]) {
-        for origin in &mut self.origins {
-            let Some((path, line)) = origin
-                .line
-                .checked_sub(1)
-                .and_then(|index| origins.get(index))
-            else {
-                continue;
-            };
-            origin.path = Some(path.clone());
-            origin.line = *line;
-        }
-    }
 }
 
-pub(in crate::check) fn build(document: &Document) -> Result<CheckedFacts, Error> {
-    FactsBuilder::new(document).build()
+pub(in crate::check) fn build(
+    document: &Document,
+    declarations: &DeclarationIndex,
+    origins: &mut OriginArena,
+) -> Result<CheckedFacts, Error> {
+    FactsBuilder::new(document, declarations, origins).build()
 }
 
 struct FactsBuilder<'a> {
     document: &'a Document,
+    declarations: &'a DeclarationIndex,
+    origins: &'a mut OriginArena,
     facts: CheckedFacts,
     values_by_scope: HashMap<ValueScope, HashMap<String, CheckedValueId>>,
-    externs_by_name: HashMap<String, CheckedExternFnId>,
-    structs_by_name: HashMap<String, CheckedStructId>,
-    struct_fields_by_owner: HashMap<CheckedStructId, HashMap<String, CheckedStructFieldId>>,
-    enums_by_name: HashMap<String, CheckedEnumId>,
-    enum_variants_by_owner: HashMap<CheckedEnumId, HashMap<String, CheckedEnumVariantId>>,
-    palettes_by_name: HashMap<String, CheckedPaletteId>,
     builtins_by_name: HashMap<String, CheckedBuiltinId>,
 }
 
-type FactEnv = HashMap<String, (CheckedPathRoot, Type)>;
+#[derive(Clone, Debug, Default)]
+struct FactEnv {
+    paths: HashMap<String, (CheckedPathRoot, Type)>,
+    types: HashMap<String, Type>,
+}
+
+impl FactEnv {
+    fn insert(&mut self, name: String, root: CheckedPathRoot, ty: Type) {
+        self.types.insert(name.clone(), ty.clone());
+        self.paths.insert(name, (root, ty));
+    }
+
+    fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
+        self.paths.get(name)
+    }
+
+    fn types(&self) -> &HashMap<String, Type> {
+        &self.types
+    }
+
+    fn len(&self) -> usize {
+        self.paths.len()
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ExpressionLowering<'a> {
     analysis: &'a ExprTypeAnalysis,
     owner: CheckedExprUseId,
-    origin: CheckedOriginId,
+    origin: OriginId,
     span: &'a Span,
 }
 
 impl<'a> FactsBuilder<'a> {
-    fn new(document: &'a Document) -> Self {
+    fn new(
+        document: &'a Document,
+        declarations: &'a DeclarationIndex,
+        origins: &'a mut OriginArena,
+    ) -> Self {
         Self {
             document,
+            declarations,
+            origins,
             facts: CheckedFacts::default(),
             values_by_scope: HashMap::new(),
-            externs_by_name: document
-                .functions
-                .iter()
-                .enumerate()
-                .filter(|(_, function)| function.kind == ExternKind::Sync)
-                .map(|(index, function)| (function.name.clone(), CheckedExternFnId(index as u32)))
-                .collect(),
-            structs_by_name: document
-                .structs
-                .iter()
-                .enumerate()
-                .map(|(index, item)| (item.name.clone(), CheckedStructId(index as u32)))
-                .collect(),
-            struct_fields_by_owner: document
-                .structs
-                .iter()
-                .enumerate()
-                .map(|(struct_index, item)| {
-                    let owner = CheckedStructId(struct_index as u32);
-                    let fields = item
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .map(|(index, (name, _))| {
-                            (
-                                name.clone(),
-                                CheckedStructFieldId {
-                                    owner,
-                                    index: index as u32,
-                                },
-                            )
-                        })
-                        .collect();
-                    (owner, fields)
-                })
-                .collect(),
-            enums_by_name: document
-                .enums
-                .iter()
-                .enumerate()
-                .map(|(index, item)| (item.name.clone(), CheckedEnumId(index as u32)))
-                .collect(),
-            enum_variants_by_owner: document
-                .enums
-                .iter()
-                .enumerate()
-                .map(|(enum_index, item)| {
-                    let owner = CheckedEnumId(enum_index as u32);
-                    let variants = item
-                        .variants
-                        .iter()
-                        .enumerate()
-                        .map(|(index, variant)| {
-                            (
-                                variant.name.clone(),
-                                CheckedEnumVariantId {
-                                    owner,
-                                    index: index as u32,
-                                },
-                            )
-                        })
-                        .collect();
-                    (owner, variants)
-                })
-                .collect(),
-            palettes_by_name: document
-                .palettes
-                .iter()
-                .enumerate()
-                .map(|(index, item)| (item.name.clone(), CheckedPaletteId(index as u32)))
-                .collect(),
             builtins_by_name: HashMap::new(),
         }
     }
@@ -436,7 +357,7 @@ impl<'a> FactsBuilder<'a> {
             .iter()
             .find(|expression| contains_unknown(&expression.ty))
         {
-            let origin = &self.facts.origins[expression.origin.0 as usize];
+            let origin = self.origins.get(expression.origin);
             return Err(self.invariant(
                 &Span {
                     line: origin.line,
@@ -455,50 +376,49 @@ impl<'a> FactsBuilder<'a> {
 
     fn index_values(&mut self) -> Result<(), Error> {
         for (index, state) in self.document.states.iter().enumerate() {
+            let declaration = self.declarations.app_state(index);
             self.push_value(
                 ValueScope::App,
                 state.name.clone(),
                 state.ty.clone(),
-                CheckedValueKind::AppState {
-                    index: index as u32,
-                },
+                CheckedValueRef::AppState(declaration.id),
+                declaration.origin,
                 &state.span,
             )?;
         }
         for (index, derived) in self.document.derived.iter().enumerate() {
+            let declaration = self.declarations.derived(index);
             self.push_value(
                 ValueScope::App,
                 derived.name.clone(),
                 derived.ty.clone(),
-                CheckedValueKind::Derived {
-                    index: index as u32,
-                },
+                CheckedValueRef::Derived(declaration.id),
+                declaration.origin,
                 &derived.span,
             )?;
         }
         for (component_index, component) in self.document.components.iter().enumerate() {
-            let scope = ValueScope::Component(component_index as u32);
+            let component_id = self.declarations.component(component_index).id;
+            let scope = ValueScope::Component(component_id);
             for (index, param) in component.params.iter().enumerate() {
+                let declaration = self.declarations.component_param(component_id, index);
                 self.push_value(
                     scope,
                     param.name.clone(),
                     param.ty.clone(),
-                    CheckedValueKind::ComponentParam {
-                        component: component_index as u32,
-                        index: index as u32,
-                    },
+                    CheckedValueRef::ComponentParam(declaration.id),
+                    declaration.origin,
                     &component.span,
                 )?;
             }
             for (index, state) in component.states.iter().enumerate() {
+                let declaration = self.declarations.component_state(component_id, index);
                 self.push_value(
                     scope,
                     state.name.clone(),
                     state.ty.clone(),
-                    CheckedValueKind::ComponentState {
-                        component: component_index as u32,
-                        index: index as u32,
-                    },
+                    CheckedValueRef::ComponentState(declaration.id),
+                    declaration.origin,
                     &state.span,
                 )?;
             }
@@ -511,7 +431,8 @@ impl<'a> FactsBuilder<'a> {
         scope: ValueScope,
         name: String,
         ty: Type,
-        kind: CheckedValueKind,
+        value_ref: CheckedValueRef,
+        origin: OriginId,
         span: &Span,
     ) -> Result<CheckedValueId, Error> {
         let id = CheckedValueId(self.facts.values.len() as u32);
@@ -524,11 +445,10 @@ impl<'a> FactsBuilder<'a> {
         {
             return Err(self.invariant(span, format!("duplicate checked value `{name}`")));
         }
-        let origin = self.push_origin(span);
         self.facts.values.push(CheckedValue {
             name,
             ty,
-            kind,
+            id: value_ref,
             initializer: None,
             origin,
         });
@@ -536,25 +456,27 @@ impl<'a> FactsBuilder<'a> {
     }
 
     fn lower_initializers(&mut self) -> Result<(), Error> {
-        let app_env = self
+        let mut app_env = FactEnv::default();
+        for (name, id) in self
             .values_by_scope
             .get(&ValueScope::App)
             .into_iter()
             .flatten()
-            .map(|(name, id)| {
-                (
-                    name.clone(),
-                    (
-                        CheckedPathRoot::Value(*id),
-                        self.facts.values[id.0 as usize].ty.clone(),
-                    ),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        {
+            let value = &self.facts.values[id.0 as usize];
+            app_env.insert(
+                name.clone(),
+                CheckedPathRoot::Value(value.id),
+                value.ty.clone(),
+            );
+        }
+        self.facts.metrics.scope_env_builds += 1;
+        self.facts.metrics.scope_env_entries += app_env.len();
+        let empty_env = FactEnv::default();
 
         for (index, state) in self.document.states.iter().enumerate() {
             let id = self.value_id(ValueScope::App, &state.name, &state.span)?;
-            self.push_expression_use(id, &state.initial, &state.ty, &HashMap::new(), &state.span)?;
+            self.push_expression_use(id, &state.initial, &state.ty, &empty_env, &state.span)?;
             debug_assert_eq!(id, CheckedValueId(index as u32));
         }
         for derived in &self.document.derived {
@@ -562,23 +484,17 @@ impl<'a> FactsBuilder<'a> {
             self.push_expression_use(id, &derived.value, &derived.ty, &app_env, &derived.span)?;
         }
         for (component_index, component) in self.document.components.iter().enumerate() {
-            let scope = ValueScope::Component(component_index as u32);
+            let scope = ValueScope::Component(self.declarations.component(component_index).id);
             for param in &component.params {
                 let Some(default) = &param.default else {
                     continue;
                 };
                 let id = self.value_id(scope, &param.name, &component.span)?;
-                self.push_expression_use(id, default, &param.ty, &HashMap::new(), &component.span)?;
+                self.push_expression_use(id, default, &param.ty, &empty_env, &component.span)?;
             }
             for state in &component.states {
                 let id = self.value_id(scope, &state.name, &state.span)?;
-                self.push_expression_use(
-                    id,
-                    &state.initial,
-                    &state.ty,
-                    &HashMap::new(),
-                    &state.span,
-                )?;
+                self.push_expression_use(id, &state.initial, &state.ty, &empty_env, &state.span)?;
             }
         }
         Ok(())
@@ -606,13 +522,11 @@ impl<'a> FactsBuilder<'a> {
         env: &FactEnv,
         span: &Span,
     ) -> Result<CheckedExprUseId, Error> {
-        let origin = self.facts.values[owner.0 as usize].origin;
-        let env_types = env
-            .iter()
-            .map(|(name, (_, ty))| (name.clone(), ty.clone()))
-            .collect::<HashMap<_, _>>();
+        let value = &self.facts.values[owner.0 as usize];
+        let origin = value.origin;
+        let owner_ref = value.id;
         let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
-        let analysis = analyze_expr_types(expr, &env_types, self.document, span)?;
+        let analysis = analyze_expr_types(expr, env.types(), self.document, span)?;
         let analysis_metrics = analysis.metrics();
         self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
         self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
@@ -623,12 +537,25 @@ impl<'a> FactsBuilder<'a> {
             origin,
             span,
         };
-        let root = self.lower_expr(expr, Some(expected), env, lowering)?;
+        let inferred = analysis
+            .type_of(expr)
+            .ok_or_else(|| self.invariant(span, "missing initializer expression type"))?;
+        let (source_context, coercion) = initializer_source_context(inferred, expected);
+        let source = resolve_erased_type(&contextual_type(inferred.clone(), Some(&source_context)));
+        let root = self.lower_expr(expr, Some(&source_context), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "initializer source type does not match its checked expression root",
+            ));
+        }
         debug_assert_eq!(id.0 as usize, self.facts.expression_uses.len());
         self.facts.expression_uses.push(CheckedExprUse {
-            owner: CheckedExprOwner::Value(owner),
+            owner: CheckedExprOwner::Value(owner_ref),
             root,
-            expected: expected.clone(),
+            source,
+            destination: expected.clone(),
+            coercion,
             origin,
         });
         self.facts.values[owner.0 as usize].initializer = Some(id);
@@ -646,7 +573,7 @@ impl<'a> FactsBuilder<'a> {
             lowering.analysis.type_of(expr).cloned().ok_or_else(|| {
                 self.invariant(lowering.span, "missing post-order expression type")
             })?;
-        let ty = contextual_type(inferred, expected);
+        let ty = resolve_erased_type(&contextual_type(inferred, expected));
         let kind =
             match expr {
                 Expr::Bool(value) => CheckedExprKind::Bool(*value),
@@ -750,7 +677,7 @@ impl<'a> FactsBuilder<'a> {
                 .is_some_and(|item| item.name == *contract)
         {
             self.facts.metrics.declaration_lookups += 1;
-            let id = self.palettes_by_name.get(palette).copied().ok_or_else(|| {
+            let id = self.declarations.palette_id(palette).ok_or_else(|| {
                 self.invariant(span, format!("missing checked palette `{palette}`"))
             })?;
             return Ok(CheckedExprKind::Path {
@@ -779,18 +706,12 @@ impl<'a> FactsBuilder<'a> {
             let output = field_type(&input, field, self.document, span)?;
             let kind = if let Type::Named(struct_name) = &input {
                 self.facts.metrics.declaration_lookups += 1;
-                let owner = self
-                    .structs_by_name
-                    .get(struct_name)
-                    .copied()
-                    .ok_or_else(|| {
-                        self.invariant(span, format!("missing checked struct `{struct_name}`"))
-                    })?;
+                let owner = self.declarations.struct_id(struct_name).ok_or_else(|| {
+                    self.invariant(span, format!("missing checked struct `{struct_name}`"))
+                })?;
                 let field_id = self
-                    .struct_fields_by_owner
-                    .get(&owner)
-                    .and_then(|fields| fields.get(field))
-                    .copied()
+                    .declarations
+                    .struct_field(owner, field)
                     .ok_or_else(|| {
                         self.invariant(
                             span,
@@ -821,7 +742,9 @@ impl<'a> FactsBuilder<'a> {
             return Ok(CheckedCallTarget::EnumVariant(variant));
         }
         self.facts.metrics.declaration_lookups += 1;
-        if let Some(id) = self.externs_by_name.get(name).copied() {
+        if let Some(id) = self.declarations.extern_fn_id(name)
+            && self.document.functions[id.0 as usize].kind == ExternKind::Sync
+        {
             return Ok(CheckedCallTarget::Extern(id));
         }
         let name = unqualified_name(name);
@@ -843,17 +766,10 @@ impl<'a> FactsBuilder<'a> {
         Ok(CheckedCallTarget::Builtin(id))
     }
 
-    fn enum_variant(
-        &mut self,
-        enum_name: &str,
-        variant_name: &str,
-    ) -> Option<CheckedEnumVariantId> {
+    fn enum_variant(&mut self, enum_name: &str, variant_name: &str) -> Option<EnumVariantId> {
         self.facts.metrics.declaration_lookups += 1;
-        let owner = self.enums_by_name.get(enum_name).copied()?;
-        self.enum_variants_by_owner
-            .get(&owner)?
-            .get(variant_name)
-            .copied()
+        let owner = self.declarations.enum_id(enum_name)?;
+        self.declarations.enum_variant(owner, variant_name)
     }
 
     fn lower_call_arguments(
@@ -913,7 +829,7 @@ impl<'a> FactsBuilder<'a> {
                     })?;
                     let mut scoped = env.clone();
                     let ty = self.facts.locals[local.0 as usize].ty.clone();
-                    scoped.insert(name, (CheckedPathRoot::Local(local), ty));
+                    scoped.insert(name, CheckedPathRoot::Local(local), ty);
                     arguments.push(CheckedCallArgument::Value(self.lower_expr(
                         argument,
                         expected.as_ref(),
@@ -972,16 +888,23 @@ impl<'a> FactsBuilder<'a> {
 
     fn index_views(&mut self) {
         for (index, component) in self.document.components.iter().enumerate() {
+            let declaration = self.declarations.component(index);
             self.index_view(
                 &component.root,
                 None,
-                CheckedViewScope::Component(index as u32),
+                CheckedViewScope::Component(declaration.id),
+                Some(declaration.origin),
             );
         }
-        self.index_view(&self.document.view, None, CheckedViewScope::App);
+        self.index_view(&self.document.view, None, CheckedViewScope::App, None);
         for (index, test) in self.document.tests.iter().enumerate() {
             if let Some(mount) = &test.mount {
-                self.index_view(mount, None, CheckedViewScope::Test(index as u32));
+                self.index_view(
+                    mount,
+                    None,
+                    CheckedViewScope::Test(TestId(index as u32)),
+                    None,
+                );
             }
         }
     }
@@ -991,9 +914,13 @@ impl<'a> FactsBuilder<'a> {
         node: &ViewNode,
         parent: Option<CheckedViewId>,
         scope: CheckedViewScope,
+        root_parent_origin: Option<OriginId>,
     ) -> CheckedViewId {
         let id = CheckedViewId(self.facts.views.len() as u32);
-        let origin = self.push_origin(node.span());
+        let parent_origin = parent
+            .map(|parent| self.facts.views[parent.0 as usize].origin)
+            .or(root_parent_origin);
+        let origin = self.origins.push(node.span(), parent_origin);
         self.facts.views.push(CheckedView {
             kind: view_kind(node),
             scope,
@@ -1003,24 +930,37 @@ impl<'a> FactsBuilder<'a> {
         });
         let children = view_children(node)
             .into_iter()
-            .map(|child| self.index_view(child, Some(id), scope))
+            .map(|child| self.index_view(child, Some(id), scope, None))
             .collect();
         self.facts.views[id.0 as usize].children = children;
         id
     }
 
-    fn push_origin(&mut self, span: &Span) -> CheckedOriginId {
-        let id = CheckedOriginId(self.facts.origins.len() as u32);
-        self.facts.origins.push(CheckedOrigin {
-            path: None,
-            line: span.line,
-            column: span.column,
-        });
-        id
-    }
-
     fn invariant(&self, span: &Span, message: impl Into<String>) -> Error {
         Error::new("E196", span, message)
+    }
+}
+
+fn initializer_source_context(
+    inferred: &Type,
+    destination: &Type,
+) -> (Type, CheckedInitializerCoercion) {
+    match (inferred, destination) {
+        (Type::List(_), Type::Combo(element)) => (
+            Type::List(element.clone()),
+            CheckedInitializerCoercion::ListToCombo {
+                element: element.as_ref().clone(),
+            },
+        ),
+        (inferred, Type::Animation(value)) if compatible(inferred, value) => (
+            value.as_ref().clone(),
+            CheckedInitializerCoercion::ValueToAnimation {
+                value: value.as_ref().clone(),
+            },
+        ),
+        (Type::Str, Type::Markdown) => (Type::Str, CheckedInitializerCoercion::StrToMarkdown),
+        (Type::Str, Type::Editor) => (Type::Str, CheckedInitializerCoercion::StrToEditor),
+        _ => (destination.clone(), CheckedInitializerCoercion::None),
     }
 }
 
@@ -1061,11 +1001,7 @@ fn contains_unknown(ty: &Type) -> bool {
 }
 
 fn compatible_operand(left: &Type, right: &Type) -> Type {
-    if *left == Type::Unknown {
-        right.clone()
-    } else {
-        left.clone()
-    }
+    resolve_erased_type(&unify_type_evidence(left, right))
 }
 
 fn view_kind(node: &ViewNode) -> &'static str {
@@ -1167,17 +1103,19 @@ impl CheckedFacts {
             writeln!(
                 output,
                 "value v{index} {:?} {}:{:?} init={:?} origin=o{}",
-                value.kind, value.name, value.ty, value.initializer, value.origin.0
+                value.id, value.name, value.ty, value.initializer, value.origin.0
             )
             .unwrap();
         }
         for (index, expression_use) in self.expression_uses.iter().enumerate() {
             writeln!(
                 output,
-                "use u{index} {:?} root=e{} expected={:?} origin=o{}",
+                "use u{index} {:?} root=e{} source={:?} destination={:?} coercion={:?} origin=o{}",
                 expression_use.owner,
                 expression_use.root.0,
-                expression_use.expected,
+                expression_use.source,
+                expression_use.destination,
+                expression_use.coercion,
                 expression_use.origin.0
             )
             .unwrap();
@@ -1296,44 +1234,44 @@ view
 
         assert_eq!(
             facts.structural_snapshot(),
-            r#"value v0 AppState { index: 0 } user:Named("User") init=Some(CheckedExprUseId(0)) origin=o0
-value v1 AppState { index: 1 } color:Color init=Some(CheckedExprUseId(1)) origin=o1
-value v2 AppState { index: 2 } mode:Named("Mode") init=Some(CheckedExprUseId(2)) origin=o2
-value v3 Derived { index: 0 } name:Str init=Some(CheckedExprUseId(3)) origin=o3
-value v4 Derived { index: 1 } visible:Bool init=Some(CheckedExprUseId(4)) origin=o4
-value v5 ComponentParam { component: 0, index: 0 } label:Str init=Some(CheckedExprUseId(5)) origin=o5
-value v6 ComponentState { component: 0, index: 0 } open:Bool init=Some(CheckedExprUseId(6)) origin=o6
-use u0 Value(CheckedValueId(0)) root=e1 expected=Named("User") origin=o0
-use u1 Value(CheckedValueId(1)) root=e5 expected=Color origin=o1
-use u2 Value(CheckedValueId(2)) root=e6 expected=Named("Mode") origin=o2
-use u3 Value(CheckedValueId(3)) root=e7 expected=Str origin=o3
-use u4 Value(CheckedValueId(4)) root=e14 expected=Bool origin=o4
-use u5 Value(CheckedValueId(5)) root=e15 expected=Str origin=o5
-use u6 Value(CheckedValueId(6)) root=e16 expected=Bool origin=o6
+            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(CheckedExprUseId(0)) origin=o0
+value v1 AppState(AppStateId(1)) color:Color init=Some(CheckedExprUseId(1)) origin=o1
+value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(CheckedExprUseId(2)) origin=o2
+value v3 Derived(DerivedId(0)) name:Str init=Some(CheckedExprUseId(3)) origin=o3
+value v4 Derived(DerivedId(1)) visible:Bool init=Some(CheckedExprUseId(4)) origin=o4
+value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(CheckedExprUseId(5)) origin=o6
+value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(CheckedExprUseId(6)) origin=o7
+use u0 Value(AppState(AppStateId(0))) root=e1 source=Named("User") destination=Named("User") coercion=None origin=o0
+use u1 Value(AppState(AppStateId(1))) root=e5 source=Color destination=Color coercion=None origin=o1
+use u2 Value(AppState(AppStateId(2))) root=e6 source=Named("Mode") destination=Named("Mode") coercion=None origin=o2
+use u3 Value(Derived(DerivedId(0))) root=e7 source=Str destination=Str coercion=None origin=o3
+use u4 Value(Derived(DerivedId(1))) root=e14 source=Bool destination=Bool coercion=None origin=o4
+use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 })) root=e15 source=Str destination=Str coercion=None origin=o6
+use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
 expr e0 i64 1 : I64 origin=o0
-expr e1 call Extern(CheckedExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
+expr e1 call Extern(ExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
 expr e3 f64 0.5 : F64 origin=o1
 expr e4 f64 0.75 : F64 origin=o1
 expr e5 call builtin:color.rgb [CheckedExprId(2), CheckedExprId(3), CheckedExprId(4)] : Color origin=o1
-expr e6 path EnumVariant(CheckedEnumVariantId { owner: CheckedEnumId(0), index: 0 }) [] : Named("Mode") origin=o2
-expr e7 path Value(CheckedValueId(0)) [CheckedProjection { field: "name", input: Named("User"), output: Str, kind: Struct(CheckedStructFieldId { owner: CheckedStructId(0), index: 0 }) }] : Str origin=o3
-expr e8 path Value(CheckedValueId(1)) [CheckedProjection { field: "r", input: Color, output: F64, kind: Native }] : F64 origin=o4
+expr e6 path EnumVariant(EnumVariantId { owner: EnumId(0), index: 0 }) [] : Named("Mode") origin=o2
+expr e7 path Value(AppState(AppStateId(0))) [CheckedProjection { field: "name", input: Named("User"), output: Str, kind: Struct(StructFieldId { owner: StructId(0), index: 0 }) }] : Str origin=o3
+expr e8 path Value(AppState(AppStateId(1))) [CheckedProjection { field: "r", input: Color, output: F64, kind: Native }] : F64 origin=o4
 expr e9 f64 0.1 : F64 origin=o4
 expr e10 binary Ordering { op: Gt, operand: F64 } e8 e9 : Bool origin=o4
-expr e11 path Value(CheckedValueId(3)) [] : Str origin=o4
+expr e11 path Value(Derived(DerivedId(0))) [] : Str origin=o4
 expr e12 str "" : Str origin=o4
 expr e13 binary Equality { op: NotEq, operand: Str } e11 e12 : Bool origin=o4
 expr e14 binary Boolean(And) e10 e13 : Bool origin=o4
-expr e15 str "Card" : Str origin=o5
-expr e16 bool false : Bool origin=o6
-view w0 layout Component(0) parent=None children=[CheckedViewId(1), CheckedViewId(2)] origin=o7
-view w1 text Component(0) parent=Some(CheckedViewId(0)) children=[] origin=o8
-view w2 if Component(0) parent=Some(CheckedViewId(0)) children=[CheckedViewId(3)] origin=o9
-view w3 text Component(0) parent=Some(CheckedViewId(2)) children=[] origin=o10
-view w4 layout App parent=None children=[CheckedViewId(5), CheckedViewId(6)] origin=o11
-view w5 component App parent=Some(CheckedViewId(4)) children=[] origin=o12
-view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
+expr e15 str "Card" : Str origin=o6
+expr e16 bool false : Bool origin=o7
+view w0 layout Component(ComponentId(0)) parent=None children=[CheckedViewId(1), CheckedViewId(2)] origin=o10
+view w1 text Component(ComponentId(0)) parent=Some(CheckedViewId(0)) children=[] origin=o11
+view w2 if Component(ComponentId(0)) parent=Some(CheckedViewId(0)) children=[CheckedViewId(3)] origin=o12
+view w3 text Component(ComponentId(0)) parent=Some(CheckedViewId(2)) children=[] origin=o13
+view w4 layout App parent=None children=[CheckedViewId(5), CheckedViewId(6)] origin=o14
+view w5 component App parent=Some(CheckedViewId(4)) children=[] origin=o15
+view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o16
 "#
         );
         assert_eq!(
@@ -1349,6 +1287,8 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
                 type_analysis_cache_hits: 0,
                 declaration_lookups: 17,
                 builtin_intern_lookups: 1,
+                scope_env_builds: 1,
+                scope_env_entries: 5,
             }
         );
     }
@@ -1399,7 +1339,7 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
         .unwrap();
         fs::write(
             &imported,
-            "component Card()\n  state\n    open = false\n  text \"Card\"\n",
+            "component Card()\n  state\n    open = false\n  col\n    text \"Card\"\n",
         )
         .unwrap();
 
@@ -1408,14 +1348,47 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
         let state = facts
             .values()
             .iter()
-            .find(|value| matches!(value.kind, CheckedValueKind::ComponentState { .. }))
+            .find(|value| matches!(value.id, CheckedValueRef::ComponentState(_)))
             .unwrap();
-        let value_origin = facts.origin(state.origin);
+        let CheckedValueRef::ComponentState(state_id) = state.id else {
+            unreachable!();
+        };
+        let component = program
+            .components()
+            .iter()
+            .find(|component| component.name == "ui::Card")
+            .unwrap();
+        let lowered_state = component
+            .states
+            .iter()
+            .find(|lowered| lowered.source.name == "open")
+            .unwrap();
+        assert_eq!(lowered_state.id, state_id);
+        assert_eq!(lowered_state.origin, state.origin);
+        let value_origin = program.origin(state.origin);
         let initializer = facts.expression_use(state.initializer.unwrap());
-        let expression_origin = facts.origin(facts.expression(initializer.root).origin);
+        let expression_origin = program.origin(facts.expression(initializer.root).origin);
         assert_eq!(value_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(value_origin.line, 3);
         assert_eq!(value_origin.column, 1);
+        assert_eq!(value_origin.parent, Some(component.origin));
+        let component_origin = program.origin(component.origin);
+        assert_eq!(component_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(component_origin.line, 1);
+        let component_view = facts
+            .views()
+            .iter()
+            .find(|view| view.scope == CheckedViewScope::Component(component.id))
+            .unwrap();
+        assert_eq!(
+            program.origin(component_view.origin).parent,
+            Some(component.origin)
+        );
+        let child = facts.view(component_view.children[0]);
+        assert_eq!(
+            program.origin(child.origin).parent,
+            Some(component_view.origin)
+        );
         assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(expression_origin.line, 3);
 
@@ -1554,6 +1527,169 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
     }
 
     #[test]
+    fn generic_expression_contexts_resolve_erased_empty_values() {
+        let source = format!(
+            "app GenericContexts\n{THEME}state\n  optional:str? = none\n  timed:[str] = debug.time_with(\"items\", [])\nderived\n  optional_equal = none == optional\n  empty_equal = [] == [\"item\"]\n  erased_equal = [] == []\n  empty_length = len([])\n  is_empty = empty([])\nview\n  text empty_length\n"
+        );
+
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        assert!(
+            facts
+                .expressions
+                .iter()
+                .all(|expression| !contains_unknown(&expression.ty))
+        );
+
+        let root = |name: &str| {
+            let value = facts
+                .values()
+                .iter()
+                .find(|value| value.name == name)
+                .unwrap();
+            facts.expression_use(value.initializer.unwrap()).root
+        };
+        let binary_operand = |name: &str| {
+            let CheckedExprKind::Binary { operator, .. } = &facts.expression(root(name)).kind
+            else {
+                panic!("{name} must be a checked binary expression");
+            };
+            match operator {
+                CheckedBinaryOperator::Equality { operand, .. } => operand.clone(),
+                _ => panic!("{name} must be an equality expression"),
+            }
+        };
+        let call_argument = |name: &str, index: usize| {
+            let CheckedExprKind::Call { arguments, .. } = &facts.expression(root(name)).kind else {
+                panic!("{name} must be a checked call");
+            };
+            let CheckedCallArgument::Value(argument) = arguments[index] else {
+                panic!("{name} argument {index} must be a value");
+            };
+            facts.expression(argument).ty.clone()
+        };
+
+        assert_eq!(call_argument("timed", 1), Type::List(Box::new(Type::Str)));
+        assert_eq!(
+            binary_operand("optional_equal"),
+            Type::Option(Box::new(Type::Str))
+        );
+        assert_eq!(
+            binary_operand("empty_equal"),
+            Type::List(Box::new(Type::Str))
+        );
+        assert_eq!(
+            binary_operand("erased_equal"),
+            Type::List(Box::new(Type::Unit))
+        );
+        assert_eq!(
+            call_argument("empty_length", 0),
+            Type::List(Box::new(Type::Unit))
+        );
+        assert_eq!(
+            call_argument("is_empty", 0),
+            Type::List(Box::new(Type::Unit))
+        );
+    }
+
+    #[test]
+    fn initializer_coercions_and_composite_evidence_have_exact_types() {
+        let source = format!(
+            "app ExactTypes\n{THEME}state\n  items:combo[str] = []\n  nested:combo[[str]] = [[]]\n  progress:animation[f64] = 0.0\n  document:markdown = \"# Document\"\n  draft:editor = \"Draft\"\nderived\n  nested_length = len([[], [\"x\"]])\n  optional_length = len([none, some(\"x\")])\nview\n  text nested_length\n"
+        );
+
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        let value = |name: &str| {
+            facts
+                .values()
+                .iter()
+                .find(|value| value.name == name)
+                .unwrap()
+        };
+
+        for (name, element) in [
+            ("items", Type::Str),
+            ("nested", Type::List(Box::new(Type::Str))),
+        ] {
+            let value = value(name);
+            let use_fact = facts.expression_use(value.initializer.unwrap());
+            let source = Type::List(Box::new(element.clone()));
+            assert_eq!(use_fact.source, source);
+            assert_eq!(use_fact.destination, Type::Combo(Box::new(element.clone())));
+            assert_eq!(
+                use_fact.coercion,
+                CheckedInitializerCoercion::ListToCombo {
+                    element: element.clone()
+                }
+            );
+            assert_eq!(facts.expression(use_fact.root).ty, source);
+        }
+
+        for (name, source, destination, coercion) in [
+            (
+                "progress",
+                Type::F64,
+                Type::Animation(Box::new(Type::F64)),
+                CheckedInitializerCoercion::ValueToAnimation { value: Type::F64 },
+            ),
+            (
+                "document",
+                Type::Str,
+                Type::Markdown,
+                CheckedInitializerCoercion::StrToMarkdown,
+            ),
+            (
+                "draft",
+                Type::Str,
+                Type::Editor,
+                CheckedInitializerCoercion::StrToEditor,
+            ),
+        ] {
+            let use_fact = facts.expression_use(value(name).initializer.unwrap());
+            assert_eq!(use_fact.source, source);
+            assert_eq!(use_fact.destination, destination);
+            assert_eq!(use_fact.coercion, coercion);
+            assert_eq!(facts.expression(use_fact.root).ty, source);
+        }
+
+        let call_argument = |name: &str| {
+            let use_fact = facts.expression_use(value(name).initializer.unwrap());
+            let CheckedExprKind::Call { arguments, .. } = &facts.expression(use_fact.root).kind
+            else {
+                panic!("{name} must be a call");
+            };
+            let CheckedCallArgument::Value(argument) = arguments[0] else {
+                panic!("{name} must have a value argument");
+            };
+            argument
+        };
+
+        let nested = call_argument("nested_length");
+        let nested_ty = Type::List(Box::new(Type::List(Box::new(Type::Str))));
+        assert_eq!(facts.expression(nested).ty, nested_ty);
+        let CheckedExprKind::List(children) = &facts.expression(nested).kind else {
+            panic!("nested length argument must be a list");
+        };
+        for child in children {
+            assert_eq!(facts.expression(*child).ty, Type::List(Box::new(Type::Str)));
+        }
+
+        let optional = call_argument("optional_length");
+        let optional_element = Type::Option(Box::new(Type::Str));
+        assert_eq!(
+            facts.expression(optional).ty,
+            Type::List(Box::new(optional_element.clone()))
+        );
+        let CheckedExprKind::List(children) = &facts.expression(optional).kind else {
+            panic!("optional length argument must be a list");
+        };
+        for child in children {
+            assert_eq!(facts.expression(*child).ty, optional_element);
+        }
+    }
+
+    #[test]
     #[ignore = "explicit large checked-fact performance contract"]
     fn performance_contract_ten_thousand_fact_lookups_are_direct_arena_accesses() {
         const VALUES: usize = 10_000;
@@ -1623,6 +1759,35 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
         assert!(
             elapsed.as_secs_f64() < 8.0,
             "128-term expression facts built and lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit shared derived-scope performance contract"]
+    fn performance_contract_four_thousand_derived_initializers_share_one_scope_env() {
+        const DERIVED: usize = 4_000;
+        let mut source = format!("app DerivedFacts\n{THEME}state\n  base = 1\nderived\n");
+        for index in 0..DERIVED {
+            writeln!(source, "  value_{index} = base").unwrap();
+        }
+        source.push_str("view\n  text base\n");
+
+        let started = Instant::now();
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let elapsed = started.elapsed();
+        let metrics = program.checked_facts().metrics();
+        assert_eq!(metrics.values, DERIVED + 1);
+        assert_eq!(metrics.expression_uses, DERIVED + 1);
+        assert_eq!(metrics.scope_env_builds, 1);
+        assert_eq!(metrics.scope_env_entries, DERIVED + 1);
+        assert_eq!(metrics.type_analysis_nodes, DERIVED + 1);
+        eprintln!(
+            "built {DERIVED} derived initializer facts from {} shared scope entries in {elapsed:?}",
+            metrics.scope_env_entries
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k derived initializer facts built with one shared scope in {elapsed:?}"
         );
     }
 }

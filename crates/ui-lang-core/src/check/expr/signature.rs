@@ -6,6 +6,9 @@ pub(crate) enum ContextualBuiltin {
     AnimationInterpolate,
     AnimationProject,
     DebugActive,
+    DebugTimeWith,
+    Empty,
+    Len,
     LinearAddStops,
     MouseClick,
     Some,
@@ -35,6 +38,9 @@ impl ContextualBuiltin {
             "animation.interpolate" => Some(Self::AnimationInterpolate),
             "animation.project" => Some(Self::AnimationProject),
             "debug.active" => Some(Self::DebugActive),
+            "debug.time_with" => Some(Self::DebugTimeWith),
+            "empty" => Some(Self::Empty),
+            "len" => Some(Self::Len),
             "linear.add_stops" => Some(Self::LinearAddStops),
             "mouse.click" => Some(Self::MouseClick),
             "some" => Some(Self::Some),
@@ -53,6 +59,19 @@ impl ContextualBuiltin {
         Ok(match self {
             Self::Aborted => vec![value(Some(Type::Option(Box::new(Type::TaskHandle))))],
             Self::DebugActive => vec![value(Some(Type::Option(Box::new(Type::DebugSpan))))],
+            Self::DebugTimeWith => vec![value(Some(Type::Str)), value(Some(output.clone()))],
+            Self::Empty | Self::Len => {
+                let Some(input) = inferred_arguments.first() else {
+                    return Err("collection query has no input");
+                };
+                let input = match input {
+                    Type::List(inner) => Type::List(Box::new(resolve_erased_type(inner))),
+                    Type::Str => Type::Str,
+                    Type::Bytes => Type::Bytes,
+                    _ => return Err("collection query input is not a list, string, or bytes"),
+                };
+                vec![value(Some(input))]
+            }
             Self::LinearAddStops => vec![
                 value(Some(Type::LinearGradient)),
                 value(Some(Type::List(Box::new(Type::ColorStop)))),
@@ -104,5 +123,46 @@ impl ContextualBuiltin {
                 contexts
             }
         })
+    }
+}
+
+pub(crate) fn resolve_erased_type(ty: &Type) -> Type {
+    match ty {
+        Type::Unknown => Type::Unit,
+        Type::List(inner) => Type::List(Box::new(resolve_erased_type(inner))),
+        Type::Option(inner) => Type::Option(Box::new(resolve_erased_type(inner))),
+        Type::Result(output, error) => Type::Result(
+            Box::new(resolve_erased_type(output)),
+            Box::new(resolve_erased_type(error)),
+        ),
+        Type::Combo(inner) => Type::Combo(Box::new(resolve_erased_type(inner))),
+        Type::Animation(inner) => Type::Animation(Box::new(resolve_erased_type(inner))),
+        ty => ty.clone(),
+    }
+}
+
+pub(crate) fn unify_type_evidence(left: &Type, right: &Type) -> Type {
+    match (left, right) {
+        (Type::Unknown, right) => right.clone(),
+        (left, Type::Unknown) => left.clone(),
+        (Type::List(left), Type::List(right)) => {
+            Type::List(Box::new(unify_type_evidence(left, right)))
+        }
+        (Type::Option(left), Type::Option(right)) => {
+            Type::Option(Box::new(unify_type_evidence(left, right)))
+        }
+        (Type::Result(left_output, left_error), Type::Result(right_output, right_error)) => {
+            Type::Result(
+                Box::new(unify_type_evidence(left_output, right_output)),
+                Box::new(unify_type_evidence(left_error, right_error)),
+            )
+        }
+        (Type::Combo(left), Type::Combo(right)) => {
+            Type::Combo(Box::new(unify_type_evidence(left, right)))
+        }
+        (Type::Animation(left), Type::Animation(right)) => {
+            Type::Animation(Box::new(unify_type_evidence(left, right)))
+        }
+        (left, _) => left.clone(),
     }
 }
