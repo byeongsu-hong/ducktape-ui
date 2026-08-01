@@ -96,57 +96,6 @@ pub(in crate::codegen) fn radius_code(
     )))
 }
 
-pub(in crate::codegen) fn append_float_style(
-    code: &mut String,
-    style: &FloatStyleOptions,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(), Error> {
-    let radius = radius_code(
-        style.radius.as_ref(),
-        [
-            style.radius_top_left.as_ref(),
-            style.radius_top_right.as_ref(),
-            style.radius_bottom_right.as_ref(),
-            style.radius_bottom_left.as_ref(),
-        ],
-        env,
-        document,
-    )?;
-    if style.shadow_color.is_none()
-        && style.shadow_x.is_none()
-        && style.shadow_y.is_none()
-        && style.shadow_blur.is_none()
-        && radius.is_none()
-    {
-        return Ok(());
-    }
-    code.push_str(".style(move |_| { let mut __style = ::iced::widget::float::Style::default();");
-    if let Some(color) = &style.shadow_color {
-        write!(
-            code,
-            " __style.shadow.color = {};",
-            theme_color(document, color)
-        )
-        .unwrap();
-    }
-    append_f32_fields(
-        code,
-        [
-            (&style.shadow_x, "__style.shadow.offset.x"),
-            (&style.shadow_y, "__style.shadow.offset.y"),
-            (&style.shadow_blur, "__style.shadow.blur_radius"),
-        ],
-        env,
-        document,
-    )?;
-    if let Some(radius) = radius {
-        write!(code, " __style.shadow_border_radius = {radius};").unwrap();
-    }
-    code.push_str(" __style })");
-    Ok(())
-}
-
 pub(in crate::codegen) fn background_code(
     background: &BackgroundValue,
     env: &dyn BindingEnvironment,

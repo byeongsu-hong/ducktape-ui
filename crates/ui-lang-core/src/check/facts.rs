@@ -7,9 +7,9 @@ use crate::hir::{
     AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
     CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
     ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, HandlerId, InteractionExpressionId, InteractionRouteId, MediaExpressionId,
-    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
-    TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+    ExternRef, FloatExpressionId, HandlerId, InteractionExpressionId, InteractionRouteId,
+    MediaExpressionId, OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId,
+    SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -130,6 +130,14 @@ pub(crate) enum CheckedViewLocalRole {
     PaneTemplateMaximized(u32),
     ResponsiveWidth,
     ResponsiveHeight,
+    FloatOriginalX,
+    FloatOriginalY,
+    FloatOriginalWidth,
+    FloatOriginalHeight,
+    FloatViewportX,
+    FloatViewportY,
+    FloatViewportWidth,
+    FloatViewportHeight,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,6 +256,11 @@ pub(crate) enum CheckedViewFlow {
         width: CheckedLocalId,
         height: CheckedLocalId,
     },
+    Float {
+        semantic_key: String,
+        expression_count: u32,
+        geometry: [CheckedLocalId; 8],
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -314,6 +327,7 @@ pub(crate) enum CheckedExprOwner {
     Canvas(CanvasExpressionId),
     Media(MediaExpressionId),
     Tooltip(TooltipExpressionId),
+    Float(FloatExpressionId),
     Interaction(InteractionExpressionId),
 }
 
@@ -738,6 +752,14 @@ impl CheckedFacts {
         raw: u32,
     ) {
         self.handlers[handler.0 as usize].params[index] = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_float_geometry_local(&mut self, float: ViewId, index: usize, raw: u32) {
+        let CheckedViewFlow::Float { geometry, .. } = &mut self.views[float.0 as usize].flow else {
+            panic!("test view must be a float");
+        };
+        geometry[index] = CheckedLocalId(raw);
     }
 
     #[cfg(test)]
@@ -1350,6 +1372,7 @@ pub(super) struct CheckedAnalyses {
     canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
     media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    float_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     interaction_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     interaction_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
 }
@@ -1393,6 +1416,7 @@ impl CheckedAnalyses {
             && self.canvas_route_inputs.is_empty()
             && self.media_entries.is_empty()
             && self.tooltip_entries.is_empty()
+            && self.float_entries.is_empty()
             && self.interaction_entries.is_empty()
             && self.interaction_route_inputs.is_empty()
     }
@@ -1495,6 +1519,15 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "tooltip expression was captured more than once",
+                ));
+            }
+        }
+        for (key, analysis) in other.float_entries {
+            if self.float_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "float expression was captured more than once",
                 ));
             }
         }
@@ -1633,6 +1666,30 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "interaction route contract was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_float(
+        &mut self,
+        float: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "float expression capture unexpectedly retained routes",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self.float_entries.insert((float, key), analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "float expression was captured more than once",
                 ));
             }
         }
@@ -1779,6 +1836,53 @@ impl ExprTypeEnv for LayeredFactEnv<'_> {
     }
 }
 
+struct ScopedFactEnv<'a> {
+    base: &'a dyn FactEnvironment,
+    entries: FactEnv,
+}
+
+impl<'a> ScopedFactEnv<'a> {
+    fn new(base: &'a dyn FactEnvironment) -> Self {
+        Self {
+            base,
+            entries: FactEnv::default(),
+        }
+    }
+
+    fn insert(&mut self, name: String, root: CheckedPathRoot, ty: Type) {
+        self.entries.insert(name, root, ty);
+    }
+}
+
+impl FactEnvironment for ScopedFactEnv<'_> {
+    fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
+        self.entries.get(name).or_else(|| self.base.get(name))
+    }
+
+    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
+        self.entries.slot(name).or_else(|| self.base.slot(name))
+    }
+}
+
+impl ExprTypeEnv for ScopedFactEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.entries
+            .get_type(name)
+            .or_else(|| self.base.get_type(name))
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.base.visit_types(visitor);
+        self.entries.visit_types(visitor);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.entries
+            .type_with_prefix(prefix)
+            .or_else(|| self.base.type_with_prefix(prefix))
+    }
+}
+
 struct HandlerFactEnv<'a> {
     base: &'a dyn FactEnvironment,
     locals: FactEnv,
@@ -1891,7 +1995,7 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, interaction_expressions={}, interaction_routes={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, float_expressions={}, interaction_expressions={}, interaction_routes={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
@@ -1899,6 +2003,7 @@ impl<'a> FactsBuilder<'a> {
                     self.analyses.canvas_route_inputs.len(),
                     self.analyses.media_entries.len(),
                     self.analyses.tooltip_entries.len(),
+                    self.analyses.float_entries.len(),
                     self.analyses.interaction_entries.len(),
                     self.analyses.interaction_route_inputs.len(),
                     self.analyses.handler_entries.len(),
@@ -2729,6 +2834,144 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(span, "tooltip facts were produced more than once"));
         }
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_float_facts(
+        &mut self,
+        float: ViewId,
+        scale: &Expr,
+        x: &Expr,
+        y: &Expr,
+        style: &FloatStyleOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedViewFlow, Error> {
+        let parent = self.declarations.view(float).origin;
+        let geometry = [
+            ("original_x", CheckedViewLocalRole::FloatOriginalX),
+            ("original_y", CheckedViewLocalRole::FloatOriginalY),
+            ("original_width", CheckedViewLocalRole::FloatOriginalWidth),
+            ("original_height", CheckedViewLocalRole::FloatOriginalHeight),
+            ("viewport_x", CheckedViewLocalRole::FloatViewportX),
+            ("viewport_y", CheckedViewLocalRole::FloatViewportY),
+            ("viewport_width", CheckedViewLocalRole::FloatViewportWidth),
+            ("viewport_height", CheckedViewLocalRole::FloatViewportHeight),
+        ]
+        .map(|(name, role)| self.push_view_local(name, Type::F64, float, role, span));
+        let mut translate_env = ScopedFactEnv::new(env);
+        for (name, local) in [
+            "original_x",
+            "original_y",
+            "original_width",
+            "original_height",
+            "viewport_x",
+            "viewport_y",
+            "viewport_width",
+            "viewport_height",
+        ]
+        .into_iter()
+        .zip(geometry)
+        {
+            translate_env.insert(name.into(), CheckedPathRoot::Local(local), Type::F64);
+        }
+        self.facts.metrics.scope_env_overlays += 1;
+        let roots = crate::ast::float_expression_roots(scale, x, y, style);
+        for (index, expression) in roots.iter().enumerate() {
+            let expression_env: &dyn FactEnvironment = if matches!(index, 1 | 2) {
+                &translate_env
+            } else {
+                env
+            };
+            self.push_float_expression(
+                float,
+                index as u32,
+                expression,
+                expression_env,
+                span,
+                parent,
+            )?;
+        }
+        let remaining = self
+            .analyses
+            .float_entries
+            .keys()
+            .filter(|(owner, _)| *owner == float)
+            .count();
+        if remaining != 0 {
+            return Err(self.invariant(
+                span,
+                format!("float left {remaining} expression analyses unconsumed"),
+            ));
+        }
+        Ok(CheckedViewFlow::Float {
+            semantic_key: crate::ast::float_semantic_key(style),
+            expression_count: roots.len() as u32,
+            geometry,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_float_expression(
+        &mut self,
+        float: ViewId,
+        index: u32,
+        expression: &Expr,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Float(FloatExpressionId { float, index });
+        let analysis = self
+            .analyses
+            .float_entries
+            .remove(&(float, super::expr::expr_key(expression)))
+            .ok_or_else(|| {
+                self.invariant(span, "missing authoritative float expression analysis")
+            })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.view_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let source = analysis
+            .type_of(expression)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained float expression root type"))?;
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+        if self.facts.expression(root).ty != source {
+            return Err(self.invariant(
+                span,
+                "float expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: source,
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked float expression owner"));
+        }
+        Ok(id)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5725,6 +5968,19 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_view_expression_tree(tip, env)?;
                 CheckedViewFlow::None
             }
+            ViewNode::Float {
+                scale,
+                x,
+                y,
+                style,
+                content,
+                span,
+                ..
+            } => {
+                let flow = self.lower_float_facts(view, scale, x, y, style, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
+                flow
+            }
             ViewNode::MouseArea {
                 options,
                 content,
@@ -8482,6 +8738,75 @@ view
                 _ => panic!("first child must be a mouse area"),
             })
         );
+    }
+
+    #[test]
+    fn float_facts_retain_expression_owners_geometry_locals_and_static_contract() {
+        let source = r#"app FloatFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  shift = 2.0
+view
+  float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0
+    text "Floating"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked = program.checked_facts().view(ViewId(0));
+        let CheckedViewFlow::Float {
+            semantic_key,
+            expression_count,
+            geometry,
+        } = &checked.flow
+        else {
+            panic!("root must retain float facts");
+        };
+        assert_eq!(*expression_count, 11);
+        let expected_roles = [
+            CheckedViewLocalRole::FloatOriginalX,
+            CheckedViewLocalRole::FloatOriginalY,
+            CheckedViewLocalRole::FloatOriginalWidth,
+            CheckedViewLocalRole::FloatOriginalHeight,
+            CheckedViewLocalRole::FloatViewportX,
+            CheckedViewLocalRole::FloatViewportY,
+            CheckedViewLocalRole::FloatViewportWidth,
+            CheckedViewLocalRole::FloatViewportHeight,
+        ];
+        for (local, role) in geometry.iter().zip(expected_roles) {
+            let local = program.checked_facts().local(*local);
+            assert_eq!(local.ty, Type::F64);
+            assert_eq!(
+                local.owner,
+                CheckedLocalOwner::View {
+                    view: ViewId(0),
+                    role
+                }
+            );
+        }
+        for index in 0..*expression_count {
+            assert!(
+                program
+                    .checked_facts()
+                    .expression_use_by_owner(CheckedExprOwner::Float(FloatExpressionId {
+                        float: ViewId(0),
+                        index,
+                    }))
+                    .is_some(),
+                "missing float expression {index}"
+            );
+        }
+        let ViewNode::Float { style, .. } = &program.document().view else {
+            panic!("root must be a float");
+        };
+        assert_eq!(semantic_key, &crate::ast::float_semantic_key(style));
     }
 
     #[test]

@@ -41,45 +41,11 @@ pub(in crate::codegen) fn render_structure(
                 "{{ let __theme_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::dynamic_themer({preset}, __theme_content, {text}, {background}).into() }}"
             ))
         }
-        ViewNode::Float {
-            scale,
-            x,
-            y,
-            style,
-            content,
-            ..
-        } => {
+        ViewNode::Float { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let scale = clamped_f32_code(scale, "f32::EPSILON", "f32::MAX", env, document)?;
-            let mut translate_env = ScopedBindingEnv::new(env);
-            for (name, code) in [
-                ("original_x", "(__original.x as f64)"),
-                ("original_y", "(__original.y as f64)"),
-                ("original_width", "(__original.width as f64)"),
-                ("original_height", "(__original.height as f64)"),
-                ("viewport_x", "(__viewport.x as f64)"),
-                ("viewport_y", "(__viewport.y as f64)"),
-                ("viewport_width", "(__viewport.width as f64)"),
-                ("viewport_height", "(__viewport.height as f64)"),
-            ] {
-                translate_env.insert(
-                    name.to_owned(),
-                    Binding {
-                        code: code.to_owned(),
-                        ty: Type::F64,
-                        local: true,
-                        state: None,
-                        owner: None,
-                    },
-                );
-            }
-            let x = expr_code(x, &translate_env, document, ValueMode::Owned)?;
-            let y = expr_code(y, &translate_env, document, ValueMode::Owned)?;
-            let mut code = format!(
-                "{{ let __float_content: __IceElement<'_, {message}> = {content}; let __float = ::iced::widget::float(__float_content).scale({scale}).translate(move |__original, __viewport| ::iced::Vector::new({x} as f32, {y} as f32))"
-            );
-            append_float_style(&mut code, style, env, document)?;
-            Ok(format!("{code}; __float.into() }}"))
+            let program = document.hir();
+            let float = program.resolved_float_for(node)?;
+            render_resolved_float(float, program, message, env, content)
         }
         ViewNode::Pin {
             width,
@@ -239,6 +205,117 @@ pub(in crate::codegen) fn render_structure(
     Ok(Some(identify_rendered(
         rendered, id, message, env, document, scope,
     )?))
+}
+
+fn render_resolved_float(
+    float: &ResolvedFloat,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let checked_f32 = |expression| -> Result<String, Error> {
+        Ok(format!(
+            "{} as f32",
+            checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+        ))
+    };
+    let scale = checked_expr_use_code(program, float.scale, env, ValueMode::Owned)?;
+    let scale = format!("(({scale}) as f32).max(f32::EPSILON).min(f32::MAX)");
+    let mut translate_env = ScopedBindingEnv::new(env);
+    for (geometry, code) in float.geometry.iter().zip([
+        "(__original.x as f64)",
+        "(__original.y as f64)",
+        "(__original.width as f64)",
+        "(__original.height as f64)",
+        "(__viewport.x as f64)",
+        "(__viewport.y as f64)",
+        "(__viewport.width as f64)",
+        "(__viewport.height as f64)",
+    ]) {
+        translate_env.insert(
+            geometry.name.clone(),
+            checked_local_binding(program, geometry.local, code.into(), true),
+        );
+    }
+    let x = checked_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?;
+    let y = checked_expr_use_code(program, float.y, &translate_env, ValueMode::Owned)?;
+    let mut code = format!(
+        "{{ let __float_content: __IceElement<'_, {message}> = {content}; let __float = ::iced::widget::float(__float_content).scale({scale}).translate(move |__original, __viewport| ::iced::Vector::new({x} as f32, {y} as f32))"
+    );
+    let radius = resolved_float_radius_code(&float.radius, program, env)?;
+    if float.shadow_color.is_some()
+        || float.shadow_x.is_some()
+        || float.shadow_y.is_some()
+        || float.shadow_blur.is_some()
+        || radius.is_some()
+    {
+        code.push_str(
+            ".style(move |_| { let mut __style = ::iced::widget::float::Style::default();",
+        );
+        if let Some(color) = &float.shadow_color {
+            write!(
+                code,
+                " __style.shadow.color = {};",
+                resolved_theme_color(color)
+            )
+            .unwrap();
+        }
+        for (expression, field) in [
+            (float.shadow_x, "__style.shadow.offset.x"),
+            (float.shadow_y, "__style.shadow.offset.y"),
+            (float.shadow_blur, "__style.shadow.blur_radius"),
+        ] {
+            if let Some(expression) = expression {
+                write!(code, " {field} = {};", checked_f32(expression)?).unwrap();
+            }
+        }
+        if let Some(radius) = radius {
+            write!(code, " __style.shadow_border_radius = {radius};").unwrap();
+        }
+        code.push_str(" __style })");
+    }
+    Ok(format!("{code}; __float.into() }}"))
+}
+
+fn resolved_float_radius_code(
+    radius: &ResolvedFloatRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let code = |expression| -> Result<String, Error> {
+        let value = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+        Ok(format!("(({value}) as f32).max(0.0).min(f32::MAX)"))
+    };
+    let base = radius
+        .all
+        .map(&code)
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corners = [
+        radius.top_left,
+        radius.top_right,
+        radius.bottom_right,
+        radius.bottom_left,
+    ]
+    .map(|corner| corner.map(&code).transpose())
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter()
+    .map(|corner| corner.unwrap_or_else(|| base.clone()))
+    .collect::<Vec<_>>();
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {}, top_right: {}, bottom_right: {}, bottom_left: {} }}",
+        corners[0], corners[1], corners[2], corners[3]
+    )))
 }
 
 fn render_resolved_sensor(

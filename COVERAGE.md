@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, and Sensor families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, and Float families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +493,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, and Sensor remain open HIR slices.
+ResizeHandle, Sensor, and Float remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -557,6 +557,17 @@ Production emission reads only that record and checked expression IDs.
 Component routing, post-check expression/static mutation, post-lowering raw
 option/route poisoning, structural snapshots, and an ignored 4,000-node
 lower+emit contract under two seconds provide the evidence.
+
+Float has a complete private HIR boundary. Stable expression owners retain
+scale, translation, shadow, and radius operands. Eight checked view locals give
+the translation callback exact original/viewport geometry identities without
+opening those names to other Float expressions. A semantic key freezes style
+field presence and shadow-color spelling; lowering resolves the color to a
+theme-token ID and revalidates local roles, expression DAGs, scope, types, and
+complete arena consumption before publishing `ResolvedFloat`. Production
+emission reads only that record and checked IDs. Structural, malformed-ID,
+post-check expression/static mutation, post-lowering AST/theme poisoning, and
+an ignored 4,000-node lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
