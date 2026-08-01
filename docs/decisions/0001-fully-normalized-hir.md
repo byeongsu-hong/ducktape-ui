@@ -165,6 +165,20 @@ Handler/task/canvas/settings/test expressions and expression-bearing
 widget options remain later slices, so the full-HIR completion criteria remain
 open.
 
+An integration ratchet inventories selected lexical markers for backend escapes
+through `LoweredProgram::document`, the `RenderDocument` raw-document wrapper,
+checker imports and uses, type or extern re-resolution, raw expression fallback,
+and exported source-AST identifiers. A dependency-free Rust lexer strips
+comments and literals before it records normalized containing-item and
+call-site fingerprints, so same-file delete/add swaps change the reviewed
+ledger while identifier prefixes do not become false AST matches. It also
+tracks the symbols behind the existing AST glob and grouped checker imports;
+exact aliases from grouped and nested AST imports are tracked per file, while
+checker glob imports are rejected. This is a conservative lexical migration
+ratchet, not a Rust semantic resolver or completion claim. The selected ledger
+must reach zero, and ordinary semantic review must confirm that no unrepresented
+boundary remains before HIR is complete.
+
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and
 hands the owned result to fact construction; fact construction cannot invoke a
