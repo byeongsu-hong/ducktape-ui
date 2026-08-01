@@ -4,7 +4,7 @@ use crate::check::{
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
     CheckedLocalId, CheckedLocalOwner, CheckedMedia, CheckedPathRoot, CheckedProjectionKind,
-    CheckedUnaryOperator, CheckedValueRef, CheckedViewScope, ContextualBuiltin,
+    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewScope, ContextualBuiltin,
     canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
@@ -17,7 +17,7 @@ pub(crate) use crate::hir::{
     ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
     ExternRef, HandlerId, HandlerOwner, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena,
     OriginId, PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
-    TestStepId, TestTargetId, ViewId,
+    TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
@@ -27,11 +27,13 @@ mod canvas;
 mod media;
 mod style;
 mod testing;
+mod tooltip;
 
 pub(crate) use canvas::*;
 pub(crate) use media::*;
 
 pub(crate) use style::*;
+pub(crate) use tooltip::*;
 
 pub(crate) type ResolvedExpressionId = CheckedExprUseId;
 
@@ -1430,6 +1432,7 @@ pub(crate) struct LoweredProgram {
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    tooltips: HashMap<ViewId, ResolvedTooltip>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -2972,6 +2975,11 @@ impl LoweredProgram {
         self.media.get(&id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn tooltip(&self, id: ViewId) -> Option<&ResolvedTooltip> {
+        self.tooltips.get(&id)
+    }
+
     pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
         let span = node.span();
         let id = self.declarations.view_id(span).ok_or_else(|| {
@@ -3020,6 +3028,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "media reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_tooltip_for(&self, node: &ViewNode) -> Result<&ResolvedTooltip, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.tooltips.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation without normalized HIR",
             )
         })
     }
@@ -3250,6 +3284,7 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    tooltips: HashMap<ViewId, ResolvedTooltip>,
 }
 
 #[derive(Default)]
@@ -3960,6 +3995,7 @@ impl Lowerer {
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
             media: HashMap::new(),
+            tooltips: HashMap::new(),
         }
     }
 
@@ -4034,6 +4070,7 @@ impl Lowerer {
             tests,
             canvases: self.canvases,
             media: self.media,
+            tooltips: self.tooltips,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -7768,6 +7805,17 @@ impl Lowerer {
             } => {
                 self.lower_media(*kind, source, options, span, outer_component)?;
             }
+            ViewNode::Tooltip {
+                content,
+                tip,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_tooltip(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+                self.lower_view(tip, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -7827,10 +7875,6 @@ impl Lowerer {
             | ViewNode::KeyedColumn { child: content, .. }
             | ViewNode::Lazy { child: content, .. } => {
                 self.lower_view(content, outer_component)?;
-            }
-            ViewNode::Tooltip { content, tip, .. } => {
-                self.lower_view(content, outer_component)?;
-                self.lower_view(tip, outer_component)?;
             }
             ViewNode::Overlay { content, layer, .. } => {
                 self.lower_view(content, outer_component)?;
@@ -9730,6 +9774,30 @@ view
     }
 
     #[test]
+    fn malformed_checked_tooltip_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidTooltipFacts\n{THEME}view\n  tooltip gap=2.0\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Tooltip(TooltipExpressionId {
+                tooltip: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -9799,6 +9867,112 @@ view
         let actual = crate::codegen::generate(&program, "lowered-media.ice").unwrap();
         assert_eq!(actual, expected);
         assert!(!actual.contains("poisoned.png"));
+    }
+
+    #[test]
+    fn tooltip_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedTooltip\n{THEME}state\n  gap = 2.0\nview\n  tooltip position=cursor gap=gap bg=primary\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-tooltip.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.gap = Expr::F64(99.0);
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-tooltip.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("bounded_table_metric(99.0"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.position = TooltipPosition::Top;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn tooltip_codegen_ignores_raw_options_and_theme_token_order_after_lowering() {
+        let source = format!(
+            "app LoweredTooltip\n{THEME}state\n  gap = 2.0\nview\n  tooltip position=cursor gap=gap bg=primary text=fg\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-tooltip.ice").unwrap();
+
+        let ViewNode::Tooltip { options, .. } = &mut program.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.position = TooltipPosition::Top;
+        options.gap = Expr::F64(99.0);
+        options.background = Some(BackgroundValue::Color("danger".into()));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+
+        let actual = crate::codegen::generate(&program, "lowered-tooltip.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("bounded_table_metric(99.0"));
+    }
+
+    #[test]
+    fn normalizes_tooltip_options_colors_styles_and_expression_owners() {
+        let source = format!(
+            "app TooltipHir\nextern crate::backend\n  box-style dynamic_tooltip(active:bool)\n{THEME}state\n  active = true\nview\n  tooltip position=cursor gap=2.0 p=5.0 delay=100 snap=false style=dynamic_tooltip(active) bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary/75 border-w=1.0 r=5.0 r-tl=2.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=8.0 px-snap=true\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let tooltip = program.tooltip(ViewId(0)).unwrap();
+
+        assert_eq!(tooltip.id, ViewId(0));
+        assert_eq!(tooltip.position, ResolvedTooltipPosition::FollowCursor);
+        let Some(ResolvedTooltipBaseStyle::Custom(style)) = &tooltip.base_style else {
+            panic!("fixture must normalize a custom tooltip style");
+        };
+        assert_eq!(
+            program.extern_function(style.function).name,
+            "dynamic_tooltip"
+        );
+        assert_eq!(style.arguments.len(), 1);
+        let Some(ResolvedTooltipBackground::Linear { stops, .. }) = &tooltip.background else {
+            panic!("fixture must normalize a linear background");
+        };
+        assert_eq!(stops.len(), 2);
+        assert!(matches!(
+            tooltip.text_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 1, .. }),
+                opacity: None,
+            })
+        ));
+        assert!(matches!(
+            tooltip.border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                opacity: Some(75),
+            })
+        ));
+        assert_eq!(
+            program
+                .facts
+                .expression_use_by_owner(CheckedExprOwner::Tooltip(TooltipExpressionId {
+                    tooltip: ViewId(0),
+                    index: 0,
+                })),
+            Some(tooltip.gap)
+        );
     }
 
     #[test]
@@ -9889,6 +10063,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized media nodes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized tooltip lowering and emission performance contract"]
+    fn performance_contract_four_thousand_tooltips_lower_and_emit_under_two_seconds() {
+        const TOOLTIPS: usize = 4_000;
+        let mut source = format!("app TooltipScale\n{THEME}view\n  col\n");
+        for index in 0..TOOLTIPS {
+            writeln!(
+                source,
+                "    tooltip position=cursor gap=2.0 p=5.0 delay=100 bg=primary\n      text \"Hover {index}\"\n      text \"Tip {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "tooltip-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.tooltips.len(), TOOLTIPS);
+        assert_eq!(
+            generated.matches("::iced::widget::tooltip(").count(),
+            TOOLTIPS
+        );
+        eprintln!("4k normalized tooltips lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized tooltips lowered and emitted in {elapsed:?}"
         );
     }
 
