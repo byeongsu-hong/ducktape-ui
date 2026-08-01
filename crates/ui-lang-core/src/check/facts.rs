@@ -102,9 +102,7 @@ pub(crate) enum CheckedLocalOwner {
         task: TaskId,
         index: u32,
     },
-    AppSettingDaemonWindow {
-        setting: AppSettingExprId,
-    },
+    AppSettingDaemonWindow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -585,12 +583,7 @@ impl CheckedFacts {
     pub(crate) fn app_setting_daemon_window_local(&self) -> Option<CheckedLocalId> {
         self.locals
             .iter()
-            .position(|local| {
-                matches!(
-                    local.owner,
-                    CheckedLocalOwner::AppSettingDaemonWindow { .. }
-                )
-            })
+            .position(|local| matches!(local.owner, CheckedLocalOwner::AppSettingDaemonWindow))
             .map(|index| CheckedLocalId(index as u32))
     }
 
@@ -681,15 +674,78 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_daemon_window_owner(&mut self) {
+        let setting = self
+            .locals
+            .iter()
+            .position(|local| local.owner == CheckedLocalOwner::AppSettingDaemonWindow)
+            .expect("app-setting fixture must have a daemon-window local");
+        let owner = self
+            .locals
+            .iter()
+            .find_map(|local| match local.owner {
+                CheckedLocalOwner::View {
+                    role: CheckedViewLocalRole::DaemonWindow,
+                    ..
+                } => Some(local.owner),
+                _ => None,
+            })
+            .expect("app-setting fixture must have a view daemon-window local");
+        self.locals[setting].owner = owner;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_builtin_target(
+        &mut self,
+        setting: AppSettingExprId,
+        replacement: &str,
+    ) {
+        let replacement = CheckedBuiltinId(
+            self.builtins
+                .iter()
+                .position(|name| name == replacement)
+                .expect("replacement builtin must be interned") as u32,
+        );
+        let expression_use = self.expression_uses_by_owner[&CheckedExprOwner::AppSetting(setting)];
+        let root = self.expression_uses[expression_use.0 as usize].root;
+        let CheckedExprKind::Call { target, .. } = &mut self.expressions[root.0 as usize].kind
+        else {
+            panic!("app-setting fixture root must be a call");
+        };
+        *target = CheckedCallTarget::Builtin(replacement);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_binding_body_argument(
+        &mut self,
+        setting: AppSettingExprId,
+        replacement: usize,
+    ) {
+        let expression = self.expression_uses_by_owner[&CheckedExprOwner::AppSetting(setting)];
+        let local = self
+            .locals
+            .iter_mut()
+            .find(|local| {
+                matches!(
+                    local.owner,
+                    CheckedLocalOwner::ExpressionBinding {
+                        expression: owner,
+                        ..
+                    } if owner == expression
+                )
+            })
+            .expect("app-setting fixture must have an expression binding");
+        let CheckedLocalOwner::ExpressionBinding { body_argument, .. } = &mut local.owner else {
+            unreachable!();
+        };
+        *body_argument = replacement;
+    }
+
+    #[cfg(test)]
     pub(crate) fn app_setting_daemon_window_local_count(&self) -> usize {
         self.locals
             .iter()
-            .filter(|local| {
-                matches!(
-                    local.owner,
-                    CheckedLocalOwner::AppSettingDaemonWindow { .. }
-                )
-            })
+            .filter(|local| matches!(local.owner, CheckedLocalOwner::AppSettingDaemonWindow))
             .count()
     }
 
@@ -1429,18 +1485,27 @@ impl<'a> FactsBuilder<'a> {
         {
             return Ok(());
         }
-        let mut state_env = FactEnv::default();
+        let mut app_env = FactEnv::default();
         for (index, state) in self.document.states.iter().enumerate() {
             let value_ref = CheckedValueRef::AppState(self.declarations.app_state(index).id);
             let value = self.facts.value_by_ref(value_ref);
-            state_env.insert(
+            app_env.insert(
                 state.name.clone(),
                 CheckedPathRoot::Value(value.id),
                 value.ty.clone(),
             );
         }
+        for (index, derived) in self.document.derived.iter().enumerate() {
+            let value_ref = CheckedValueRef::Derived(self.declarations.derived(index).id);
+            let value = self.facts.value_by_ref(value_ref);
+            app_env.insert(
+                derived.name.clone(),
+                CheckedPathRoot::Value(value.id),
+                value.ty.clone(),
+            );
+        }
         self.facts.metrics.scope_env_builds += 1;
-        self.facts.metrics.scope_env_entries += state_env.len();
+        self.facts.metrics.scope_env_entries += app_env.len();
 
         let lower = |this: &mut Self,
                      id: AppSettingExprId,
@@ -1480,38 +1545,30 @@ impl<'a> FactsBuilder<'a> {
                     id,
                     &setting.value,
                     &Type::Str,
-                    &state_env,
+                    &app_env,
                     &setting.span,
                 )?;
             }
         }
 
-        let mut callback_env = state_env;
-        let callback_ids = [
-            AppSettingExprId::Title,
-            AppSettingExprId::Theme,
-            AppSettingExprId::Palette,
-            AppSettingExprId::ScaleFactor,
-        ];
-        if self.document.daemon {
-            let owner = callback_ids
-                .into_iter()
-                .find(|id| self.declarations.app_setting_expression(*id).is_some());
-            if let Some(id) = owner {
-                let declaration = self.declarations.app_setting_expression(id).unwrap();
-                let local = self.push_local(
-                    "window",
-                    Type::WindowId,
-                    CheckedLocalOwner::AppSettingDaemonWindow { setting: id },
-                    &self.document.settings.span,
-                    declaration.origin,
-                );
-                callback_env.insert(
-                    "window".into(),
-                    CheckedPathRoot::Local(local),
-                    Type::WindowId,
-                );
-            }
+        let mut callback_env = app_env;
+        let has_callback_setting = self.document.settings.title.is_some()
+            || self.document.settings.theme.is_some()
+            || self.document.settings.palette.is_some()
+            || self.document.settings.scale_factor.is_some();
+        if self.document.daemon && has_callback_setting {
+            let local = self.push_local(
+                "window",
+                Type::WindowId,
+                CheckedLocalOwner::AppSettingDaemonWindow,
+                &self.document.settings.span,
+                self.declarations.app_settings().origin,
+            );
+            callback_env.insert(
+                "window".into(),
+                CheckedPathRoot::Local(local),
+                Type::WindowId,
+            );
         }
         if let Some(setting) = &self.document.settings.title {
             lower(
@@ -4957,7 +5014,7 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 | CheckedLocalOwner::HandlerParam { .. }
                 | CheckedLocalOwner::StatementLet(_)
                 | CheckedLocalOwner::TaskTransform { .. }
-                | CheckedLocalOwner::AppSettingDaemonWindow { .. } => None,
+                | CheckedLocalOwner::AppSettingDaemonWindow => None,
             })
             .collect::<Vec<_>>();
         for role in [

@@ -4,7 +4,7 @@ use crate::check::{
     CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner,
     CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
     CheckedPathRoot, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
-    ContextualBuiltin, field_type,
+    ContextualBuiltin, builtin_call_type, field_type, resolve_erased_type,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -2720,13 +2720,31 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
             )
         })?;
         match local.owner {
-            CheckedLocalOwner::AppSettingDaemonWindow { setting } => {
+            CheckedLocalOwner::AppSettingDaemonWindow => {
+                let callback_owns_local = self
+                    .lowerer
+                    .facts
+                    .try_expression_use(self.use_id)
+                    .is_some_and(|expression| {
+                        matches!(
+                            expression.owner,
+                            CheckedExprOwner::AppSetting(
+                                AppSettingExprId::Title
+                                    | AppSettingExprId::Theme
+                                    | AppSettingExprId::ThemeFactoryArgument(_)
+                                    | AppSettingExprId::Palette
+                                    | AppSettingExprId::ScaleFactor
+                            )
+                        )
+                    });
                 if local.ty != Type::WindowId
-                    || self
+                    || local.name != "window"
+                    || !callback_owns_local
+                    || !self
                         .lowerer
                         .facts
-                        .expression_use_by_owner(CheckedExprOwner::AppSetting(setting))
-                        .is_none()
+                        .app_settings()
+                        .is_some_and(|settings| settings.daemon)
                     || self.lowerer.facts.app_setting_daemon_window_local() != Some(id)
                 {
                     return Err(self.lowerer.invariant(
@@ -3478,9 +3496,7 @@ impl Lowerer {
                         CheckedCallArgument::Value(value) => {
                             self.validate_checked_expression_node(*value, policy, graph)?
                         }
-                        CheckedCallArgument::Binding(local) => {
-                            self.validate_checked_expression_binding(*local, arguments, policy)?
-                        }
+                        CheckedCallArgument::Binding(local) => policy.local_type(*local)?,
                     });
                 }
                 self.validate_checked_expression_call(
@@ -3607,6 +3623,7 @@ impl Lowerer {
         id: CheckedLocalId,
         arguments: &[CheckedCallArgument],
         policy: &impl CheckedExpressionOwnerPolicy,
+        expected_body: usize,
     ) -> Result<Type, Error> {
         let ty = policy.local_type(id)?;
         let local = self.facts.try_local(id).ok_or_else(|| {
@@ -3626,6 +3643,7 @@ impl Lowerer {
             ));
         };
         if expression != policy.use_id()
+            || body_argument != expected_body
             || !matches!(
                 arguments.get(body_argument),
                 Some(CheckedCallArgument::Value(_))
@@ -3703,52 +3721,171 @@ impl Lowerer {
                         "checked call references an invalid builtin ID",
                     )
                 })?;
-                if let Some(builtin) = ContextualBuiltin::from_name(name) {
-                    let contexts = builtin
-                        .argument_contexts(output, argument_types)
-                        .map_err(|message| self.invariant(policy.span(), message))?;
-                    if contexts.len() != arguments.len() {
-                        return Err(self.invariant(
-                            policy.span(),
-                            "checked builtin call has an invalid argument count",
-                        ));
-                    }
-                    for ((argument, actual), context) in
-                        arguments.iter().zip(argument_types).zip(contexts)
-                    {
-                        let (binding, expected) = match context {
-                            BuiltinArgumentContext::Value { expected }
-                            | BuiltinArgumentContext::ScopedValue { expected, .. } => {
-                                (false, expected)
-                            }
-                            BuiltinArgumentContext::Binding { ty, .. } => (true, Some(ty)),
-                        };
-                        if binding != matches!(argument, CheckedCallArgument::Binding(_))
+                self.validate_checked_builtin_call(
+                    name,
+                    arguments,
+                    argument_types,
+                    output,
+                    policy,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_checked_builtin_call(
+        &self,
+        name: &str,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<(), Error> {
+        if let Some(builtin) = ContextualBuiltin::from_name(name) {
+            let contexts = builtin
+                .argument_contexts(output, argument_types)
+                .map_err(|message| self.invariant(policy.span(), message))?;
+            if contexts.len() != arguments.len() {
+                return Err(self.invariant(
+                    policy.span(),
+                    "checked builtin call has an invalid argument count",
+                ));
+            }
+            for (index, ((argument, actual), context)) in arguments
+                .iter()
+                .zip(argument_types)
+                .zip(&contexts)
+                .enumerate()
+            {
+                match context {
+                    BuiltinArgumentContext::Value { expected } => {
+                        if !matches!(argument, CheckedCallArgument::Value(_))
                             || expected.as_ref().is_some_and(|expected| expected != actual)
                         {
                             return Err(self.invariant(
                                 policy.span(),
-                                "checked builtin call has an inconsistent retained signature",
+                                "checked builtin value argument has an inconsistent retained signature",
                             ));
                         }
                     }
-                } else if arguments
-                    .iter()
-                    .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
-                {
-                    return Err(self.invariant(
-                        policy.span(),
-                        "non-contextual checked builtin contains a binding argument",
-                    ));
-                }
-                for argument in arguments {
-                    if let CheckedCallArgument::Binding(local) = argument {
-                        self.validate_checked_expression_binding(*local, arguments, policy)?;
+                    BuiltinArgumentContext::Binding { ty, body } => {
+                        let CheckedCallArgument::Binding(local) = argument else {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin binding argument has an inconsistent retained signature",
+                            ));
+                        };
+                        if actual != ty {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin binding type is inconsistent",
+                            ));
+                        }
+                        self.validate_checked_expression_binding(*local, arguments, policy, *body)?;
+                    }
+                    BuiltinArgumentContext::ScopedValue { expected, binding } => {
+                        if !matches!(argument, CheckedCallArgument::Value(_))
+                            || expected.as_ref().is_some_and(|expected| expected != actual)
+                        {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin scoped value has an inconsistent retained signature",
+                            ));
+                        }
+                        let Some(CheckedCallArgument::Binding(local)) = arguments.get(*binding)
+                        else {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin scoped value has no binding argument",
+                            ));
+                        };
+                        self.validate_checked_expression_binding(*local, arguments, policy, index)?;
                     }
                 }
             }
+        } else if arguments
+            .iter()
+            .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "non-contextual checked builtin contains a binding argument",
+            ));
+        }
+
+        let mut env = HashMap::new();
+        let mut source_arguments = Vec::with_capacity(arguments.len());
+        for (index, (argument, ty)) in arguments.iter().zip(argument_types).enumerate() {
+            source_arguments.push(
+                self.checked_builtin_contract_argument(argument, ty, index, &mut env, policy)?,
+            );
+        }
+        let canonical =
+            builtin_call_type(name, &source_arguments, &env, &self.document, policy.span())
+                .map_err(|error| {
+                    self.invariant(
+                        policy.span(),
+                        format!(
+                            "checked builtin call `{name}` violates its canonical contract: {}",
+                            error.message
+                        ),
+                    )
+                })?;
+        if resolve_erased_type(&canonical) != *output {
+            return Err(self.invariant(
+                policy.span(),
+                "checked builtin output type is inconsistent with its canonical contract",
+            ));
         }
         Ok(())
+    }
+
+    fn checked_builtin_contract_argument(
+        &self,
+        argument: &CheckedCallArgument,
+        ty: &Type,
+        index: usize,
+        env: &mut HashMap<String, Type>,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Expr, Error> {
+        match argument {
+            CheckedCallArgument::Value(id) => {
+                if let Some(literal) = self.checked_builtin_literal(*id) {
+                    return Ok(literal);
+                }
+                let name = format!("__checked_builtin_argument_{index}");
+                env.insert(name.clone(), ty.clone());
+                Ok(Expr::Path(vec![name]))
+            }
+            CheckedCallArgument::Binding(id) => {
+                let local = self.facts.try_local(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked builtin binding references an invalid local ID",
+                    )
+                })?;
+                Ok(Expr::Path(vec![local.name.clone()]))
+            }
+        }
+    }
+
+    fn checked_builtin_literal(&self, id: CheckedExprId) -> Option<Expr> {
+        let expression = self.facts.try_expression(id)?;
+        Some(match &expression.kind {
+            CheckedExprKind::Bool(value) => Expr::Bool(*value),
+            CheckedExprKind::I64(value) => Expr::I64(*value),
+            CheckedExprKind::F64(value) => Expr::F64(*value),
+            CheckedExprKind::Str(value) => Expr::Str(value.clone()),
+            CheckedExprKind::Bytes(value) => Expr::Bytes(value.clone()),
+            CheckedExprKind::Unary {
+                operator: CheckedUnaryOperator::NumericNegation(_),
+                value,
+            } => Expr::Unary {
+                op: UnaryOp::Neg,
+                value: Box::new(self.checked_builtin_literal(*value)?),
+            },
+            _ => return None,
+        })
     }
 
     fn checked_app_setting_expression(
@@ -7985,6 +8122,83 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("changed after semantic analysis"));
         assert_eq!(error.line, 3);
+    }
+
+    #[test]
+    fn daemon_theme_factory_without_title_uses_one_shared_typed_window_scope() {
+        let source = format!(
+            "daemon OnlyTheme\n  theme native_theme(window)\nextern crate::backend\n  theme native_theme(id:window-id)\n{THEME}view\n  text \"ready\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        assert!(program.settings().callback_window.is_some());
+        assert_eq!(
+            program
+                .checked_facts()
+                .app_setting_daemon_window_local_count(),
+            1
+        );
+        let generated = crate::codegen::generate(&program, "only_theme.ice").unwrap();
+        assert!(generated.contains("crate::backend::native_theme(window)"));
+
+        let mut corrupted = analyze(&source).unwrap();
+        corrupted.facts.corrupt_app_setting_daemon_window_owner();
+        let error = lower(corrupted).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("cannot reference a view local"));
+    }
+
+    #[test]
+    fn application_settings_accept_derived_values_across_every_dynamic_callback() {
+        let source = format!(
+            "app DerivedSettings\n  title computed_title\n  theme computed_theme\n  palette computed_palette\n  bg computed_background\n  fg computed_foreground\n  scale computed_scale\n{THEME}state\n  base_title = \"Title\"\n  base_theme = \"app\"\n  base_palette:palette[AppTheme] = AppTheme.app\n  base_background = \"000000\"\n  base_foreground = \"ffffff\"\n  base_scale = 1.25\nderived\n  computed_title = trim(base_title)\n  computed_theme = base_theme\n  computed_palette = base_palette\n  computed_background = base_background\n  computed_foreground = base_foreground\n  computed_scale = base_scale\nview\n  text computed_title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let metrics = program.checked_facts().metrics();
+        assert_eq!(metrics.app_setting_analysis_passes, 6);
+        assert_eq!(metrics.type_scope_env_full_clones, 0);
+        assert_eq!(metrics.scope_env_full_clones, 0);
+        let generated = crate::codegen::generate(&program, "derived_settings.ice").unwrap();
+        for name in [
+            "computed_title",
+            "computed_theme",
+            "computed_palette",
+            "computed_background",
+            "computed_foreground",
+            "computed_scale",
+        ] {
+            assert!(
+                generated.contains(&format!("Self::__ice_derived_{name}(self)")),
+                "missing derived setting binding `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_different_valid_builtin_id_in_an_app_setting_expression() {
+        let source = format!(
+            "app BuiltinContract\n  title trim(title)\n{THEME}state\n  title = \"Title\"\n  document:editor = editor(\"Body\")\nview\n  text editor_text(document)\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_builtin_target(AppSettingExprId::Title, "editor");
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("canonical contract"));
+    }
+
+    #[test]
+    fn rejects_a_contextual_builtin_binding_with_the_wrong_body_topology() {
+        let source = format!(
+            "app BindingContract\n  scale animation.project(progress, sample, sample)\n{THEME}state\n  progress:animation[f64] = 0.0\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_binding_body_argument(AppSettingExprId::ScaleFactor, 0);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("body-argument topology"));
     }
 
     #[test]

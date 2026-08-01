@@ -2524,6 +2524,24 @@ fn expr_type_uncached(
     }
 }
 
+pub(crate) fn builtin_call_type(
+    name: &str,
+    args: &[Expr],
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+) -> Result<Type, Error> {
+    expr_type(
+        &Expr::Call {
+            name: name.to_owned(),
+            args: args.to_vec(),
+        },
+        env,
+        document,
+        span,
+    )
+}
+
 fn check_contextual_builtin(
     builtin: ContextualBuiltin,
     args: &[Expr],
