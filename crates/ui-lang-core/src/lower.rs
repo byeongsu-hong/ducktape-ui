@@ -2104,6 +2104,19 @@ impl LoweredProgram {
             return Err(self.invariant_at_origin(origin, message));
         }
 
+        if self.handlers.len() != self.declarations.handlers().len()
+            || self
+                .handlers
+                .iter()
+                .enumerate()
+                .any(|(index, handler)| handler.id != HandlerId(index as u32))
+        {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "handler arena order or cardinality diverged from its declarations",
+            ));
+        }
+
         for handler in &self.handlers {
             let declaration = self.declarations.try_handler(handler.id).ok_or_else(|| {
                 self.invariant_at_origin(handler.origin, "handler ID is outside its arena")
@@ -2169,43 +2182,45 @@ impl LoweredProgram {
             }
         }
 
-        let missing_origin = OriginId(u32::MAX);
-        for id in &self.app_handlers {
-            let handler = self.try_handler(*id).ok_or_else(|| {
-                self.invariant_at_origin(missing_origin, "app handler ID is outside its arena")
-            })?;
-            if handler.owner != HandlerOwner::App {
-                return Err(self.invariant_at_origin(
-                    handler.origin,
-                    "app handler ID belongs to a different owner",
-                ));
-            }
+        let expected_app = self
+            .declarations
+            .handlers()
+            .iter()
+            .filter(|handler| handler.owner == HandlerOwner::App)
+            .map(|handler| handler.declaration.id)
+            .collect::<Vec<_>>();
+        if self.app_handlers != expected_app {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "app handler index diverged from its declaration partition",
+            ));
         }
-        for id in &self.preset_handlers {
-            let handler = self.try_handler(*id).ok_or_else(|| {
-                self.invariant_at_origin(missing_origin, "preset handler ID is outside its arena")
-            })?;
-            if !matches!(handler.owner, HandlerOwner::Preset(_)) {
-                return Err(self.invariant_at_origin(
-                    handler.origin,
-                    "preset handler ID belongs to a different owner",
-                ));
-            }
+        let expected_presets = self
+            .declarations
+            .handlers()
+            .iter()
+            .filter(|handler| matches!(handler.owner, HandlerOwner::Preset(_)))
+            .map(|handler| handler.declaration.id)
+            .collect::<Vec<_>>();
+        if self.preset_handlers != expected_presets {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "preset handler index diverged from its declaration partition",
+            ));
         }
         for component in &self.components {
-            for id in &component.handlers {
-                let handler = self.try_handler(*id).ok_or_else(|| {
-                    self.invariant_at_origin(
-                        component.origin,
-                        "component handler ID is outside its arena",
-                    )
-                })?;
-                if handler.owner != HandlerOwner::Component(component.id) {
-                    return Err(self.invariant_at_origin(
-                        handler.origin,
-                        "component handler ID belongs to a different owner",
-                    ));
-                }
+            let expected = self
+                .declarations
+                .handlers()
+                .iter()
+                .filter(|handler| handler.owner == HandlerOwner::Component(component.id))
+                .map(|handler| handler.declaration.id)
+                .collect::<Vec<_>>();
+            if component.handlers != expected {
+                return Err(self.invariant_at_origin(
+                    component.origin,
+                    "component handler index diverged from its declaration partition",
+                ));
             }
         }
         Ok(())
@@ -5652,6 +5667,18 @@ view
         let error = crate::codegen::generate(&invalid_param, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("parameter local ID"));
+
+        let mut invalid_handler_order = program();
+        invalid_handler_order.handlers.swap(0, 1);
+        let error = crate::codegen::generate(&invalid_handler_order, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler arena order"));
+
+        let mut invalid_app_partition = program();
+        invalid_app_partition.app_handlers.pop();
+        let error = crate::codegen::generate(&invalid_app_partition, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("app handler index"));
     }
 
     #[test]
