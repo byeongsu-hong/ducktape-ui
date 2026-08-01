@@ -14,7 +14,7 @@ pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, ComponentCallId, ComponentEventId, ComponentId,
     ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
     HandlerId, HandlerOwner, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId,
-    RunSiteId, StatementId, SubscriptionId, TaskId,
+    RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
@@ -3027,6 +3027,12 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
                     "app setting expression cannot reference a view local",
                 ));
             }
+            CheckedLocalOwner::TestTarget(_) => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a test target",
+                ));
+            }
             CheckedLocalOwner::HandlerParam { .. }
             | CheckedLocalOwner::StatementLet(_)
             | CheckedLocalOwner::TaskTransform { .. } => {
@@ -3086,6 +3092,155 @@ struct SubscriptionExpressionPolicy<'a> {
     lowerer: &'a Lowerer,
     use_id: CheckedExprUseId,
     span: &'a Span,
+}
+
+struct TestExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    use_id: CheckedExprUseId,
+    test: TestId,
+    span: &'a Span,
+}
+
+impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test path references an invalid value ID")
+        })?;
+        match value {
+            CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
+            CheckedValueRef::ComponentParam(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_param(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "test path references an invalid component parameter ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "test path cannot reference a component parameter",
+                ))
+            }
+            CheckedValueRef::ComponentState(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_state(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "test path references an invalid component state ID",
+                        )
+                    })?;
+                Err(self
+                    .lowerer
+                    .invariant(self.span, "test path cannot reference component state"))
+            }
+        }
+    }
+
+    fn local_type(&self, id: CheckedLocalId) -> Result<Type, Error> {
+        let local = self.lowerer.facts.try_local(id).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test expression references an invalid local ID")
+        })?;
+        match local.owner {
+            CheckedLocalOwner::TestTarget(target) if target.test == self.test => {
+                let declaration =
+                    self.lowerer
+                        .declarations
+                        .test_target(target)
+                        .ok_or_else(|| {
+                            self.lowerer.invariant(
+                                self.span,
+                                "test expression references an invalid target ID",
+                            )
+                        })?;
+                if local.ty != Type::TestTarget || local.origin != declaration.origin {
+                    return Err(self.lowerer.invariant(
+                        self.span,
+                        "test target local has an inconsistent retained contract",
+                    ));
+                }
+            }
+            CheckedLocalOwner::TestTarget(_) => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression references a target from another test",
+                ));
+            }
+            CheckedLocalOwner::View {
+                role: crate::check::CheckedViewLocalRole::DaemonWindow,
+                ..
+            } if self.lowerer.document.daemon
+                && self.lowerer.facts.daemon_window_local() == Some(id)
+                && local.name == "window"
+                && local.ty == Type::WindowId => {}
+            CheckedLocalOwner::ExpressionBinding { expression, .. }
+                if expression == self.use_id => {}
+            CheckedLocalOwner::ExpressionBinding { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression binding belongs to another expression use",
+                ));
+            }
+            _ => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression references an incompatible local",
+                ));
+            }
+        }
+        Ok(local.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer
+                    .invariant(self.span, "test expression references an invalid slot ID")
+            })?;
+        Err(self.lowerer.invariant(
+            self.span,
+            "test expression cannot reference a component slot",
+        ))
+    }
+
+    fn palette_type(&self, id: PaletteId) -> Result<Type, Error> {
+        self.lowerer.declarations.palette_name(id).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test path references an invalid palette ID")
+        })?;
+        let expression = self
+            .lowerer
+            .facts
+            .try_expression_use(self.use_id)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "test palette path has an invalid expression-use ID",
+                )
+            })?;
+        match &expression.source {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                "test palette path has no checked theme-contract type",
+            )),
+        }
+    }
 }
 
 impl CheckedExpressionOwnerPolicy for SubscriptionExpressionPolicy<'_> {
@@ -3257,6 +3412,7 @@ impl Lowerer {
             return Err(self.invariant_at_origin(origin, message));
         }
         let settings = self.lower_app_settings()?;
+        self.validate_test_expression_contracts()?;
         self.lower_style_program()?;
         let subscriptions = self.lower_subscriptions()?;
         let named_type_rust_paths = self.declarations.named_type_rust_paths();
@@ -4532,6 +4688,162 @@ impl Lowerer {
             .iter()
             .map(|(name, span)| (name.clone(), self.push_origin(span, Some(parent))))
             .collect()
+    }
+
+    fn validate_test_expression_contracts(&self) -> Result<(), Error> {
+        if self.document.tests.len() != self.declarations.test_count() {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked test topology changed before HIR lowering",
+            ));
+        }
+        let mut expected_expressions = 0usize;
+        let mut expected_targets = 0usize;
+        for (test_index, test) in self.document.tests.iter().enumerate() {
+            let declaration = self.declarations.test(test_index);
+            if declaration.declaration.id != TestId(test_index as u32)
+                || declaration.name != test.name
+                || declaration.targets.len() != test.targets.len()
+                || declaration.steps.len() != test.steps.len()
+            {
+                return Err(self.invariant(
+                    &test.span,
+                    "checked test declaration topology changed before HIR lowering",
+                ));
+            }
+            for (target_index, target) in test.targets.iter().enumerate() {
+                expected_targets += 1;
+                let id = TestTargetId {
+                    test: declaration.declaration.id,
+                    index: target_index as u32,
+                };
+                let target_declaration = self.declarations.test_target(id).ok_or_else(|| {
+                    self.invariant(&target.span, "test target has no stable declaration ID")
+                })?;
+                let local = self
+                    .facts
+                    .local_by_owner(CheckedLocalOwner::TestTarget(id))
+                    .and_then(|id| self.facts.try_local(id))
+                    .ok_or_else(|| {
+                        self.invariant(&target.span, "test target has no checked local")
+                    })?;
+                if local.name != target.name
+                    || local.ty != Type::TestTarget
+                    || local.origin != target_declaration.origin
+                {
+                    return Err(self.invariant(
+                        &target.span,
+                        "test target local has a mismatched retained contract",
+                    ));
+                }
+                for (segment_index, segment) in target.target.segments.iter().enumerate() {
+                    let Some(_) = &segment.key else {
+                        continue;
+                    };
+                    expected_expressions += 1;
+                    self.validate_test_expression_use(
+                        CheckedExprOwner::TestTargetKey {
+                            target: id,
+                            segment: segment_index as u32,
+                        },
+                        declaration.declaration.id,
+                        &target.span,
+                    )?;
+                }
+            }
+            for (step_index, step) in test.steps.iter().enumerate() {
+                let id = TestStepId {
+                    test: declaration.declaration.id,
+                    index: step_index as u32,
+                };
+                if self.declarations.test_step(id).is_none() {
+                    return Err(
+                        self.invariant(&step.span, "test step has no stable declaration ID")
+                    );
+                }
+                for (operand, _) in crate::ast::test_step_expression_roots(step)
+                    .into_iter()
+                    .enumerate()
+                {
+                    expected_expressions += 1;
+                    self.validate_test_expression_use(
+                        CheckedExprOwner::TestStepOperand {
+                            step: id,
+                            operand: operand as u32,
+                        },
+                        declaration.declaration.id,
+                        &step.span,
+                    )?;
+                }
+            }
+        }
+        let actual_expressions = self
+            .facts
+            .expression_uses()
+            .iter()
+            .filter(|expression| {
+                matches!(
+                    expression.owner,
+                    CheckedExprOwner::TestTargetKey { .. }
+                        | CheckedExprOwner::TestStepOperand { .. }
+                )
+            })
+            .count();
+        let actual_targets = self
+            .facts
+            .locals()
+            .iter()
+            .filter(|local| matches!(local.owner, CheckedLocalOwner::TestTarget(_)))
+            .count();
+        if actual_expressions != expected_expressions || actual_targets != expected_targets {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked test HIR contains extra or missing arena entries",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_test_expression_use(
+        &self,
+        owner: CheckedExprOwner,
+        test: TestId,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let id = self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+            self.invariant(span, "test expression has no checked expression-use ID")
+        })?;
+        let expression = self.facts.try_expression_use(id).ok_or_else(|| {
+            self.invariant(
+                span,
+                "test expression references an invalid expression-use ID",
+            )
+        })?;
+        if expression.owner != owner {
+            return Err(self.invariant(span, "test expression has a mismatched retained owner"));
+        }
+        let policy = TestExpressionPolicy {
+            lowerer: self,
+            use_id: id,
+            test,
+            span,
+        };
+        self.validate_checked_expression_use_graph(
+            expression,
+            &expression.source,
+            &policy,
+            &mut CheckedExpressionGraph::default(),
+        )?;
+        let root = self.facts.try_expression(expression.root).ok_or_else(|| {
+            self.invariant(span, "test expression references an invalid checked root")
+        })?;
+        if root.ty != expression.source {
+            return Err(self.invariant(
+                span,
+                "test expression root type diverged from its retained use",
+            ));
+        }
+        Ok(id)
     }
 
     fn lower_subscriptions(&self) -> Result<Vec<ResolvedSubscription>, Error> {

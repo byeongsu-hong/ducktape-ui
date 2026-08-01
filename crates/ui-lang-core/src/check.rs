@@ -525,7 +525,28 @@ fn check(
         }
     }
     initializer_analyses.retain_handlers(handler_analysis_guard.finish(), preset_handlers);
+    let test_analysis_guard = expr::HandlerAnalysisGuard::start();
     check_tests(document, &view_states)?;
+    let mut test_analyses = test_analysis_guard.finish();
+    let test_expression_keys = document
+        .tests
+        .iter()
+        .flat_map(|test| {
+            test.targets
+                .iter()
+                .flat_map(|target| crate::ast::widget_target_expression_roots(&target.target))
+                .chain(
+                    test.steps
+                        .iter()
+                        .flat_map(crate::ast::test_step_expression_roots),
+                )
+        })
+        .map(expr::expr_key)
+        .collect::<HashSet<_>>();
+    test_analyses
+        .expressions
+        .retain(|key, _| test_expression_keys.contains(key));
+    initializer_analyses.retain_tests(test_analyses)?;
     initializer_analyses.extend(view_analysis_guard.finish())?;
     Ok(initializer_analyses)
 }
@@ -809,7 +830,7 @@ pub(crate) use facts::{
     CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
     CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
     CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef,
-    CheckedView, CheckedViewFlow,
+    CheckedView, CheckedViewFlow, CheckedViewLocalRole,
 };
 pub(crate) use handler::task_flow_type;
 

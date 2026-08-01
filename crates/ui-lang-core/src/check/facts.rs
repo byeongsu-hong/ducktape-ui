@@ -7,7 +7,7 @@ use crate::hir::{
     AppSettingExprId, AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId,
     ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, ExternRef, HandlerId,
     OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
-    TestId, ViewId,
+    TestId, TestStepId, TestTargetId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -103,6 +103,7 @@ pub(crate) enum CheckedLocalOwner {
         task: TaskId,
         index: u32,
     },
+    TestTarget(TestTargetId),
     AppSettingDaemonWindow,
 }
 
@@ -291,6 +292,14 @@ pub(crate) enum CheckedExprOwner {
     Subscription {
         subscription: SubscriptionId,
         role: CheckedSubscriptionExprRole,
+    },
+    TestTargetKey {
+        target: TestTargetId,
+        segment: u32,
+    },
+    TestStepOperand {
+        step: TestStepId,
+        operand: u32,
     },
 }
 
@@ -1217,6 +1226,7 @@ pub(super) struct CheckedAnalyses {
     pub(super) view_scope_env_overlays: usize,
     pub(super) view_scope_env_full_clones: usize,
     subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
+    test_entries: HashMap<usize, ExprTypeAnalysis>,
 }
 
 impl CheckedAnalyses {
@@ -1253,6 +1263,7 @@ impl CheckedAnalyses {
             && self.handler_route_inputs.is_empty()
             && self.preset_handlers.is_empty()
             && self.subscriptions.is_empty()
+            && self.test_entries.is_empty()
     }
 
     pub(super) fn insert_subscription(
@@ -1311,6 +1322,15 @@ impl CheckedAnalyses {
         for (id, analysis) in other.subscriptions {
             self.insert_subscription(id, analysis)?;
         }
+        for (key, analysis) in other.test_entries {
+            if self.test_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "test expression was captured more than once",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1322,6 +1342,29 @@ impl CheckedAnalyses {
         self.handler_entries = analyses.expressions;
         self.handler_route_inputs = analyses.routes;
         self.preset_handlers = preset_handlers;
+    }
+
+    pub(super) fn retain_tests(
+        &mut self,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "test checking captured an unexpected handler route",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self.test_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "test expression was captured more than once",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1527,6 +1570,7 @@ impl<'a> FactsBuilder<'a> {
         self.lower_app_setting_expressions()?;
         self.index_views()?;
         self.lower_view_expressions()?;
+        self.lower_test_expressions()?;
         self.lower_subscriptions()?;
         self.lower_handler_expressions()?;
         self.facts.metrics.handler_auxiliary_analyses = self.analyses.handler_entries.len();
@@ -1535,9 +1579,10 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
+                    self.analyses.test_entries.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -2007,6 +2052,150 @@ impl<'a> FactsBuilder<'a> {
             ));
         }
         Ok(())
+    }
+
+    fn lower_test_expressions(&mut self) -> Result<(), Error> {
+        let document = self.document;
+        for (test_index, test) in document.tests.iter().enumerate() {
+            let declaration = self.declarations.test(test_index);
+            let mut env = self.fact_env(ValueScope::App);
+            if self.document.daemon {
+                let local = self.facts.daemon_window_local().ok_or_else(|| {
+                    self.invariant(&test.span, "daemon test has no checked window local")
+                })?;
+                env.insert(
+                    "window".into(),
+                    CheckedPathRoot::Local(local),
+                    Type::WindowId,
+                );
+            }
+            for (target_index, target) in test.targets.iter().enumerate() {
+                let target_id = TestTargetId {
+                    test: declaration.declaration.id,
+                    index: target_index as u32,
+                };
+                for (segment_index, segment) in target.target.segments.iter().enumerate() {
+                    if let Some(key) = &segment.key {
+                        self.push_test_expression(
+                            CheckedExprOwner::TestTargetKey {
+                                target: target_id,
+                                segment: segment_index as u32,
+                            },
+                            key,
+                            &env,
+                            &target.span,
+                            self.declarations
+                                .test_target(target_id)
+                                .expect("indexed test target")
+                                .origin,
+                        )?;
+                    }
+                }
+                let owner = CheckedLocalOwner::TestTarget(target_id);
+                let local = CheckedLocalId(self.facts.locals.len() as u32);
+                self.facts.locals.push(CheckedLocal {
+                    name: target.name.clone(),
+                    ty: Type::TestTarget,
+                    owner,
+                    origin: self
+                        .declarations
+                        .test_target(target_id)
+                        .expect("indexed test target")
+                        .origin,
+                });
+                self.facts.locals_by_owner.insert(owner, local);
+                env.insert(
+                    target.name.clone(),
+                    CheckedPathRoot::Local(local),
+                    Type::TestTarget,
+                );
+            }
+            for (step_index, step) in test.steps.iter().enumerate() {
+                let step_id = TestStepId {
+                    test: declaration.declaration.id,
+                    index: step_index as u32,
+                };
+                let origin = self
+                    .declarations
+                    .test_step(step_id)
+                    .expect("indexed test step")
+                    .origin;
+                for (operand, expression) in crate::ast::test_step_expression_roots(step)
+                    .into_iter()
+                    .enumerate()
+                {
+                    self.push_test_expression(
+                        CheckedExprOwner::TestStepOperand {
+                            step: step_id,
+                            operand: operand as u32,
+                        },
+                        expression,
+                        &env,
+                        &step.span,
+                        origin,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn push_test_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        expression: &Expr,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        origin: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let analysis = self
+            .analyses
+            .test_entries
+            .remove(&super::expr::expr_key(expression))
+            .ok_or_else(|| {
+                self.invariant(span, "missing authoritative test expression analysis")
+            })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let source = analysis
+            .type_of(expression)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained test expression root type"))?;
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "test expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: source,
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked test expression owner"));
+        }
+        Ok(id)
     }
 
     fn lower_handler(
@@ -4799,7 +4988,11 @@ impl<'a> FactsBuilder<'a> {
         self.index_view(&self.document.view, None, CheckedViewScope::App)?;
         for (index, test) in self.document.tests.iter().enumerate() {
             if let Some(mount) = &test.mount {
-                self.index_view(mount, None, CheckedViewScope::Test(TestId(index as u32)))?;
+                self.index_view(
+                    mount,
+                    None,
+                    CheckedViewScope::Test(self.declarations.test(index).declaration.id),
+                )?;
             }
         }
         Ok(())
@@ -5353,6 +5546,108 @@ view
         assert!(generated.contains(".with(self.tag)"));
         assert!(generated.contains("__SubscriptionsMessage::Number(__value.0, __value.1)"));
         assert!(generated.contains("__IceEventFilterRawEvent"));
+    }
+
+    #[test]
+    fn tests_retain_stable_target_step_and_expression_owners() {
+        let source = format!(
+            r#"app TestFacts
+{THEME}view
+  col #root
+    text "Key" #key
+    text "Item" #item("Key")
+test dynamic_targets
+  target key = #root/key
+  target item = #root/item(key.value)
+  click #root/item(key.value)
+  expect text "Item" within #root/item(key.value)
+"#
+        );
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let declarations = program.declarations();
+        let facts = program.checked_facts();
+        let test = TestId(0);
+        assert_eq!(declarations.test(0).declaration.id, test);
+        assert_eq!(declarations.test(0).name, "dynamic_targets");
+
+        let key = TestTargetId { test, index: 0 };
+        let item = TestTargetId { test, index: 1 };
+        let key_local = facts
+            .local_by_owner(CheckedLocalOwner::TestTarget(key))
+            .unwrap();
+        let item_local = facts
+            .local_by_owner(CheckedLocalOwner::TestTarget(item))
+            .unwrap();
+        assert_eq!(facts.local(key_local).name, "key");
+        assert_eq!(facts.local(item_local).name, "item");
+        assert_eq!(facts.local(item_local).ty, Type::TestTarget);
+
+        for owner in [
+            CheckedExprOwner::TestTargetKey {
+                target: item,
+                segment: 1,
+            },
+            CheckedExprOwner::TestStepOperand {
+                step: TestStepId { test, index: 0 },
+                operand: 0,
+            },
+            CheckedExprOwner::TestStepOperand {
+                step: TestStepId { test, index: 1 },
+                operand: 0,
+            },
+            CheckedExprOwner::TestStepOperand {
+                step: TestStepId { test, index: 1 },
+                operand: 1,
+            },
+        ] {
+            let expression = facts
+                .expression_use_by_owner(owner)
+                .unwrap_or_else(|| panic!("missing checked test expression for {owner:?}"));
+            assert_eq!(facts.expression_use(expression).owner, owner);
+        }
+
+        let target_key = facts.expression_use_by_owner(CheckedExprOwner::TestTargetKey {
+            target: item,
+            segment: 1,
+        });
+        let click_key = facts.expression_use_by_owner(CheckedExprOwner::TestStepOperand {
+            step: TestStepId { test, index: 0 },
+            operand: 0,
+        });
+        assert_ne!(target_key, click_key);
+    }
+
+    #[test]
+    fn missing_and_mutated_test_hir_contracts_are_e196_invariants() {
+        let source = format!(
+            "app TestContracts\n{THEME}view\n  text \"Item\" #item\ntest contract\n  target item = #item\n  click item\n  expect true\n"
+        );
+
+        let mut missing_expression = analyze(&source).unwrap();
+        let owner = CheckedExprOwner::TestStepOperand {
+            step: TestStepId {
+                test: TestId(0),
+                index: 1,
+            },
+            operand: 0,
+        };
+        missing_expression
+            .facts
+            .expression_uses_by_owner
+            .remove(&owner);
+        let error = lower::lower(missing_expression).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("test expression has no checked expression-use ID")
+        );
+
+        let mut changed_topology = analyze(&source).unwrap();
+        changed_topology.document.tests[0].steps.clear();
+        let error = lower::lower(changed_topology).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("test declaration topology changed"));
     }
 
     #[test]
@@ -6379,6 +6674,7 @@ view
                 | CheckedLocalOwner::HandlerParam { .. }
                 | CheckedLocalOwner::StatementLet(_)
                 | CheckedLocalOwner::TaskTransform { .. }
+                | CheckedLocalOwner::TestTarget(_)
                 | CheckedLocalOwner::AppSettingDaemonWindow => None,
             })
             .collect::<Vec<_>>();

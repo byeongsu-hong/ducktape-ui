@@ -42,6 +42,18 @@ arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct TestTargetId {
+    pub(crate) test: TestId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct TestStepId {
+    pub(crate) test: TestId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NamedTypeId {
     Struct(StructId),
     Enum(EnumId),
@@ -231,6 +243,14 @@ struct ComponentDeclarations {
     states: Vec<Declaration<ComponentStateId>>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TestDeclaration {
+    pub(crate) declaration: Declaration<TestId>,
+    pub(crate) name: String,
+    pub(crate) targets: Vec<Declaration<TestTargetId>>,
+    pub(crate) steps: Vec<Declaration<TestStepId>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct SourceSite {
     line: usize,
@@ -264,6 +284,7 @@ pub(crate) struct DeclarationIndex {
     handlers: Vec<HandlerDeclaration>,
     handlers_by_owner_name: HashMap<(HandlerOwner, String), HandlerId>,
     subscriptions: Vec<Declaration<SubscriptionId>>,
+    tests: Vec<TestDeclaration>,
     statements: Vec<StatementDeclaration>,
     tasks: Vec<TaskDeclaration>,
     routes: Vec<RouteDeclaration>,
@@ -550,6 +571,46 @@ impl DeclarationIndex {
             })
             .collect();
 
+        let tests = document
+            .tests
+            .iter()
+            .enumerate()
+            .map(|(test_index, test)| {
+                let id = TestId(test_index as u32);
+                let origin = origins.push(&test.span, None);
+                let targets = test
+                    .targets
+                    .iter()
+                    .enumerate()
+                    .map(|(index, target)| Declaration {
+                        id: TestTargetId {
+                            test: id,
+                            index: index as u32,
+                        },
+                        origin: origins.push(&target.span, Some(origin)),
+                    })
+                    .collect();
+                let steps = test
+                    .steps
+                    .iter()
+                    .enumerate()
+                    .map(|(index, step)| Declaration {
+                        id: TestStepId {
+                            test: id,
+                            index: index as u32,
+                        },
+                        origin: origins.push(&step.span, Some(origin)),
+                    })
+                    .collect();
+                TestDeclaration {
+                    declaration: Declaration { id, origin },
+                    name: test.name.clone(),
+                    targets,
+                    steps,
+                }
+            })
+            .collect();
+
         let mut views = Vec::new();
         let mut views_by_site = HashMap::new();
         let mut component_calls_by_view = HashMap::new();
@@ -716,6 +777,7 @@ impl DeclarationIndex {
             #[cfg(test)]
             extern_name_lookups: TestLookupCount::default(),
             subscriptions,
+            tests,
             views,
             views_by_site,
             component_calls_by_view,
@@ -730,6 +792,36 @@ impl DeclarationIndex {
 
     pub(crate) fn app_settings(&self) -> Declaration<AppSettingsId> {
         self.app_settings
+    }
+
+    pub(crate) fn test(&self, index: usize) -> &TestDeclaration {
+        &self.tests[index]
+    }
+
+    pub(crate) fn try_test(&self, id: TestId) -> Option<&TestDeclaration> {
+        self.tests
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
+    }
+
+    pub(crate) fn test_count(&self) -> usize {
+        self.tests.len()
+    }
+
+    pub(crate) fn test_target(&self, id: TestTargetId) -> Option<Declaration<TestTargetId>> {
+        self.try_test(id.test)?
+            .targets
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
+    }
+
+    pub(crate) fn test_step(&self, id: TestStepId) -> Option<Declaration<TestStepId>> {
+        self.try_test(id.test)?
+            .steps
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn app_setting_expression(
