@@ -1,3 +1,4 @@
+use crate::evidence::{CAPTURE_SCHEMA_VERSION, REVIEW_SCHEMA_VERSION, require_schema_version};
 use crate::inspection::{
     DiffThresholds, compare_capture_manifests, containing_package, manifest_png, source_output_name,
 };
@@ -18,6 +19,31 @@ struct ReviewOptions {
     baseline: Option<PathBuf>,
     tests: Vec<String>,
     thresholds: DiffThresholds,
+}
+
+#[derive(Debug, PartialEq)]
+enum BaselineScope {
+    Full,
+    Selected(BTreeSet<String>),
+}
+
+impl BaselineScope {
+    fn from_selection(selected: &[String], explicitly_selected: bool) -> Self {
+        if explicitly_selected {
+            Self::Selected(selected.iter().map(|test| safe_component(test)).collect())
+        } else {
+            Self::Full
+        }
+    }
+
+    fn contains_capture(&self, key: &str) -> bool {
+        match self {
+            Self::Full => true,
+            Self::Selected(tests) => key
+                .split_once('/')
+                .is_some_and(|(test, _)| tests.contains(test)),
+        }
+    }
 }
 
 pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
@@ -49,6 +75,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         Err(error) => return analysis_failure(root, &source, &output, error),
     };
     let selected = selected_tests(&analysis.document.tests, &options.tests)?;
+    let baseline_scope = BaselineScope::from_selection(&selected, !options.tests.is_empty());
     let expected_captures = expected_capture_keys(&analysis.document.tests, &selected)?;
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let package = options
@@ -137,7 +164,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     let diagnostics_path = output.join("diagnostics.json");
     write_json(
         &diagnostics_path,
-        &json!({ "schema_version": 1, "diagnostics": diagnostics }),
+        &json!({ "schema_version": REVIEW_SCHEMA_VERSION, "diagnostics": diagnostics }),
     )?;
 
     let current = capture_index(&artifact_dir)?;
@@ -266,7 +293,10 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     }
     if let Some(baseline) = &baseline {
         for key in baseline.keys() {
-            if !compared_baselines.contains(key) && !current.contains_key(key) {
+            if baseline_scope.contains_capture(key)
+                && !compared_baselines.contains(key)
+                && !current.contains_key(key)
+            {
                 captures.push(json!({
                     "key": key,
                     "comparison": {
@@ -291,7 +321,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
-        "schema_version": 1,
+        "schema_version": REVIEW_SCHEMA_VERSION,
         "success": success,
         "source": relative_path(root, &source),
         "package": package,
@@ -366,12 +396,15 @@ fn analysis_failure(
     let diagnostics_path = output.join("diagnostics.json");
     write_json(
         &diagnostics_path,
-        &json!({ "schema_version": 1, "diagnostics": [&diagnostic] }),
+        &json!({
+            "schema_version": REVIEW_SCHEMA_VERSION,
+            "diagnostics": [&diagnostic]
+        }),
     )?;
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
-        "schema_version": 1,
+        "schema_version": REVIEW_SCHEMA_VERSION,
         "success": false,
         "source": relative_path(root, source),
         "package": null,
@@ -545,6 +578,12 @@ fn baseline_index(path: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     };
     if report_path.is_file() {
         let report = read_json(&report_path)?;
+        require_schema_version(
+            &report_path,
+            &report,
+            REVIEW_SCHEMA_VERSION,
+            "review report",
+        )?;
         let directory = report_path.parent().unwrap_or_else(|| Path::new("."));
         let mut index = BTreeMap::new();
         for capture in report["captures"].as_array().into_iter().flatten() {
@@ -693,6 +732,7 @@ fn validate_capture_manifest(path: &Path, manifest: &Value) -> Result<PathBuf, S
     let object = manifest
         .as_object()
         .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
+    require_schema_version(path, manifest, CAPTURE_SCHEMA_VERSION, "capture manifest")?;
     let name = object
         .get("name")
         .and_then(Value::as_str)
@@ -701,16 +741,6 @@ fn validate_capture_manifest(path: &Path, manifest: &Value) -> Result<PathBuf, S
     if path.file_stem().and_then(|stem| stem.to_str()) != Some(name) {
         return Err(format!(
             "{} capture name {name:?} does not match its filename",
-            path.display()
-        ));
-    }
-    if object
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return Err(format!(
-            "{} omits integer field `schema_version`",
             path.display()
         ));
     }
@@ -989,6 +1019,16 @@ mod tests {
     }
 
     #[test]
+    fn selected_baseline_scope_excludes_unselected_capture_removals() {
+        let selected = BaselineScope::from_selection(&["wide".into()], true);
+        assert!(selected.contains_capture("wide/current.json"));
+        assert!(!selected.contains_capture("narrow/removed.json"));
+
+        let full = BaselineScope::from_selection(&["wide".into()], false);
+        assert!(full.contains_capture("narrow/removed.json"));
+    }
+
+    #[test]
     fn summarizes_accessibility_and_maps_changes_to_sources() {
         let fixture = fixture("summary");
         fs::create_dir_all(&fixture).unwrap();
@@ -1047,6 +1087,7 @@ mod tests {
         write_json(
             &fixture.join("report.json"),
             &json!({
+                "schema_version": REVIEW_SCHEMA_VERSION,
                 "captures": [{
                     "key": "test/wide.json",
                     "manifest": "artifacts/run/test/wide.json"
@@ -1069,6 +1110,7 @@ mod tests {
         write_json(
             &fixture.join("report.json"),
             &json!({
+                "schema_version": REVIEW_SCHEMA_VERSION,
                 "captures": [{
                     "key": "test/wide.json",
                     "manifest": "../outside.json"
@@ -1083,6 +1125,7 @@ mod tests {
         write_json(
             &fixture.join("report.json"),
             &json!({
+                "schema_version": REVIEW_SCHEMA_VERSION,
                 "captures": [
                     { "key": "test/wide.json", "manifest": "artifacts/wide.json" },
                     { "key": "test/wide.json", "manifest": "artifacts/wide.json" }
@@ -1091,6 +1134,21 @@ mod tests {
         )
         .unwrap();
         assert!(baseline_index(&fixture).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn previous_review_reports_require_the_supported_schema() {
+        let fixture = fixture("baseline-schema");
+        fs::create_dir_all(&fixture).unwrap();
+        for schema in [Value::Null, json!("1"), json!(REVIEW_SCHEMA_VERSION + 1)] {
+            let mut report = json!({ "captures": [] });
+            if !schema.is_null() {
+                report["schema_version"] = schema;
+            }
+            write_json(&fixture.join("report.json"), &report).unwrap();
+            assert!(baseline_index(&fixture).is_err());
+        }
         fs::remove_dir_all(fixture).unwrap();
     }
 
@@ -1125,6 +1183,15 @@ mod tests {
         incomplete["targets"] = json!([]);
         incomplete["name"] = json!("renamed");
         assert!(validate_capture_manifest(&path, &incomplete).is_err());
+        for schema in [Value::Null, json!("2"), json!(CAPTURE_SCHEMA_VERSION + 1)] {
+            let mut invalid = manifest.clone();
+            if schema.is_null() {
+                invalid.as_object_mut().unwrap().remove("schema_version");
+            } else {
+                invalid["schema_version"] = schema;
+            }
+            assert!(validate_capture_manifest(&path, &invalid).is_err());
+        }
         fs::remove_dir_all(fixture).unwrap();
     }
 

@@ -4,6 +4,7 @@ mod api;
 mod cargo_config;
 mod compat;
 mod dev;
+mod evidence;
 mod inspection;
 mod lsp;
 mod review;

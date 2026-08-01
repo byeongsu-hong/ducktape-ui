@@ -583,10 +583,15 @@ only repeated `--test NAME` selections. Captures are collected below a unique
 run directory without deleting older evidence. `--baseline DIR` accepts a
 previous review directory (or a capture directory), compares captures by their
 stable `test-name/capture-name.json` key, and treats changed, new, removed, or
-unreadable evidence as a failed review. `--package`, `--output`, and the same
-pixel/ratio/value tolerance flags control execution and policy. The output
-contains `report.json`, `report.html`, `diagnostics.json`, test logs, current
-PNGs/manifests, and per-capture `diff.png`/`report.json` files.
+unreadable evidence as a failed review. With explicit `--test` selections,
+removed-capture checks are scoped to those selected tests; captures belonging
+to unselected tests are not reported as removed. Capture manifests use schema
+2 and review/diff reports use schema 1. Direct diff and review reject missing,
+non-integer, or unsupported schema versions before comparing evidence.
+`--package`, `--output`, and the same pixel/ratio/value tolerance flags control
+execution and policy. The output contains `report.json`, `report.html`,
+`diagnostics.json`, test logs, current PNGs/manifests, and per-capture
+`diff.png`/`report.json` files.
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
 one native app or daemon, watches its complete Ice and Cargo input graph, and

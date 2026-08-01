@@ -1,3 +1,4 @@
+use crate::evidence::CAPTURE_SCHEMA_VERSION;
 use serde_json::{Value, json};
 
 pub use ui_lang_core::LANGUAGE_REVISION;
@@ -1935,7 +1936,7 @@ fn capture_manifest_schema() -> Value {
             "locale", "platform", "reduced_motion", "window", "clock", "targets"
         ],
         "fields": {
-            "schema_version": { "type": "integer", "const": 1 },
+            "schema_version": { "type": "integer", "const": CAPTURE_SCHEMA_VERSION },
             "name": { "type": "string" },
             "png": { "type": "string", "path": "sibling basename" },
             "viewport": { "ref": "logical_size" },
@@ -2672,8 +2673,9 @@ pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCESSKIT_WINDOWS_VERSION, COMPLETIONS, ICED_VERSION, ICED_WIDGET_VERSION,
-        UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items, document,
+        ACCESSKIT_WINDOWS_VERSION, CAPTURE_SCHEMA_VERSION, COMPLETIONS, ICED_VERSION,
+        ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items,
+        document,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -3175,7 +3177,10 @@ mod tests {
         assert!(required.contains(&json!("configured_theme")));
         assert!(required.contains(&json!("resolved_theme")));
         assert!(!required.contains(&json!("theme")));
-        assert_eq!(manifest["fields"]["schema_version"]["const"], 1);
+        assert_eq!(
+            manifest["fields"]["schema_version"]["const"],
+            CAPTURE_SCHEMA_VERSION
+        );
         assert_eq!(manifest["fields"]["png"]["path"], "sibling basename");
         assert!(manifest["fields"]["theme"].is_null());
         assert_eq!(

@@ -115,6 +115,7 @@ test generated_control_accessibility
   expect a11y editor value "Default multiline editor"
   expect a11y editor disabled true
   expect a11y editor action focus false
+  capture accessibility_contract
 
 test catalog_layout
   preset test

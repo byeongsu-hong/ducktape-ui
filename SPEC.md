@@ -4780,9 +4780,14 @@ diagnostics inventory, accessibility role/name/action summary, and
 source-mapped structured changes. A baseline may be a previous review bundle
 or capture directory; captures match by the stable test/capture manifest key.
 When a baseline is supplied, a changed, new, removed, or unreadable capture is
-a review failure under the explicit pixel, ratio, and value tolerances. Test
-failure also fails the review. Each run uses a fresh artifact/log/diff
-subdirectory, so publishing a new report never deletes earlier evidence.
+a review failure under the explicit pixel, ratio, and value tolerances. An
+explicit `--test` selection limits removed-capture checks to the selected test
+names, so evidence from unselected tests is outside that run's baseline scope.
+Capture manifests have schema version 2 and review/diff reports have schema
+version 1; direct diff and review reject missing, non-integer, and unsupported
+versions. Test failure also fails the review. Each run uses a fresh
+artifact/log/diff subdirectory, so publishing a new report never deletes
+earlier evidence.
 
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their

@@ -1,3 +1,4 @@
+use crate::evidence::{CAPTURE_SCHEMA_VERSION, REVIEW_SCHEMA_VERSION, require_schema_version};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -395,6 +396,18 @@ pub(super) fn compare_capture_manifests(
 ) -> Result<Value, String> {
     let baseline = read_json(baseline_path)?;
     let current = read_json(current_path)?;
+    require_schema_version(
+        baseline_path,
+        &baseline,
+        CAPTURE_SCHEMA_VERSION,
+        "capture manifest",
+    )?;
+    require_schema_version(
+        current_path,
+        &current,
+        CAPTURE_SCHEMA_VERSION,
+        "capture manifest",
+    )?;
     let baseline_png = manifest_png(baseline_path, &baseline)?;
     let current_png = manifest_png(current_path, &current)?;
     let baseline_image = read_png(&baseline_png)?;
@@ -420,7 +433,7 @@ pub(super) fn compare_capture_manifests(
     let matches = differences.is_empty() && changed_ratio <= thresholds.max_changed_ratio;
     let report_path = output.join("report.json");
     let report = json!({
-        "schema_version": 1,
+        "schema_version": REVIEW_SCHEMA_VERSION,
         "matches": matches,
         "baseline": { "manifest": baseline_path, "png": baseline_png },
         "current": { "manifest": current_path, "png": current_png },
@@ -812,6 +825,55 @@ mod tests {
         compare_json("", &baseline, &current, 0.0, &mut differences);
         assert_eq!(differences[0]["path"], "/source");
         assert_eq!(differences[0]["current"]["$missing"], true);
+    }
+
+    #[test]
+    fn direct_diff_rejects_missing_string_and_unsupported_capture_schemas() {
+        let fixture = tempfile::tempdir().unwrap();
+        let baseline = fixture.path().join("baseline.json");
+        let current = fixture.path().join("current.json");
+        let output = fixture.path().join("diff");
+        fs::write(
+            &current,
+            serde_json::to_vec(&json!({
+                "schema_version": CAPTURE_SCHEMA_VERSION
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        for invalid in [
+            json!({}),
+            json!({ "schema_version": "2" }),
+            json!({
+                "schema_version": CAPTURE_SCHEMA_VERSION + 1
+            }),
+        ] {
+            fs::write(&baseline, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(
+                compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default(),)
+                    .is_err()
+            );
+        }
+
+        fs::write(
+            &baseline,
+            serde_json::to_vec(&json!({
+                "schema_version": CAPTURE_SCHEMA_VERSION
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            &current,
+            serde_json::to_vec(&json!({ "schema_version": "2" })).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default())
+                .unwrap_err()
+                .contains(&current.display().to_string())
+        );
     }
 
     #[test]
