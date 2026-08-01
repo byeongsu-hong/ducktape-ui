@@ -117,6 +117,56 @@ the new style/theme nodes retain physical root/import locations, but current
 diagnostics and generated source markers still do not traverse expansion
 stacks.
 
+The checker now also preserves the first expression-family facts in a private,
+owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
+connect initializer expression trees to concrete types and to resolved value,
+enum, palette, extern, builtin, field-projection, and operator facts. The arena
+uses direct typed-ID indexing and does not recover facts from AST locations
+during lowering. Structs, struct fields, enums, enum variants, and extern
+functions are origin-aware semantic declaration records rather than positional
+lookups back into `Document` vectors. Declaration references use the same
+`AppStateId`, `DerivedId`, `ComponentParamId`, `ComponentStateId`, `PaletteId`,
+`ExternFnId`, struct, and enum identities as the rest of HIR. Checked facts,
+component lowering, and style lowering also allocate from one shared origin
+arena. Imported physical locations and declaration-parent links therefore
+survive across expression and declaration slices without a parallel origin
+table.
+
+This slice now covers app-state, derived-value, component-default, and
+component-state initializers through production Rust emission. Lowering retains
+their checked expression-use IDs, explicit coercions, and resolved animation
+options, including a typed extern ID for custom easing. The backend emits those
+facts directly. The former initializer AST helper and its unchecked `Default`
+recovery are removed. Component arguments supplied at a call site, canvas-local
+state, view expressions, handlers, and matches remain in later expression/view
+slices; component defaults selected by a call are already HIR-backed. The
+full-HIR completion criteria therefore remain open.
+
+Initializer typing and fact lowering are linear in the expression tree. The
+checker performs one authoritative post-order analysis for each initializer and
+hands the owned result to fact construction; fact construction cannot invoke a
+second analysis. It consumes that table instead of restarting subtree type
+checks.
+Composite list, optional, and result evidence is unified recursively before an
+otherwise unconstrained type variable is canonically erased to `unit`; parent
+and child facts consequently retain one exact concrete type. Initializer uses
+record their source type, destination type, and explicit state-construction
+coercion separately, including list-to-combo and value-to-animation conversion.
+Context-sensitive builtins share one signature/context model between checking
+and fact construction. That model distinguishes ordinary values, binding-name
+arguments, and expressions evaluated under a binding. Consequently,
+`animation.project` retains its binder as a typed local ID with an owning
+expression use and body-argument scope; reads in the projection body resolve to
+that local rather than to an unresolved source path. Exact analysis-pass,
+query, analyzed-node, cache-hit, local, lowered-expression, layered-scope, and
+full-clone counters make the linearity and scope contracts testable. Each
+lexical scope constructs its base path and type views once. Binding bodies such
+as `animation.project` borrow that base through one-entry overlays in both
+checking and fact lowering instead of cloning the full environment. The
+500-to-4,000 repeated-projection contract verifies exact linear node/overlay
+growth and zero full-scope clones under a wall-clock ceiling. The thread-local
+collection context is guarded across both ordinary errors and panic unwinding.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;

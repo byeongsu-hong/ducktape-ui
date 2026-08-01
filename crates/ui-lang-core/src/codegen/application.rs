@@ -274,9 +274,15 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
-    for state in &document.states {
+    for state in program.app_states() {
         writeln!(out, "{}", source_marker(&state.span)).unwrap();
-        writeln!(out, "{}: {},", state.name, initial_code(state, document)).unwrap();
+        writeln!(
+            out,
+            "{}: {},",
+            state.name,
+            resolved_initializer_code(&state.initializer, program)?
+        )
+        .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     for component in program
@@ -420,7 +426,7 @@ pub(in crate::codegen) fn generate_update(
                 || component
                     .states
                     .iter()
-                    .any(|state| state.source.ty == Type::Str)
+                    .any(|state| state.ty == Type::Str)
         })
         || document_pane_grids(document).into_iter().any(|(node, _)| {
             matches!(node, ViewNode::PaneGrid { options, .. } if options.resize_leeway.is_some() || options.draggable)
@@ -593,7 +599,6 @@ pub(in crate::codegen) fn generate_update(
             }
             let mut env = HashMap::new();
             for state in &component.states {
-                let state = &state.source;
                 env.insert(
                     state.name.clone(),
                     Binding {
@@ -657,7 +662,6 @@ pub(in crate::codegen) fn generate_update(
         for state in component
             .states
             .iter()
-            .map(|state| &state.source)
             .filter(|state| state.ty == Type::Str)
         {
             let variant = component_binding_variant(&component.name, &state.name);

@@ -37,7 +37,7 @@ pub(in crate::check) fn keyboard_variant<'a>(
 
 pub(in crate::check) fn animation_inner(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -52,7 +52,7 @@ pub(in crate::check) fn check_animation_instant(
     args: &[Expr],
     required: usize,
     optional_instant: bool,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -85,7 +85,7 @@ pub(in crate::check) fn check_builtin_args(
     name: &str,
     args: &[Expr],
     expected: &[Type],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -106,7 +106,7 @@ pub(in crate::check) fn check_f32_args(
     name: &str,
     args: &[Expr],
     expected: &[Type],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -277,7 +277,7 @@ pub(in crate::check) fn check_u8_literals(
 
 pub(in crate::check) fn require_pixel_value(
     value: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -297,7 +297,7 @@ pub(in crate::check) fn require_pixel_value(
 
 pub(in crate::check) fn require_radius_value(
     value: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {
@@ -317,7 +317,7 @@ pub(in crate::check) fn require_radius_value(
 
 pub(in crate::check) fn check_length_value(
     length: &LengthValue,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
     label: &str,
@@ -344,7 +344,7 @@ pub(in crate::check) fn check_length_value(
 
 pub(in crate::check) fn require_radians_value(
     value: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<Type, Error> {

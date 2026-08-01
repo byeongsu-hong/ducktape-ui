@@ -6,7 +6,17 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable = reachable_components(&document);
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
-    check(&mut document, &reachable, &reachable_handlers)?;
+    let mut origins = crate::hir::OriginArena::default();
+    let declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
+    let initializer_analyses = check(
+        &mut document,
+        &reachable,
+        &reachable_handlers,
+        &declarations,
+    )?;
+    let facts = without_usage(|| {
+        facts::build(&document, &declarations, &mut origins, initializer_analyses)
+    })?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(unreachable_handler_warnings(
         &document,
@@ -30,6 +40,9 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(
         document,
+        facts,
+        declarations,
+        origins,
         warnings,
         reachable,
         reachable_handlers.app,
@@ -44,7 +57,8 @@ fn check(
     document: &mut Document,
     reachable: &HashSet<String>,
     reachable_handlers: &HandlerReachability,
-) -> Result<(), Error> {
+    declarations: &crate::hir::DeclarationIndex,
+) -> Result<facts::InitializerAnalyses, Error> {
     check_unique(document)?;
     check_fonts(document)?;
     check_slots(document)?;
@@ -64,7 +78,10 @@ fn check(
         .iter()
         .map(|state| (state.name.clone(), state.ty.clone()))
         .collect();
-    let derived = without_usage(|| check_derived(document, &states))?;
+    let mut initializer_analyses = facts::InitializerAnalyses::default();
+    let derived = without_usage(|| {
+        check_derived(document, &states, declarations, &mut initializer_analyses)
+    })?;
     let mut app_values = states.clone();
     app_values.extend(derived);
     let preset_handlers = document
@@ -72,8 +89,17 @@ fn check(
         .iter()
         .map(preset_handler)
         .collect::<Vec<_>>();
-    for state in &document.states {
-        let actual = expr_type(&state.initial, &HashMap::new(), document, &state.span)?;
+    for (index, state) in document.states.iter().enumerate() {
+        let analysis =
+            expr::analyze_expr_types(&state.initial, &HashMap::new(), document, &state.span)?;
+        let actual = analysis
+            .type_of(&state.initial)
+            .cloned()
+            .ok_or_else(|| Error::new("E196", &state.span, "missing checked state type"))?;
+        initializer_analyses.insert(
+            facts::CheckedValueRef::AppState(declarations.app_state(index).id),
+            analysis,
+        )?;
         if state.ty == Type::Option(Box::new(Type::DebugSpan))
             && !matches!(state.initial, Expr::None)
         {
@@ -131,9 +157,10 @@ fn check(
             }
         }
     }
-    for component in &document.components {
+    for (component_index, component) in document.components.iter().enumerate() {
+        let component_id = declarations.component(component_index).id;
         let mut saw_default = false;
-        for param in &component.params {
+        for (param_index, param) in component.params.iter().enumerate() {
             if let Some(default) = &param.default {
                 saw_default = true;
                 if param.bind {
@@ -164,8 +191,18 @@ fn check(
                         ),
                     ));
                 }
-                let actual = expr_type(default, &HashMap::new(), document, &component.span)?;
+                let analysis =
+                    expr::analyze_expr_types(default, &HashMap::new(), document, &component.span)?;
+                let actual = analysis.type_of(default).cloned().ok_or_else(|| {
+                    Error::new("E196", &component.span, "missing checked default type")
+                })?;
                 require_type(&actual, &param.ty, &component.span)?;
+                initializer_analyses.insert(
+                    facts::CheckedValueRef::ComponentParam(
+                        declarations.component_param(component_id, param_index).id,
+                    ),
+                    analysis,
+                )?;
             } else if saw_default {
                 return Err(Error::new(
                     "E103",
@@ -177,11 +214,21 @@ fn check(
                 ));
             }
         }
-        for state in &component.states {
-            let actual = expr_type(&state.initial, &HashMap::new(), document, &state.span)?;
+        for (state_index, state) in component.states.iter().enumerate() {
+            let analysis =
+                expr::analyze_expr_types(&state.initial, &HashMap::new(), document, &state.span)?;
+            let actual = analysis.type_of(&state.initial).cloned().ok_or_else(|| {
+                Error::new("E196", &state.span, "missing checked component state type")
+            })?;
             if actual != Type::Unknown && !compatible(&state.ty, &actual) {
                 return Err(type_error(&state.span, &state.ty, &actual));
             }
+            initializer_analyses.insert(
+                facts::CheckedValueRef::ComponentState(
+                    declarations.component_state(component_id, state_index).id,
+                ),
+                analysis,
+            )?;
         }
     }
     check_app_settings(document, &states)?;
@@ -449,7 +496,7 @@ fn check(
         }
     }
     check_tests(document, &view_states)?;
-    Ok(())
+    Ok(initializer_analyses)
 }
 
 fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {
@@ -484,6 +531,8 @@ fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> 
 fn check_derived(
     document: &mut Document,
     states: &HashMap<String, Type>,
+    declarations: &crate::hir::DeclarationIndex,
+    analyses: &mut facts::InitializerAnalyses,
 ) -> Result<HashMap<String, Type>, Error> {
     fn dependencies(expr: &Expr, names: &HashMap<String, usize>, output: &mut Vec<usize>) {
         match expr {
@@ -524,67 +573,82 @@ fn check_derived(
         }
     }
 
-    fn visit(
-        index: usize,
-        document: &Document,
-        states: &HashMap<String, Type>,
-        names: &HashMap<String, usize>,
-        marks: &mut [u8],
-        types: &mut [Option<Type>],
-    ) -> Result<Type, Error> {
-        if marks[index] == 1 {
-            return Err(Error::new(
-                "E103",
-                &document.derived[index].span,
-                format!(
-                    "derived value `{}` has a dependency cycle",
-                    document.derived[index].name
-                ),
-            ));
+    struct DerivedVisitor<'a> {
+        document: &'a Document,
+        states: &'a HashMap<String, Type>,
+        names: &'a HashMap<String, usize>,
+        declarations: &'a crate::hir::DeclarationIndex,
+        analyses: &'a mut facts::InitializerAnalyses,
+        marks: Vec<u8>,
+        types: Vec<Option<Type>>,
+    }
+
+    impl DerivedVisitor<'_> {
+        fn visit(&mut self, index: usize) -> Result<Type, Error> {
+            if self.marks[index] == 1 {
+                return Err(Error::new(
+                    "E103",
+                    &self.document.derived[index].span,
+                    format!(
+                        "derived value `{}` has a dependency cycle",
+                        self.document.derived[index].name
+                    ),
+                ));
+            }
+            if let Some(ty) = &self.types[index] {
+                return Ok(ty.clone());
+            }
+            self.marks[index] = 1;
+            if sync_extern_call(&self.document.derived[index].value, self.document).is_some() {
+                let derived = &self.document.derived[index];
+                return Err(Error::new(
+                    "E103",
+                    &derived.span,
+                    format!(
+                        "derived value `{}` must use a pure Ice expression",
+                        derived.name
+                    ),
+                ));
+            }
+            let mut env = self.states.clone();
+            let mut deps = Vec::new();
+            dependencies(&self.document.derived[index].value, self.names, &mut deps);
+            for dependency in deps {
+                let ty = self.visit(dependency)?;
+                env.insert(self.document.derived[dependency].name.clone(), ty);
+            }
+            let derived = &self.document.derived[index];
+            let analysis =
+                expr::analyze_expr_types(&derived.value, &env, self.document, &derived.span)?;
+            let ty = analysis
+                .type_of(&derived.value)
+                .cloned()
+                .ok_or_else(|| Error::new("E196", &derived.span, "missing checked derived type"))?;
+            if contains_unknown(&ty) {
+                return Err(Error::new(
+                    "E103",
+                    &derived.span,
+                    format!("cannot infer type of derived value `{}`", derived.name),
+                ));
+            }
+            if !component_value_is_cloneable(&ty) {
+                return Err(Error::new(
+                    "E103",
+                    &derived.span,
+                    format!(
+                        "derived value `{}` must produce an ordinary cloneable value",
+                        derived.name
+                    ),
+                ));
+            }
+            self.marks[index] = 2;
+            self.types[index] = Some(ty.clone());
+            self.analyses.insert(
+                facts::CheckedValueRef::Derived(self.declarations.derived(index).id),
+                analysis,
+            )?;
+            Ok(ty)
         }
-        if let Some(ty) = &types[index] {
-            return Ok(ty.clone());
-        }
-        marks[index] = 1;
-        let derived = &document.derived[index];
-        if sync_extern_call(&derived.value, document).is_some() {
-            return Err(Error::new(
-                "E103",
-                &derived.span,
-                format!(
-                    "derived value `{}` must use a pure Ice expression",
-                    derived.name
-                ),
-            ));
-        }
-        let mut env = states.clone();
-        let mut deps = Vec::new();
-        dependencies(&derived.value, names, &mut deps);
-        for dependency in deps {
-            let ty = visit(dependency, document, states, names, marks, types)?;
-            env.insert(document.derived[dependency].name.clone(), ty);
-        }
-        let ty = expr_type(&derived.value, &env, document, &derived.span)?;
-        if contains_unknown(&ty) {
-            return Err(Error::new(
-                "E103",
-                &derived.span,
-                format!("cannot infer type of derived value `{}`", derived.name),
-            ));
-        }
-        if !component_value_is_cloneable(&ty) {
-            return Err(Error::new(
-                "E103",
-                &derived.span,
-                format!(
-                    "derived value `{}` must produce an ordinary cloneable value",
-                    derived.name
-                ),
-            ));
-        }
-        marks[index] = 2;
-        types[index] = Some(ty.clone());
-        Ok(ty)
     }
 
     let names = document
@@ -593,11 +657,21 @@ fn check_derived(
         .enumerate()
         .map(|(index, derived)| (derived.name.clone(), index))
         .collect::<HashMap<_, _>>();
-    let mut marks = vec![0; document.derived.len()];
-    let mut types = vec![None; document.derived.len()];
-    for index in 0..document.derived.len() {
-        visit(index, document, states, &names, &mut marks, &mut types)?;
-    }
+    let types = {
+        let mut visitor = DerivedVisitor {
+            document,
+            states,
+            names: &names,
+            declarations,
+            analyses,
+            marks: vec![0; document.derived.len()],
+            types: vec![None; document.derived.len()],
+        };
+        for index in 0..document.derived.len() {
+            visitor.visit(index)?;
+        }
+        visitor.types
+    };
     let mut env = HashMap::new();
     for (derived, ty) in document.derived.iter_mut().zip(types) {
         let ty = ty.expect("every derived value was visited");
@@ -655,6 +729,8 @@ mod canvas;
 mod cycles;
 mod declarations;
 mod expr;
+#[allow(dead_code)]
+mod facts;
 mod handler;
 mod lifecycle;
 mod options;
@@ -686,8 +762,13 @@ use usage::*;
 use view::*;
 use widgets::*;
 
-pub(crate) use expr::expr_type;
+pub(crate) use expr::{ExprTypeEnv, expr_type};
 use expr::{check_length_value, contains_ui_enum};
+pub(crate) use facts::{
+    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,
+    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
+    CheckedProjection, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
+};
 pub(crate) use handler::task_flow_type;
 
 pub(in crate::check) type WidgetIdPath = Vec<(String, Option<Type>)>;

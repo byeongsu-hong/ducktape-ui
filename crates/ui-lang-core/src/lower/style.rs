@@ -22,12 +22,6 @@ pub(crate) struct ThemeTokenId {
     pub(crate) index: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PaletteId(pub(crate) u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ExternFnId(pub(super) u32);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedStyleTargetKind {
     Column,
@@ -556,10 +550,11 @@ impl Lowerer {
             if function.kind != ExternKind::Theme {
                 continue;
             }
+            let id = self.declarations.extern_fn(index).id;
             if self
                 .styles
                 .theme_factory_ids
-                .insert(function.name.clone(), ExternFnId(index as u32))
+                .insert(function.name.clone(), id)
                 .is_some()
             {
                 return Err(self.invariant(
@@ -602,14 +597,14 @@ impl Lowerer {
         };
         let source_palettes = self.document.palettes.clone();
         for (index, palette) in source_palettes.iter().enumerate() {
-            self.styles
-                .palette_ids
-                .insert(palette.name.clone(), PaletteId(index as u32));
+            let id = self.declarations.palette(index).id;
+            self.styles.palette_ids.insert(palette.name.clone(), id);
         }
         let mut palettes = Vec::with_capacity(source_palettes.len());
         for (index, palette) in source_palettes.iter().enumerate() {
-            let id = PaletteId(index as u32);
-            let origin = self.push_origin(&palette.span, None);
+            let declaration = self.declarations.palette(index);
+            let id = declaration.id;
+            let origin = declaration.origin;
             if palette.contract != source.name {
                 return Err(self.invariant(
                     &palette.span,

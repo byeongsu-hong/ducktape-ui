@@ -1,56 +1,20 @@
 use crate::ast::*;
+use crate::check::{CheckedExprUseId, CheckedFacts, CheckedValueRef};
+use crate::hir::Origin;
+pub(crate) use crate::hir::{
+    AppStateId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId,
+    DeclarationIndex, ExternFnId, OriginArena, OriginId, PaletteId,
+};
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 mod style;
 
 pub(crate) use style::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ComponentCallId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentParamId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentEventId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct ComponentSlotId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ComponentStateId {
-    component: ComponentId,
-    index: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct AppStateId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct OriginId(u32);
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Origin {
-    path: Option<PathBuf>,
-    line: usize,
-    column: usize,
-    parent: Option<OriginId>,
-}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -59,7 +23,7 @@ struct ComponentParamContract {
     name: String,
     ty: Type,
     capability: ParamCapability,
-    default: Option<Expr>,
+    default: Option<CheckedExprUseId>,
     origin: OriginId,
 }
 
@@ -90,9 +54,56 @@ struct ComponentSlotContract {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentStateContract {
-    id: ComponentStateId,
-    pub(crate) source: State,
-    origin: OriginId,
+    pub(crate) id: ComponentStateId,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+    pub(crate) initializer: ResolvedInitializer,
+    pub(crate) span: Span,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct AppStateContract {
+    pub(crate) id: AppStateId,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+    pub(crate) initializer: ResolvedInitializer,
+    pub(crate) span: Span,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct DerivedContract {
+    pub(crate) id: crate::hir::DerivedId,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+    pub(crate) initializer: CheckedExprUseId,
+    pub(crate) span: Span,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedInitializer {
+    pub(crate) expression: CheckedExprUseId,
+    pub(crate) animation: Option<ResolvedAnimation>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAnimation {
+    pub(crate) easing: Option<ResolvedAnimationEasing>,
+    pub(crate) duration: Option<AnimationDuration>,
+    pub(crate) delay_ms: Option<u64>,
+    pub(crate) repeat: Option<u32>,
+    pub(crate) repeat_forever: bool,
+    pub(crate) auto_reverse: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedAnimationEasing {
+    Builtin(String),
+    Custom(ExternFnId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,10 +173,16 @@ pub(crate) struct ResolvedArgument {
     param: ComponentParamId,
     pub(crate) name: String,
     pub(crate) ty: Type,
-    pub(crate) expression: Expr,
+    pub(crate) expression: ResolvedArgumentExpression,
     scope: ArgumentScope,
     pub(crate) writable: Option<WritableStateRef>,
     origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedArgumentExpression {
+    Supplied(Expr),
+    Default(CheckedExprUseId),
 }
 
 impl ResolvedArgument {
@@ -268,17 +285,37 @@ struct CallSite {
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
+    facts: CheckedFacts,
+    declarations: DeclarationIndex,
+    app_states: Vec<AppStateContract>,
+    derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgram,
-    origins: Vec<Origin>,
-    source_origins: Vec<(PathBuf, usize)>,
+    origins: OriginArena,
 }
 
 impl LoweredProgram {
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn checked_facts(&self) -> &CheckedFacts {
+        &self.facts
+    }
+
+    pub(crate) fn declarations(&self) -> &DeclarationIndex {
+        &self.declarations
+    }
+
+    pub(crate) fn app_states(&self) -> &[AppStateContract] {
+        &self.app_states
+    }
+
+    pub(crate) fn derived(&self) -> &[DerivedContract] {
+        &self.derived
     }
 
     pub(crate) fn components(&self) -> &[ComponentContract] {
@@ -322,19 +359,17 @@ impl LoweredProgram {
         self.styles.nested_theme(span)
     }
 
-    pub(crate) fn extern_function(&self, id: ExternFnId) -> &ExternFn {
-        &self.document.functions[id.0 as usize]
+    pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
+        self.declarations.extern_decl(id)
     }
 
-    #[cfg(test)]
-    fn origin(&self, id: OriginId) -> &Origin {
-        &self.origins[id.0 as usize]
+    #[allow(dead_code)]
+    pub(crate) fn origin(&self, id: OriginId) -> &Origin {
+        self.origins.get(id)
     }
 
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
-        self.source_origins
-            .get(merged_line.checked_sub(1)?)
-            .map(|(path, line)| (path.as_path(), *line))
+        self.origins.source_origin(merged_line)
     }
 }
 
@@ -344,14 +379,15 @@ pub(crate) fn lower(checked: CheckedDocument) -> Result<LoweredProgram, Error> {
 
 struct Lowerer {
     document: Document,
-    source_origins: Vec<(PathBuf, usize)>,
+    facts: CheckedFacts,
+    declarations: DeclarationIndex,
+    origins: OriginArena,
     components: Vec<ComponentContract>,
     component_indexes: Vec<ComponentIndex>,
     component_ids: HashMap<String, ComponentId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgramBuilder,
-    origins: Vec<Origin>,
     app_states: HashMap<String, AppStateId>,
 }
 
@@ -359,31 +395,32 @@ impl Lowerer {
     fn new(checked: CheckedDocument) -> Self {
         let CheckedDocument {
             document,
-            source_origins,
+            facts,
+            declarations,
+            origins,
             ..
         } = checked;
-        let app_states = document
-            .states
-            .iter()
-            .enumerate()
-            .map(|(index, state)| (state.name.clone(), AppStateId(index as u32)))
-            .collect();
+        let app_states = declarations.app_state_ids();
+        let component_ids = declarations.component_ids();
         Self {
             document,
-            source_origins,
+            facts,
+            declarations,
+            origins,
             components: Vec::new(),
             component_indexes: Vec::new(),
-            component_ids: HashMap::new(),
+            component_ids,
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
             styles: StyleProgramBuilder::default(),
-            origins: Vec::new(),
             app_states,
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
         self.lower_style_program()?;
+        let app_states = self.lower_app_states()?;
+        let derived = self.lower_derived()?;
         self.index_components()?;
         let component_roots = self
             .components
@@ -413,40 +450,126 @@ impl Lowerer {
         })?;
         Ok(LoweredProgram {
             document: self.document,
+            facts: self.facts,
+            declarations: self.declarations,
+            app_states,
+            derived,
             components: self.components,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
             styles,
             origins: self.origins,
-            source_origins: self.source_origins,
+        })
+    }
+
+    fn lower_app_states(&self) -> Result<Vec<AppStateContract>, Error> {
+        self.document
+            .states
+            .iter()
+            .enumerate()
+            .map(|(index, state)| {
+                let declaration = self.declarations.app_state(index);
+                Ok(AppStateContract {
+                    id: declaration.id,
+                    name: state.name.clone(),
+                    ty: state.ty.clone(),
+                    initializer: self
+                        .resolve_initializer(CheckedValueRef::AppState(declaration.id), state)?,
+                    span: state.span.clone(),
+                    origin: declaration.origin,
+                })
+            })
+            .collect()
+    }
+
+    fn lower_derived(&self) -> Result<Vec<DerivedContract>, Error> {
+        self.document
+            .derived
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let declaration = self.declarations.derived(index);
+                let checked = self
+                    .facts
+                    .value_by_ref(CheckedValueRef::Derived(declaration.id));
+                Ok(DerivedContract {
+                    id: declaration.id,
+                    name: value.name.clone(),
+                    ty: value.ty.clone(),
+                    initializer: checked.initializer.ok_or_else(|| {
+                        self.invariant(&value.span, "derived value has no checked initializer")
+                    })?,
+                    span: value.span.clone(),
+                    origin: declaration.origin,
+                })
+            })
+            .collect()
+    }
+
+    fn resolve_initializer(
+        &self,
+        value_ref: CheckedValueRef,
+        state: &State,
+    ) -> Result<ResolvedInitializer, Error> {
+        let checked = self.facts.value_by_ref(value_ref);
+        let expression = checked.initializer.ok_or_else(|| {
+            self.invariant(&state.span, "state has no checked initializer expression")
+        })?;
+        let animation = state
+            .animation
+            .as_ref()
+            .map(|options| self.resolve_animation(options, &state.span))
+            .transpose()?;
+        Ok(ResolvedInitializer {
+            expression,
+            animation,
+        })
+    }
+
+    fn resolve_animation(
+        &self,
+        options: &AnimationOptions,
+        span: &Span,
+    ) -> Result<ResolvedAnimation, Error> {
+        let easing = options
+            .easing
+            .as_deref()
+            .map(|easing| {
+                if ANIMATION_EASINGS.contains(&easing) {
+                    Ok(ResolvedAnimationEasing::Builtin(easing.to_owned()))
+                } else {
+                    self.declarations
+                        .extern_decl_by_name(easing)
+                        .map(|declaration| {
+                            ResolvedAnimationEasing::Custom(declaration.declaration.id)
+                        })
+                        .ok_or_else(|| {
+                            self.invariant(span, "animation easing has no extern declaration")
+                        })
+                }
+            })
+            .transpose()?;
+        Ok(ResolvedAnimation {
+            easing,
+            duration: options.duration,
+            delay_ms: options.delay_ms,
+            repeat: options.repeat,
+            repeat_forever: options.repeat_forever,
+            auto_reverse: options.auto_reverse,
         })
     }
 
     fn index_components(&mut self) -> Result<(), Error> {
         let source_components = self.document.components.clone();
-        for (index, component) in source_components.iter().enumerate() {
-            let id = ComponentId(index as u32);
-            if self
-                .component_ids
-                .insert(component.name.clone(), id)
-                .is_some()
-            {
-                return Err(self.invariant(
-                    &component.span,
-                    format!("duplicate checked component `{}`", component.name),
-                ));
-            }
-        }
         for (index, component) in source_components.into_iter().enumerate() {
-            let id = ComponentId(index as u32);
-            let origin = self.push_origin(&component.span, None);
+            let declaration = self.declarations.component(index);
+            let id = declaration.id;
+            let origin = declaration.origin;
             let mut params = Vec::with_capacity(component.params.len());
             for (index, param) in component.params.iter().enumerate() {
+                let declaration = self.declarations.component_param(id, index);
                 params.push(ComponentParamContract {
-                    id: ComponentParamId {
-                        component: id,
-                        index: index as u32,
-                    },
+                    id: declaration.id,
                     name: param.name.clone(),
                     ty: param.ty.clone(),
                     capability: if param.bind {
@@ -454,8 +577,11 @@ impl Lowerer {
                     } else {
                         ParamCapability::Read
                     },
-                    default: param.default.clone(),
-                    origin: self.push_origin(&component.span, Some(origin)),
+                    default: self
+                        .facts
+                        .value_by_ref(CheckedValueRef::ComponentParam(declaration.id))
+                        .initializer,
+                    origin: declaration.origin,
                 });
             }
             let events: Vec<ComponentEventContract> = component
@@ -489,15 +615,21 @@ impl Lowerer {
                 .states
                 .iter()
                 .enumerate()
-                .map(|(index, state)| ComponentStateContract {
-                    id: ComponentStateId {
-                        component: id,
-                        index: index as u32,
-                    },
-                    source: state.clone(),
-                    origin: self.push_origin(&state.span, Some(origin)),
+                .map(|(index, state)| {
+                    let declaration = self.declarations.component_state(id, index);
+                    Ok(ComponentStateContract {
+                        id: declaration.id,
+                        name: state.name.clone(),
+                        ty: state.ty.clone(),
+                        initializer: self.resolve_initializer(
+                            CheckedValueRef::ComponentState(declaration.id),
+                            state,
+                        )?,
+                        span: state.span.clone(),
+                        origin: declaration.origin,
+                    })
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, Error>>()?;
             let stateful = !states.is_empty() || !component.handlers.is_empty();
             let storage = match (stateful, component.lifetime) {
                 (false, _) => ComponentStorage::Stateless,
@@ -523,12 +655,11 @@ impl Lowerer {
                 .iter()
                 .filter(|param| param.capability == ParamCapability::Bind)
                 .map(|param| (param.name.clone(), ComponentWritable::Param(param.id)))
-                .chain(states.iter().map(|state| {
-                    (
-                        state.source.name.clone(),
-                        ComponentWritable::State(state.id),
-                    )
-                }))
+                .chain(
+                    states
+                        .iter()
+                        .map(|state| (state.name.clone(), ComponentWritable::State(state.id))),
+                )
                 .collect();
             self.components.push(ComponentContract {
                 id,
@@ -739,20 +870,26 @@ impl Lowerer {
         let mut arguments = Vec::with_capacity(params.len());
         for (param, supplied) in params.iter().zip(supplied_args) {
             let (expression, scope) = if let Some(arg) = supplied {
-                (arg.value.clone(), ArgumentScope::Caller)
+                (
+                    ResolvedArgumentExpression::Supplied(arg.value.clone()),
+                    ArgumentScope::Caller,
+                )
             } else {
                 (
-                    param.default.clone().ok_or_else(|| {
+                    ResolvedArgumentExpression::Default(param.default.ok_or_else(|| {
                         self.invariant(
                             span,
                             format!("required prop `{}` has no checked argument", param.name),
                         )
-                    })?,
+                    })?),
                     ArgumentScope::Definition,
                 )
             };
             let writable = if param.capability == ParamCapability::Bind {
-                Some(self.resolve_writable(&expression, outer_component, span)?)
+                let ResolvedArgumentExpression::Supplied(expression) = &expression else {
+                    return Err(self.invariant(span, "bind argument resolved to a default"));
+                };
+                Some(self.resolve_writable(expression, outer_component, span)?)
             } else {
                 None
             };
@@ -916,20 +1053,7 @@ impl Lowerer {
     }
 
     fn push_origin(&mut self, span: &Span, parent: Option<OriginId>) -> OriginId {
-        let (path, line) = self
-            .source_origins
-            .get(span.line.saturating_sub(1))
-            .map_or((None, span.line), |(path, line)| {
-                (Some(path.clone()), *line)
-            });
-        let id = OriginId(self.origins.len() as u32);
-        self.origins.push(Origin {
-            path,
-            line,
-            column: span.column,
-            parent,
-        });
-        id
+        self.origins.push(span, parent)
     }
 
     fn invariant(&self, span: &Span, message: impl Into<String>) -> Error {
@@ -1112,6 +1236,72 @@ mod tests {
             program.origin(component.params[0].origin).parent,
             Some(component.origin)
         );
+    }
+
+    #[test]
+    fn snapshots_the_complete_initializer_hir_slice() {
+        let source = format!(
+            "app Initializers\nextern crate::backend\n  sync elastic(value:f64) -> f64\n{THEME}state\n  progress:animation[f64] = 0.0\n    easing elastic\n    duration 120ms\n    delay 5ms\n    repeat 2\n    auto-reverse true\nderived\n  total = 1.0 + 2.0\ncomponent Meter(label:str=\"ready\")\n  state\n    open = false\n  text label\nview\n  Meter\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        let app = &program.app_states[0];
+        let derived = &program.derived[0];
+        let component = &program.components[0];
+        let default = component.params[0].default.unwrap();
+        let component_state = &component.states[0];
+        let app_use = facts.expression_use(app.initializer.expression);
+        let derived_use = facts.expression_use(derived.initializer);
+        let default_use = facts.expression_use(default);
+        let component_state_use = facts.expression_use(component_state.initializer.expression);
+
+        let snapshot = format!(
+            "app {:?} {} {:?} use={:?} {:?} line={} animation={:?}\n\
+             derived {:?} {} {:?} use={:?} {:?} line={}\n\
+             default {:?} {} {:?} use={:?} {:?} line={}\n\
+             component-state {:?} {} {:?} use={:?} {:?} line={} animation={:?}\n",
+            app.id,
+            app.name,
+            app.ty,
+            app.initializer.expression,
+            app_use.coercion,
+            program.origin(app.origin).line,
+            app.initializer.animation,
+            derived.id,
+            derived.name,
+            derived.ty,
+            derived.initializer,
+            derived_use.coercion,
+            program.origin(derived.origin).line,
+            component.params[0].id,
+            component.params[0].name,
+            component.params[0].ty,
+            default,
+            default_use.coercion,
+            program.origin(component.params[0].origin).line,
+            component_state.id,
+            component_state.name,
+            component_state.ty,
+            component_state.initializer.expression,
+            component_state_use.coercion,
+            program.origin(component_state.origin).line,
+            component_state.initializer.animation,
+        );
+        assert_eq!(
+            snapshot,
+            "app AppStateId(0) progress Animation(F64) use=CheckedExprUseId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
+             derived DerivedId(0) total F64 use=CheckedExprUseId(1) None line=22\n\
+             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=CheckedExprUseId(2) None line=23\n\
+             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=CheckedExprUseId(3) None line=25 animation=None\n"
+        );
+
+        let generated = crate::codegen::generate(&program, "initializers.ice").unwrap();
+        assert!(generated.contains(
+            "::iced::Animation::new((0.0) as f32).easing(::iced::animation::Easing::Custom(|__value: f32| crate::backend::elastic(__value as f64) as f32)).duration(::std::time::Duration::from_millis(120)).delay(::std::time::Duration::from_millis(5)).repeat(2).auto_reverse()"
+        ));
+        assert!(generated.contains("fn __ice_derived_total(&self) -> f64 { (1.0 + 2.0) }"));
+        assert!(generated.contains("(\"ready\").to_string()"));
+        assert!(generated.contains("open: false"));
     }
 
     #[test]

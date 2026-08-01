@@ -5,6 +5,7 @@ mod check;
 mod codegen;
 mod editor;
 mod format;
+mod hir;
 mod lower;
 mod parser;
 mod source;
@@ -36,8 +37,10 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct CheckedDocument {
     document: Document,
+    facts: check::CheckedFacts,
+    declarations: hir::DeclarationIndex,
+    origins: hir::OriginArena,
     symbols: Vec<CheckedSymbol>,
-    source_origins: Vec<(PathBuf, usize)>,
     warnings: Vec<Warning>,
     reachable_components: HashSet<String>,
     reachable_handlers: HashSet<String>,
@@ -138,14 +141,19 @@ pub struct CheckedSymbol {
 impl CheckedDocument {
     pub(crate) fn new(
         document: Document,
+        facts: check::CheckedFacts,
+        declarations: hir::DeclarationIndex,
+        origins: hir::OriginArena,
         warnings: Vec<Warning>,
         reachable_components: HashSet<String>,
         reachable_handlers: HashSet<String>,
     ) -> Self {
         Self {
             document,
+            facts,
+            declarations,
+            origins,
             symbols: Vec::new(),
-            source_origins: Vec::new(),
             warnings,
             reachable_components,
             reachable_handlers,
@@ -258,19 +266,17 @@ impl CheckedDocument {
             warning.path = Some(path.display().to_string());
             warning.line = *line;
         }
-        self.source_origins = origins;
+        self.origins.set_source_origins(origins);
         self
     }
 
     pub(crate) fn source_origins(&self) -> &[(PathBuf, usize)] {
-        &self.source_origins
+        self.origins.source_origins()
     }
 
     #[cfg(test)]
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
-        self.source_origins
-            .get(merged_line.checked_sub(1)?)
-            .map(|(path, line)| (path.as_path(), *line))
+        self.origins.source_origin(merged_line)
     }
 }
 

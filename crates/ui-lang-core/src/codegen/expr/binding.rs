@@ -1,11 +1,23 @@
 use super::*;
 
-#[derive(Clone)]
 pub(in crate::codegen) struct Binding {
     pub(in crate::codegen) code: String,
     pub(in crate::codegen) ty: Type,
     pub(in crate::codegen) local: bool,
     pub(in crate::codegen) state: Option<StateBinding>,
+}
+
+impl Clone for Binding {
+    fn clone(&self) -> Self {
+        #[cfg(test)]
+        record_binding_clone();
+        Self {
+            code: self.code.clone(),
+            ty: self.ty.clone(),
+            local: self.local,
+            state: self.state.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -211,66 +223,6 @@ pub(in crate::codegen) fn env_types(env: &HashMap<String, Binding>) -> HashMap<S
     env.iter()
         .map(|(name, binding)| (name.clone(), binding.ty.clone()))
         .collect()
-}
-
-pub(in crate::codegen) fn pixel_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Pixels {
-            code
-        } else {
-            format!("({code}) as f32")
-        },
-    )
-}
-
-pub(in crate::codegen) fn pixel_scalar_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Pixels {
-            format!("({code}).0")
-        } else {
-            format!("({code}) as f32")
-        },
-    )
-}
-
-pub(in crate::codegen) fn radius_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Radius {
-            code
-        } else {
-            format!("::iced::border::Radius::from(({code}) as f32)")
-        },
-    )
-}
-
-pub(in crate::codegen) fn radians_value_code(
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(value, env, document, ValueMode::Owned)?;
-    Ok(
-        if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Radians {
-            code
-        } else {
-            format!("::iced::Radians(({code}) as f32)")
-        },
-    )
 }
 
 pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {

@@ -1,0 +1,5 @@
+::std::vec::Vec::new()
+::std::option::Option::None
+::std::option::Option::Some("ready".to_owned())
+::std::result::Result::Ok("yes".to_owned())
+::std::result::Result::Err("no".to_owned())
