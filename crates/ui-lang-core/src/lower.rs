@@ -2104,16 +2104,21 @@ impl LoweredProgram {
             return Err(self.invariant_at_origin(origin, message));
         }
 
-        if self.handlers.len() != self.declarations.handlers().len()
-            || self
-                .handlers
-                .iter()
-                .enumerate()
-                .any(|(index, handler)| handler.id != HandlerId(index as u32))
-        {
+        if self.handlers.len() != self.declarations.handlers().len() {
             return Err(self.invariant_at_origin(
                 OriginId(u32::MAX),
-                "handler arena order or cardinality diverged from its declarations",
+                "handler arena cardinality diverged from its declarations",
+            ));
+        }
+        if let Some((_, handler)) = self
+            .handlers
+            .iter()
+            .enumerate()
+            .find(|(index, handler)| handler.id != HandlerId(*index as u32))
+        {
+            return Err(self.invariant_at_origin(
+                handler.origin,
+                "handler arena order diverged from its declarations",
             ));
         }
 
