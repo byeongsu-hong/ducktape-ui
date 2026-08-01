@@ -127,15 +127,35 @@ undo, redo, selection-replacement, and IME-commit history.
 
 The explicit 100,000-line contracts separately drive 1,000 caret layouts,
 1,000 pointer drag events, `ㅇ → 으 → 응` preedit, one-character insertion,
-and viewport resize under wall-time budgets. They record materialized source
-bytes, owned parsed-line strings and bytes, owned styled text, line-vector
-slots, mapping and styled-signature comparisons, highlighting, rebuilding, and
-shaping. These are deterministic allocations owned by this code. A global
-allocator hook is intentionally not used: the workspace forbids unsafe Rust
-and dependency/platform allocator calls are not a stable contract. Text
-revisions still materialize and parse the native buffer, line layout still
-prepares O(N) slots and top offsets, and a stateful highlighter may rescan the
-suffix; the counters make those remaining costs explicit.
+viewport resize, and a format-key-only formatting change under wall-time
+budgets. The insertion timer starts immediately before the native content
+mutation, so its budget includes mutation, materialization, parsing, and rich
+layout. The contracts record materialized source bytes, owned parsed-line
+strings and bytes, owned styled text, line-vector slots, mapping and
+styled-signature comparisons, highlighting, rebuilding, and shaping.
+
+A separate release-mode integration-test process installs the safe `dhat`
+allocator wrapper and starts its profiler only after the initial 100,001
+logical lines have been shaped. Monotonic `HeapStats` snapshots give the total
+allocation count and requested bytes routed through Rust's global allocator
+for each exact operation scope, including allocations in runtime dependencies.
+The wrapper keeps unsafe allocator implementation out of this workspace's
+forbid-unsafe source. These totals do not include the fixture setup, resident
+memory, GPU/driver allocations, or native allocations that bypass Rust's
+global allocator. They are therefore allocator-request evidence for the hot
+operation, not a whole-process or physical-memory measurement. Each operation
+and heap record is flushed and synced before its budget is gated. The runner
+continues through the remaining scenarios after a budget failure, then reports
+the aggregate failure, so the uploaded evidence retains every measurable
+actual value. CI rejects duplicate JSON object keys at any nesting depth,
+non-finite values, and the existing schema, identity, numeric, and budget
+violations before accepting the strict 12-line JSONL artifact. The same gate is
+reproducible with `scripts/editor-performance-contracts.sh [artifact-path]`.
+
+Text revisions still materialize and parse the native buffer, line layout
+still prepares O(N) slots and top offsets, and a stateful highlighter or format
+change may rescan the suffix or whole document; the counters and allocator
+totals make those remaining costs explicit.
 
 The checked public package contract is separately executable through
 `cargo ice api`: a declaration-only or application root produces a sorted,
