@@ -207,7 +207,8 @@ ordered named windows. The checker hands one authoritative analysis per
 expression to fact construction; dynamic theme and palette classification is
 recovered from those facts, not from source spelling. A typed current-window
 local supplies daemon callback scope. The HIR also owns renderer and executor
-choices, ordered font assets, common application settings, a folded
+choices, ordered font assets, the exact default-font
+family/weight/stretch/style and declaration origin, common application settings, a folded
 runtime-default primary window, every common and platform-specific window
 field, icon metadata, and physical origins. Checked facts retain the complete
 static setting topology and program kind; lowering rejects any post-check
@@ -217,7 +218,12 @@ fields, fonts, window fields, icons, and platform subfields retain their exact
 declaration origins for generated Rust diagnostics. Rust emission for this family no
 longer accepts `AppSettings`/`WindowSettings`, rereads a setting expression, or
 calls checker/type-inference helpers. Missing, extra, or reclassified retained
-facts fail with `E196`; post-check expression mutation cannot change output.
+facts fail with `E196`; post-check expression mutation cannot change output. A
+shared visited-set graph validator checks retained expression IDs, ownership,
+topology, and types exactly once per reachable node. Settings contribute only
+their owner policy (app state, derived state, expression bindings, and the
+daemon-window local), so later HIR slices can reuse the same graph contract
+without copying a settings-specific semantic checker.
 Structured snapshots, imported extern/origin and direct source-marker tests,
 the existing complete application/window compile surface, and a 5,000 named
 window lowering contract are the executable evidence.

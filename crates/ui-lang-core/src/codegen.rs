@@ -684,17 +684,26 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_extern_probes(&mut out, document);
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
-    writeln!(
-        out,
-        "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}",
-        app_default_font_code(document)
-    )
-    .unwrap();
-    generate_derived(&mut out, program)?;
     let app_settings = program.settings();
+    if let Some(font) = &app_settings.default_font {
+        writeln!(out, "{}", source_marker_for_origin(program, font.origin)).unwrap();
+        writeln!(
+            out,
+            "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}\n{SOURCE_MARKER_END}",
+            resolved_default_font_code(font)
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "#[must_use]\npub fn default_font() -> ::iced::Font {{ ::iced::Font::DEFAULT }}"
+        )
+        .unwrap();
+    }
+    generate_derived(&mut out, program)?;
     generate_named_windows(&mut out, program, app_settings, source_path);
     let subscription = ".subscription(Self::__subscription)";
-    let default_font = if app_settings.has_default_font {
+    let default_font = if app_settings.default_font.is_some() {
         ".default_font(Self::default_font())"
     } else {
         ""

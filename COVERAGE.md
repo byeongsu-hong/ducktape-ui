@@ -447,8 +447,9 @@ requires ordinary semantic review for unrepresented behavior.
 Application and daemon settings have a complete private HIR boundary. Stable
 setting-expression and named-window IDs retain title, active palette, theme,
 background, foreground, scale, native theme-factory arguments, renderer,
-executor, ordered font assets, application settings, the primary window, named
-windows, every platform-specific window field, and source origins. An omitted
+executor, ordered font assets, the complete default-font family/weight/stretch/style,
+application settings, the primary window, named windows, every platform-specific
+window field, and source origins. An omitted
 primary window is folded to one canonical runtime-default record; renderer
 defaulting is folded before emission. The checker performs exactly one retained
 analysis for each dynamic setting expression and owns one typed daemon
@@ -456,7 +457,11 @@ current-window local shared by all callback settings. Rust generation consumes
 those facts and never rereads an application-setting AST expression or invokes
 type inference for this family. Static program kind/settings topology is
 snapshotted in checked facts; any later static mutation fails with a
-source-mapped `E196`, while callbacks build their value scope only from lowered
+source-mapped `E196`. A reusable visited-set validator checks every reachable
+retained expression node once for stable IDs, DAG ownership, projection/call
+topology, and retained type consistency; an app-setting owner policy separately
+limits values to app state, derived state, and the typed daemon-window local.
+Callbacks build their value scope only from lowered
 app-state and derived contracts. Renderer, executor, app fields, fonts,
 primary/named window fields, icons, and platform subfields each emit exact
 declaration source markers. Structural tests cover the complete static and

@@ -1,6 +1,10 @@
 use crate::ast::*;
 use crate::check::{
-    CheckedComponentArgumentSource, CheckedExprUseId, CheckedFacts, CheckedLocalId, CheckedValueRef,
+    BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
+    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner,
+    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
+    CheckedPathRoot, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
+    ContextualBuiltin, field_type,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -10,7 +14,7 @@ pub(crate) use crate::hir::{
     TaskId,
 };
 use crate::{CheckedDocument, Error};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod style;
@@ -297,6 +301,16 @@ pub(crate) enum ResolvedTaskSource {
         task: TaskId,
         output: Type,
     },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedDefaultFont {
+    pub(crate) family: FontFamily,
+    pub(crate) weight: FontWeight,
+    pub(crate) stretch: FontStretch,
+    pub(crate) style: FontStyle,
+    pub(crate) origin: OriginId,
 }
 
 #[allow(dead_code)]
@@ -715,7 +729,7 @@ pub(crate) struct ResolvedAppSettings {
     pub(crate) executor: ResolvedExecutorSelection,
     pub(crate) renderer: ResolvedRendererSelection,
     pub(crate) fonts: Vec<ResolvedFontAsset>,
-    pub(crate) has_default_font: bool,
+    pub(crate) default_font: Option<ResolvedDefaultFont>,
     pub(crate) default_text_size: Option<f64>,
     pub(crate) antialiasing: Option<bool>,
     pub(crate) vsync: Option<bool>,
@@ -2627,6 +2641,169 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
 }
 
+#[derive(Default)]
+struct CheckedExpressionGraph {
+    visiting: HashSet<CheckedExprId>,
+    validated: HashSet<CheckedExprId>,
+    node_owners: HashMap<CheckedExprId, CheckedExprUseId>,
+}
+
+trait CheckedExpressionOwnerPolicy {
+    fn use_id(&self) -> CheckedExprUseId;
+    fn span(&self) -> &Span;
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error>;
+    fn local_type(&self, local: CheckedLocalId) -> Result<Type, Error>;
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error>;
+    fn palette_type(&self, palette: PaletteId) -> Result<Type, Error>;
+}
+
+struct AppSettingExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    use_id: CheckedExprUseId,
+    span: &'a Span,
+}
+
+impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "app setting path references an invalid value ID")
+        })?;
+        match value {
+            CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
+            CheckedValueRef::ComponentParam(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_param(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "app setting path references an invalid component parameter ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting path cannot reference a component parameter",
+                ))
+            }
+            CheckedValueRef::ComponentState(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_state(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "app setting path references an invalid component state ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting path cannot reference component state",
+                ))
+            }
+        }
+    }
+
+    fn local_type(&self, id: CheckedLocalId) -> Result<Type, Error> {
+        let local = self.lowerer.facts.try_local(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "app setting expression references an invalid local ID",
+            )
+        })?;
+        match local.owner {
+            CheckedLocalOwner::AppSettingDaemonWindow { setting } => {
+                if local.ty != Type::WindowId
+                    || self
+                        .lowerer
+                        .facts
+                        .expression_use_by_owner(CheckedExprOwner::AppSetting(setting))
+                        .is_none()
+                    || self.lowerer.facts.app_setting_daemon_window_local() != Some(id)
+                {
+                    return Err(self.lowerer.invariant(
+                        self.span,
+                        "app setting daemon-window local has inconsistent topology",
+                    ));
+                }
+            }
+            CheckedLocalOwner::ExpressionBinding { expression, .. }
+                if expression == self.use_id => {}
+            CheckedLocalOwner::ExpressionBinding { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression binding belongs to another expression use",
+                ));
+            }
+            CheckedLocalOwner::View { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a view local",
+                ));
+            }
+            CheckedLocalOwner::HandlerParam { .. }
+            | CheckedLocalOwner::StatementLet(_)
+            | CheckedLocalOwner::TaskTransform { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a handler local",
+                ));
+            }
+        }
+        Ok(local.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "app setting expression references an invalid slot ID",
+                )
+            })?;
+        Err(self.lowerer.invariant(
+            self.span,
+            "app setting expression cannot reference a component slot",
+        ))
+    }
+
+    fn palette_type(&self, id: PaletteId) -> Result<Type, Error> {
+        self.lowerer.declarations.palette_name(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "app setting path references an invalid palette ID",
+            )
+        })?;
+        let expression = self
+            .lowerer
+            .facts
+            .try_expression_use(self.use_id)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "app setting path has an invalid expression-use ID",
+                )
+            })?;
+        match &expression.destination {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                "app setting palette path has no checked theme-contract type",
+            )),
+        }
+    }
+}
+
 impl Lowerer {
     fn new(checked: CheckedDocument) -> Self {
         let CheckedDocument {
@@ -2715,6 +2892,7 @@ impl Lowerer {
 
     fn lower_app_settings(&mut self) -> Result<ResolvedAppSettings, Error> {
         self.validate_app_setting_expression_shape()?;
+        self.validate_app_setting_expression_graphs()?;
         let checked = self.facts.app_settings().cloned().ok_or_else(|| {
             self.invariant(
                 &self.document.settings.span,
@@ -2724,6 +2902,13 @@ impl Lowerer {
         self.validate_checked_app_settings(&checked)?;
         let source = checked.source;
         let declaration = self.declarations.app_settings();
+        let default_font = checked.default_font.map(|font| ResolvedDefaultFont {
+            family: font.family,
+            weight: font.weight,
+            stretch: font.stretch,
+            style: font.style,
+            origin: self.push_origin(&font.span, Some(declaration.origin)),
+        });
         let title = source
             .title
             .as_ref()
@@ -2814,7 +2999,7 @@ impl Lowerer {
                     origin: self.push_origin(&font.span, Some(declaration.origin)),
                 })
                 .collect(),
-            has_default_font: checked.has_default_font,
+            default_font,
             default_text_size: source.default_text_size,
             antialiasing: source.antialiasing,
             vsync: source.vsync,
@@ -2853,10 +3038,17 @@ impl Lowerer {
             && current.vsync == settings.vsync
             && current.window == settings.window
             && current.windows == settings.windows;
-        let current_has_default_font = self.document.fonts.iter().any(|font| font.default);
-        if !static_fields_match || current_has_default_font != checked.has_default_font {
-            let span =
-                first_changed_static_setting_span(current, settings).unwrap_or(&settings.span);
+        let mut current_default_fonts = self.document.fonts.iter().filter(|font| font.default);
+        let current_default_font = current_default_fonts.next();
+        let duplicate_default_font = current_default_fonts.next();
+        let default_font_changed = duplicate_default_font.is_some()
+            || current_default_font != checked.default_font.as_ref();
+        if !static_fields_match || default_font_changed {
+            let span = first_changed_static_setting_span(current, settings)
+                .or_else(|| duplicate_default_font.map(|font| &font.span))
+                .or_else(|| current_default_font.map(|font| &font.span))
+                .or_else(|| checked.default_font.as_ref().map(|font| &font.span))
+                .unwrap_or(&settings.span);
             return Err(self.invariant(
                 span,
                 "static application settings changed after semantic analysis",
@@ -2930,7 +3122,6 @@ impl Lowerer {
     }
 
     fn validate_app_setting_expression_shape(&self) -> Result<(), Error> {
-        use crate::check::CheckedExprOwner;
         use std::collections::HashSet;
 
         let source = &self
@@ -2975,7 +3166,11 @@ impl Lowerer {
                         "app theme factory references an invalid extern ID",
                     )
                 })?;
-            if declaration.name != *name || checked.arguments as usize != args.len() {
+            if declaration.kind != ExternKind::Theme
+                || declaration.name != *name
+                || declaration.params.len() != args.len()
+                || checked.arguments as usize != args.len()
+            {
                 return Err(self.invariant(
                     &source.span,
                     "app theme factory does not match its authoritative checked facts",
@@ -2987,7 +3182,7 @@ impl Lowerer {
         } else if source.theme.is_some() {
             expected.insert(AppSettingExprId::Theme);
         }
-        let actual = self
+        let actual_entries = self
             .facts
             .expression_uses()
             .iter()
@@ -2995,12 +3190,563 @@ impl Lowerer {
                 CheckedExprOwner::AppSetting(id) => Some(id),
                 _ => None,
             })
-            .collect::<HashSet<_>>();
-        if actual != expected {
+            .collect::<Vec<_>>();
+        let actual = actual_entries.iter().copied().collect::<HashSet<_>>();
+        if actual != expected || actual_entries.len() != expected.len() {
             return Err(self.invariant(
                 &source.span,
                 "app setting expression facts do not match the checked source shape",
             ));
+        }
+        Ok(())
+    }
+
+    fn validate_app_setting_expression_graphs(&self) -> Result<(), Error> {
+        let checked = self.facts.app_settings().ok_or_else(|| {
+            self.invariant(
+                &self.document.settings.span,
+                "application settings are missing their authoritative checked snapshot",
+            )
+        })?;
+        let mut graph = CheckedExpressionGraph::default();
+        for expression in self.facts.expression_uses() {
+            let CheckedExprOwner::AppSetting(setting) = expression.owner else {
+                continue;
+            };
+            let span = self.app_setting_expression_span(&checked.source, setting)?;
+            let use_id = self
+                .facts
+                .expression_use_by_owner(expression.owner)
+                .ok_or_else(|| {
+                    self.invariant(span, "app setting has no checked expression owner mapping")
+                })?;
+            if !self
+                .facts
+                .try_expression_use(use_id)
+                .is_some_and(|mapped| std::ptr::eq(mapped, expression))
+            {
+                return Err(self.invariant(
+                    span,
+                    "app setting expression owner maps to a different retained use",
+                ));
+            }
+            let expected = self.app_setting_expected_type(setting, expression, span)?;
+            let policy = AppSettingExpressionPolicy {
+                lowerer: self,
+                use_id,
+                span,
+            };
+            self.validate_checked_expression_use_graph(expression, &expected, &policy, &mut graph)?;
+        }
+        Ok(())
+    }
+
+    fn validate_checked_expression_use_graph(
+        &self,
+        expression: &crate::check::CheckedExprUse,
+        expected: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &mut CheckedExpressionGraph,
+    ) -> Result<(), Error> {
+        if expression.source != *expected
+            || expression.destination != *expected
+            || expression.coercion != CheckedInitializerCoercion::None
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression use type contract changed after semantic analysis",
+            ));
+        }
+        let root = self.validate_checked_expression_node(expression.root, policy, graph)?;
+        if root != expression.source {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression root type does not match its retained use",
+            ));
+        }
+        Ok(())
+    }
+
+    fn app_setting_expression_span<'b>(
+        &self,
+        source: &'b AppSettings,
+        id: AppSettingExprId,
+    ) -> Result<&'b Span, Error> {
+        let setting = match id {
+            AppSettingExprId::Title => source.title.as_ref(),
+            AppSettingExprId::Theme | AppSettingExprId::ThemeFactoryArgument(_) => {
+                source.theme.as_ref()
+            }
+            AppSettingExprId::Palette => source.palette.as_ref(),
+            AppSettingExprId::Background => source.background.as_ref(),
+            AppSettingExprId::TextColor => source.text_color.as_ref(),
+            AppSettingExprId::ScaleFactor => source.scale_factor.as_ref(),
+        };
+        setting.map(|setting| &setting.span).ok_or_else(|| {
+            self.invariant(
+                &source.span,
+                "app setting expression owner has no checked source setting",
+            )
+        })
+    }
+
+    fn app_setting_expected_type(
+        &self,
+        id: AppSettingExprId,
+        expression: &crate::check::CheckedExprUse,
+        span: &Span,
+    ) -> Result<Type, Error> {
+        Ok(match id {
+            AppSettingExprId::Title
+            | AppSettingExprId::Theme
+            | AppSettingExprId::Background
+            | AppSettingExprId::TextColor => Type::Str,
+            AppSettingExprId::ScaleFactor => Type::F64,
+            AppSettingExprId::Palette => match &expression.destination {
+                Type::Palette(contract) => Type::Palette(contract.clone()),
+                _ => {
+                    return Err(self.invariant(
+                        span,
+                        "app palette expression lost its checked theme-contract type",
+                    ));
+                }
+            },
+            AppSettingExprId::ThemeFactoryArgument(index) => {
+                let factory = self.facts.app_theme_factory().ok_or_else(|| {
+                    self.invariant(span, "app theme argument has no checked factory")
+                })?;
+                let declaration = self
+                    .declarations
+                    .try_extern_decl(factory.function)
+                    .ok_or_else(|| {
+                        self.invariant(span, "app theme factory references an invalid extern ID")
+                    })?;
+                declaration
+                    .params
+                    .get(index as usize)
+                    .map(|(_, ty)| ty.clone())
+                    .ok_or_else(|| {
+                        self.invariant(span, "app theme argument has an invalid parameter index")
+                    })?
+            }
+        })
+    }
+
+    fn validate_checked_expression_node(
+        &self,
+        id: CheckedExprId,
+        policy: &impl CheckedExpressionOwnerPolicy,
+        graph: &mut CheckedExpressionGraph,
+    ) -> Result<Type, Error> {
+        if let Some(owner) = graph.node_owners.insert(id, policy.use_id())
+            && owner != policy.use_id()
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression node is shared by different retained expression uses",
+            ));
+        }
+        let expression = self.facts.try_expression(id).cloned().ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "expression use references an invalid checked expression ID",
+            )
+        })?;
+        if graph.validated.contains(&id) {
+            return Ok(expression.ty);
+        }
+        if !graph.visiting.insert(id) {
+            return Err(self.invariant(policy.span(), "checked expression graph contains a cycle"));
+        }
+
+        let inferred = match &expression.kind {
+            CheckedExprKind::Bool(_) => Type::Bool,
+            CheckedExprKind::I64(_) => Type::I64,
+            CheckedExprKind::F64(_) => Type::F64,
+            CheckedExprKind::Str(_) => Type::Str,
+            CheckedExprKind::Bytes(_) => Type::Bytes,
+            CheckedExprKind::List(values) => {
+                let Type::List(item) = &expression.ty else {
+                    return Err(self
+                        .invariant(policy.span(), "checked list expression has a non-list type"));
+                };
+                for value in values {
+                    let value_ty = self.validate_checked_expression_node(*value, policy, graph)?;
+                    if value_ty != **item {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked list item type does not match its list type",
+                        ));
+                    }
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::None => {
+                if !matches!(expression.ty, Type::Option(_)) {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked none expression has a non-optional type",
+                    ));
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::SlotProvided(slot) => policy.slot_type(*slot)?,
+            CheckedExprKind::Path { root, projections } => {
+                let mut current = self.validate_checked_path_root(root, policy)?;
+                for projection in projections {
+                    if projection.input != current {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked projection input does not match its preceding value",
+                        ));
+                    }
+                    let expected = match projection.kind {
+                        CheckedProjectionKind::Struct(field_id) => {
+                            let field = self
+                                .declarations
+                                .try_struct_field_decl(field_id)
+                                .ok_or_else(|| {
+                                    self.invariant(
+                                        policy.span(),
+                                        "checked projection references an invalid struct field ID",
+                                    )
+                                })?;
+                            let owner = self
+                                .declarations
+                                .try_struct_decl(field_id.owner)
+                                .ok_or_else(|| {
+                                    self.invariant(
+                                        policy.span(),
+                                        "checked projection references an invalid struct ID",
+                                    )
+                                })?;
+                            if current != Type::Named(owner.name.clone())
+                                || field.name != projection.field
+                            {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked struct projection topology is inconsistent",
+                                ));
+                            }
+                            field.ty.clone()
+                        }
+                        CheckedProjectionKind::OptionalWidgetTarget => {
+                            if current != Type::Option(Box::new(Type::WidgetTarget)) {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked optional widget projection has the wrong input type",
+                                ));
+                            }
+                            field_type(&current, &projection.field, &self.document, policy.span())
+                                .map_err(|_| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked optional widget projection is invalid",
+                                )
+                            })?
+                        }
+                        CheckedProjectionKind::Native => {
+                            if matches!(current, Type::Named(_)) {
+                                return Err(self.invariant(
+                                    policy.span(),
+                                    "checked named projection lost its struct field ID",
+                                ));
+                            }
+                            field_type(&current, &projection.field, &self.document, policy.span())
+                                .map_err(|_| {
+                                self.invariant(
+                                    policy.span(),
+                                    "checked native projection is invalid",
+                                )
+                            })?
+                        }
+                    };
+                    if projection.output != expected {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked projection output type is inconsistent",
+                        ));
+                    }
+                    current = expected;
+                }
+                current
+            }
+            CheckedExprKind::Call { target, arguments } => {
+                let mut argument_types = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    argument_types.push(match argument {
+                        CheckedCallArgument::Value(value) => {
+                            self.validate_checked_expression_node(*value, policy, graph)?
+                        }
+                        CheckedCallArgument::Binding(local) => {
+                            self.validate_checked_expression_binding(*local, arguments, policy)?
+                        }
+                    });
+                }
+                self.validate_checked_expression_call(
+                    target,
+                    arguments,
+                    &argument_types,
+                    &expression.ty,
+                    policy,
+                )?;
+                expression.ty.clone()
+            }
+            CheckedExprKind::Unary { operator, value } => {
+                let value = self.validate_checked_expression_node(*value, policy, graph)?;
+                match operator {
+                    CheckedUnaryOperator::BooleanNot
+                        if value == Type::Bool && expression.ty == Type::Bool => {}
+                    CheckedUnaryOperator::NumericNegation(operand)
+                        if value == *operand && expression.ty == *operand => {}
+                    _ => {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked unary expression type contract is inconsistent",
+                        ));
+                    }
+                }
+                expression.ty.clone()
+            }
+            CheckedExprKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let left = self.validate_checked_expression_node(*left, policy, graph)?;
+                let right = self.validate_checked_expression_node(*right, policy, graph)?;
+                let valid = match operator {
+                    CheckedBinaryOperator::Boolean(op) => {
+                        matches!(op, BinaryOp::And | BinaryOp::Or)
+                            && left == Type::Bool
+                            && right == Type::Bool
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Equality { op, operand } => {
+                        matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                            && left == *operand
+                            && right == *operand
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Ordering { op, operand } => {
+                        matches!(
+                            op,
+                            BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+                        ) && left == *operand
+                            && right == *operand
+                            && expression.ty == Type::Bool
+                    }
+                    CheckedBinaryOperator::Arithmetic { op, operand } => {
+                        matches!(
+                            op,
+                            BinaryOp::Add
+                                | BinaryOp::Sub
+                                | BinaryOp::Mul
+                                | BinaryOp::Div
+                                | BinaryOp::Rem
+                        ) && left == *operand
+                            && right == *operand
+                            && expression.ty == *operand
+                    }
+                };
+                if !valid {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked binary expression type contract is inconsistent",
+                    ));
+                }
+                expression.ty.clone()
+            }
+        };
+        if inferred != expression.ty {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression kind does not match its retained type",
+            ));
+        }
+        graph.visiting.remove(&id);
+        graph.validated.insert(id);
+        Ok(expression.ty)
+    }
+
+    fn validate_checked_path_root(
+        &self,
+        root: &CheckedPathRoot,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Type, Error> {
+        match root {
+            CheckedPathRoot::Value(value) => policy.value_type(*value),
+            CheckedPathRoot::Local(local) => policy.local_type(*local),
+            CheckedPathRoot::EnumVariant(id) => {
+                let variant = self
+                    .declarations
+                    .try_enum_variant_decl(*id)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            policy.span(),
+                            "checked path references an invalid enum variant ID",
+                        )
+                    })?;
+                if variant.payload.is_some() {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked path uses a payload enum variant without a call",
+                    ));
+                }
+                let owner = self.declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                    self.invariant(policy.span(), "checked path references an invalid enum ID")
+                })?;
+                Ok(Type::Named(owner.name.clone()))
+            }
+            CheckedPathRoot::Palette(id) => policy.palette_type(*id),
+        }
+    }
+
+    fn validate_checked_expression_binding(
+        &self,
+        id: CheckedLocalId,
+        arguments: &[CheckedCallArgument],
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<Type, Error> {
+        let ty = policy.local_type(id)?;
+        let local = self.facts.try_local(id).ok_or_else(|| {
+            self.invariant(
+                policy.span(),
+                "checked expression binding references an invalid local ID",
+            )
+        })?;
+        let CheckedLocalOwner::ExpressionBinding {
+            expression,
+            body_argument,
+        } = local.owner
+        else {
+            return Err(self.invariant(
+                policy.span(),
+                "checked call binding is not an expression binding",
+            ));
+        };
+        if expression != policy.use_id()
+            || !matches!(
+                arguments.get(body_argument),
+                Some(CheckedCallArgument::Value(_))
+            )
+        {
+            return Err(self.invariant(
+                policy.span(),
+                "checked call binding has an invalid body-argument topology",
+            ));
+        }
+        Ok(ty)
+    }
+
+    fn validate_checked_expression_call(
+        &self,
+        target: &CheckedCallTarget,
+        arguments: &[CheckedCallArgument],
+        argument_types: &[Type],
+        output: &Type,
+        policy: &impl CheckedExpressionOwnerPolicy,
+    ) -> Result<(), Error> {
+        match target {
+            CheckedCallTarget::Extern(id) => {
+                let function = self.declarations.try_extern_decl(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked call references an invalid extern ID",
+                    )
+                })?;
+                if arguments
+                    .iter()
+                    .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+                    || function.params.len() != argument_types.len()
+                    || function
+                        .params
+                        .iter()
+                        .map(|(_, ty)| ty)
+                        .ne(argument_types.iter())
+                    || function.output != *output
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked extern call has an inconsistent retained signature",
+                    ));
+                }
+            }
+            CheckedCallTarget::EnumVariant(id) => {
+                let variant = self
+                    .declarations
+                    .try_enum_variant_decl(*id)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            policy.span(),
+                            "checked call references an invalid enum variant ID",
+                        )
+                    })?;
+                let owner = self.declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                    self.invariant(policy.span(), "checked call references an invalid enum ID")
+                })?;
+                if arguments.len() != 1
+                    || !matches!(arguments[0], CheckedCallArgument::Value(_))
+                    || variant.payload.as_ref() != argument_types.first()
+                    || *output != Type::Named(owner.name.clone())
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "checked enum call has an inconsistent retained signature",
+                    ));
+                }
+            }
+            CheckedCallTarget::Builtin(id) => {
+                let name = self.facts.try_builtin(*id).ok_or_else(|| {
+                    self.invariant(
+                        policy.span(),
+                        "checked call references an invalid builtin ID",
+                    )
+                })?;
+                if let Some(builtin) = ContextualBuiltin::from_name(name) {
+                    let contexts = builtin
+                        .argument_contexts(output, argument_types)
+                        .map_err(|message| self.invariant(policy.span(), message))?;
+                    if contexts.len() != arguments.len() {
+                        return Err(self.invariant(
+                            policy.span(),
+                            "checked builtin call has an invalid argument count",
+                        ));
+                    }
+                    for ((argument, actual), context) in
+                        arguments.iter().zip(argument_types).zip(contexts)
+                    {
+                        let (binding, expected) = match context {
+                            BuiltinArgumentContext::Value { expected }
+                            | BuiltinArgumentContext::ScopedValue { expected, .. } => {
+                                (false, expected)
+                            }
+                            BuiltinArgumentContext::Binding { ty, .. } => (true, Some(ty)),
+                        };
+                        if binding != matches!(argument, CheckedCallArgument::Binding(_))
+                            || expected.as_ref().is_some_and(|expected| expected != actual)
+                        {
+                            return Err(self.invariant(
+                                policy.span(),
+                                "checked builtin call has an inconsistent retained signature",
+                            ));
+                        }
+                    }
+                } else if arguments
+                    .iter()
+                    .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+                {
+                    return Err(self.invariant(
+                        policy.span(),
+                        "non-contextual checked builtin contains a binding argument",
+                    ));
+                }
+                for argument in arguments {
+                    if let CheckedCallArgument::Binding(local) = argument {
+                        self.validate_checked_expression_binding(*local, arguments, policy)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -7043,6 +7789,7 @@ extern crate::backend
   sync describe(id:window-id) -> str
   sync scale_for(id:window-id) -> f64
   theme native_theme(id:window-id, dark:bool)
+font brand family="Brand Sans" weight=semibold stretch=semi-expanded style=italic default=true
 theme contract AppTheme
   bg
   fg
@@ -7100,6 +7847,14 @@ view
                 if path == "iced::executor::Default"
         ));
         assert_eq!(settings.fonts.len(), 1);
+        let default_font = settings.default_font.as_ref().unwrap();
+        assert!(matches!(
+            &default_font.family,
+            FontFamily::Named(name) if name == "Brand Sans"
+        ));
+        assert_eq!(default_font.weight, FontWeight::Semibold);
+        assert_eq!(default_font.stretch, FontStretch::SemiExpanded);
+        assert_eq!(default_font.style, FontStyle::Italic);
         assert_eq!(settings.named_windows.len(), 2);
         assert_eq!(settings.named_windows[0].id, NamedWindowId(0));
         assert_eq!(settings.named_windows[0].name, "dashboard");
@@ -7152,6 +7907,7 @@ view
         program.document.daemon = false;
         program.document.states.clear();
         program.document.derived.clear();
+        program.document.fonts.clear();
         let generated = crate::codegen::generate(&program, "configured.ice").unwrap();
         for expected in [
             "crate::backend::describe(window)",
@@ -7173,6 +7929,10 @@ view
             "size: ::iced::Size::new(960 as f32, 720 as f32)",
             "visible: false",
             "level: ::iced::window::Level::AlwaysOnTop",
+            "family: ::iced::font::Family::Name(\"Brand Sans\")",
+            "weight: ::iced::font::Weight::Semibold",
+            "stretch: ::iced::font::Stretch::SemiExpanded",
+            "style: ::iced::font::Style::Italic",
         ] {
             assert!(
                 generated.contains(expected),
@@ -7230,7 +7990,7 @@ view
     #[test]
     fn rejects_every_static_application_setting_topology_mutation_with_e196() {
         let source = format!(
-            "daemon StaticSettings\n  id \"dev.example.original\"\n  executor iced::executor::Default\n  renderer crate::Renderer\n  font \"assets/one.ttf\"\n  font \"assets/two.ttf\"\n  text-size 14\n  antialiasing true\n  vsync true\n  window primary\n    icon-rgba \"assets/icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.original\"\n  window child\n    size 640 480\n{THEME}view\n  text \"ready\"\n"
+            "daemon StaticSettings\n  id \"dev.example.original\"\n  executor iced::executor::Default\n  renderer crate::Renderer\n  font \"assets/one.ttf\"\n  font \"assets/two.ttf\"\n  text-size 14\n  antialiasing true\n  vsync true\n  window primary\n    icon-rgba \"assets/icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.original\"\n  window child\n    size 640 480\nfont brand family=serif weight=bold default=true\n{THEME}view\n  text \"ready\"\n"
         );
 
         let mut checked = analyze(&source).unwrap();
@@ -7282,6 +8042,50 @@ view
             .application_id = Some("changed".into());
         let error = lower(checked).unwrap_err();
         assert_eq!((error.code, error.line), ("E196", 13));
+
+        fn reject_default_font_mutation(
+            source: &str,
+            mutate: impl FnOnce(&mut FontDecl),
+            expected_line: usize,
+        ) {
+            let mut checked = analyze(source).unwrap();
+            mutate(&mut checked.document.fonts[0]);
+            let error = lower(checked).unwrap_err();
+            assert_eq!((error.code, error.line), ("E196", expected_line));
+            assert!(error.message.contains("changed after semantic analysis"));
+        }
+
+        reject_default_font_mutation(&source, |font| font.family = FontFamily::Monospace, 16);
+        reject_default_font_mutation(&source, |font| font.weight = FontWeight::Thin, 16);
+        reject_default_font_mutation(
+            &source,
+            |font| font.stretch = FontStretch::UltraExpanded,
+            16,
+        );
+        reject_default_font_mutation(&source, |font| font.style = FontStyle::Oblique, 16);
+        reject_default_font_mutation(&source, |font| font.span = Span::line(999), 999);
+    }
+
+    #[test]
+    fn rejects_invalid_app_setting_expression_descendants_and_palette_ids_with_e196() {
+        let binary_source = format!(
+            "app InvalidSettingExpr\n  scale 1.0 + factor\n{THEME}state\n  factor = 1.0\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&binary_source).unwrap();
+        checked
+            .facts
+            .corrupt_app_setting_binary_child(AppSettingExprId::ScaleFactor);
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let palette_source =
+            format!("app InvalidPalette\n  palette AppTheme.app\n{THEME}view\n  text \"ready\"\n");
+        let mut checked = analyze(&palette_source).unwrap();
+        checked.facts.corrupt_app_setting_palette_id();
+        let error = lower(checked).unwrap_err();
+        assert_eq!((error.code, error.line), ("E196", 2));
+        assert!(error.message.contains("invalid palette ID"));
     }
 
     #[test]
@@ -7888,7 +8692,7 @@ view
         fs::write(
             &root,
             format!(
-                "daemon ImportedSettings\n  title tools::describe(window)\n  theme tools::native_theme(window)\n  scale tools::scale(window)\n  id \"dev.example.imported\"\n  executor iced::executor::Default\n  renderer crate::backend::Renderer\n  font \"brand.ttf\"\n  window primary\n    icon-rgba \"icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.imported\"\nuse \"settings.ice\" as tools\n{THEME}view\n  text tools::describe(window)\n"
+                "daemon ImportedSettings\n  title tools::describe(window)\n  theme tools::native_theme(window)\n  scale tools::scale(window)\n  id \"dev.example.imported\"\n  executor iced::executor::Default\n  renderer crate::backend::Renderer\n  font \"brand.ttf\"\n  window primary\n    icon-rgba \"icon.rgba\" 1 1\n    platform linux\n      app-id \"dev.example.imported\"\nfont brand family=\"Brand Sans\" weight=semibold stretch=semi-expanded style=italic default=true\nuse \"settings.ice\" as tools\n{THEME}view\n  text tools::describe(window)\n"
             ),
         )
         .unwrap();
@@ -7947,6 +8751,7 @@ view
             (8, ".font(include_bytes!"),
             (10, "icon: ::std::option::Option::Some"),
             (12, "__platform.application_id"),
+            (13, "#[must_use]\npub fn default_font"),
         ] {
             assert!(
                 generated.contains(&format!(

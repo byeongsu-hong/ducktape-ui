@@ -364,7 +364,7 @@ pub enum WindowLevel {
     AlwaysOnTop,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FontDecl {
     pub name: String,
     pub family: FontFamily,
@@ -375,7 +375,7 @@ pub struct FontDecl {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FontFamily {
     Named(String),
     Serif,
@@ -385,7 +385,7 @@ pub enum FontFamily {
     Monospace,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontWeight {
     Thin,
     ExtraLight,
@@ -398,7 +398,7 @@ pub enum FontWeight {
     Black,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontStretch {
     UltraCondensed,
     ExtraCondensed,
@@ -411,7 +411,7 @@ pub enum FontStretch {
     UltraExpanded,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontStyle {
     Normal,
     Italic,

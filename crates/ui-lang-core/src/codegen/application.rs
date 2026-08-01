@@ -418,6 +418,7 @@ pub(in crate::codegen) fn generate_presets(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
+    let settings = program.settings();
     let accessibility_root = rust_string(&program.settings().app_name);
     for (index, preset) in program.preset_handlers().enumerate() {
         let task_name = format!("__preset_task_{index}");
@@ -427,7 +428,7 @@ pub(in crate::codegen) fn generate_presets(
             "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();"
         )
         .unwrap();
-        if program.settings().kind == ProgramKind::Daemon {
+        if settings.kind == ProgramKind::Daemon {
             writeln!(out, "let task = state.{task_name}();\n(state, task)\n}}").unwrap();
         } else {
             writeln!(
@@ -438,7 +439,7 @@ pub(in crate::codegen) fn generate_presets(
             .unwrap();
         }
     }
-    if program.settings().kind == ProgramKind::Application {
+    if settings.kind == ProgramKind::Application {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_initial_task(&mut self) -> ::iced::Task<{message}> {{\nmatch self.__ice_accessibility_initial.take() {{\n::std::option::Option::Some(0) => self.__boot_task(),"

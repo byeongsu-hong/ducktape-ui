@@ -2752,8 +2752,8 @@ pub(in crate::check) fn contains_ui_enum(ty: &Type, document: &Document) -> bool
     }
 }
 
-mod fields;
-mod signature;
+pub(crate) mod fields;
+pub(crate) mod signature;
 mod validation;
 
 pub(super) use fields::*;

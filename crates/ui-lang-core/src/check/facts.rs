@@ -474,7 +474,7 @@ pub(crate) struct CheckedAppSettings {
     pub(crate) app_name: String,
     pub(crate) daemon: bool,
     pub(crate) source: AppSettings,
-    pub(crate) has_default_font: bool,
+    pub(crate) default_font: Option<FontDecl>,
 }
 
 impl CheckedFacts {
@@ -543,8 +543,10 @@ impl CheckedFacts {
 
     pub(crate) fn try_value_by_ref(&self, value_ref: CheckedValueRef) -> Option<&CheckedValue> {
         self.record_lookup();
-        let id = self.values_by_ref.get(&value_ref)?;
-        self.values.get(id.0 as usize)
+        let value = self
+            .values
+            .get(self.values_by_ref.get(&value_ref)?.0 as usize)?;
+        (value.id == value_ref).then_some(value)
     }
 
     pub(crate) fn locals(&self) -> &[CheckedLocal] {
@@ -654,6 +656,28 @@ impl CheckedFacts {
         if let Some(factory) = &mut self.app_theme_factory {
             factory.function = ExternFnId(u32::MAX);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_binary_child(&mut self, id: AppSettingExprId) {
+        let expression_use = self.expression_uses_by_owner[&CheckedExprOwner::AppSetting(id)];
+        let root = self.expression_uses[expression_use.0 as usize].root;
+        let CheckedExprKind::Binary { left, .. } = &mut self.expressions[root.0 as usize].kind
+        else {
+            panic!("app-setting fixture root must be binary");
+        };
+        *left = CheckedExprId(u32::MAX);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_setting_palette_id(&mut self) {
+        let expression_use =
+            self.expression_uses_by_owner[&CheckedExprOwner::AppSetting(AppSettingExprId::Palette)];
+        let root = self.expression_uses[expression_use.0 as usize].root;
+        self.expressions[root.0 as usize].kind = CheckedExprKind::Path {
+            root: CheckedPathRoot::Palette(PaletteId(u32::MAX)),
+            projections: Vec::new(),
+        };
     }
 
     #[cfg(test)]
@@ -896,6 +920,11 @@ impl CheckedFacts {
     pub(crate) fn try_task(&self, id: TaskId) -> Option<&CheckedTask> {
         self.record_lookup();
         self.tasks.get(id.0 as usize)?.as_ref()
+    }
+
+    pub(crate) fn try_builtin(&self, id: CheckedBuiltinId) -> Option<&str> {
+        self.record_lookup();
+        self.builtins.get(id.0 as usize).map(String::as_str)
     }
 
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
@@ -1213,7 +1242,12 @@ impl<'a> FactsBuilder<'a> {
             app_name: self.document.app.clone(),
             daemon: self.document.daemon,
             source: self.document.settings.clone(),
-            has_default_font: self.document.fonts.iter().any(|font| font.default),
+            default_font: self
+                .document
+                .fonts
+                .iter()
+                .find(|font| font.default)
+                .cloned(),
         });
         self.index_values()?;
         self.lower_initializers()?;

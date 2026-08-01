@@ -694,7 +694,21 @@ impl Lowerer {
                     crate::check::CheckedExprKind::Path {
                         root: crate::check::CheckedPathRoot::Palette(id),
                         projections,
-                    } if projections.is_empty() => ResolvedPaletteSelection::Static(*id),
+                    } if projections.is_empty() => {
+                        let palette = palettes.get(id.0 as usize).ok_or_else(|| {
+                            self.invariant(
+                                &setting.span,
+                                "app palette expression references an invalid palette ID",
+                            )
+                        })?;
+                        if palette.id != *id || palette.contract != contract_id {
+                            return Err(self.invariant(
+                                &setting.span,
+                                "app palette expression references a mismatched palette contract",
+                            ));
+                        }
+                        ResolvedPaletteSelection::Static(*id)
+                    }
                     _ => ResolvedPaletteSelection::Dynamic(expression),
                 }
             }

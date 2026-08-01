@@ -725,12 +725,36 @@ impl DeclarationIndex {
         self.components[component.0 as usize].params[index]
     }
 
+    pub(crate) fn try_component_param(
+        &self,
+        id: ComponentParamId,
+    ) -> Option<Declaration<ComponentParamId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .params
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
+    }
+
     pub(crate) fn component_state(
         &self,
         component: ComponentId,
         index: usize,
     ) -> Declaration<ComponentStateId> {
         self.components[component.0 as usize].states[index]
+    }
+
+    pub(crate) fn try_component_state(
+        &self,
+        id: ComponentStateId,
+    ) -> Option<Declaration<ComponentStateId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .states
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn component_slot(
@@ -750,6 +774,7 @@ impl DeclarationIndex {
             .slots
             .get(id.index as usize)
             .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
@@ -774,6 +799,12 @@ impl DeclarationIndex {
         self.structs.get(id.0 as usize)
     }
 
+    pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {
+        self.structs
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
+    }
+
     pub(crate) fn struct_field(
         &self,
         owner: StructId,
@@ -794,6 +825,7 @@ impl DeclarationIndex {
             .get(id.owner.0 as usize)?
             .fields
             .get(id.index as usize)
+            .filter(|field| field.declaration.id == id)
     }
 
     pub(crate) fn enum_decl_by_name(&self, name: &str) -> Option<&EnumDeclaration> {
@@ -806,7 +838,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_enum_decl(&self, id: EnumId) -> Option<&EnumDeclaration> {
-        self.enums.get(id.0 as usize)
+        self.enums
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
     }
 
     pub(crate) fn enum_variant(
@@ -833,6 +867,7 @@ impl DeclarationIndex {
             .get(id.owner.0 as usize)?
             .variants
             .get(id.index as usize)
+            .filter(|variant| variant.declaration.id == id)
     }
 
     pub(crate) fn palette(&self, index: usize) -> Declaration<PaletteId> {
@@ -844,6 +879,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn palette_name(&self, id: PaletteId) -> Option<&str> {
+        self.palettes
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.id == id)?;
         self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
@@ -861,7 +899,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
-        self.externs.get(id.0 as usize)
+        self.externs
+            .get(id.0 as usize)
+            .filter(|declaration| declaration.declaration.id == id)
     }
     pub(crate) fn handlers(&self) -> &[HandlerDeclaration] {
         &self.handlers

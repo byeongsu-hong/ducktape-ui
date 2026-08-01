@@ -788,6 +788,8 @@ use usage::*;
 use view::*;
 use widgets::*;
 
+pub(crate) use expr::fields::field_type;
+pub(crate) use expr::signature::{BuiltinArgumentContext, ContextualBuiltin};
 pub(crate) use expr::{ExprTypeEnv, ScopedTypeEnv, expr_type};
 use expr::{check_length_value, contains_ui_enum};
 #[cfg(test)]
@@ -795,8 +797,8 @@ pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedAppSettings, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
-    CheckedExprOwner, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId,
-    CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
+    CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
+    CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
     CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator,
     CheckedValueRef, CheckedView, CheckedViewFlow,
 };

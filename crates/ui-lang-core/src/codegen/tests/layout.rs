@@ -107,7 +107,7 @@ view
     assert!(generated.contains("__style.border.radius = 9.0.into()"));
     assert!(generated.contains(".size(12.5)"));
     assert!(generated.contains(
-        "::iced::widget::text(\"Delete\").size(12.5).line_height(::iced::widget::text::LineHeight::Relative(1.35)).font(::iced::Font { weight: ::iced::font::Weight::Semibold, ..::iced::Font::DEFAULT }).into()"
+        "::iced::widget::text(\"Delete\").size(12.5).line_height(::iced::widget::text::LineHeight::Relative(1.35)).font(::iced::Font { weight: ::iced::font::Weight::Semibold, ..Self::default_font() }).into()"
     ));
     assert!(generated.contains("::iced::Color::from_rgba8(204, 0, 0, 1.000000)"));
 
@@ -170,7 +170,7 @@ view
     assert!(
         generated.contains("weight: ::iced::font::Weight::Semibold, ..::iced::Font::MONOSPACE")
     );
-    assert!(generated.contains("weight: ::iced::font::Weight::Bold, ..::iced::Font::DEFAULT"));
+    assert!(generated.contains("weight: ::iced::font::Weight::Bold, ..Self::default_font()"));
 }
 
 #[test]

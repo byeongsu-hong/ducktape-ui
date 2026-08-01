@@ -9,6 +9,23 @@ pub(in crate::codegen) fn generate_test_mounts(
     let document = program.document();
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let render_document = RenderDocument::new(program);
+    let presets = if document.presets.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ".presets([{}])",
+            document
+                .presets
+                .iter()
+                .enumerate()
+                .map(|(index, preset)| format!(
+                    "::iced::Preset::new({}, Self::__preset_{index})",
+                    rust_string(&preset.name)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     for (index, test) in document.tests.iter().enumerate() {
         let Some(mount) = &test.mount else {
             continue;
@@ -60,7 +77,8 @@ pub(in crate::codegen) fn generate_test_mounts(
             )
             .unwrap();
         }
-        let test_program = test_program_code(program, source_path, index);
+        let test_program =
+            test_program_code(program, program.settings(), source_path, index, &presets);
         let program_ty = if daemon {
             "::iced::Daemon"
         } else {
@@ -177,7 +195,34 @@ fn generate_test(
     for step in &test.steps {
         let statement = test_step_source(step);
         let location = location_code(program, source_path, &step.span, &statement);
-        let env = test_env(test, program, &location)?;
+        let mut env = state_env(document, "__test.state()");
+        if program.settings().kind == ProgramKind::Daemon {
+            env.insert(
+                "window".into(),
+                Binding {
+                    code: "__test.window()".into(),
+                    ty: Type::WindowId,
+                    local: true,
+                    state: None,
+                    owner: None,
+                },
+            );
+        }
+        for target in &test.targets {
+            let path = widget_target_path_code(&target.target, &env, document)?;
+            env.insert(
+                target.name.clone(),
+                Binding {
+                    code: format!(
+                        "{{ let __target_path = {path}; __test.target(&__target_path, {location}) }}"
+                    ),
+                    ty: Type::TestTarget,
+                    local: true,
+                    state: None,
+                    owner: None,
+                },
+            );
+        }
         writeln!(
             out,
             "::ui_lang_runtime::testing::step({}, {location}, || {{",
@@ -755,43 +800,6 @@ fn accessibility_action_variant(name: &str) -> &'static str {
     }
 }
 
-fn test_env(
-    test: &TestDecl,
-    program: &LoweredProgram,
-    location: &str,
-) -> Result<HashMap<String, Binding>, Error> {
-    let document = program.document();
-    let mut env = state_env(document, "__test.state()");
-    if program.settings().kind == ProgramKind::Daemon {
-        env.insert(
-            "window".into(),
-            Binding {
-                code: "__test.window()".into(),
-                ty: Type::WindowId,
-                local: true,
-                state: None,
-                owner: None,
-            },
-        );
-    }
-    for target in &test.targets {
-        let path = widget_target_path_code(&target.target, &env, document)?;
-        env.insert(
-            target.name.clone(),
-            Binding {
-                code: format!(
-                    "{{ let __target_path = {path}; __test.target(&__target_path, {location}) }}"
-                ),
-                ty: Type::TestTarget,
-                local: true,
-                state: None,
-                owner: None,
-            },
-        );
-    }
-    Ok(env)
-}
-
 fn target_ref_path_code(
     target: &TestTargetRef,
     test: &TestDecl,
@@ -832,11 +840,15 @@ fn location_code(
     )
 }
 
-fn test_program_code(program: &LoweredProgram, source_path: &str, index: usize) -> String {
-    let document = program.document();
-    let app_settings = program.settings();
+fn test_program_code(
+    program: &LoweredProgram,
+    app_settings: &ResolvedAppSettings,
+    source_path: &str,
+    index: usize,
+    presets: &str,
+) -> String {
     let subscription = ".subscription(Self::__subscription)";
-    let default_font = if app_settings.has_default_font {
+    let default_font = if app_settings.default_font.is_some() {
         ".default_font(Self::default_font())"
     } else {
         ""
@@ -858,23 +870,6 @@ fn test_program_code(program: &LoweredProgram, source_path: &str, index: usize) 
             "\n{}\n.executor::<{path}>()\n{SOURCE_MARKER_END}\n",
             source_marker_for_origin(program, *origin)
         ),
-    };
-    let presets = if document.presets.is_empty() {
-        String::new()
-    } else {
-        format!(
-            ".presets([{}])",
-            document
-                .presets
-                .iter()
-                .enumerate()
-                .map(|(index, preset)| format!(
-                    "::iced::Preset::new({}, Self::__preset_{index})",
-                    rust_string(&preset.name)
-                ))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
     };
     let scale_factor = app_settings
         .scale_factor

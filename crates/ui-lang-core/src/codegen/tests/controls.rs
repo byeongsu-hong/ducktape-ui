@@ -953,9 +953,7 @@ view
         "typography.ice",
     )
     .unwrap();
-    assert!(inherited.contains(
-        "weight: ::iced::font::Weight::Bold, ..::iced::Font { family: ::iced::font::Family::Name(\"Inter\")"
-    ));
+    assert!(inherited.contains("weight: ::iced::font::Weight::Bold, ..Self::default_font()"));
 
     let builtin_default = compile(&source.replace(" default=true", ""), "typography.ice").unwrap();
     assert!(
