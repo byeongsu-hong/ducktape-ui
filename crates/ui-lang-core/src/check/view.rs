@@ -248,7 +248,7 @@ pub(in crate::check) fn infer_view(
     unreachable!("every view node belongs to an inference group")
 }
 
-pub(in crate::check) fn lazy_hashable(ty: &Type) -> bool {
+pub(crate) fn lazy_hashable(ty: &Type) -> bool {
     match ty {
         Type::Bool
         | Type::I64

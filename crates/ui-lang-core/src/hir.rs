@@ -980,6 +980,16 @@ impl DeclarationIndex {
         &self.externs[id.0 as usize]
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_extern_param_type_for_test(
+        &mut self,
+        id: ExternFnId,
+        index: usize,
+        ty: Type,
+    ) {
+        self.externs[id.0 as usize].params[index].1 = ty;
+    }
+
     pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
         self.externs
             .get(id.0 as usize)

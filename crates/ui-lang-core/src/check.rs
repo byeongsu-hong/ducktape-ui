@@ -792,6 +792,7 @@ use style::*;
 use subscription::*;
 use testing::*;
 use usage::*;
+pub(crate) use view::lazy_hashable;
 use view::*;
 use widgets::*;
 

@@ -409,7 +409,7 @@ pub(crate) struct CheckedProjection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedCallTarget {
     Builtin(CheckedBuiltinId),
-    Extern(ExternFnId),
+    Extern(ExternRef),
     EnumVariant(EnumVariantId),
 }
 
@@ -1073,16 +1073,16 @@ impl CheckedFacts {
             "editor expression root ID is outside its arena",
         ))?;
         let CheckedExprKind::Call {
-            target: CheckedCallTarget::Extern(function),
+            target: CheckedCallTarget::Extern(reference),
             ..
-        } = root.kind
+        } = &root.kind
         else {
             return Ok(false);
         };
         let function = declarations
-            .try_extern_decl(function)
+            .try_extern_decl(reference.id)
             .ok_or((root.origin, "editor sync extern ID is outside its arena"))?;
-        if function.kind != ExternKind::Sync {
+        if function.name != reference.name || function.kind != ExternKind::Sync {
             return Ok(false);
         }
 
@@ -4635,7 +4635,10 @@ impl<'a> FactsBuilder<'a> {
         if let Some(declaration) = self.declarations.extern_decl_by_name(name)
             && declaration.kind == ExternKind::Sync
         {
-            return Ok(CheckedCallTarget::Extern(declaration.declaration.id));
+            return Ok(CheckedCallTarget::Extern(ExternRef {
+                id: declaration.declaration.id,
+                name: declaration.name.clone(),
+            }));
         }
         let name = unqualified_name(name);
         debug_assert_ne!(name, "provided");
@@ -4746,9 +4749,9 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
     ) -> Result<Vec<BuiltinArgumentContext>, Error> {
         Ok(match target {
-            CheckedCallTarget::Extern(id) => self
+            CheckedCallTarget::Extern(reference) => self
                 .declarations
-                .extern_decl(*id)
+                .extern_decl(reference.id)
                 .params
                 .iter()
                 .map(|(_, ty)| BuiltinArgumentContext::Value {
@@ -5074,7 +5077,7 @@ use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index:
 use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
 use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o23
 expr e0 i64 1 : I64 origin=o0
-expr e1 call Extern(ExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
+expr e1 call Extern(ExternRef { id: ExternFnId(0), name: "load_user" }) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
 expr e3 f64 0.5 : F64 origin=o1
 expr e4 f64 0.75 : F64 origin=o1
@@ -5355,10 +5358,12 @@ view
     #[test]
     fn subscription_lowering_and_codegen_ignore_raw_subscription_mutations() {
         let source = format!(
-            "app FrozenSubscription\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) -> number _\nview\n  text \"ready\"\n"
+            "app FrozenSubscription\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\non key(value)\non theme(value)\nsubscribe\n  run numbers(seed) -> number _\n  keyboard press -> key _\n  system theme -> theme _\nview\n  text \"ready\"\n"
         );
         let baseline = lower::lower(analyze(&source).unwrap()).unwrap();
         let baseline = crate::codegen::generate(&baseline, "frozen-subscription.ice").unwrap();
+        assert!(baseline.contains("pub(crate) struct __IceKeyPress"));
+        assert!(baseline.contains("fn __ice_system_theme"));
 
         let mut checked = analyze(&source).unwrap();
         checked.document.subscriptions.clear();
@@ -5610,6 +5615,7 @@ view
             r#"app SubscriptionNodeContracts
 extern crate::backend
   sync normalize(value:i64) -> i64
+  sync normalize_alias(value:i64) -> i64
   wrong_kind(value:i64) -> i64
   stream numbers(value:i64) -> i64
   stream lists(value:[i64]) -> i64
@@ -5661,8 +5667,29 @@ view
         else {
             unreachable!();
         };
-        *target = CheckedCallTarget::Extern(wrong_id);
+        *target = CheckedCallTarget::Extern(ExternRef {
+            id: wrong_id,
+            name: "wrong_kind".into(),
+        });
         assert_e196(wrong_extern_kind, "extern call");
+
+        let mut wrong_extern_identity = checked.clone();
+        let root = argument_root(&wrong_extern_identity, 0);
+        let alias_id = wrong_extern_identity
+            .declarations
+            .extern_decl_by_name("normalize_alias")
+            .unwrap()
+            .declaration
+            .id;
+        let CheckedExprKind::Call {
+            target: CheckedCallTarget::Extern(reference),
+            ..
+        } = &mut wrong_extern_identity.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        reference.id = alias_id;
+        assert_e196(wrong_extern_identity, "extern call");
 
         let mut wrong_value_scope = checked.clone();
         let root = argument_root(&wrong_value_scope, 0);
@@ -5745,6 +5772,106 @@ view
         let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("payload contract"));
+    }
+
+    #[test]
+    fn subscription_options_revalidate_their_source_compatibility() {
+        let frame = format!(
+            "app InvalidWindowId\n{THEME}on frame\nsubscribe\n  window frame -> frame\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&frame).unwrap();
+        checked.facts.subscriptions[0].window_id = true;
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("does not support a window ID"));
+
+        let timer = format!(
+            "app InvalidStatus\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&timer).unwrap();
+        checked.facts.subscriptions[0].status = Some(EventStatus::Captured);
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("does not support status filtering"));
+
+        let mut every = analyze(&timer).unwrap();
+        every.facts.subscriptions[0].source = CheckedSubscriptionSource::Every { milliseconds: 0 };
+        let error = lower::lower(every).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duration is not positive"));
+
+        let repeat = format!(
+            "app InvalidRepeatDuration\nextern crate::backend\n  refresh() -> i64\n{THEME}on tick(now)\nsubscribe\n  repeat refresh() every 10ms -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut repeat = analyze(&repeat).unwrap();
+        let CheckedSubscriptionSource::Repeat { milliseconds, .. } =
+            &mut repeat.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        *milliseconds = 0;
+        let error = lower::lower(repeat).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duration is not positive"));
+    }
+
+    #[test]
+    fn subscription_hashability_is_revalidated_during_lowering() {
+        fn replace_expression_type(
+            checked: &mut crate::CheckedDocument,
+            expression: CheckedExprUseId,
+            ty: Type,
+        ) {
+            let root = checked.facts.expression_uses[expression.0 as usize].root;
+            checked.facts.expression_uses[expression.0 as usize].source = ty.clone();
+            checked.facts.expression_uses[expression.0 as usize].destination = ty.clone();
+            checked.facts.expressions[root.0 as usize].ty = ty;
+            checked.facts.expressions[root.0 as usize].kind = CheckedExprKind::F64(1.0);
+        }
+
+        let run = format!(
+            "app InvalidRunHash\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 1\non tick(value)\nsubscribe\n  run numbers(seed) -> tick _\nview\n  text \"ready\"\n"
+        );
+        let mut run = analyze(&run).unwrap();
+        let CheckedSubscriptionSource::Run {
+            function,
+            arguments,
+        } = &run.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        let function = function.id;
+        let argument = arguments[0];
+        run.declarations
+            .replace_extern_param_type_for_test(function, 0, Type::F64);
+        replace_expression_type(&mut run, argument, Type::F64);
+        let error = lower::lower(run).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run data is not hashable"));
+
+        let events = format!(
+            "app InvalidEventIdentity\nextern crate::backend\n  event-filter raw_event() -> str\n{THEME}state\n  seed = 1\non event(value)\nsubscribe\n  events seed using=raw_event -> event _\nview\n  text \"ready\"\n"
+        );
+        let mut events = analyze(&events).unwrap();
+        let CheckedSubscriptionSource::Events { identity, .. } =
+            events.facts.subscriptions[0].source
+        else {
+            unreachable!();
+        };
+        replace_expression_type(&mut events, identity, Type::F64);
+        let error = lower::lower(events).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("event identity is not hashable"));
+
+        let context = format!(
+            "app InvalidContextHash\n{THEME}state\n  tag = 1\non tick(tag, value)\nsubscribe\n  every 10ms with=tag -> tick _ _\nview\n  text \"ready\"\n"
+        );
+        let mut context = analyze(&context).unwrap();
+        let context_expression = context.facts.subscriptions[0].context.unwrap();
+        replace_expression_type(&mut context, context_expression, Type::F64);
+        let error = lower::lower(context).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("context is not hashable"));
     }
 
     #[test]

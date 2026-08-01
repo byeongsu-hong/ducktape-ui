@@ -368,8 +368,8 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap(),
     }
-    generate_keyboard_types(&mut out, document);
-    generate_system_types(&mut out, document);
+    generate_keyboard_types(&mut out, document, program.subscriptions());
+    generate_system_types(&mut out, document, program.subscriptions());
     generate_widget_selector_types(&mut out, document);
     generate_canvas_types(&mut out, document);
     generate_pane_types(&mut out, program)?;

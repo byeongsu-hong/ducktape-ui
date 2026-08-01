@@ -4,7 +4,7 @@ use crate::check::{
     CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
     CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner, CheckedPathRoot,
     CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef, ContextualBuiltin,
-    canonical_builtin_type, field_type, resolve_erased_type,
+    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
@@ -240,15 +240,44 @@ fn resolved_native_subscription_payloads(
         _ => return None,
     };
     if window_id {
-        if !matches!(
-            source,
-            CheckedSubscriptionSource::Event { .. } | CheckedSubscriptionSource::Window(_)
-        ) {
+        if !resolved_subscription_supports_window_id(source) {
             return None;
         }
         payloads.insert(0, Type::WindowId);
     }
     Some(payloads)
+}
+
+fn resolved_subscription_supports_window_id(source: &CheckedSubscriptionSource) -> bool {
+    matches!(source, CheckedSubscriptionSource::Event { .. })
+        || matches!(
+            source,
+            CheckedSubscriptionSource::Window(event) if *event != WindowEvent::Frame
+        )
+}
+
+fn resolved_subscription_supports_status(source: &CheckedSubscriptionSource) -> bool {
+    matches!(
+        source,
+        CheckedSubscriptionSource::Event { .. }
+            | CheckedSubscriptionSource::InputMethod(_)
+            | CheckedSubscriptionSource::Keyboard(_)
+            | CheckedSubscriptionSource::Mouse(_)
+            | CheckedSubscriptionSource::Touch(_)
+            | CheckedSubscriptionSource::Window(
+                WindowEvent::Opened
+                    | WindowEvent::Closed
+                    | WindowEvent::Moved
+                    | WindowEvent::Resized
+                    | WindowEvent::Rescaled
+                    | WindowEvent::CloseRequested
+                    | WindowEvent::Focused
+                    | WindowEvent::Unfocused
+                    | WindowEvent::FileHovered
+                    | WindowEvent::FileDropped
+                    | WindowEvent::FilesHoveredLeft
+            )
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -1128,7 +1157,9 @@ fn validate_expression_declaration_references(
                     })
             }
             CheckedExprKind::Call { target, .. } => match target {
-                CheckedCallTarget::Extern(id) => declarations.try_extern_decl(*id).is_some(),
+                CheckedCallTarget::Extern(reference) => {
+                    declarations.try_extern_decl(reference.id).is_some()
+                }
                 CheckedCallTarget::EnumVariant(id) => {
                     declarations.try_enum_variant_decl(*id).is_some()
                 }
@@ -4130,16 +4161,20 @@ impl Lowerer {
         policy: &impl CheckedExpressionOwnerPolicy,
     ) -> Result<(), Error> {
         match target {
-            CheckedCallTarget::Extern(id) => {
-                let function = self.declarations.try_extern_decl(*id).ok_or_else(|| {
-                    self.invariant(
-                        policy.span(),
-                        "checked call references an invalid extern ID",
-                    )
-                })?;
+            CheckedCallTarget::Extern(reference) => {
+                let function =
+                    self.declarations
+                        .try_extern_decl(reference.id)
+                        .ok_or_else(|| {
+                            self.invariant(
+                                policy.span(),
+                                "checked call references an invalid extern ID",
+                            )
+                        })?;
                 if arguments
                     .iter()
                     .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+                    || function.name != reference.name
                     || function.kind != ExternKind::Sync
                     || function.params.len() != argument_types.len()
                     || function
@@ -4673,6 +4708,37 @@ impl Lowerer {
         subscription: &CheckedSubscription,
     ) -> Result<ValidatedSubscriptionContract, Error> {
         let span = &subscription.span;
+        if matches!(
+            subscription.source,
+            CheckedSubscriptionSource::Every { milliseconds: 0 }
+                | CheckedSubscriptionSource::Repeat {
+                    milliseconds: 0,
+                    ..
+                }
+        ) {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription duration is not positive",
+            ));
+        }
+        if subscription.window_id && !resolved_subscription_supports_window_id(&subscription.source)
+        {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription source does not support a window ID",
+            ));
+        }
+        if subscription.status.is_some()
+            && !resolved_subscription_supports_status(&subscription.source)
+        {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription source does not support status filtering",
+            ));
+        }
         if let Some(condition) = subscription.condition {
             self.validate_subscription_expression_use(
                 condition,
@@ -4701,7 +4767,19 @@ impl Lowerer {
             } => {
                 let function =
                     self.checked_subscription_extern(function, ExternKind::Stream, span)?;
-                self.validate_subscription_arguments(subscription.id, arguments, function, span)?;
+                let argument_types = self.validate_subscription_arguments(
+                    subscription.id,
+                    arguments,
+                    function,
+                    span,
+                )?;
+                if argument_types.iter().any(|ty| !lazy_hashable(ty)) {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked subscription run data is not hashable",
+                    ));
+                }
                 vec![extern_subscription_payload(function)]
             }
             CheckedSubscriptionSource::Recipe {
@@ -4714,13 +4792,20 @@ impl Lowerer {
                 vec![function.output.clone()]
             }
             CheckedSubscriptionSource::Events { identity, filter } => {
-                self.validate_subscription_expression_use(
+                let identity = self.validate_subscription_expression_use(
                     *identity,
                     subscription.id,
                     CheckedSubscriptionExprRole::EventIdentity,
                     None,
                     span,
                 )?;
+                if !lazy_hashable(&identity) {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked raw event identity is not hashable",
+                    ));
+                }
                 let function =
                     self.checked_subscription_extern(filter, ExternKind::EventFilter, span)?;
                 if !function.params.is_empty() {
@@ -4795,16 +4880,21 @@ impl Lowerer {
             source_payloads.clone()
         };
         if let Some(context) = subscription.context {
-            delivered_payloads.insert(
-                0,
-                self.validate_subscription_expression_use(
-                    context,
-                    subscription.id,
-                    CheckedSubscriptionExprRole::Context,
-                    None,
+            let context = self.validate_subscription_expression_use(
+                context,
+                subscription.id,
+                CheckedSubscriptionExprRole::Context,
+                None,
+                span,
+            )?;
+            if !lazy_hashable(&context) {
+                return Err(Error::new(
+                    "E196",
                     span,
-                )?,
-            );
+                    "checked subscription context is not hashable",
+                ));
+            }
+            delivered_payloads.insert(0, context);
         }
         if delivered_payloads != subscription.delivered_payloads {
             return Err(Error::new(
@@ -4862,7 +4952,7 @@ impl Lowerer {
         arguments: &[CheckedExprUseId],
         function: &crate::hir::ExternDeclaration,
         span: &Span,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<Type>, Error> {
         if arguments.len() != function.params.len() {
             return Err(Error::new(
                 "E196",
@@ -4870,17 +4960,20 @@ impl Lowerer {
                 "checked subscription extern arguments have a mismatched arity",
             ));
         }
-        for (index, (argument, (_, expected))) in arguments.iter().zip(&function.params).enumerate()
-        {
-            self.validate_subscription_expression_use(
-                *argument,
-                subscription,
-                CheckedSubscriptionExprRole::SourceArgument(index as u32),
-                Some(expected),
-                span,
-            )?;
-        }
-        Ok(())
+        arguments
+            .iter()
+            .zip(&function.params)
+            .enumerate()
+            .map(|(index, (argument, (_, expected)))| {
+                self.validate_subscription_expression_use(
+                    *argument,
+                    subscription,
+                    CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                    Some(expected),
+                    span,
+                )
+            })
+            .collect()
     }
 
     fn checked_subscription_extern(
@@ -9928,11 +10021,11 @@ view
         let crate::check::CheckedExprKind::Call {
             target: crate::check::CheckedCallTarget::Extern(function),
             ..
-        } = title_root.kind
+        } = &title_root.kind
         else {
             panic!("title must retain its imported extern target ID");
         };
-        assert_eq!(program.extern_function(function).name, "tools::describe");
+        assert_eq!(program.extern_function(function.id).name, "tools::describe");
 
         let generated = crate::codegen::generate(&program, &root.display().to_string()).unwrap();
         let encoded_root = root

@@ -481,7 +481,9 @@ impl<'a> ExprEmission<'a> {
                                     .checked_facts()
                                     .builtin(*id),
                             ),
-                            CheckedCallTarget::Extern(id) => ExprCallTarget::Extern(*id),
+                            CheckedCallTarget::Extern(reference) => {
+                                ExprCallTarget::Extern(reference.id)
+                            }
                             CheckedCallTarget::EnumVariant(id) => ExprCallTarget::EnumVariant(*id),
                         },
                         arguments: ExprArguments(
