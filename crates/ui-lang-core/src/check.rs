@@ -793,6 +793,7 @@ pub(crate) use facts::{
     CheckedLocalId, CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
     CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
     CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
+    SubscriptionExpressionContract,
 };
 pub(crate) use handler::task_flow_type;
 

@@ -2,7 +2,7 @@ use crate::ast::*;
 pub(crate) use crate::check::CheckedExprUseId;
 use crate::check::{
     CheckedComponentArgumentSource, CheckedFacts, CheckedSubscription, CheckedSubscriptionExprRole,
-    CheckedSubscriptionSource, CheckedValueRef,
+    CheckedSubscriptionSource, CheckedValueRef, SubscriptionExpressionContract,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -86,7 +86,7 @@ pub(crate) struct DerivedContract {
     pub(crate) origin: OriginId,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedType {
     Value(Type),
     List(Box<ResolvedType>),
@@ -104,8 +104,8 @@ pub(crate) struct ResolvedExternContract {
     pub(crate) name: String,
     pub(crate) rust_path: String,
     pub(crate) params: Vec<ResolvedType>,
-    pub(crate) output: Type,
-    pub(crate) error: Option<Type>,
+    pub(crate) output: ResolvedType,
+    pub(crate) error: Option<ResolvedType>,
 }
 
 #[derive(Clone, Debug)]
@@ -157,8 +157,8 @@ pub(crate) struct ResolvedSubscriptionRoute {
 pub(crate) struct ResolvedSubscription {
     pub(crate) id: SubscriptionId,
     pub(crate) source: ResolvedSubscriptionSource,
-    pub(crate) source_payloads: Vec<Type>,
-    pub(crate) delivered_payloads: Vec<Type>,
+    pub(crate) source_payloads: Vec<ResolvedType>,
+    pub(crate) delivered_payloads: Vec<ResolvedType>,
     pub(crate) filter: Option<ResolvedExternContract>,
     pub(crate) context: Option<CheckedExprUseId>,
     pub(crate) condition: Option<CheckedExprUseId>,
@@ -167,6 +167,12 @@ pub(crate) struct ResolvedSubscription {
     pub(crate) route: ResolvedSubscriptionRoute,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
+}
+
+struct ValidatedSubscriptionContract {
+    source_payloads: Vec<Type>,
+    delivered_payloads: Vec<Type>,
+    filter: Option<ResolvedExternContract>,
 }
 
 fn subscription_source_matches(
@@ -798,6 +804,13 @@ impl Lowerer {
             .enumerate()
             .map(|(index, (subscription, source))| {
                 self.lower_subscription(index, subscription, source)
+                    .map_err(|error| {
+                        if error.path.is_some() {
+                            error
+                        } else {
+                            self.invariant_at(&subscription.span, error.message)
+                        }
+                    })
             })
             .collect()
     }
@@ -817,6 +830,7 @@ impl Lowerer {
         })?;
         if subscription.id != declaration.id
             || subscription.origin != declaration.origin
+            || subscription.syntax.ne(raw)
             || raw.span != subscription.span
             || raw.window_id != subscription.window_id
             || raw.status != subscription.status
@@ -842,8 +856,11 @@ impl Lowerer {
                 "checked subscription topology changed before HIR lowering",
             ));
         }
-        let (source_payloads, delivered_payloads, filter) =
-            self.validate_subscription_contract(subscription)?;
+        let ValidatedSubscriptionContract {
+            source_payloads,
+            delivered_payloads,
+            filter,
+        } = self.validate_subscription_contract(subscription)?;
         let source = match &subscription.source {
             CheckedSubscriptionSource::Every { milliseconds } => {
                 ResolvedSubscriptionSource::Every {
@@ -916,6 +933,14 @@ impl Lowerer {
                 "checked subscription route has a mismatched handler identity",
             ));
         }
+        let source_payloads = source_payloads
+            .iter()
+            .map(|payload| self.resolve_type(payload, span))
+            .collect::<Result<Vec<_>, _>>()?;
+        let delivered_payloads = delivered_payloads
+            .iter()
+            .map(|payload| self.resolve_type(payload, span))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedSubscription {
             id: subscription.id,
             source,
@@ -939,16 +964,19 @@ impl Lowerer {
     fn validate_subscription_contract(
         &self,
         subscription: &CheckedSubscription,
-    ) -> Result<(Vec<Type>, Vec<Type>, Option<ResolvedExternContract>), Error> {
+    ) -> Result<ValidatedSubscriptionContract, Error> {
         let span = &subscription.span;
         if let Some(condition) = subscription.condition {
             self.facts.validate_subscription_expression_use(
                 condition,
-                subscription.id,
-                CheckedSubscriptionExprRole::Condition,
-                Some(&Type::Bool),
-                &self.declarations,
-                span,
+                SubscriptionExpressionContract {
+                    subscription: subscription.id,
+                    role: CheckedSubscriptionExprRole::Condition,
+                    expected: Some(&Type::Bool),
+                    declarations: &self.declarations,
+                    document: &self.document,
+                    span,
+                },
             )?;
         }
         let source_payloads = match &subscription.source {
@@ -985,11 +1013,14 @@ impl Lowerer {
             CheckedSubscriptionSource::Events { identity, filter } => {
                 self.facts.validate_subscription_expression_use(
                     *identity,
-                    subscription.id,
-                    CheckedSubscriptionExprRole::EventIdentity,
-                    None,
-                    &self.declarations,
-                    span,
+                    SubscriptionExpressionContract {
+                        subscription: subscription.id,
+                        role: CheckedSubscriptionExprRole::EventIdentity,
+                        expected: None,
+                        declarations: &self.declarations,
+                        document: &self.document,
+                        span,
+                    },
                 )?;
                 let function =
                     self.checked_subscription_extern(filter, ExternKind::EventFilter, span)?;
@@ -1046,25 +1077,21 @@ impl Lowerer {
                         "checked subscription filter has mismatched parameter types",
                     ));
                 }
-                if !matches!(function.output, Type::Option(_)) {
+                let Type::Option(output) = &function.output else {
                     return Err(Error::new(
                         "E196",
                         span,
                         "checked subscription filter has a non-optional output",
                     ));
-                }
-                self.resolve_subscription_extern(reference, ExternKind::Sync, span)
+                };
+                Ok((
+                    self.resolve_subscription_extern(reference, ExternKind::Sync, span)?,
+                    output.as_ref().clone(),
+                ))
             })
             .transpose()?;
-        let mut delivered_payloads = if let Some(filter) = &filter {
-            let Type::Option(output) = &filter.output else {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "resolved subscription filter lost its optional output contract",
-                ));
-            };
-            vec![(**output).clone()]
+        let mut delivered_payloads = if let Some((_, output)) = &filter {
+            vec![output.clone()]
         } else {
             source_payloads.clone()
         };
@@ -1073,11 +1100,14 @@ impl Lowerer {
                 0,
                 self.facts.validate_subscription_expression_use(
                     context,
-                    subscription.id,
-                    CheckedSubscriptionExprRole::Context,
-                    None,
-                    &self.declarations,
-                    span,
+                    SubscriptionExpressionContract {
+                        subscription: subscription.id,
+                        role: CheckedSubscriptionExprRole::Context,
+                        expected: None,
+                        declarations: &self.declarations,
+                        document: &self.document,
+                        span,
+                    },
                 )?,
             );
         }
@@ -1115,7 +1145,11 @@ impl Lowerer {
                 "checked subscription route has a mismatched handler contract",
             ));
         }
-        Ok((source_payloads, delivered_payloads, filter))
+        Ok(ValidatedSubscriptionContract {
+            source_payloads,
+            delivered_payloads,
+            filter: filter.map(|(contract, _)| contract),
+        })
     }
 
     fn validate_subscription_arguments(
@@ -1136,11 +1170,14 @@ impl Lowerer {
         {
             self.facts.validate_subscription_expression_use(
                 *argument,
-                subscription,
-                CheckedSubscriptionExprRole::SourceArgument(index as u32),
-                Some(expected),
-                &self.declarations,
-                span,
+                SubscriptionExpressionContract {
+                    subscription,
+                    role: CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                    expected: Some(expected),
+                    declarations: &self.declarations,
+                    document: &self.document,
+                    span,
+                },
             )?;
         }
         Ok(())
@@ -1186,8 +1223,12 @@ impl Lowerer {
                 .iter()
                 .map(|(_, ty)| self.resolve_type(ty, span))
                 .collect::<Result<Vec<_>, _>>()?,
-            output: declaration.output.clone(),
-            error: declaration.error.clone(),
+            output: self.resolve_type(&declaration.output, span)?,
+            error: declaration
+                .error
+                .as_ref()
+                .map(|error| self.resolve_type(error, span))
+                .transpose()?,
         })
     }
 

@@ -221,6 +221,7 @@ pub(crate) struct DeclarationIndex {
     enum_variants_by_owner: HashMap<EnumId, HashMap<String, EnumVariantId>>,
     palettes: Vec<Declaration<PaletteId>>,
     palette_names: Vec<String>,
+    palette_contracts: Vec<String>,
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
@@ -434,6 +435,11 @@ impl DeclarationIndex {
             .iter()
             .map(|palette| palette.name.clone())
             .collect();
+        let palette_contracts = document
+            .palettes
+            .iter()
+            .map(|palette| palette.contract.clone())
+            .collect();
 
         let externs = document
             .functions
@@ -536,6 +542,7 @@ impl DeclarationIndex {
             enum_variants_by_owner,
             palettes,
             palette_names,
+            palette_contracts,
             palettes_by_name,
             externs,
             externs_by_name,
@@ -732,6 +739,13 @@ impl DeclarationIndex {
 
     pub(crate) fn palette_name(&self, id: PaletteId) -> Option<&str> {
         self.palette_names.get(id.0 as usize).map(String::as_str)
+    }
+
+    pub(crate) fn palette_type(&self, id: PaletteId) -> Option<Type> {
+        self.palette_contracts
+            .get(id.0 as usize)
+            .cloned()
+            .map(Type::Palette)
     }
 
     pub(crate) fn extern_fn(&self, index: usize) -> Declaration<ExternFnId> {

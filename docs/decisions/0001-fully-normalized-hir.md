@@ -170,12 +170,16 @@ subscription has a stable `SubscriptionId`; extern-backed sources and filters
 carry `ExternFnId`s; condition, context, worker arguments, and event identity
 carry retained typed expression-use IDs; native and extern source payloads are
 fixed before filtering; post-filter/context payloads are recorded separately;
-and the route carries a stable `HandlerId` plus ordered payload indices. The
-Rust subscription emitter iterates this representation and no longer reads raw
-subscription sources, expressions, filters, or routes, nor invokes checker
-lookups. Post-check source and route mutations therefore cannot change emitted
-behavior. Imported source markers keep the subscription origin. A 500-to-4,000
-contract verifies exact linear expression growth, one shared app scope, zero
+and the route carries a stable `HandlerId` plus ordered payload indices.
+Lowering validates the complete retained expression graph and every source,
+filter, payload, window-ID, and route contract, rejects raw topology changes,
+and publishes private `ResolvedSubscription`, `ResolvedSubscriptionSource`,
+and `ResolvedSubscriptionRoute` records. The Rust subscription emitter
+iterates only those records and performs no checked-fact, declaration, raw
+subscription, or semantic lookup. Imported lowering diagnostics and source
+markers keep the subscription origin. A 500-to-4,000 contract measures the
+complete analyze, lower, and codegen path while verifying exact generated
+subscription counts, linear expression growth, one shared app scope, zero
 full-scope clones, and a bounded debug-build wall time.
 
 Initializer typing and fact lowering are linear in the expression tree. The
