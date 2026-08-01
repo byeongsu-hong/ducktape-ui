@@ -2,8 +2,11 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ContextualBuiltin {
+    Aborted,
     AnimationInterpolate,
     AnimationProject,
+    DebugActive,
+    LinearAddStops,
     MouseClick,
     Some,
     Ok,
@@ -28,8 +31,11 @@ pub(crate) enum BuiltinArgumentContext {
 impl ContextualBuiltin {
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
+            "aborted" => Some(Self::Aborted),
             "animation.interpolate" => Some(Self::AnimationInterpolate),
             "animation.project" => Some(Self::AnimationProject),
+            "debug.active" => Some(Self::DebugActive),
+            "linear.add_stops" => Some(Self::LinearAddStops),
             "mouse.click" => Some(Self::MouseClick),
             "some" => Some(Self::Some),
             "ok" => Some(Self::Ok),
@@ -45,6 +51,12 @@ impl ContextualBuiltin {
     ) -> Result<Vec<BuiltinArgumentContext>, &'static str> {
         let value = |expected| BuiltinArgumentContext::Value { expected };
         Ok(match self {
+            Self::Aborted => vec![value(Some(Type::Option(Box::new(Type::TaskHandle))))],
+            Self::DebugActive => vec![value(Some(Type::Option(Box::new(Type::DebugSpan))))],
+            Self::LinearAddStops => vec![
+                value(Some(Type::LinearGradient)),
+                value(Some(Type::List(Box::new(Type::ColorStop)))),
+            ],
             Self::Some => match output {
                 Type::Option(inner) => vec![value(Some(inner.as_ref().clone()))],
                 _ => return Err("some output is not optional"),

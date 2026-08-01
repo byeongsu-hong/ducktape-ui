@@ -435,17 +435,6 @@ fn expr_type_uncached(
                     )?;
                     Ok(Type::LinearGradient)
                 }
-                "linear.add_stops" => {
-                    check_builtin_args(
-                        name,
-                        args,
-                        &[Type::LinearGradient, Type::List(Box::new(Type::ColorStop))],
-                        env,
-                        document,
-                        span,
-                    )?;
-                    Ok(Type::LinearGradient)
-                }
                 "linear.scale_alpha" => {
                     check_f32_args(
                         name,
@@ -1082,17 +1071,6 @@ fn expr_type_uncached(
                         span,
                     )?;
                     Ok(Type::Size)
-                }
-                "debug.active" => {
-                    check_builtin_args(
-                        name,
-                        args,
-                        &[Type::Option(Box::new(Type::DebugSpan))],
-                        env,
-                        document,
-                        span,
-                    )?;
-                    Ok(Type::Bool)
                 }
                 "debug.time_with" => {
                     if args.len() != 2 {
@@ -2021,17 +1999,6 @@ fn expr_type_uncached(
                     }
                     Ok(Type::Image)
                 }
-                "aborted" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "aborted expects one argument"));
-                    }
-                    require_type(
-                        &expr_type(&args[0], env, document, span)?,
-                        &Type::Option(Box::new(Type::TaskHandle)),
-                        span,
-                    )?;
-                    Ok(Type::Bool)
-                }
                 _ => {
                     let function = extern_function(document, name, ExternKind::Sync, span)?;
                     check_call_args(function, args, env, document, span)?;
@@ -2265,6 +2232,39 @@ fn check_contextual_builtin(
     span: &Span,
 ) -> Result<Type, Error> {
     match builtin {
+        ContextualBuiltin::Aborted => {
+            if args.len() != 1 {
+                return Err(Error::new("E152", span, "aborted expects one argument"));
+            }
+            require_type(
+                &expr_type(&args[0], env, document, span)?,
+                &Type::Option(Box::new(Type::TaskHandle)),
+                span,
+            )?;
+            Ok(Type::Bool)
+        }
+        ContextualBuiltin::DebugActive => {
+            check_builtin_args(
+                "debug.active",
+                args,
+                &[Type::Option(Box::new(Type::DebugSpan))],
+                env,
+                document,
+                span,
+            )?;
+            Ok(Type::Bool)
+        }
+        ContextualBuiltin::LinearAddStops => {
+            check_builtin_args(
+                "linear.add_stops",
+                args,
+                &[Type::LinearGradient, Type::List(Box::new(Type::ColorStop))],
+                env,
+                document,
+                span,
+            )?;
+            Ok(Type::LinearGradient)
+        }
         ContextualBuiltin::Some | ContextualBuiltin::Ok | ContextualBuiltin::Err => {
             if args.len() != 1 {
                 return Err(Error::new(

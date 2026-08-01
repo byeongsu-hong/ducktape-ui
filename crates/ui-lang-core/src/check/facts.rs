@@ -1509,6 +1509,51 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
     }
 
     #[test]
+    fn fixed_builtin_signatures_contextualize_empty_list_and_none_arguments() {
+        let source = format!(
+            "app BuiltinContexts\n{THEME}derived\n  gradient = linear.add_stops(linear(0.0), [])\n  debug_is_active = debug.active(none)\n  task_was_aborted = aborted(none)\nview\n  text \"contexts\"\n"
+        );
+
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        let argument_types = |name: &str| {
+            let value = facts
+                .values()
+                .iter()
+                .find(|value| value.name == name)
+                .unwrap();
+            let root = facts.expression_use(value.initializer.unwrap()).root;
+            let CheckedExprKind::Call { arguments, .. } = &facts.expression(root).kind else {
+                panic!("{name} must be a checked builtin call");
+            };
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    CheckedCallArgument::Value(id) => facts.expression(*id).ty.clone(),
+                    CheckedCallArgument::Binding(_) => panic!("{name} has no binding argument"),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            argument_types("gradient"),
+            [Type::LinearGradient, Type::List(Box::new(Type::ColorStop))]
+        );
+        assert_eq!(
+            argument_types("debug_is_active"),
+            [Type::Option(Box::new(Type::DebugSpan))]
+        );
+        assert_eq!(
+            argument_types("task_was_aborted"),
+            [Type::Option(Box::new(Type::TaskHandle))]
+        );
+        assert_eq!(
+            facts.metrics().type_analysis_nodes,
+            facts.metrics().expressions
+        );
+    }
+
+    #[test]
     #[ignore = "explicit large checked-fact performance contract"]
     fn performance_contract_ten_thousand_fact_lookups_are_direct_arena_accesses() {
         const VALUES: usize = 10_000;
