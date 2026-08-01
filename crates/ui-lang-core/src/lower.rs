@@ -2217,11 +2217,13 @@ impl LoweredProgram {
                 "preset handler index diverged from its declaration partition",
             ));
         }
-        for (component, expected) in self.components.iter().zip(expected_components) {
-            if component.handlers != expected {
+        for (index, (component, expected)) in
+            self.components.iter().zip(expected_components).enumerate()
+        {
+            if component.id != ComponentId(index as u32) || component.handlers != expected {
                 return Err(self.invariant_at_origin(
                     component.origin,
-                    "component handler index diverged from its declaration partition",
+                    "component identity or handler index diverged from its declaration partition",
                 ));
             }
         }
@@ -5681,6 +5683,15 @@ view
         let error = crate::codegen::generate(&invalid_app_partition, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("app handler index"));
+
+        let component_source = format!(
+            "app ComponentPartition\n{THEME}component Surface()\n  on update\n  text \"Ready\"\nview\n  Surface\n"
+        );
+        let mut invalid_component = lower(analyze(&component_source).unwrap()).unwrap();
+        invalid_component.components[0].id = ComponentId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_component, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("component identity"));
     }
 
     #[test]
