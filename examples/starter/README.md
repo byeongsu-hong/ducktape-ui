@@ -11,8 +11,21 @@ cargo test -p ice-starter
 cargo ice check
 ```
 
-Copy the package when starting an application, then replace the workspace
-dependencies with released versions:
+To render the authored test and inspect its source-mapped native evidence:
+
+```bash
+ICE_TEST_ARTIFACT_DIR=target/starter-evidence \
+  cargo test -p ice-starter __ice_tests::starter_flow -- --exact --nocapture
+```
+
+The capture is written below
+`examples/starter/target/starter-evidence/starter_flow/` as `ready.png` and
+`ready.json`. The JSON includes the capture source, resolved theme, geometry,
+paint output, and accessibility snapshot used by the test.
+
+Copy the package when starting another application inside this repository and
+keep its workspace dependencies. After the first crates.io release, an external
+copy can replace those entries with the lockstep released versions:
 
 ```toml
 [dependencies]
@@ -22,6 +35,12 @@ ui-lang-runtime = "=0.1.0"
 [build-dependencies]
 ui-lang-build = "=0.1.0"
 ```
+
+Those registry coordinates are the release layout, not a claim that `0.1.0` is
+already published. `tests/downstream-app` remains the release gate: CI extracts
+the actual `.crate` archives and builds that fixture outside this workspace.
+The starter instead keeps the authored build/include/test path small enough to
+copy and read.
 
 The starter has no `ducktape-ui` or showcase dependency, and its Ice graph has
 no repository-relative import. Its local `theme.ice` import is compiled through
