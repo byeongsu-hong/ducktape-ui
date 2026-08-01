@@ -864,7 +864,7 @@ pub(in crate::codegen) fn generate_statements(
                 };
                 let task = match operation {
                     ResolvedWindowOperation::Open(index) => {
-                        let settings = index.map_or_else(
+                        let window_settings = index.map_or_else(
                             || "::std::default::Default::default()".into(),
                             |index| format!("Self::__window_{index}()"),
                         );
@@ -872,7 +872,7 @@ pub(in crate::codegen) fn generate_statements(
                         let message_code =
                             resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
-                            "{{ let (_, __task) = ::iced::window::open({settings}); __task.map(move |value| {message_code}) }}"
+                            "{{ let (_, __task) = ::iced::window::open({window_settings}); __task.map(move |value| {message_code}) }}"
                         )
                     }
                     ResolvedWindowOperation::Oldest | ResolvedWindowOperation::Latest => {

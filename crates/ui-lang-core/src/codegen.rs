@@ -778,7 +778,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_boot(&mut out, program, &message)?;
     generate_presets(&mut out, program, &message)?;
     generate_update(&mut out, program, &message)?;
-    generate_subscription(&mut out, program, &message)?;
+    generate_subscription(
+        &mut out,
+        document,
+        app_settings,
+        has_animations(program),
+        &message,
+    )?;
     generate_view(&mut out, program, &message)?;
     generate_test_mounts(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
