@@ -319,6 +319,17 @@ widget style blocks and other view/canvas color fields remain in the later
 expression/view HIR slice; their presence is not counted as a completed
 AST-free style migration.
 
+Initializer HIR coverage includes app state, derived values, component
+defaults, and component state, with explicit list/combo, string/content, and
+animation coercions plus all animation options and custom easing IDs. Invalid
+initializer fixtures stop before lowering; HIR snapshots cover normalized
+owners, expression uses, coercions, options, and origins; generated-Rust tests
+exercise the checked emitter and prove that post-check AST mutation cannot
+change output. Imported struct/field, enum/variant, and extern declaration tests
+verify physical paths and parent origins. Metrics assert one checker analysis
+per initializer, direct arena lookup, zero full environment clones, and exact
+linear growth from 500 to 4,000 repeated `animation.project` scopes.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

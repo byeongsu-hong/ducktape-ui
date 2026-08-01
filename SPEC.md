@@ -205,6 +205,17 @@ migration, so this slice does not claim that all style-related AST has gone.
 Each later slice must remove its prior backend path when it adds normalized
 nodes.
 
+The initializer expression slice is normalized as well. One authoritative
+checker analysis supplies the typed fact arena for app state, derived values,
+component defaults, and component state. Lowering preserves explicit
+initializer coercions and resolves animation options and custom easing to
+semantic IDs; Rust emission consumes only those checked records. Semantic
+struct, field, enum, variant, and extern declarations retain physical imported
+origins and parent links, so initializer facts never recover declarations from
+raw `Document` positions. Scoped binding expressions borrow layered
+environments and do not clone the complete surrounding scope. Call-site
+component arguments and view/canvas expressions remain in later slices.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
