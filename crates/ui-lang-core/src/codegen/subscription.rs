@@ -1,235 +1,8 @@
 use super::*;
 use crate::lower::{
-    CheckedExprUseId, CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
-    ExternRef,
+    CheckedExprUseId, ResolvedSubscription, ResolvedSubscriptionRoute, ResolvedSubscriptionSource,
+    ResolvedType,
 };
-
-fn checked_subscription_extern<'a>(
-    program: &'a LoweredProgram,
-    reference: &ExternRef,
-    kind: ExternKind,
-    span: &Span,
-) -> Result<&'a crate::hir::ExternDeclaration, Error> {
-    let declaration = program
-        .declarations()
-        .checked_extern_decl(reference.id, span)?;
-    if declaration.name != reference.name || declaration.kind != kind {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription extern reference has a mismatched declaration contract",
-        ));
-    }
-    Ok(declaration)
-}
-
-fn checked_subscription_expression_type(
-    program: &LoweredProgram,
-    id: CheckedExprUseId,
-    span: &Span,
-) -> Result<Type, Error> {
-    let facts = program.checked_facts();
-    facts.validate_expression_use(id, program.declarations(), span)?;
-    Ok(facts.checked_expression_use(id, span)?.destination.clone())
-}
-
-fn validate_subscription_arguments(
-    program: &LoweredProgram,
-    arguments: &[CheckedExprUseId],
-    function: &crate::hir::ExternDeclaration,
-    span: &Span,
-) -> Result<(), Error> {
-    if arguments.len() != function.params.len() {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription extern arguments have a mismatched arity",
-        ));
-    }
-    for (argument, (_, expected)) in arguments.iter().zip(&function.params) {
-        if checked_subscription_expression_type(program, *argument, span)? != *expected {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription extern argument has a mismatched parameter type",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn extern_payload(function: &crate::hir::ExternDeclaration) -> Type {
-    function.error.as_ref().map_or_else(
-        || function.output.clone(),
-        |error| Type::Result(Box::new(function.output.clone()), Box::new(error.clone())),
-    )
-}
-
-fn validate_subscription_contract(
-    program: &LoweredProgram,
-    subscription: &CheckedSubscription,
-) -> Result<(), Error> {
-    let span = &subscription.span;
-    match &subscription.source {
-        CheckedSubscriptionSource::Repeat { function, .. } => {
-            let function =
-                checked_subscription_extern(program, function, ExternKind::Future, span)?;
-            validate_subscription_arguments(program, &[], function, span)?;
-            if subscription.source_payloads != [extern_payload(function)] {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked repeat subscription has a mismatched output contract",
-                ));
-            }
-        }
-        CheckedSubscriptionSource::Run {
-            function,
-            arguments,
-        } => {
-            let function =
-                checked_subscription_extern(program, function, ExternKind::Stream, span)?;
-            validate_subscription_arguments(program, arguments, function, span)?;
-            if subscription.source_payloads != [extern_payload(function)] {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked run subscription has a mismatched output contract",
-                ));
-            }
-        }
-        CheckedSubscriptionSource::Recipe {
-            function,
-            arguments,
-        } => {
-            let function =
-                checked_subscription_extern(program, function, ExternKind::Recipe, span)?;
-            validate_subscription_arguments(program, arguments, function, span)?;
-            if subscription.source_payloads != [function.output.clone()] {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked recipe subscription has a mismatched output contract",
-                ));
-            }
-        }
-        CheckedSubscriptionSource::Events { identity, filter } => {
-            checked_subscription_expression_type(program, *identity, span)?;
-            let function =
-                checked_subscription_extern(program, filter, ExternKind::EventFilter, span)?;
-            validate_subscription_arguments(program, &[], function, span)?;
-            if subscription.source_payloads != [function.output.clone()] {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked event-filter subscription has a mismatched output contract",
-                ));
-            }
-        }
-        CheckedSubscriptionSource::Extern {
-            function,
-            arguments,
-        } => {
-            let function =
-                checked_subscription_extern(program, function, ExternKind::Subscription, span)?;
-            validate_subscription_arguments(program, arguments, function, span)?;
-            if subscription.source_payloads != [function.output.clone()] {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked custom subscription has a mismatched output contract",
-                ));
-            }
-        }
-        _ => {}
-    }
-
-    if let Some(condition) = subscription.condition
-        && checked_subscription_expression_type(program, condition, span)? != Type::Bool
-    {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription condition has a non-boolean type",
-        ));
-    }
-
-    let mut delivered = if let Some(reference) = &subscription.filter {
-        let function = checked_subscription_extern(program, reference, ExternKind::Sync, span)?;
-        if function
-            .params
-            .iter()
-            .map(|(_, ty)| ty)
-            .ne(&subscription.source_payloads)
-        {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription filter has mismatched parameter types",
-            ));
-        }
-        let Type::Option(output) = &function.output else {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription filter has a non-optional output",
-            ));
-        };
-        vec![(**output).clone()]
-    } else {
-        subscription.source_payloads.clone()
-    };
-    if let Some(context) = subscription.context {
-        delivered.insert(
-            0,
-            checked_subscription_expression_type(program, context, span)?,
-        );
-    }
-    if delivered != subscription.delivered_payloads {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription transforms have a mismatched delivered payload contract",
-        ));
-    }
-
-    let handler = program
-        .declarations()
-        .checked_handler(subscription.route.handler, span)?;
-    if handler.name != subscription.route.handler_name {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription route has a mismatched handler identity",
-        ));
-    }
-    let route_payloads = subscription
-        .route
-        .payloads
-        .iter()
-        .map(|index| {
-            subscription
-                .delivered_payloads
-                .get(*index as usize)
-                .cloned()
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        span,
-                        "checked subscription route references an invalid payload index",
-                    )
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if route_payloads != handler.payloads {
-        return Err(Error::new(
-            "E196",
-            span,
-            "checked subscription route has a mismatched handler payload contract",
-        ));
-    }
-    Ok(())
-}
 
 pub(in crate::codegen) fn identified_window_filter(filter: &str, arity: usize) -> String {
     match arity {
@@ -270,19 +43,17 @@ pub(in crate::codegen) fn generate_subscription(
         .unwrap();
     }
     for subscription in program.subscriptions() {
-        validate_subscription_contract(program, subscription)?;
-        writeln!(out, "{}", source_marker(&subscription.span)).unwrap();
+        writeln!(
+            out,
+            "{}",
+            source_marker_for_origin(program, subscription.origin)
+        )
+        .unwrap();
         let source_arity = subscription.source_payloads.len();
         let filter = subscription
             .filter
             .as_ref()
             .map(|filter| {
-                let function = checked_subscription_extern(
-                    program,
-                    filter,
-                    ExternKind::Sync,
-                    &subscription.span,
-                )?;
                 let args = match source_arity {
                     0 => String::new(),
                     1 => "__value".into(),
@@ -294,7 +65,7 @@ pub(in crate::codegen) fn generate_subscription(
                 Ok(format!(
                     ".filter_map(|{}| {}({args}))",
                     if source_arity == 0 { "_" } else { "__value" },
-                    function.rust_path
+                    filter.rust_path
                 ))
             })
             .transpose()?
@@ -344,7 +115,7 @@ pub(in crate::codegen) fn generate_subscription(
                 "subscription transform payload shape disagrees with checked HIR",
             ));
         }
-        let route = checked_subscription_route_code(program, subscription, &payloads, message)?;
+        let route = checked_subscription_route_code(subscription, &payloads, message)?;
         let transforms = format!("{filter}{context}");
         let condition = subscription
             .condition
@@ -362,36 +133,24 @@ pub(in crate::codegen) fn generate_subscription(
             write!(out, "if {condition} {{ ::iced::Subscription::batch([").unwrap();
         }
         match &subscription.source {
-            CheckedSubscriptionSource::Every { milliseconds } => {
+            ResolvedSubscriptionSource::Every { milliseconds } => {
                 writeln!(out, "::iced::time::every(::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Repeat {
+            ResolvedSubscriptionSource::Repeat {
                 function,
                 milliseconds,
             } => {
-                let source = checked_subscription_extern(
-                    program,
-                    function,
-                    ExternKind::Future,
-                    &subscription.span,
-                )?;
-                writeln!(out, "::iced::time::repeat({}, ::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
+                writeln!(out, "::iced::time::repeat({}, ::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
             }
-            CheckedSubscriptionSource::Run {
+            ResolvedSubscriptionSource::Run {
                 function,
                 arguments,
             } => {
-                let source = checked_subscription_extern(
-                    program,
-                    function,
-                    ExternKind::Stream,
-                    &subscription.span,
-                )?;
                 if arguments.is_empty() {
                     writeln!(
                         out,
                         "::iced::Subscription::run({}){transforms}.map(move |__value| {route}),",
-                        source.rust_path
+                        function.rust_path
                     )
                     .unwrap();
                 } else {
@@ -407,10 +166,10 @@ pub(in crate::codegen) fn generate_subscription(
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let types = source
+                    let types = function
                         .params
                         .iter()
-                        .map(|(_, ty)| program.declarations().rust_type(ty, &subscription.span))
+                        .map(|ty| resolved_type_code(program, ty, &subscription.span))
                         .collect::<Result<Vec<_>, _>>()?;
                     let (data, data_type, builder_args) = if arguments.len() == 1 {
                         (data[0].clone(), types[0].clone(), "__data.clone()".into())
@@ -424,30 +183,18 @@ pub(in crate::codegen) fn generate_subscription(
                                 .join(", "),
                         )
                     };
-                    writeln!(out, "::iced::Subscription::run_with({data}, |__data: &{data_type}| {}({builder_args})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
+                    writeln!(out, "::iced::Subscription::run_with({data}, |__data: &{data_type}| {}({builder_args})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
                 }
             }
-            CheckedSubscriptionSource::Recipe {
+            ResolvedSubscriptionSource::Recipe {
                 function,
                 arguments,
             } => {
-                let source = checked_subscription_extern(
-                    program,
-                    function,
-                    ExternKind::Recipe,
-                    &subscription.span,
-                )?;
                 let args =
                     checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
-                writeln!(out, "::iced::advanced::subscription::from_recipe({}({args})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
+                writeln!(out, "::iced::advanced::subscription::from_recipe({}({args})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
             }
-            CheckedSubscriptionSource::Events { identity, filter } => {
-                let source = checked_subscription_extern(
-                    program,
-                    filter,
-                    ExternKind::EventFilter,
-                    &subscription.span,
-                )?;
+            ResolvedSubscriptionSource::Events { identity, filter } => {
                 let id = checked_expr_use_code_at(
                     program,
                     *identity,
@@ -455,10 +202,10 @@ pub(in crate::codegen) fn generate_subscription(
                     ValueMode::Owned,
                     &subscription.span,
                 )?;
-                let recipe = event_filter_type(&source.name);
+                let recipe = event_filter_type(&filter.name);
                 writeln!(out, "::iced::advanced::subscription::from_recipe({recipe} {{ id: {id} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Event { raw } => {
+            ResolvedSubscriptionSource::Event { raw } => {
                 let value = if subscription.window_id {
                     "::std::option::Option::Some((__id, __event))"
                 } else {
@@ -468,26 +215,20 @@ pub(in crate::codegen) fn generate_subscription(
                 let listen = if *raw { "listen_raw" } else { "listen_with" };
                 writeln!(out, "::iced::event::{listen}(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Extern {
+            ResolvedSubscriptionSource::Extern {
                 function,
                 arguments,
             } => {
-                let source = checked_subscription_extern(
-                    program,
-                    function,
-                    ExternKind::Subscription,
-                    &subscription.span,
-                )?;
                 let args =
                     checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
                 writeln!(
                     out,
                     "{}({args}){transforms}.map(move |__value| {route}),",
-                    source.rust_path
+                    function.rust_path
                 )
                 .unwrap();
             }
-            CheckedSubscriptionSource::InputMethod(event) => {
+            ResolvedSubscriptionSource::InputMethod(event) => {
                 let filter = match event {
                     InputMethodEvent::Opened => {
                         "matches!(__event, ::iced::Event::InputMethod(::iced::advanced::input_method::Event::Opened)).then_some(())"
@@ -505,7 +246,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Keyboard(event) => {
+            ResolvedSubscriptionSource::Keyboard(event) => {
                 let filter = match event {
                     KeyboardEvent::Press => {
                         "match __event { ::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat } => ::std::option::Option::Some(__IceKeyPress { key, modified_key, physical_key, location, modifiers, text: text.map(|value| value.to_string()), repeat }), _ => ::std::option::Option::None }"
@@ -523,7 +264,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(&filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Mouse(event) => {
+            ResolvedSubscriptionSource::Mouse(event) => {
                 let filter = match event {
                     MouseEvent::Entered => {
                         "matches!(__event, ::iced::Event::Mouse(::iced::mouse::Event::CursorEntered)).then_some(())"
@@ -547,10 +288,10 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::SystemTheme => {
+            ResolvedSubscriptionSource::SystemTheme => {
                 writeln!(out, "::iced::system::theme_changes().map(__ice_system_theme){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Touch(event) => {
+            ResolvedSubscriptionSource::Touch(event) => {
                 let variant = match event {
                     TouchEvent::Pressed => "FingerPressed",
                     TouchEvent::Moved => "FingerMoved",
@@ -563,7 +304,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(&filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            CheckedSubscriptionSource::Window(event) => {
+            ResolvedSubscriptionSource::Window(event) => {
                 if *event == WindowEvent::Frame {
                     writeln!(
                         out,
@@ -665,6 +406,52 @@ pub(in crate::codegen) fn generate_subscription(
     Ok(())
 }
 
+fn resolved_type_code(
+    program: &LoweredProgram,
+    ty: &ResolvedType,
+    span: &Span,
+) -> Result<String, Error> {
+    Ok(match ty {
+        ResolvedType::List(inner) => format!(
+            "::std::vec::Vec<{}>",
+            resolved_type_code(program, inner, span)?
+        ),
+        ResolvedType::Option(inner) => format!(
+            "::std::option::Option<{}>",
+            resolved_type_code(program, inner, span)?
+        ),
+        ResolvedType::Result(output, error) => format!(
+            "::std::result::Result<{}, {}>",
+            resolved_type_code(program, output, span)?,
+            resolved_type_code(program, error, span)?
+        ),
+        ResolvedType::Combo(inner) => format!(
+            "::iced::widget::combo_box::State<{}>",
+            resolved_type_code(program, inner, span)?
+        ),
+        ResolvedType::Animation(inner)
+            if matches!(inner.as_ref(), ResolvedType::Value(Type::F64)) =>
+        {
+            "::iced::Animation<f32>".into()
+        }
+        ResolvedType::Animation(inner) => format!(
+            "::iced::Animation<{}>",
+            resolved_type_code(program, inner, span)?
+        ),
+        ResolvedType::Named(id) => program
+            .named_type_rust_path(*id)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    span,
+                    "resolved subscription type references an invalid declaration ID",
+                )
+            })?,
+        ResolvedType::Value(ty) => ty.rust(&[]),
+    })
+}
+
 fn checked_subscription_arguments(
     program: &LoweredProgram,
     arguments: &[CheckedExprUseId],
@@ -679,20 +466,16 @@ fn checked_subscription_arguments(
 }
 
 fn checked_subscription_route_code(
-    program: &LoweredProgram,
-    subscription: &CheckedSubscription,
+    subscription: &ResolvedSubscription,
     payloads: &[String],
     message: &str,
 ) -> Result<String, Error> {
-    let CheckedSubscriptionRoute {
-        handler,
+    let ResolvedSubscriptionRoute {
+        handler_name,
         payloads: route_payloads,
         ..
     } = &subscription.route;
-    let handler = program
-        .declarations()
-        .checked_handler(*handler, &subscription.span)?;
-    let variant = handler_variant(&handler.name);
+    let variant = handler_variant(handler_name);
     if route_payloads.is_empty() {
         return Ok(format!("{message}::{variant}"));
     }

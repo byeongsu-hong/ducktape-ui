@@ -1,12 +1,14 @@
 use crate::ast::*;
-use crate::check::{CheckedComponentArgumentSource, CheckedFacts, CheckedValueRef};
-pub(crate) use crate::check::{
-    CheckedExprUseId, CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
+pub(crate) use crate::check::CheckedExprUseId;
+use crate::check::{
+    CheckedComponentArgumentSource, CheckedFacts, CheckedSubscription, CheckedSubscriptionExprRole,
+    CheckedSubscriptionSource, CheckedValueRef,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, ExternFnId, ExternRef, OriginArena, OriginId, PaletteId,
+    ComponentStateId, DeclarationIndex, ExternFnId, ExternRef, HandlerId, NamedTypeId, OriginArena,
+    OriginId, PaletteId, SubscriptionId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
@@ -82,6 +84,238 @@ pub(crate) struct DerivedContract {
     pub(crate) initializer: CheckedExprUseId,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedType {
+    Value(Type),
+    List(Box<ResolvedType>),
+    Option(Box<ResolvedType>),
+    Result(Box<ResolvedType>, Box<ResolvedType>),
+    Combo(Box<ResolvedType>),
+    Animation(Box<ResolvedType>),
+    Named(NamedTypeId),
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedExternContract {
+    pub(crate) id: ExternFnId,
+    pub(crate) name: String,
+    pub(crate) rust_path: String,
+    pub(crate) params: Vec<ResolvedType>,
+    pub(crate) output: Type,
+    pub(crate) error: Option<Type>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedSubscriptionSource {
+    Every {
+        milliseconds: u64,
+    },
+    Repeat {
+        function: ResolvedExternContract,
+        milliseconds: u64,
+    },
+    Run {
+        function: ResolvedExternContract,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    Recipe {
+        function: ResolvedExternContract,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    Events {
+        identity: CheckedExprUseId,
+        filter: ResolvedExternContract,
+    },
+    Event {
+        raw: bool,
+    },
+    Extern {
+        function: ResolvedExternContract,
+        arguments: Vec<CheckedExprUseId>,
+    },
+    InputMethod(InputMethodEvent),
+    Keyboard(KeyboardEvent),
+    Mouse(MouseEvent),
+    SystemTheme,
+    Touch(TouchEvent),
+    Window(WindowEvent),
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedSubscriptionRoute {
+    pub(crate) handler: HandlerId,
+    pub(crate) handler_name: String,
+    pub(crate) payloads: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedSubscription {
+    pub(crate) id: SubscriptionId,
+    pub(crate) source: ResolvedSubscriptionSource,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) delivered_payloads: Vec<Type>,
+    pub(crate) filter: Option<ResolvedExternContract>,
+    pub(crate) context: Option<CheckedExprUseId>,
+    pub(crate) condition: Option<CheckedExprUseId>,
+    pub(crate) window_id: bool,
+    pub(crate) status: Option<EventStatus>,
+    pub(crate) route: ResolvedSubscriptionRoute,
+    pub(crate) span: Span,
+    pub(crate) origin: OriginId,
+}
+
+fn subscription_source_matches(
+    checked: &CheckedSubscriptionSource,
+    raw: &SubscriptionSource,
+) -> bool {
+    match (checked, raw) {
+        (
+            CheckedSubscriptionSource::Every { milliseconds },
+            SubscriptionSource::Every {
+                milliseconds: raw_milliseconds,
+            },
+        ) => milliseconds == raw_milliseconds,
+        (
+            CheckedSubscriptionSource::Repeat {
+                function,
+                milliseconds,
+            },
+            SubscriptionSource::Repeat {
+                function: raw_function,
+                milliseconds: raw_milliseconds,
+            },
+        ) => function.name == *raw_function && milliseconds == raw_milliseconds,
+        (
+            CheckedSubscriptionSource::Run {
+                function,
+                arguments,
+            },
+            SubscriptionSource::Run {
+                function: raw_function,
+                args,
+            },
+        )
+        | (
+            CheckedSubscriptionSource::Recipe {
+                function,
+                arguments,
+            },
+            SubscriptionSource::Recipe {
+                function: raw_function,
+                args,
+            },
+        )
+        | (
+            CheckedSubscriptionSource::Extern {
+                function,
+                arguments,
+            },
+            SubscriptionSource::Extern {
+                function: raw_function,
+                args,
+            },
+        ) => function.name == *raw_function && arguments.len() == args.len(),
+        (
+            CheckedSubscriptionSource::Events { filter, .. },
+            SubscriptionSource::Events {
+                filter: raw_filter, ..
+            },
+        ) => filter.name == *raw_filter,
+        (
+            CheckedSubscriptionSource::Event { raw: checked_raw },
+            SubscriptionSource::Event { raw },
+        ) => checked_raw == raw,
+        (
+            CheckedSubscriptionSource::InputMethod(event),
+            SubscriptionSource::InputMethod(raw_event),
+        ) => event == raw_event,
+        (CheckedSubscriptionSource::Keyboard(event), SubscriptionSource::Keyboard(raw_event)) => {
+            event == raw_event
+        }
+        (CheckedSubscriptionSource::Mouse(event), SubscriptionSource::Mouse(raw_event)) => {
+            event == raw_event
+        }
+        (CheckedSubscriptionSource::SystemTheme, SubscriptionSource::SystemTheme) => true,
+        (CheckedSubscriptionSource::Touch(event), SubscriptionSource::Touch(raw_event)) => {
+            event == raw_event
+        }
+        (CheckedSubscriptionSource::Window(event), SubscriptionSource::Window(raw_event)) => {
+            event == raw_event
+        }
+        _ => false,
+    }
+}
+
+fn extern_subscription_payload(function: &crate::hir::ExternDeclaration) -> Type {
+    function.error.as_ref().map_or_else(
+        || function.output.clone(),
+        |error| Type::Result(Box::new(function.output.clone()), Box::new(error.clone())),
+    )
+}
+
+fn resolved_native_subscription_payloads(
+    source: &CheckedSubscriptionSource,
+    window_id: bool,
+) -> Option<Vec<Type>> {
+    let mut payloads = match source {
+        CheckedSubscriptionSource::Every { .. } => vec![Type::Instant],
+        CheckedSubscriptionSource::Event { .. } => vec![Type::Event],
+        CheckedSubscriptionSource::InputMethod(event) => match event {
+            InputMethodEvent::Opened | InputMethodEvent::Closed => Vec::new(),
+            InputMethodEvent::Preedit => vec![
+                Type::Str,
+                Type::Option(Box::new(Type::I64)),
+                Type::Option(Box::new(Type::I64)),
+            ],
+            InputMethodEvent::Commit => vec![Type::Str],
+        },
+        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Press) => vec![Type::KeyPress],
+        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Release) => vec![Type::KeyRelease],
+        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Modifiers) => vec![Type::KeyModifiers],
+        CheckedSubscriptionSource::Mouse(event) => match event {
+            MouseEvent::Entered | MouseEvent::Left => Vec::new(),
+            MouseEvent::Moved => vec![Type::F64, Type::F64],
+            MouseEvent::Pressed | MouseEvent::Released => vec![Type::MouseButton],
+            MouseEvent::Wheel => vec![Type::F64, Type::F64, Type::Bool],
+        },
+        CheckedSubscriptionSource::SystemTheme => vec![Type::Str],
+        CheckedSubscriptionSource::Touch(_) => {
+            vec![Type::TouchFinger, Type::F64, Type::F64]
+        }
+        CheckedSubscriptionSource::Window(event) => match event {
+            WindowEvent::Frame
+            | WindowEvent::Closed
+            | WindowEvent::CloseRequested
+            | WindowEvent::Focused
+            | WindowEvent::Unfocused
+            | WindowEvent::FilesHoveredLeft => Vec::new(),
+            WindowEvent::Opened => vec![
+                Type::Option(Box::new(Type::F64)),
+                Type::Option(Box::new(Type::F64)),
+                Type::F64,
+                Type::F64,
+            ],
+            WindowEvent::Moved | WindowEvent::Resized => vec![Type::F64, Type::F64],
+            WindowEvent::Rescaled => vec![Type::F64],
+            WindowEvent::FileHovered | WindowEvent::FileDropped => vec![Type::Str],
+        },
+        _ => return None,
+    };
+    if window_id {
+        if !matches!(
+            source,
+            CheckedSubscriptionSource::Event { .. } | CheckedSubscriptionSource::Window(_)
+        ) {
+            return None;
+        }
+        payloads.insert(0, Type::WindowId);
+    }
+    Some(payloads)
 }
 
 #[derive(Clone, Debug)]
@@ -275,6 +509,8 @@ pub(crate) struct LoweredProgram {
     daemon: bool,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
+    subscriptions: Vec<ResolvedSubscription>,
+    named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
     derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
@@ -298,8 +534,12 @@ impl LoweredProgram {
         &self.facts
     }
 
-    pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
-        self.facts.subscriptions()
+    pub(crate) fn subscriptions(&self) -> &[ResolvedSubscription] {
+        &self.subscriptions
+    }
+
+    pub(crate) fn named_type_rust_path(&self, id: NamedTypeId) -> Option<&str> {
+        self.named_type_rust_paths.get(&id).map(String::as_str)
     }
 
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
@@ -486,7 +726,15 @@ impl Lowerer {
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        if self.document.daemon != self.declarations.daemon() {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked program kind changed before HIR lowering",
+            ));
+        }
         self.lower_style_program()?;
+        let subscriptions = self.lower_subscriptions()?;
+        let named_type_rust_paths = self.declarations.named_type_rust_paths();
         let app_states = self.lower_app_states()?;
         let derived = self.lower_derived()?;
         self.index_components()?;
@@ -516,12 +764,14 @@ impl Lowerer {
                 "style lowering completed without a normalized theme program",
             )
         })?;
-        let daemon = self.document.daemon;
+        let daemon = self.declarations.daemon();
         Ok(LoweredProgram {
             document: self.document,
             daemon,
             facts: self.facts,
             declarations: self.declarations,
+            subscriptions,
+            named_type_rust_paths,
             app_states,
             derived,
             components: self.components,
@@ -530,6 +780,464 @@ impl Lowerer {
             styles,
             origins: self.origins,
         })
+    }
+
+    fn lower_subscriptions(&self) -> Result<Vec<ResolvedSubscription>, Error> {
+        if self.facts.subscriptions().len() != self.document.subscriptions.len()
+            || self.facts.subscriptions().len() != self.declarations.subscription_count()
+        {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked subscription topology changed before HIR lowering",
+            ));
+        }
+        self.facts
+            .subscriptions()
+            .iter()
+            .zip(&self.document.subscriptions)
+            .enumerate()
+            .map(|(index, (subscription, source))| {
+                self.lower_subscription(index, subscription, source)
+            })
+            .collect()
+    }
+
+    fn lower_subscription(
+        &self,
+        index: usize,
+        subscription: &CheckedSubscription,
+        raw: &Subscription,
+    ) -> Result<ResolvedSubscription, Error> {
+        let span = &subscription.span;
+        let declaration = self.declarations.try_subscription(index).ok_or_else(|| {
+            self.invariant_at(
+                &raw.span,
+                "checked subscription has no declaration identity",
+            )
+        })?;
+        if subscription.id != declaration.id
+            || subscription.origin != declaration.origin
+            || raw.span != subscription.span
+            || raw.window_id != subscription.window_id
+            || raw.status != subscription.status
+            || raw.condition.is_some() != subscription.condition.is_some()
+            || raw.context.is_some() != subscription.context.is_some()
+            || raw.filter.as_deref()
+                != subscription
+                    .filter
+                    .as_ref()
+                    .map(|filter| filter.name.as_str())
+            || raw.route.handler != subscription.route.handler_name
+            || raw.route.args.len() != subscription.route.payloads.len()
+            || raw
+                .route
+                .args
+                .iter()
+                .any(|argument| !matches!(argument, RouteArg::Payload))
+            || !subscription_source_matches(&subscription.source, &raw.source)
+        {
+            return Err(Error::new(
+                "E196",
+                &raw.span,
+                "checked subscription topology changed before HIR lowering",
+            ));
+        }
+        let (source_payloads, delivered_payloads, filter) =
+            self.validate_subscription_contract(subscription)?;
+        let source = match &subscription.source {
+            CheckedSubscriptionSource::Every { milliseconds } => {
+                ResolvedSubscriptionSource::Every {
+                    milliseconds: *milliseconds,
+                }
+            }
+            CheckedSubscriptionSource::Repeat {
+                function,
+                milliseconds,
+            } => ResolvedSubscriptionSource::Repeat {
+                function: self.resolve_subscription_extern(function, ExternKind::Future, span)?,
+                milliseconds: *milliseconds,
+            },
+            CheckedSubscriptionSource::Run {
+                function,
+                arguments,
+            } => ResolvedSubscriptionSource::Run {
+                function: self.resolve_subscription_extern(function, ExternKind::Stream, span)?,
+                arguments: arguments.clone(),
+            },
+            CheckedSubscriptionSource::Recipe {
+                function,
+                arguments,
+            } => ResolvedSubscriptionSource::Recipe {
+                function: self.resolve_subscription_extern(function, ExternKind::Recipe, span)?,
+                arguments: arguments.clone(),
+            },
+            CheckedSubscriptionSource::Events { identity, filter } => {
+                ResolvedSubscriptionSource::Events {
+                    identity: *identity,
+                    filter: self.resolve_subscription_extern(
+                        filter,
+                        ExternKind::EventFilter,
+                        span,
+                    )?,
+                }
+            }
+            CheckedSubscriptionSource::Event { raw } => {
+                ResolvedSubscriptionSource::Event { raw: *raw }
+            }
+            CheckedSubscriptionSource::Extern {
+                function,
+                arguments,
+            } => ResolvedSubscriptionSource::Extern {
+                function: self.resolve_subscription_extern(
+                    function,
+                    ExternKind::Subscription,
+                    span,
+                )?,
+                arguments: arguments.clone(),
+            },
+            CheckedSubscriptionSource::InputMethod(event) => {
+                ResolvedSubscriptionSource::InputMethod(*event)
+            }
+            CheckedSubscriptionSource::Keyboard(event) => {
+                ResolvedSubscriptionSource::Keyboard(*event)
+            }
+            CheckedSubscriptionSource::Mouse(event) => ResolvedSubscriptionSource::Mouse(*event),
+            CheckedSubscriptionSource::SystemTheme => ResolvedSubscriptionSource::SystemTheme,
+            CheckedSubscriptionSource::Touch(event) => ResolvedSubscriptionSource::Touch(*event),
+            CheckedSubscriptionSource::Window(event) => ResolvedSubscriptionSource::Window(*event),
+        };
+        let handler = self
+            .declarations
+            .checked_handler(subscription.route.handler, span)?;
+        if handler.name != subscription.route.handler_name {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription route has a mismatched handler identity",
+            ));
+        }
+        Ok(ResolvedSubscription {
+            id: subscription.id,
+            source,
+            source_payloads,
+            delivered_payloads,
+            filter,
+            context: subscription.context,
+            condition: subscription.condition,
+            window_id: subscription.window_id,
+            status: subscription.status,
+            route: ResolvedSubscriptionRoute {
+                handler: subscription.route.handler,
+                handler_name: handler.name.clone(),
+                payloads: subscription.route.payloads.clone(),
+            },
+            span: subscription.span.clone(),
+            origin: subscription.origin,
+        })
+    }
+
+    fn validate_subscription_contract(
+        &self,
+        subscription: &CheckedSubscription,
+    ) -> Result<(Vec<Type>, Vec<Type>, Option<ResolvedExternContract>), Error> {
+        let span = &subscription.span;
+        if let Some(condition) = subscription.condition {
+            self.facts.validate_subscription_expression_use(
+                condition,
+                subscription.id,
+                CheckedSubscriptionExprRole::Condition,
+                Some(&Type::Bool),
+                &self.declarations,
+                span,
+            )?;
+        }
+        let source_payloads = match &subscription.source {
+            CheckedSubscriptionSource::Repeat { function, .. } => {
+                let function =
+                    self.checked_subscription_extern(function, ExternKind::Future, span)?;
+                if !function.params.is_empty() {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked repeat subscription has a mismatched arity",
+                    ));
+                }
+                vec![extern_subscription_payload(function)]
+            }
+            CheckedSubscriptionSource::Run {
+                function,
+                arguments,
+            } => {
+                let function =
+                    self.checked_subscription_extern(function, ExternKind::Stream, span)?;
+                self.validate_subscription_arguments(subscription.id, arguments, function, span)?;
+                vec![extern_subscription_payload(function)]
+            }
+            CheckedSubscriptionSource::Recipe {
+                function,
+                arguments,
+            } => {
+                let function =
+                    self.checked_subscription_extern(function, ExternKind::Recipe, span)?;
+                self.validate_subscription_arguments(subscription.id, arguments, function, span)?;
+                vec![function.output.clone()]
+            }
+            CheckedSubscriptionSource::Events { identity, filter } => {
+                self.facts.validate_subscription_expression_use(
+                    *identity,
+                    subscription.id,
+                    CheckedSubscriptionExprRole::EventIdentity,
+                    None,
+                    &self.declarations,
+                    span,
+                )?;
+                let function =
+                    self.checked_subscription_extern(filter, ExternKind::EventFilter, span)?;
+                if !function.params.is_empty() {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked event-filter subscription has a mismatched arity",
+                    ));
+                }
+                vec![function.output.clone()]
+            }
+            CheckedSubscriptionSource::Extern {
+                function,
+                arguments,
+            } => {
+                let function =
+                    self.checked_subscription_extern(function, ExternKind::Subscription, span)?;
+                self.validate_subscription_arguments(subscription.id, arguments, function, span)?;
+                vec![function.output.clone()]
+            }
+            source => resolved_native_subscription_payloads(source, subscription.window_id)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        span,
+                        "checked subscription source has no intrinsic payload contract",
+                    )
+                })?,
+        };
+        if source_payloads != subscription.source_payloads {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription source has a mismatched payload contract",
+            ));
+        }
+
+        let filter = subscription
+            .filter
+            .as_ref()
+            .map(|reference| {
+                let function =
+                    self.checked_subscription_extern(reference, ExternKind::Sync, span)?;
+                if function
+                    .params
+                    .iter()
+                    .map(|(_, ty)| ty)
+                    .ne(&source_payloads)
+                {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked subscription filter has mismatched parameter types",
+                    ));
+                }
+                if !matches!(function.output, Type::Option(_)) {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "checked subscription filter has a non-optional output",
+                    ));
+                }
+                self.resolve_subscription_extern(reference, ExternKind::Sync, span)
+            })
+            .transpose()?;
+        let mut delivered_payloads = if let Some(filter) = &filter {
+            let Type::Option(output) = &filter.output else {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "resolved subscription filter lost its optional output contract",
+                ));
+            };
+            vec![(**output).clone()]
+        } else {
+            source_payloads.clone()
+        };
+        if let Some(context) = subscription.context {
+            delivered_payloads.insert(
+                0,
+                self.facts.validate_subscription_expression_use(
+                    context,
+                    subscription.id,
+                    CheckedSubscriptionExprRole::Context,
+                    None,
+                    &self.declarations,
+                    span,
+                )?,
+            );
+        }
+        if delivered_payloads != subscription.delivered_payloads {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription transforms have a mismatched delivered payload contract",
+            ));
+        }
+        let handler = self
+            .declarations
+            .checked_handler(subscription.route.handler, span)?;
+        let routed = subscription
+            .route
+            .payloads
+            .iter()
+            .map(|index| {
+                delivered_payloads
+                    .get(*index as usize)
+                    .cloned()
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E196",
+                            span,
+                            "checked subscription route references an invalid payload index",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if handler.name != subscription.route.handler_name || routed != handler.payloads {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription route has a mismatched handler contract",
+            ));
+        }
+        Ok((source_payloads, delivered_payloads, filter))
+    }
+
+    fn validate_subscription_arguments(
+        &self,
+        subscription: SubscriptionId,
+        arguments: &[CheckedExprUseId],
+        function: &crate::hir::ExternDeclaration,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if arguments.len() != function.params.len() {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription extern arguments have a mismatched arity",
+            ));
+        }
+        for (index, (argument, (_, expected))) in arguments.iter().zip(&function.params).enumerate()
+        {
+            self.facts.validate_subscription_expression_use(
+                *argument,
+                subscription,
+                CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                Some(expected),
+                &self.declarations,
+                span,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn checked_subscription_extern(
+        &self,
+        reference: &ExternRef,
+        kind: ExternKind,
+        span: &Span,
+    ) -> Result<&crate::hir::ExternDeclaration, Error> {
+        let declaration = self.declarations.checked_extern_decl(reference.id, span)?;
+        if declaration.name != reference.name || declaration.kind != kind {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription extern reference has a mismatched declaration contract",
+            ));
+        }
+        Ok(declaration)
+    }
+
+    fn resolve_subscription_extern(
+        &self,
+        reference: &ExternRef,
+        kind: ExternKind,
+        span: &Span,
+    ) -> Result<ResolvedExternContract, Error> {
+        let declaration = self.declarations.checked_extern_decl(reference.id, span)?;
+        if declaration.name != reference.name || declaration.kind != kind {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription extern reference has a mismatched declaration contract",
+            ));
+        }
+        Ok(ResolvedExternContract {
+            id: declaration.declaration.id,
+            name: declaration.name.clone(),
+            rust_path: declaration.rust_path.clone(),
+            params: declaration
+                .params
+                .iter()
+                .map(|(_, ty)| self.resolve_type(ty, span))
+                .collect::<Result<Vec<_>, _>>()?,
+            output: declaration.output.clone(),
+            error: declaration.error.clone(),
+        })
+    }
+
+    fn resolve_type(&self, ty: &Type, span: &Span) -> Result<ResolvedType, Error> {
+        Ok(match ty {
+            Type::List(inner) => ResolvedType::List(Box::new(self.resolve_type(inner, span)?)),
+            Type::Option(inner) => ResolvedType::Option(Box::new(self.resolve_type(inner, span)?)),
+            Type::Result(output, error) => ResolvedType::Result(
+                Box::new(self.resolve_type(output, span)?),
+                Box::new(self.resolve_type(error, span)?),
+            ),
+            Type::Combo(inner) => ResolvedType::Combo(Box::new(self.resolve_type(inner, span)?)),
+            Type::Animation(inner) => {
+                ResolvedType::Animation(Box::new(self.resolve_type(inner, span)?))
+            }
+            Type::Named(name) => {
+                ResolvedType::Named(self.declarations.named_type_id(name).ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        span,
+                        format!("checked type references unknown declaration `{name}`"),
+                    )
+                })?)
+            }
+            Type::Unknown => {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "checked subscription type remained unknown",
+                ));
+            }
+            ty => ResolvedType::Value(ty.clone()),
+        })
+    }
+
+    fn invariant_at(&self, span: &Span, message: impl Into<String>) -> Error {
+        let message = message.into();
+        if let Some((path, line)) = self.origins.source_origin(span.line) {
+            Error::new(
+                "E196",
+                &Span {
+                    line,
+                    column: span.column,
+                },
+                message,
+            )
+            .at_path(path.display().to_string())
+        } else {
+            Error::new("E196", span, message)
+        }
     }
 
     fn lower_app_states(&self) -> Result<Vec<AppStateContract>, Error> {

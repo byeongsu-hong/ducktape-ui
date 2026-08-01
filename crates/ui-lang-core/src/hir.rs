@@ -25,6 +25,12 @@ arena_id!(ComponentCallId);
 arena_id!(HandlerId);
 arena_id!(SubscriptionId);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum NamedTypeId {
+    Struct(StructId),
+    Enum(EnumId),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExternRef {
     pub(crate) id: ExternFnId,
@@ -202,6 +208,7 @@ struct SourceSite {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeclarationIndex {
+    daemon: bool,
     app_states: Vec<Declaration<AppStateId>>,
     derived: Vec<Declaration<DerivedId>>,
     components: Vec<ComponentDeclarations>,
@@ -516,6 +523,7 @@ impl DeclarationIndex {
         }
 
         Self {
+            daemon: document.daemon,
             app_states,
             derived,
             components,
@@ -544,6 +552,36 @@ impl DeclarationIndex {
 
     pub(crate) fn app_state(&self, index: usize) -> Declaration<AppStateId> {
         self.app_states[index]
+    }
+
+    pub(crate) fn daemon(&self) -> bool {
+        self.daemon
+    }
+
+    pub(crate) fn named_type_id(&self, name: &str) -> Option<NamedTypeId> {
+        self.structs_by_name
+            .get(name)
+            .copied()
+            .map(NamedTypeId::Struct)
+            .or_else(|| self.enums_by_name.get(name).copied().map(NamedTypeId::Enum))
+    }
+
+    pub(crate) fn named_type_rust_paths(&self) -> HashMap<NamedTypeId, String> {
+        self.structs
+            .iter()
+            .map(|item| {
+                (
+                    NamedTypeId::Struct(item.declaration.id),
+                    item.rust_path.clone(),
+                )
+            })
+            .chain(self.enums.iter().map(|item| {
+                (
+                    NamedTypeId::Enum(item.declaration.id),
+                    item.rust_name.clone(),
+                )
+            }))
+            .collect()
     }
 
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
@@ -631,49 +669,6 @@ impl DeclarationIndex {
             .get(id.owner.0 as usize)?
             .fields
             .get(id.index as usize)
-    }
-
-    pub(crate) fn rust_type(&self, ty: &Type, span: &Span) -> Result<String, crate::Error> {
-        Ok(match ty {
-            Type::List(inner) => format!("::std::vec::Vec<{}>", self.rust_type(inner, span)?),
-            Type::Option(inner) => {
-                format!("::std::option::Option<{}>", self.rust_type(inner, span)?)
-            }
-            Type::Result(output, error) => format!(
-                "::std::result::Result<{}, {}>",
-                self.rust_type(output, span)?,
-                self.rust_type(error, span)?
-            ),
-            Type::Combo(inner) => format!(
-                "::iced::widget::combo_box::State<{}>",
-                self.rust_type(inner, span)?
-            ),
-            Type::Animation(inner) if **inner == Type::F64 => "::iced::Animation<f32>".into(),
-            Type::Animation(inner) => {
-                format!("::iced::Animation<{}>", self.rust_type(inner, span)?)
-            }
-            Type::Named(name) => {
-                if let Some(item) = self.struct_decl_by_name(name) {
-                    item.rust_path.clone()
-                } else if let Some(item) = self.enum_decl_by_name(name) {
-                    item.rust_name.clone()
-                } else {
-                    return Err(crate::Error::new(
-                        "E196",
-                        span,
-                        format!("checked type references unknown named declaration `{name}`"),
-                    ));
-                }
-            }
-            Type::Unknown => {
-                return Err(crate::Error::new(
-                    "E196",
-                    span,
-                    "checked type remained unknown at code generation",
-                ));
-            }
-            ty => ty.rust(&[]),
-        })
     }
 
     pub(crate) fn struct_field(
@@ -794,6 +789,14 @@ impl DeclarationIndex {
 
     pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
         self.subscriptions[index]
+    }
+
+    pub(crate) fn try_subscription(&self, index: usize) -> Option<Declaration<SubscriptionId>> {
+        self.subscriptions.get(index).copied()
+    }
+
+    pub(crate) fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
     }
 
     pub(crate) fn finalize_checked_handlers(

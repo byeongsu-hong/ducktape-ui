@@ -25,6 +25,21 @@ fn source_marker(span: &Span) -> String {
     format!("{SOURCE_MARKER}{} {}", span.line, span.column)
 }
 
+fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
+    let origin = program.origin(origin);
+    origin.path.as_ref().map_or_else(
+        || format!("{SOURCE_MARKER}{} {}", origin.line, origin.column),
+        |path| {
+            format!(
+                "{SOURCE_MARKER}{} {} {}",
+                origin.line,
+                origin.column,
+                encode_source_path(&path.display().to_string())
+            )
+        },
+    )
+}
+
 fn source_mapped_expression(
     code: String,
     span: &Span,
