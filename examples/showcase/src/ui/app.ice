@@ -69,7 +69,8 @@ view
                 title="Virtual list"
                 description="A typed Rust boundary mounts only visible fixed-height keyed rows; Ice owns the state and event route."
                 count=100000
-              extern virtual_list(virtual_list) #virtual-list -> virtual_list_changed _
+              box w=fill h=252.0
+                extern virtual_list(virtual_list) #virtual-list -> virtual_list_changed _
 
             Catalog #catalog-grid email<->email project_slug<->project_slug textarea_notes<->textarea_notes catalog_query<->catalog_query
               with

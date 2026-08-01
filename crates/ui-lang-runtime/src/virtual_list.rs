@@ -7,41 +7,78 @@
 
 use crate::{StableId, accessible};
 use iced::advanced::text;
-use iced::advanced::widget::operation::Focusable;
+use iced::advanced::widget::operation::{self, Focusable};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::keyboard;
-use iced::widget::{container, keyed_column, scrollable, space};
-use iced::{Element, Event, Length, Rectangle, Size, Task, Vector};
-use std::collections::HashSet;
+use iced::widget::{column, container, keyed_column, scrollable, space};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static NEXT_VIRTUAL_LIST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
+
+/// Explicit identity for one retained virtual-list instance.
+///
+/// The logical name is exported to inspection tools. A process-unique
+/// namespace prevents two lists with the same logical name from aliasing
+/// native widget or accessibility identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VirtualListId {
+    logical: String,
+    namespace: u32,
+}
+
+impl VirtualListId {
+    pub fn new(logical: impl Into<String>) -> Self {
+        let namespace = NEXT_VIRTUAL_LIST_NAMESPACE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .expect("virtual-list identity namespace exhausted");
+        Self {
+            logical: logical.into(),
+            namespace,
+        }
+    }
+
+    pub fn logical(&self) -> &str {
+        &self.logical
+    }
+
+    fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
+        format!("__ice_virtual_list/{}/{suffix}", self.namespace).into()
+    }
+
+    fn semantic_id(&self, local: u32) -> StableId {
+        StableId::from_node_id(accesskit::NodeId(
+            (u64::from(self.namespace) << 32) | u64::from(local),
+        ))
+    }
+}
 
 /// Validated fixed-row geometry for a virtual list.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VirtualListConfig {
     row_height: f32,
-    viewport_height: f32,
     overscan: usize,
 }
 
 impl VirtualListConfig {
     /// Creates fixed-row geometry.
     ///
-    /// Row height must be finite and strictly positive. Viewport height must
-    /// be finite and non-negative.
-    pub fn new(row_height: f32, viewport_height: f32) -> Result<Self, VirtualListConfigError> {
+    /// Row height must be finite and strictly positive. The viewport is always
+    /// measured from native layout and is not caller-declared geometry.
+    pub fn new(row_height: f32) -> Result<Self, VirtualListConfigError> {
         if !row_height.is_finite() || row_height <= 0.0 {
             return Err(VirtualListConfigError::RowHeight);
         }
-        if !viewport_height.is_finite() || viewport_height < 0.0 {
-            return Err(VirtualListConfigError::ViewportHeight);
-        }
         Ok(Self {
             row_height,
-            viewport_height,
             overscan: 2,
         })
     }
@@ -57,38 +94,34 @@ impl VirtualListConfig {
         self.row_height
     }
 
-    pub const fn viewport_height(self) -> f32 {
-        self.viewport_height
-    }
-
     pub const fn overscan_rows(self) -> usize {
         self.overscan
     }
 
-    fn rows_per_page(self) -> usize {
-        (self.viewport_height / self.row_height).floor().max(1.0) as usize
+    fn rows_per_page(self, viewport_height: f32) -> usize {
+        (viewport_height / self.row_height).floor().max(1.0) as usize
     }
 
     fn total_height(self, item_count: usize) -> f32 {
         ((item_count as f64) * f64::from(self.row_height)).min(f64::from(f32::MAX)) as f32
     }
 
-    fn max_offset(self, item_count: usize) -> f32 {
-        (self.total_height(item_count) - self.viewport_height).max(0.0)
+    fn max_offset(self, item_count: usize, viewport_height: f32) -> f32 {
+        (self.total_height(item_count) - viewport_height).max(0.0)
     }
 
-    fn visible_range(self, item_count: usize, offset: f32) -> Range<usize> {
-        if item_count == 0 || self.viewport_height == 0.0 {
+    fn visible_range(self, item_count: usize, offset: f32, viewport_height: f32) -> Range<usize> {
+        if item_count == 0 || viewport_height == 0.0 {
             return 0..0;
         }
-        let offset = offset.clamp(0.0, self.max_offset(item_count));
+        let offset = offset.clamp(0.0, self.max_offset(item_count, viewport_height));
         let first = (offset / self.row_height).floor() as usize;
-        let end = ((offset + self.viewport_height) / self.row_height).ceil() as usize;
+        let end = ((offset + viewport_height) / self.row_height).ceil() as usize;
         first..end.min(item_count)
     }
 
-    fn mounted_range(self, item_count: usize, offset: f32) -> Range<usize> {
-        let visible = self.visible_range(item_count, offset);
+    fn mounted_range(self, item_count: usize, offset: f32, viewport_height: f32) -> Range<usize> {
+        let visible = self.visible_range(item_count, offset, viewport_height);
         if visible.is_empty() {
             return visible;
         }
@@ -101,14 +134,12 @@ impl VirtualListConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtualListConfigError {
     RowHeight,
-    ViewportHeight,
 }
 
 impl fmt::Display for VirtualListConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RowHeight => "virtual-list row height must be finite and positive",
-            Self::ViewportHeight => "virtual-list viewport height must be finite and non-negative",
         })
     }
 }
@@ -129,6 +160,7 @@ pub enum VirtualListNavigation {
 /// A strongly typed interaction emitted by [`virtual_list`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VirtualListEvent<Key> {
+    ViewportChanged { height: f32 },
     Scrolled { offset_y: f32 },
     Select { index: usize, key: Key },
     Navigate(VirtualListNavigation),
@@ -150,17 +182,21 @@ pub struct VirtualListInspection {
     pub visible_range: Range<usize>,
     pub mounted_range: Range<usize>,
     pub mounted_rows: usize,
-    /// Exact keyed-column child slots: mounted rows plus top and bottom spacers.
+    /// Exact scroll-content child slots: mounted rows plus top and bottom spacers.
     pub child_slots: usize,
 }
 
 /// Retained selection and viewport state for one virtual list.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct VirtualListState<Key> {
-    id: String,
+    id: VirtualListId,
     selected: Option<Key>,
     selected_index: Option<usize>,
     scroll_offset: f32,
+    viewport_height: f32,
+    scroll_revision: u64,
+    semantic_ids: HashMap<Key, u32>,
+    next_semantic_id: u32,
 }
 
 /// A data-identity error found during explicit reconciliation.
@@ -173,16 +209,20 @@ impl<Key> VirtualListState<Key>
 where
     Key: Copy + Eq + Hash,
 {
-    pub fn new(id: impl Into<String>) -> Self {
+    pub fn new(id: VirtualListId) -> Self {
         Self {
-            id: id.into(),
+            id,
             selected: None,
             selected_index: None,
             scroll_offset: 0.0,
+            viewport_height: 0.0,
+            scroll_revision: 0,
+            semantic_ids: HashMap::new(),
+            next_semantic_id: 2,
         }
     }
 
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &VirtualListId {
         &self.id
     }
 
@@ -198,14 +238,26 @@ where
         self.scroll_offset
     }
 
+    pub const fn viewport_height(&self) -> f32 {
+        self.viewport_height
+    }
+
     /// Returns the logical rows intersecting the viewport for the current offset.
     pub fn visible_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        config.visible_range(item_count, self.effective_offset(item_count, config))
+        config.visible_range(
+            item_count,
+            self.effective_offset(item_count, config),
+            self.viewport_height,
+        )
     }
 
     /// Returns the exact range mounted by [`virtual_list`], including overscan.
     pub fn mounted_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        config.mounted_range(item_count, self.effective_offset(item_count, config))
+        config.mounted_range(
+            item_count,
+            self.effective_offset(item_count, config),
+            self.viewport_height,
+        )
     }
 
     pub fn inspect(&self, item_count: usize, config: VirtualListConfig) -> VirtualListInspection {
@@ -238,17 +290,39 @@ where
                 return Err(VirtualListReconcileError::DuplicateKey(item_key));
             }
         }
+        let mut semantic_ids = HashMap::with_capacity(items.len());
+        for item in items {
+            let item_key = key(item);
+            let semantic_id = self
+                .semantic_ids
+                .get(&item_key)
+                .copied()
+                .unwrap_or_else(|| {
+                    let semantic_id = self.next_semantic_id;
+                    self.next_semantic_id = self
+                        .next_semantic_id
+                        .checked_add(1)
+                        .expect("virtual-list semantic identity exhausted");
+                    semantic_id
+                });
+            semantic_ids.insert(item_key, semantic_id);
+        }
+        self.semantic_ids = semantic_ids;
         self.selected_index = self
             .selected
             .and_then(|selected| items.iter().position(|item| key(item) == selected));
         if self.selected_index.is_none() {
             self.selected = None;
         }
+        let previous_offset = self.scroll_offset;
         self.set_offset(self.scroll_offset, items.len(), config);
+        if self.scroll_offset != previous_offset {
+            self.scroll_revision = self.scroll_revision.wrapping_add(1);
+        }
         Ok(())
     }
 
-    /// Applies a mouse, scroll, or keyboard interaction.
+    /// Applies a measured viewport, pointer, scroll, or keyboard interaction.
     pub fn apply<T>(
         &mut self,
         event: VirtualListEvent<Key>,
@@ -261,6 +335,14 @@ where
         let previous_offset = self.scroll_offset;
 
         match event {
+            VirtualListEvent::ViewportChanged { height } => {
+                self.viewport_height = if height.is_finite() {
+                    height.max(0.0)
+                } else {
+                    0.0
+                };
+                self.set_offset(self.scroll_offset, items.len(), config);
+            }
             VirtualListEvent::Scrolled { offset_y } => {
                 self.set_offset(offset_y, items.len(), config);
             }
@@ -284,13 +366,19 @@ where
                     self.selected_index,
                     items.len(),
                     navigation,
-                    config.rows_per_page(),
+                    config.rows_per_page(self.viewport_height),
                 ) {
                     self.selected = items.get(index).map(&key);
                     self.selected_index = self.selected.map(|_| index);
                     self.reveal(index, items.len(), config);
                 }
             }
+        }
+
+        if !matches!(event, VirtualListEvent::Scrolled { .. })
+            && self.scroll_offset != previous_offset
+        {
+            self.scroll_revision = self.scroll_revision.wrapping_add(1);
         }
 
         VirtualListOutcome {
@@ -302,63 +390,50 @@ where
     }
 
     /// Scrolls an item into view without changing selection.
-    pub fn scroll_to_item<Message>(
+    pub fn scroll_to_item(
         &mut self,
         index: usize,
         item_count: usize,
         config: VirtualListConfig,
-    ) -> Task<Message> {
+    ) -> bool {
+        let previous = self.scroll_offset;
         if index < item_count {
-            self.scroll_offset = (index as f64 * f64::from(config.row_height))
-                .min(f64::from(config.max_offset(item_count)))
-                as f32;
+            self.scroll_offset = (index as f64 * f64::from(config.row_height)).min(f64::from(
+                config.max_offset(item_count, self.viewport_height),
+            )) as f32;
         }
-        iced::widget::operation::scroll_to(
-            self.scroll_id(),
-            iced::widget::operation::AbsoluteOffset {
-                x: None,
-                y: Some(self.scroll_offset),
-            },
-        )
+        if self.scroll_offset != previous {
+            self.scroll_revision = self.scroll_revision.wrapping_add(1);
+            true
+        } else {
+            false
+        }
     }
 
-    /// Scrolls a stable key into view, returning `None` when it is absent.
-    pub fn scroll_to_key<T, Message>(
+    /// Scrolls a stable key into view and returns whether the offset changed.
+    pub fn scroll_to_key<T>(
         &mut self,
         selected: Key,
         items: &[T],
         key: impl Fn(&T) -> Key,
         config: VirtualListConfig,
-    ) -> Option<Task<Message>> {
-        let index = items.iter().position(|item| key(item) == selected)?;
-        Some(self.scroll_to_item(index, items.len(), config))
-    }
-
-    /// Synchronizes the native scrollable with this state's current offset.
-    pub fn sync_scroll<Message>(
-        &self,
-        item_count: usize,
-        config: VirtualListConfig,
-    ) -> Task<Message> {
-        iced::widget::operation::scroll_to(
-            self.scroll_id(),
-            iced::widget::operation::AbsoluteOffset {
-                x: None,
-                y: Some(self.effective_offset(item_count, config)),
-            },
-        )
+    ) -> bool {
+        let Some(index) = items.iter().position(|item| key(item) == selected) else {
+            return false;
+        };
+        self.scroll_to_item(index, items.len(), config)
     }
 
     fn reveal(&mut self, index: usize, item_count: usize, config: VirtualListConfig) {
         let top = index as f64 * f64::from(config.row_height);
         let bottom = top + f64::from(config.row_height);
         let offset = f64::from(self.scroll_offset);
-        let viewport_bottom = offset + f64::from(config.viewport_height);
+        let viewport_bottom = offset + f64::from(self.viewport_height);
         if top < offset {
             self.set_offset(top as f32, item_count, config);
         } else if bottom > viewport_bottom {
             self.set_offset(
-                (bottom - f64::from(config.viewport_height)) as f32,
+                (bottom - f64::from(self.viewport_height)) as f32,
                 item_count,
                 config,
             );
@@ -367,31 +442,32 @@ where
 
     fn set_offset(&mut self, offset: f32, item_count: usize, config: VirtualListConfig) {
         self.scroll_offset = if offset.is_finite() {
-            offset.clamp(0.0, config.max_offset(item_count))
+            offset.clamp(0.0, config.max_offset(item_count, self.viewport_height))
         } else {
             0.0
         };
     }
 
     fn effective_offset(&self, item_count: usize, config: VirtualListConfig) -> f32 {
-        self.scroll_offset.clamp(0.0, config.max_offset(item_count))
+        self.scroll_offset
+            .clamp(0.0, config.max_offset(item_count, self.viewport_height))
     }
 
     fn widget_id(&self) -> iced::advanced::widget::Id {
-        format!("{}/focus", self.id).into()
+        self.id.widget_id("focus")
     }
 
     fn scroll_id(&self) -> iced::advanced::widget::Id {
-        format!("{}/scroll", self.id).into()
+        self.id.widget_id("scroll")
     }
-}
 
-impl<Key> Default for VirtualListState<Key>
-where
-    Key: Copy + Eq + Hash,
-{
-    fn default() -> Self {
-        Self::new("virtual-list")
+    fn semantic_id(&self, key: &Key) -> StableId {
+        self.id.semantic_id(
+            *self
+                .semantic_ids
+                .get(key)
+                .expect("virtual-list items must be reconciled before rendering"),
+        )
     }
 }
 
@@ -419,13 +495,6 @@ fn navigation_index(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MountedKey<Key> {
-    Top,
-    Item(Key),
-    Bottom,
-}
-
 /// Builds a fixed-height keyed virtual list.
 ///
 /// `view` is called exactly once for each row in [`VirtualListState::mounted_range`].
@@ -450,17 +519,14 @@ where
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
     let scroll_offset = state.effective_offset(items.len(), config);
-    let range = config.mounted_range(items.len(), scroll_offset);
+    let range = config.mounted_range(items.len(), scroll_offset, state.viewport_height);
     let top = (range.start as f64 * f64::from(config.row_height)).min(f64::from(f32::MAX)) as f32;
     let bottom = (config.total_height(items.len())
         - (range.end as f64 * f64::from(config.row_height)) as f32)
         .max(0.0);
-    let mut children = Vec::with_capacity(range.len().saturating_add(2));
-    children.push((
-        MountedKey::Top,
-        space().height(top).width(Length::Fill).into(),
-    ));
+    let mut children = Vec::with_capacity(range.len());
     let mut mounted = Vec::with_capacity(range.len());
+    let mut mounted_semantic_ids = Vec::with_capacity(range.len());
     for index in range.clone() {
         let item = &items[index];
         let item_key = key(item);
@@ -468,135 +534,78 @@ where
         let row = container(view(index, item, selected))
             .width(Length::Fill)
             .height(config.row_height);
-        let semantic_key = stable_key_hash(&item_key);
-        let logical_id = format!("{}/item/{semantic_key:016x}", state.id);
-        let row: Element<'a, Message, Theme, Renderer> = accessible(
-            row,
-            stable_item_id(&state.id, &item_key),
-            crate::Role::ListItem,
-        )
-        .logical_id(logical_id)
-        .label(label(item))
-        .position_in_set(index.saturating_add(1))
-        .size_of_set(items.len())
-        .selected(selected)
-        .into();
-        children.push((MountedKey::Item(item_key), row));
+        let semantic_key = state
+            .semantic_ids
+            .get(&item_key)
+            .copied()
+            .expect("virtual-list items must be reconciled before rendering");
+        let logical_id = format!("{}/item/{semantic_key}", state.id.logical());
+        let row: Element<'a, Message, Theme, Renderer> =
+            accessible(row, state.semantic_id(&item_key), crate::Role::ListItem)
+                .logical_id(logical_id)
+                .label(label(item))
+                .position_in_set(index.saturating_add(1))
+                .size_of_set(items.len())
+                .selected(selected)
+                .into();
+        children.push((item_key, row));
         mounted.push((index, item_key));
+        mounted_semantic_ids.push(semantic_key);
     }
-    children.push((
-        MountedKey::Bottom,
-        space().height(bottom).width(Length::Fill).into(),
-    ));
 
     let on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a> = Rc::new(on_event);
     let on_scroll = Rc::clone(&on_event);
-    let content = scrollable(keyed_column(children).width(Length::Fill))
-        .id(state.scroll_id())
-        .width(Length::Fill)
-        .height(config.viewport_height)
-        .on_scroll(move |viewport| {
-            on_scroll(VirtualListEvent::Scrolled {
-                offset_y: viewport.absolute_offset().y,
-            })
-        });
+    let content = scrollable(
+        column![
+            space()
+                .height(if top == 0.0 {
+                    Length::Shrink
+                } else {
+                    Length::Fixed(top)
+                })
+                .width(Length::Fill),
+            keyed_column(children).width(Length::Fill),
+            space()
+                .height(if bottom == 0.0 {
+                    Length::Shrink
+                } else {
+                    Length::Fixed(bottom)
+                })
+                .width(Length::Fill),
+        ]
+        .width(Length::Fill),
+    )
+    .id(state.scroll_id())
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .on_scroll(move |viewport| {
+        on_scroll(VirtualListEvent::Scrolled {
+            offset_y: viewport.absolute_offset().y,
+        })
+    });
     let list = VirtualList {
         content: content.into(),
         id: state.widget_id(),
+        scroll_id: state.scroll_id(),
+        namespace: state.id.namespace,
         mounted,
+        mounted_semantic_ids,
         config,
         scroll_offset,
+        viewport_height: state.viewport_height,
+        scroll_revision: state.scroll_revision,
         on_event,
     };
     accessible(
         Element::new(list),
-        StableId::new(&state.id),
+        state.id.semantic_id(1),
         crate::Role::List,
     )
-    .logical_id(state.id.clone())
+    .logical_id(state.id.logical().to_owned())
     .label(collection_label)
     .focus_descendant()
     .size_of_set(items.len())
     .into()
-}
-
-fn stable_item_id<Key: Hash>(scope: &str, key: &Key) -> StableId {
-    StableId::new(format!("{scope}/item/{:016x}", stable_key_hash(key)))
-}
-
-fn stable_key_hash<Key: Hash>(key: &Key) -> u64 {
-    let mut hasher = StableKeyHasher::new();
-    key.hash(&mut hasher);
-    hasher.finish()
-}
-
-struct StableKeyHasher(u64);
-
-impl StableKeyHasher {
-    const fn new() -> Self {
-        Self(0xcbf29ce484222325)
-    }
-}
-
-impl Hasher for StableKeyHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 ^= u64::from(*byte);
-            self.0 = self.0.wrapping_mul(0x100000001b3);
-        }
-    }
-
-    fn write_u8(&mut self, value: u8) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_u16(&mut self, value: u16) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_u32(&mut self, value: u32) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_u128(&mut self, value: u128) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_usize(&mut self, value: usize) {
-        self.write_u64(value as u64);
-    }
-
-    fn write_i8(&mut self, value: i8) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_i16(&mut self, value: i16) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_i32(&mut self, value: i32) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_i64(&mut self, value: i64) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_i128(&mut self, value: i128) {
-        self.write(&value.to_le_bytes());
-    }
-
-    fn write_isize(&mut self, value: isize) {
-        self.write_i64(value as i64);
-    }
 }
 
 struct VirtualList<'a, Key, Message, Theme, Renderer>
@@ -605,16 +614,47 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     id: iced::advanced::widget::Id,
+    scroll_id: iced::advanced::widget::Id,
+    namespace: u32,
     mounted: Vec<(usize, Key)>,
+    mounted_semantic_ids: Vec<u32>,
     config: VirtualListConfig,
     scroll_offset: f32,
+    viewport_height: f32,
+    scroll_revision: u64,
     on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a>,
 }
 
-#[derive(Default)]
 struct State {
+    namespace: u32,
+    mounted_semantic_ids: Vec<u32>,
     focused: bool,
     focus_visible: bool,
+    measured_viewport_height: f32,
+    reported_viewport_height: Option<f32>,
+    applied_scroll_revision: Option<u64>,
+    touch: Option<TouchGesture>,
+}
+
+impl State {
+    fn new(namespace: u32, mounted_semantic_ids: Vec<u32>) -> Self {
+        Self {
+            namespace,
+            mounted_semantic_ids,
+            focused: false,
+            focus_visible: false,
+            measured_viewport_height: 0.0,
+            reported_viewport_height: None,
+            applied_scroll_revision: None,
+            touch: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TouchGesture {
+    finger: iced::touch::Finger,
+    origin: Point,
 }
 
 impl Focusable for State {
@@ -645,7 +685,10 @@ where
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(State::default())
+        tree::State::new(State::new(
+            self.namespace,
+            self.mounted_semantic_ids.clone(),
+        ))
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -653,6 +696,45 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        if tree.state.downcast_ref::<State>().namespace != self.namespace {
+            *tree = Tree::new(self as &dyn Widget<Message, Theme, Renderer>);
+            return;
+        }
+        let state = tree.state.downcast_mut::<State>();
+        if state.mounted_semantic_ids != self.mounted_semantic_ids {
+            let previous_ids = std::mem::replace(
+                &mut state.mounted_semantic_ids,
+                self.mounted_semantic_ids.clone(),
+            );
+            // VirtualList owns this fixed hierarchy:
+            // scrollable -> column -> [top spacer, keyed rows, bottom spacer].
+            if !previous_ids.is_empty()
+                && previous_ids.len() == self.mounted_semantic_ids.len()
+                && self
+                    .mounted_semantic_ids
+                    .iter()
+                    .all(|id| previous_ids.contains(id))
+            {
+                // Iced's keyed column does not reorder equal-length children, so
+                // align its child trees by retained semantic identity first.
+                let keyed_rows = &mut tree.children[0].children[0].children[1];
+                let previous_children = std::mem::take(&mut keyed_rows.children);
+                let mut retained = previous_ids
+                    .into_iter()
+                    .zip(previous_children)
+                    .collect::<HashMap<_, _>>();
+                keyed_rows.children = self
+                    .mounted_semantic_ids
+                    .iter()
+                    .map(|id| retained.remove(id).expect("retained row tree"))
+                    .collect();
+            } else {
+                // A length change cannot be repaired without also replacing the
+                // keyed column's private key state. Recreate the scroll content;
+                // native scrolling and list focus remain retained.
+                tree.children[0].children[0] = Tree::empty();
+            }
+        }
         tree.diff_children(std::slice::from_ref(&self.content));
     }
 
@@ -670,9 +752,32 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.content
+        let node = self
+            .content
             .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
+            .layout(&mut tree.children[0], renderer, limits);
+        tree.state.downcast_mut::<State>().measured_viewport_height = node.size().height;
+
+        if tree.state.downcast_ref::<State>().applied_scroll_revision != Some(self.scroll_revision)
+        {
+            if self.scroll_offset != 0.0 {
+                let mut scroll = operation::scrollable::scroll_to::<()>(
+                    self.scroll_id.clone(),
+                    operation::scrollable::AbsoluteOffset {
+                        x: None,
+                        y: Some(self.scroll_offset),
+                    },
+                );
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    Layout::new(&node),
+                    renderer,
+                    &mut scroll,
+                );
+            }
+            tree.state.downcast_mut::<State>().applied_scroll_revision = Some(self.scroll_revision);
+        }
+        node
     }
 
     fn operate(
@@ -709,22 +814,53 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
-        let pointer_position = match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                state.focused = false;
-                state.focus_visible = false;
-                cursor.position()
+        let mut touch_tap = None;
+        match event {
+            Event::Touch(iced::touch::Event::FingerPressed { id, position }) => {
+                let child_interaction = self.content.as_widget().mouse_interaction(
+                    &tree.children[0],
+                    layout,
+                    mouse::Cursor::Available(*position),
+                    viewport,
+                    renderer,
+                );
+                state.touch = (layout.bounds().contains(*position)
+                    && child_interaction == mouse::Interaction::None)
+                    .then_some(TouchGesture {
+                        finger: *id,
+                        origin: *position,
+                    });
             }
-            Event::Touch(iced::touch::Event::FingerPressed { position, .. }) => {
-                state.focused = layout.bounds().contains(*position);
-                state.focus_visible = false;
-                Some(*position)
+            Event::Touch(iced::touch::Event::FingerMoved { id, position }) => {
+                if state.touch.is_some_and(|gesture| {
+                    gesture.finger == *id && gesture.origin.distance(*position) > 8.0
+                }) {
+                    state.touch = None;
+                }
             }
-            _ => None,
-        };
-        if pointer_position.is_some_and(|position| !layout.bounds().contains(position)) {
-            state.focused = false;
-            state.focus_visible = false;
+            Event::Touch(iced::touch::Event::FingerLifted { id, position }) => {
+                if state.touch.take().is_some_and(|gesture| {
+                    gesture.finger == *id
+                        && gesture.origin.distance(*position) <= 8.0
+                        && layout.bounds().contains(*position)
+                }) {
+                    touch_tap = Some(*position);
+                }
+            }
+            Event::Touch(iced::touch::Event::FingerLost { id, .. })
+                if state.touch.is_some_and(|gesture| gesture.finger == *id) =>
+            {
+                state.touch = None;
+            }
+            _ => {}
+        }
+        if state.reported_viewport_height != Some(state.measured_viewport_height) {
+            state.reported_viewport_height = Some(state.measured_viewport_height);
+            if state.measured_viewport_height != self.viewport_height {
+                shell.publish((self.on_event)(VirtualListEvent::ViewportChanged {
+                    height: state.measured_viewport_height,
+                }));
+            }
         }
 
         self.content.as_widget_mut().update(
@@ -739,27 +875,56 @@ where
         );
 
         if shell.is_event_captured() {
+            if let Some(position) = touch_tap {
+                state.focused = true;
+                state.focus_visible = false;
+                self.publish_selection(position, layout.bounds(), shell);
+                return;
+            }
+            if matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                    | Event::Touch(iced::touch::Event::FingerPressed { .. })
+            ) && state.touch.is_none()
+            {
+                state.focused = false;
+                state.focus_visible = false;
+            }
             return;
         }
 
-        if matches!(
-            event,
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-        ) && let Some(position) =
-            pointer_position.filter(|position| layout.bounds().contains(*position))
-        {
-            state.focused = true;
-            state.focus_visible = false;
-            let local_y = position.y - layout.bounds().y;
-            let index = ((self.scroll_offset + local_y) / self.config.row_height).floor() as usize;
-            if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
-                shell.publish((self.on_event)(VirtualListEvent::Select {
-                    index: *index,
-                    key: *key,
-                }));
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if let Some(position) = cursor
+                    .position()
+                    .filter(|position| layout.bounds().contains(*position))
+                {
+                    state.focused = true;
+                    state.focus_visible = false;
+                    self.publish_selection(position, layout.bounds(), shell);
+                    shell.capture_event();
+                    return;
+                }
+                state.focused = false;
+                state.focus_visible = false;
             }
-            shell.capture_event();
-            return;
+            Event::Touch(iced::touch::Event::FingerPressed { id: _, position }) => {
+                if !layout.bounds().contains(*position) {
+                    state.focused = false;
+                    state.focus_visible = false;
+                    state.touch = None;
+                }
+            }
+            Event::Touch(iced::touch::Event::FingerLifted { .. }) => {
+                if let Some(position) = touch_tap {
+                    state.focused = true;
+                    state.focus_visible = false;
+                    self.publish_selection(position, layout.bounds(), shell);
+                    shell.capture_event();
+                    return;
+                }
+            }
+            _ => {}
         }
 
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
@@ -835,16 +1000,19 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        if cursor.is_over(layout.bounds()) {
+        let child = self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        );
+        if child != mouse::Interaction::None {
+            child
+        } else if cursor.is_over(layout.bounds()) {
             mouse::Interaction::Pointer
         } else {
-            self.content.as_widget().mouse_interaction(
-                &tree.children[0],
-                layout,
-                cursor,
-                viewport,
-                renderer,
-            )
+            mouse::Interaction::None
         }
     }
 
@@ -863,6 +1031,29 @@ where
             viewport,
             translation,
         )
+    }
+}
+
+impl<Key, Message, Theme, Renderer> VirtualList<'_, Key, Message, Theme, Renderer>
+where
+    Key: Copy + 'static,
+    Message: Clone,
+    Renderer: iced::advanced::Renderer,
+{
+    fn publish_selection(
+        &self,
+        position: Point,
+        bounds: Rectangle,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let local_y = position.y - bounds.y;
+        let index = ((self.scroll_offset + local_y) / self.config.row_height).floor() as usize;
+        if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
+            shell.publish((self.on_event)(VirtualListEvent::Select {
+                index: *index,
+                key: *key,
+            }));
+        }
     }
 }
 
@@ -890,8 +1081,14 @@ mod tests {
         Input(String),
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct DisplayCollision(u64);
+
+    impl Hash for DisplayCollision {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            0_u8.hash(state);
+        }
+    }
 
     impl fmt::Display for DisplayCollision {
         fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -903,7 +1100,21 @@ mod tests {
     struct CollisionMessage;
 
     fn config() -> VirtualListConfig {
-        VirtualListConfig::new(20.0, 100.0).unwrap().overscan(2)
+        VirtualListConfig::new(20.0).unwrap().overscan(2)
+    }
+
+    fn prepared_state<Key>(logical: &str) -> VirtualListState<Key>
+    where
+        Key: Copy + Eq + Hash,
+    {
+        let mut state = VirtualListState::new(VirtualListId::new(logical));
+        state.apply::<Key>(
+            VirtualListEvent::ViewportChanged { height: 100.0 },
+            &[],
+            |key| *key,
+            config(),
+        );
+        state
     }
 
     fn renderer() -> iced_test::renderer::Renderer {
@@ -931,17 +1142,88 @@ mod tests {
         })
     }
 
+    fn redraw() -> Event {
+        Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ))
+    }
+
+    struct ScrollProbe {
+        target: iced::advanced::widget::Id,
+        offset_y: Option<f32>,
+    }
+
+    struct RowIdentity(u64);
+
+    impl Widget<Message, Theme, iced_test::renderer::Renderer> for RowIdentity {
+        fn tag(&self) -> tree::Tag {
+            tree::Tag::of::<u64>()
+        }
+
+        fn state(&self) -> tree::State {
+            tree::State::new(self.0)
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            assert_eq!(
+                *tree.state.downcast_ref::<u64>(),
+                self.0,
+                "row widget state transferred to a different stable key"
+            );
+        }
+
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fill)
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.max())
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    impl Operation for ScrollProbe {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+
+        fn scrollable(
+            &mut self,
+            id: Option<&iced::advanced::widget::Id>,
+            _bounds: Rectangle,
+            _content_bounds: Rectangle,
+            translation: Vector,
+            _state: &mut dyn operation::Scrollable,
+        ) {
+            if id == Some(&self.target) {
+                self.offset_y = Some(translation.y);
+            }
+        }
+    }
+
     #[test]
     fn validates_fixed_geometry_and_bounds_empty_ranges() {
         assert_eq!(
-            VirtualListConfig::new(0.0, 100.0),
+            VirtualListConfig::new(0.0),
             Err(VirtualListConfigError::RowHeight)
         );
-        assert_eq!(
-            VirtualListConfig::new(20.0, f32::NAN),
-            Err(VirtualListConfigError::ViewportHeight)
-        );
-        let mut state = VirtualListState::<u64>::new("empty");
+        let mut state = prepared_state::<u64>("empty");
         state.reconcile::<u64>(&[], |key| *key, config()).unwrap();
         assert_eq!(state.visible_range(0, config()), 0..0);
         assert_eq!(state.mounted_range(0, config()), 0..0);
@@ -959,9 +1241,129 @@ mod tests {
     }
 
     #[test]
+    fn fresh_layout_and_resize_emit_measured_viewport_changes() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = VirtualListState::new(VirtualListId::new("measured-viewport"));
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        let mut renderer = renderer();
+
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Measured results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 60.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[redraw()],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            messages.contains(&Message::List(VirtualListEvent::ViewportChanged {
+                height: 60.0
+            }))
+        );
+        let cache = ui.into_cache();
+        state.apply(
+            match messages
+                .iter()
+                .position(|message| {
+                    matches!(
+                        message,
+                        Message::List(VirtualListEvent::ViewportChanged { height: 60.0 })
+                    )
+                })
+                .map(|index| messages.remove(index))
+                .expect("measured viewport event")
+            {
+                Message::List(event) => event,
+                message => panic!("unexpected viewport message: {message:?}"),
+            },
+            &items,
+            |key| *key,
+            config(),
+        );
+        assert_eq!(state.visible_range(items.len(), config()), 0..3);
+        messages.clear();
+
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Measured results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut ui = UserInterface::build(element, Size::new(240.0, 140.0), cache, &mut renderer);
+        let _ = ui.update(
+            &[redraw()],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            messages.contains(&Message::List(VirtualListEvent::ViewportChanged {
+                height: 140.0
+            }))
+        );
+    }
+
+    #[test]
+    fn fresh_mount_and_remount_synchronize_native_scroll_without_a_task() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut first = prepared_state("native-scroll-sync-first");
+        first.reconcile(&items, |key| *key, config()).unwrap();
+        assert!(first.scroll_to_item(42, items.len(), config()));
+        let mut remounted = prepared_state("native-scroll-sync-remounted");
+        remounted.reconcile(&items, |key| *key, config()).unwrap();
+        assert!(remounted.scroll_to_item(84, items.len(), config()));
+
+        let mut cache = user_interface::Cache::default();
+        for (state, expected_offset) in [(&first, 840.0), (&remounted, 1_680.0)] {
+            let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+                state,
+                &items,
+                config(),
+                "Native scroll results",
+                |key| *key,
+                |key| format!("Item {key}"),
+                |index, _, _| iced::widget::text(index).into(),
+                Message::List,
+            );
+            let mut renderer = renderer();
+            let mut ui =
+                UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+            let mut probe = ScrollProbe {
+                target: state.scroll_id(),
+                offset_y: None,
+            };
+            ui.operate(&renderer, &mut probe);
+            assert_eq!(probe.offset_y, Some(expected_offset));
+            cache = ui.into_cache();
+        }
+    }
+
+    #[test]
     fn direct_render_and_queries_share_ranges_across_count_and_config_changes() {
         let items: Vec<u64> = (0..100).collect();
-        let state = VirtualListState::new("direct-render");
+        let mut state = prepared_state("direct-render");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         let first = config();
         let builds = Cell::new(0_usize);
         let element: Element<'_, Message> = virtual_list(
@@ -982,12 +1384,19 @@ mod tests {
         assert_eq!(builds.get(), 7);
         drop(element);
 
-        let changed = VirtualListConfig::new(10.0, 35.0).unwrap().overscan(1);
+        let changed = VirtualListConfig::new(10.0).unwrap().overscan(1);
+        state.apply(
+            VirtualListEvent::ViewportChanged { height: 35.0 },
+            &items,
+            |key| *key,
+            changed,
+        );
         assert_eq!(state.visible_range(items.len(), changed), 0..4);
         assert_eq!(state.mounted_range(items.len(), changed), 0..5);
         assert_eq!(state.mounted_range(1, changed), 0..1);
 
-        let mut scrolled = VirtualListState::new("shrinking-render");
+        let mut scrolled = prepared_state("shrinking-render");
+        scrolled.reconcile(&items, |key| *key, first).unwrap();
         scrolled.apply(
             VirtualListEvent::Scrolled { offset_y: 1_900.0 },
             &items,
@@ -997,6 +1406,7 @@ mod tests {
         assert_eq!(scrolled.visible_range(1, first), 0..1);
         assert_eq!(scrolled.mounted_range(1, first), 0..1);
         let one = &items[..1];
+        scrolled.reconcile(one, |key| *key, first).unwrap();
         let one_build = Cell::new(0_usize);
         let element: Element<'_, Message> = virtual_list(
             &scrolled,
@@ -1017,7 +1427,7 @@ mod tests {
 
     #[test]
     fn selection_follows_stable_key_and_clears_when_deleted() {
-        let mut state = VirtualListState::new("reconcile");
+        let mut state = prepared_state("reconcile");
         let items = [10_u64, 20, 30];
         state.apply(
             VirtualListEvent::Select { index: 1, key: 20 },
@@ -1035,22 +1445,70 @@ mod tests {
     }
 
     #[test]
-    fn semantic_identity_depends_on_scope_and_item_key_not_position() {
-        let before_reorder = stable_item_id("list", &20_u64);
-        let after_reorder = stable_item_id("list", &20_u64);
-        assert_eq!(before_reorder, after_reorder);
-        assert_ne!(before_reorder, stable_item_id("list", &30_u64));
-        assert_ne!(before_reorder, stable_item_id("other-list", &20_u64));
+    fn semantic_identity_is_retained_by_key_and_namespaced_by_list() {
+        let mut first = prepared_state("list");
+        first
+            .reconcile(&[20_u64, 30], |key| *key, config())
+            .unwrap();
+        let before_reorder = first.semantic_id(&20);
+        first
+            .reconcile(&[30_u64, 20], |key| *key, config())
+            .unwrap();
+        assert_eq!(before_reorder, first.semantic_id(&20));
+        assert_ne!(before_reorder, first.semantic_id(&30));
+        let mut second = prepared_state("list");
+        second.reconcile(&[20_u64], |key| *key, config()).unwrap();
+        assert_ne!(before_reorder, second.semantic_id(&20));
     }
 
     #[test]
-    fn equal_display_strings_do_not_alias_semantic_identity_across_reorder() {
-        fn identities(items: &[DisplayCollision]) -> std::collections::HashMap<String, NodeId> {
-            let mut state = VirtualListState::new("collision-list");
-            state.reconcile(items, |item| *item, config()).unwrap();
+    fn mounted_widget_state_follows_stable_key_across_reorder() {
+        let mut items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("retained-row-state");
+        state.reconcile(&items, |item| *item, config()).unwrap();
+        let mut renderer = renderer();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Retained rows",
+            |item| *item,
+            |item| format!("Item {item}"),
+            |_, item, _| Element::new(RowIdentity(*item)),
+            Message::List,
+        );
+        let ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let cache = ui.into_cache();
+
+        items.swap(0, 1);
+        state.reconcile(&items, |item| *item, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Retained rows",
+            |item| *item,
+            |item| format!("Item {item}"),
+            |_, item, _| Element::new(RowIdentity(*item)),
+            Message::List,
+        );
+        let _ui = UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+    }
+
+    #[test]
+    fn colliding_key_hashes_do_not_alias_semantic_identity_across_reorder() {
+        fn identities(
+            state: &VirtualListState<DisplayCollision>,
+            items: &[DisplayCollision],
+        ) -> std::collections::HashMap<String, NodeId> {
             let element: Element<'_, CollisionMessage, Theme, iced_test::renderer::Renderer> =
                 virtual_list(
-                    &state,
+                    state,
                     items,
                     config(),
                     "Collision results",
@@ -1080,16 +1538,25 @@ mod tests {
                 .collect()
         }
 
-        let before = identities(&[
+        let before_items = [
             DisplayCollision(1),
             DisplayCollision(2),
             DisplayCollision(3),
-        ]);
-        let after = identities(&[
+        ];
+        let after_items = [
             DisplayCollision(3),
             DisplayCollision(1),
             DisplayCollision(2),
-        ]);
+        ];
+        let mut state = prepared_state("collision-list");
+        state
+            .reconcile(&before_items, |item| *item, config())
+            .unwrap();
+        let before = identities(&state, &before_items);
+        state
+            .reconcile(&after_items, |item| *item, config())
+            .unwrap();
+        let after = identities(&state, &after_items);
         assert_ne!(before["Item 1"], before["Item 2"]);
         assert_eq!(before["Item 1"], after["Item 1"]);
         assert_eq!(before["Item 2"], after["Item 2"]);
@@ -1099,7 +1566,7 @@ mod tests {
     #[test]
     fn keyboard_navigation_and_programmatic_scroll_are_bounded() {
         let items: Vec<u64> = (0..100).collect();
-        let mut state = VirtualListState::new("keyboard");
+        let mut state = prepared_state("keyboard");
         let navigate = |state: &mut VirtualListState<u64>, navigation| {
             state.apply(
                 VirtualListEvent::Navigate(navigation),
@@ -1123,23 +1590,22 @@ mod tests {
         assert_eq!(state.selected(), Some(5));
         navigate(&mut state, VirtualListNavigation::Down);
         assert_eq!(state.selected(), Some(6));
-        let _: Task<()> = state.scroll_to_item(42, items.len(), config());
+        assert!(state.scroll_to_item(42, items.len(), config()));
         assert_eq!(state.scroll_offset(), 840.0);
         assert_eq!(state.visible_range(items.len(), config()), 42..47);
         assert_eq!(state.mounted_range(items.len(), config()), 40..49);
-        let task: Option<Task<()>> = state.scroll_to_key(84, &items, |key| *key, config());
-        assert!(task.is_some());
+        assert!(state.scroll_to_key(84, &items, |key| *key, config()));
         assert_eq!(state.scroll_offset(), 1_680.0);
-        let missing: Option<Task<()>> = state.scroll_to_key(1_000, &items, |key| *key, config());
-        assert!(missing.is_none());
-        let _: Task<()> = state.scroll_to_item(usize::MAX, items.len(), config());
+        assert!(!state.scroll_to_key(1_000, &items, |key| *key, config()));
+        assert!(!state.scroll_to_item(usize::MAX, items.len(), config()));
         assert_eq!(state.scroll_offset(), 1_680.0);
     }
 
     #[test]
     fn builds_only_visible_and_overscan_rows_for_one_hundred_thousand_items() {
         let items: Vec<u64> = (0..100_000).collect();
-        let mut state = VirtualListState::new("performance");
+        let mut state = prepared_state("performance");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         state.apply(
             VirtualListEvent::Scrolled {
                 offset_y: 1_000_000.0,
@@ -1166,7 +1632,7 @@ mod tests {
             builds.get(),
             state.mounted_range(items.len(), config()).len()
         );
-        assert!(builds.get() <= config().rows_per_page() + config().overscan_rows() * 2 + 1);
+        assert!(builds.get() <= config().rows_per_page(100.0) + config().overscan_rows() * 2 + 1);
         let inspection = state.inspect(items.len(), config());
         assert_eq!(inspection.logical_items, 100_000);
         assert_eq!(inspection.mounted_rows, builds.get());
@@ -1176,22 +1642,27 @@ mod tests {
 
     #[test]
     #[ignore = "100k-item performance contract run explicitly in CI"]
-    fn performance_contract_one_thousand_100k_view_builds_stay_mounted_only() {
-        const BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+    fn performance_contract_100k_full_frame_and_reconcile_stay_bounded() {
+        const FRAMES: usize = 40;
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(12);
         let items: Vec<u64> = (0..100_000).collect();
-        let mut state = VirtualListState::new("performance-contract");
+        let mut state = prepared_state("performance-contract");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         let builds = Cell::new(0_usize);
+        let mut renderer = renderer();
+        let mut cache = user_interface::Cache::default();
         let started = std::time::Instant::now();
-        for pass in 0..1_000 {
+        for pass in 0..FRAMES {
+            state.reconcile(&items, |key| *key, config()).unwrap();
             state.apply(
                 VirtualListEvent::Scrolled {
-                    offset_y: (pass * 1_997) as f32,
+                    offset_y: (pass * 41_997) as f32,
                 },
                 &items,
                 |key| *key,
                 config(),
             );
-            let element: Element<'_, Message> = virtual_list(
+            let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
                 &state,
                 &items,
                 config(),
@@ -1207,16 +1678,37 @@ mod tests {
             let inspection = state.inspect(items.len(), config());
             assert!(inspection.mounted_rows <= 10);
             assert!(inspection.child_slots <= 12);
-            drop(element);
+            let mut ui =
+                UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+            ui.draw(
+                &mut renderer,
+                &Theme::Light,
+                &renderer::Style::default(),
+                mouse::Cursor::Unavailable,
+            );
+            let mut messages = Vec::new();
+            let _ = ui.update(
+                &[redraw()],
+                mouse::Cursor::Unavailable,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+            assert!(messages.iter().all(|message| matches!(
+                message,
+                Message::List(VirtualListEvent::Scrolled { offset_y })
+                    if (*offset_y - state.scroll_offset()).abs() < f32::EPSILON
+            )));
+            cache = ui.into_cache();
         }
         let elapsed = started.elapsed();
-        assert!(builds.get() <= 10_000);
+        assert!(builds.get() <= FRAMES * 10);
         assert!(
             elapsed <= BUDGET,
-            "1,000 virtual-list views over 100k items took {elapsed:?}; budget is {BUDGET:?}"
+            "{FRAMES} reconciled full frames over 100k items took {elapsed:?}; budget is {BUDGET:?}"
         );
         eprintln!(
-            "1,000 virtual-list views over 100k items in {elapsed:?}; {} total rows built",
+            "{FRAMES} reconciled full frames over 100k items in {elapsed:?}; {} total rows built",
             builds.get()
         );
     }
@@ -1224,7 +1716,7 @@ mod tests {
     #[test]
     fn accesskit_exports_only_mounted_rows_with_collection_metadata() {
         let items: Vec<u64> = (0..100).collect();
-        let mut state = VirtualListState::new("semantic-list");
+        let mut state = prepared_state("semantic-list");
         state.reconcile(&items, |key| *key, config()).unwrap();
         state.apply(
             VirtualListEvent::Select { index: 2, key: 2 },
@@ -1323,7 +1815,7 @@ mod tests {
     #[test]
     fn headless_mouse_and_keyboard_emit_typed_interactions() {
         let items: Vec<u64> = (0..100).collect();
-        let mut state = VirtualListState::new("headless-list");
+        let mut state = prepared_state("headless-list");
         state.reconcile(&items, |key| *key, config()).unwrap();
         let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
             &state,
@@ -1412,7 +1904,8 @@ mod tests {
     #[test]
     fn interactive_row_content_captures_click_before_row_selection() {
         let items: Vec<u64> = (0..100).collect();
-        let state = VirtualListState::new("interactive-row-list");
+        let mut state = prepared_state("interactive-row-list");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
             &state,
             &items,
@@ -1461,9 +1954,99 @@ mod tests {
     }
 
     #[test]
+    fn interactive_row_content_captures_touch_and_cursor_semantics() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("interactive-touch-list");
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Interactive touch results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |_, _, _| {
+                iced::widget::button("Child action")
+                    .on_press(Message::Child)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            },
+            Message::List,
+        );
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let point = Point::new(20.0, 10.0);
+        let finger = iced::touch::Finger(11);
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[
+                Event::Touch(iced::touch::Event::FingerPressed {
+                    id: finger,
+                    position: point,
+                }),
+                Event::Touch(iced::touch::Event::FingerLifted {
+                    id: finger,
+                    position: point,
+                }),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(messages, vec![Message::Child]);
+
+        let items = [0_u64];
+        let mut state = prepared_state("text-cursor-list");
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Text cursor results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |_, _, _| {
+                iced::widget::text_input("Filter", "")
+                    .on_input(Message::Input)
+                    .width(Length::Fill)
+                    .into()
+            },
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let (ui_state, _) = ui.update(
+            &[],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        let user_interface::State::Updated {
+            mouse_interaction, ..
+        } = ui_state
+        else {
+            panic!("cursor-only update unexpectedly invalidated the interface");
+        };
+        assert_eq!(mouse_interaction, mouse::Interaction::Text);
+    }
+
+    #[test]
     fn native_scrollbar_press_and_drag_never_select_a_row() {
         let items: Vec<u64> = (0..100).collect();
-        let state = VirtualListState::new("scrollbar-list");
+        let mut state = prepared_state("scrollbar-list");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
             &state,
             &items,
@@ -1520,8 +2103,10 @@ mod tests {
     #[test]
     fn pointer_focus_moves_between_lists_and_clears_for_text_input() {
         let items: Vec<u64> = (0..100).collect();
-        let first = VirtualListState::new("first-list");
-        let second = VirtualListState::new("second-list");
+        let mut first = prepared_state("first-list");
+        first.reconcile(&items, |key| *key, config()).unwrap();
+        let mut second = prepared_state("second-list");
+        second.reconcile(&items, |key| *key, config()).unwrap();
         let first_list: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
             &first,
             &items,
@@ -1628,6 +2213,13 @@ mod tests {
             &mut iced::advanced::clipboard::Null,
             &mut messages,
         );
+        assert_eq!(
+            messages,
+            vec![Message::First(VirtualListEvent::Select {
+                index: 2,
+                key: 2,
+            })]
+        );
         messages.clear();
         let _ = ui.update(
             &[key_pressed(keyboard::key::Named::Home)],
@@ -1730,9 +2322,14 @@ mod tests {
         let list = VirtualList {
             content: Element::new(FocusLeaf),
             id: id.clone(),
+            scroll_id: "visible-list-scroll".into(),
+            namespace: 1,
             mounted: Vec::<(usize, u64)>::new(),
+            mounted_semantic_ids: Vec::new(),
             config: config(),
             scroll_offset: 0.0,
+            viewport_height: 40.0,
+            scroll_revision: 0,
             on_event: Rc::new(Message::List),
         };
         let mut element: Element<'_, Message, (), RecordingRenderer> = Element::new(list);

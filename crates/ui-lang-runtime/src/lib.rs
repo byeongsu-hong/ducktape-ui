@@ -113,6 +113,10 @@ impl StableId {
         Self(NodeId(if hash == 0 { 1 } else { hash }))
     }
 
+    pub(crate) const fn from_node_id(node_id: NodeId) -> Self {
+        Self(node_id)
+    }
+
     /// Returns the AccessKit node identity.
     pub const fn node_id(self) -> NodeId {
         self.0

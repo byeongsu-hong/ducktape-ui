@@ -92,7 +92,7 @@ extern crate::adapters
   task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerState
   component message_scroller(state:&MessageScrollerState) -> MessageScrollerEvent
   sync virtual_list_state() -> VirtualListState
-  task virtual_list_apply(state:VirtualListState, event:VirtualListEvent) -> VirtualListState
+  sync virtual_list_apply(state:VirtualListState, event:VirtualListEvent) -> VirtualListState
   component virtual_list(state:&VirtualListState) -> VirtualListEvent
   component aspect_ratio_demo() -> unit
   sync data_table_rows(query:str, sort:str, page:i64) -> [CatalogItem]

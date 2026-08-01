@@ -6,7 +6,8 @@ It is not Ice Core syntax and does not introduce `virtual-for`.
 The public path has three layers:
 
 1. `ui-lang-runtime` owns fixed-row range calculation, keyed reconciliation,
-   focus, mouse selection, keyboard navigation, scroll commands, and AccessKit
+   measured viewport geometry, focus, pointer selection, keyboard navigation,
+   internal native-scroll synchronization, and AccessKit
    collection/item semantics.
 2. `ducktape-ui::ui::virtual_list` re-exports those exact public state/event
    types and adds Ducktape row theming.
@@ -15,7 +16,8 @@ The public path has three layers:
    composition around that boundary.
 
 ```rust
-let config = VirtualListConfig::new(32.0, 208.0)?.overscan(3);
+let config = VirtualListConfig::new(32.0)?.overscan(3);
+let mut state = VirtualListState::new(VirtualListId::new("repository-results"));
 state.reconcile(&items, |item| item.id, config)?;
 
 let list = virtual_list(
@@ -37,15 +39,26 @@ that key is deleted. View/layout/draw calls never scan the complete collection:
 the row callback runs only for the visible range plus overscan. The state
 exposes pure `visible_range(item_count, config)`, `mounted_range`, and `inspect`
 queries; inspection reports both ranges, the mounted row count, and the exact
-keyed-column child-slot budget. Queries and rendering therefore cannot drift
+scroll-content child-slot budget. Queries and rendering therefore cannot drift
 when the item count or geometry changes.
 
-Mouse selection focuses the named list without stealing clicks from interactive
-row content or its native scrollbar. The focused list supports Up, Down, Home,
-End, PageUp, and PageDown. `scroll_to_item`, `scroll_to_key`, and `sync_scroll`
-produce native Iced widget tasks. AccessKit exports a focusable named `List`,
-total item count, and only mounted `ListItem` nodes with stable typed-key-derived
-identities, one-based position, set size, and selected state.
+The viewport height is never duplicated in application configuration. The
+widget measures its native layout and emits `ViewportChanged`; the reducer
+applies that event like any other typed list event. `VirtualListId` is explicit
+and has no default: its readable logical name is paired with a runtime-unique
+namespace so independently mounted lists cannot alias focus, scrolling, or
+AccessKit nodes.
+
+Mouse clicks and touch taps focus the named list without stealing input or
+cursor semantics from interactive row content or its native scrollbar. The
+focused list supports Up, Down, Home, End, PageUp, and PageDown.
+`scroll_to_item` and `scroll_to_key` update retained state; a private revisioned
+operation synchronizes the native scrollable on the next layout, including
+fresh mounts and remounts. AccessKit exports a focusable named `List`, total
+item count, and only mounted `ListItem` nodes. Item node IDs come from a
+collision-free retained allocation keyed through `Eq + Hash`, not from a key
+hash; they keep identity across reorder and expose one-based position, set size,
+and selected state.
 
 Screen readers can focus the collection and use the same list keyboard
 navigation. V1 does not expose offscreen rows as AccessKit nodes and does not

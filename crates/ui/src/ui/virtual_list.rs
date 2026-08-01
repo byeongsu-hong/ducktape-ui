@@ -6,8 +6,9 @@ use iced::{Background, Border, Element, Length};
 use std::hash::Hash;
 
 pub use ui_lang_runtime::{
-    VirtualListConfig, VirtualListConfigError, VirtualListEvent, VirtualListInspection,
-    VirtualListNavigation, VirtualListOutcome, VirtualListReconcileError, VirtualListState,
+    VirtualListConfig, VirtualListConfigError, VirtualListEvent, VirtualListId,
+    VirtualListInspection, VirtualListNavigation, VirtualListOutcome, VirtualListReconcileError,
+    VirtualListState,
 };
 
 /// Builds a fixed-height list with Ducktape row colors and geometry.

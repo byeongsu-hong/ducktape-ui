@@ -56,7 +56,7 @@ use ducktape_ui::ui::{
     switch::switch as ui_switch,
     theme::LIGHT,
     virtual_list::{
-        VirtualListConfig, VirtualListEvent as UiVirtualListEvent,
+        VirtualListConfig, VirtualListEvent as UiVirtualListEvent, VirtualListId,
         VirtualListState as UiVirtualListState, virtual_list as ui_virtual_list,
     },
 };
@@ -1621,14 +1621,14 @@ pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScro
 }
 
 fn virtual_list_config() -> VirtualListConfig {
-    VirtualListConfig::new(32.0, 208.0)
+    VirtualListConfig::new(32.0)
         .expect("showcase virtual-list geometry is valid")
         .overscan(3)
 }
 
 pub fn virtual_list_state() -> VirtualListState {
     let items: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
-    let mut list = UiVirtualListState::new("showcase-virtual-list");
+    let mut list = UiVirtualListState::new(VirtualListId::new("showcase-virtual-list"));
     list.reconcile(&items, |item| *item, virtual_list_config())
         .expect("showcase virtual-list keys are unique");
     VirtualListState { list, items }
@@ -1637,19 +1637,11 @@ pub fn virtual_list_state() -> VirtualListState {
 pub fn virtual_list_apply(
     mut state: VirtualListState,
     event: VirtualListEvent,
-) -> iced::Task<VirtualListState> {
-    let native_scroll = !matches!(event, UiVirtualListEvent::Scrolled { .. });
+) -> VirtualListState {
     state
         .list
         .apply(event, &state.items, |item| *item, virtual_list_config());
-    if native_scroll {
-        state
-            .list
-            .sync_scroll::<VirtualListState>(state.items.len(), virtual_list_config())
-            .chain(iced::Task::done(state))
-    } else {
-        iced::Task::done(state)
-    }
+    state
 }
 
 pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
@@ -1701,7 +1693,11 @@ pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
         |event| event,
         &theme,
     );
-    column![summary, list].spacing(8).width(Length::Fill).into()
+    column![summary, list]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 pub fn data_table_rows(query: String, sort: String, page: i64) -> Vec<CatalogItem> {

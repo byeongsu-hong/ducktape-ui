@@ -307,7 +307,7 @@ test virtual_list_native_boundary
   idle
   key end
   idle
-  expect text "mounted 99990..100000 · Selected #99999"
+  expect text "mounted 99989..100000 · Selected #99999"
   expect text "#99999"
   capture virtual_list_end_selection
 

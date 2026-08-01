@@ -2038,12 +2038,18 @@ visual-line backgrounds, and shared rich hit-test geometry require a custom
 widget such as `ui_lang_runtime::RichTextEditor`.
 Large fixed-height collections use `ui_lang_runtime::VirtualListState` and the
 feature-gated `ducktape_ui::ui::virtual_list` typed boundary. Stable unique keys
-reconcile selection across reorder/delete, while native focus, mouse selection,
+reconcile selection across reorder/delete, while native focus, pointer selection,
 Up/Down/Home/End/PageUp/PageDown, scroll-to-item, visible-range inspection, and
 named AccessKit list/item metadata remain runtime behavior. Visible and mounted
-range queries derive from the current item count, geometry, and scroll offset;
-only mounted visible-plus-overscan rows become Elements. Native scrollbar and
-interactive-child events take precedence over row selection. `VirtualList.Frame`
+range queries derive from the current item count, measured native viewport, and
+scroll offset. Native layout changes emit the typed `ViewportChanged` event;
+revisioned private operations synchronize programmatic state to the native
+scrollable on first layout and remount without a caller-owned Iced task. An
+explicit `VirtualListId` combines a readable logical name with a runtime-unique
+namespace, and retained per-key semantic allocations remain distinct even when
+different keys produce the same hash. Only mounted visible-plus-overscan rows
+become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
+behavior take precedence over row selection. `VirtualList.Frame`
 is an Ice composition around an app-owned extern component; there is deliberately
 no `virtual-for` syntax or variable-height measurement in v1. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or
