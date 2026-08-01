@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, and Responsive therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, and Lazy therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -338,6 +338,14 @@ Rust emission consumes that record and checked IDs; source nodes provide only
 the branch children. Expression/static mutation, post-lowering AST poisoning,
 malformed expression/local IDs, and an ignored 4,000-node lower+emit budget
 provide the executable evidence.
+
+Lazy is a completed structural-wrapper slice. Its checked flow owns the stable
+dependency expression and typed callback local. Lowering revalidates expression
+owner mapping, DAG, scope and type plus the local name/type/owner role before
+publishing `ResolvedLazy`. Rust emission consumes that record; source nodes
+provide only the child subtree. Dependency/binding mutation, post-lowering AST
+poisoning, malformed expression/local IDs, owned-static codegen, and an ignored
+4,000-node lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

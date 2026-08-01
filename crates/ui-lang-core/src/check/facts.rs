@@ -796,6 +796,14 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_lazy_binding_local(&mut self, view: ViewId, raw: u32) {
+        let CheckedViewFlow::Lazy { binding, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be lazy");
+        };
+        *binding = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_expression_use_root(&mut self, owner: CheckedExprOwner, raw: u32) {
         let id = self.expression_uses_by_owner[&owner];
         self.expression_uses[id.0 as usize].root = CheckedExprId(raw);
@@ -9186,6 +9194,52 @@ view
                 }
             );
         }
+    }
+
+    #[test]
+    fn lazy_facts_retain_dependency_owner_and_binding_local() {
+        let source = r#"app LazyFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  title = "Hello"
+view
+  lazy title as cached
+    text cached
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let CheckedViewFlow::Lazy {
+            dependency,
+            binding,
+        } = &program.checked_facts().view(ViewId(0)).flow
+        else {
+            panic!("root must retain lazy facts");
+        };
+        assert_eq!(
+            program.checked_facts().expression_use(*dependency).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::LazyDependency,
+            }
+        );
+        let binding = program.checked_facts().local(*binding);
+        assert_eq!(binding.name, "cached");
+        assert_eq!(binding.ty, Type::Str);
+        assert_eq!(
+            binding.owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::LazyDependency,
+            }
+        );
     }
 
     #[test]

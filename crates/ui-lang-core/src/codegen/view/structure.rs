@@ -142,23 +142,16 @@ pub(in crate::codegen) fn render_structure(
             &child_scope,
             slot,
         ),
-        ViewNode::Lazy { child, span, .. } => {
-            let CheckedViewFlow::Lazy {
-                dependency,
-                binding,
-            } = &document.program().checked_view(span)?.flow
-            else {
-                return Err(Error::new("E196", span, "lazy view has no checked flow"));
-            };
-            let checked_binding = document.program().checked_facts().local(*binding);
-            let binding_name = &checked_binding.name;
-            let dependency_type = checked_binding.ty.clone();
+        ViewNode::Lazy { child, .. } => {
+            let program = document.hir();
+            let lazy = program.resolved_lazy_for(node)?;
+            let binding_name = &lazy.binding.name;
             let dependency =
-                checked_expr_use_code(document.program(), *dependency, env, ValueMode::Owned)?;
+                checked_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
             let mut child_env = HashMap::new();
             child_env.insert(
                 binding_name.clone(),
-                checked_local_binding(document.program(), *binding, binding_name.clone(), false),
+                checked_local_binding(program, lazy.binding.local, binding_name.clone(), false),
             );
             let child = render_node(
                 child,
@@ -168,7 +161,7 @@ pub(in crate::codegen) fn render_structure(
                 "__lazy_scope.clone()",
                 None,
             )?;
-            let dependency_rust = dependency_type.rust(&document.structs);
+            let dependency_rust = lazy.binding.ty.rust(&document.structs);
             Ok(format!(
                 "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))

@@ -29,6 +29,7 @@ use std::path::Path;
 mod canvas;
 mod float;
 mod interaction;
+mod lazy;
 mod media;
 mod pin;
 mod responsive;
@@ -39,6 +40,7 @@ mod tooltip;
 pub(crate) use canvas::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
+pub(crate) use lazy::*;
 pub(crate) use media::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
@@ -1447,6 +1449,7 @@ pub(crate) struct LoweredProgram {
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -3011,6 +3014,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
+        self.lazy_views.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3212,6 +3220,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "responsive reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_lazy_for(&self, node: &ViewNode) -> Result<&ResolvedLazy, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "lazy reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "lazy reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.lazy_views.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "lazy reached code generation without normalized HIR",
             )
         })
     }
@@ -3476,6 +3510,7 @@ pub(crate) struct Lowerer {
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -4192,6 +4227,7 @@ impl Lowerer {
             floats: HashMap::new(),
             pins: HashMap::new(),
             responsives: HashMap::new(),
+            lazy_views: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4271,6 +4307,7 @@ impl Lowerer {
             floats: self.floats,
             pins: self.pins,
             responsives: self.responsives,
+            lazy_views: self.lazy_views,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -8086,6 +8123,16 @@ impl Lowerer {
                     }
                 }
             }
+            ViewNode::Lazy {
+                dependency,
+                binding,
+                child,
+                span,
+                ..
+            } => {
+                self.lower_lazy(dependency, binding, span, outer_component)?;
+                self.lower_view(child, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -8137,8 +8184,7 @@ impl Lowerer {
             }
             | ViewNode::Container { content, .. }
             | ViewNode::Theme { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => {
+            | ViewNode::KeyedColumn { child: content, .. } => {
                 self.lower_view(content, outer_component)?;
             }
             ViewNode::Overlay { content, layer, .. } => {
@@ -10163,6 +10209,32 @@ view
     }
 
     #[test]
+    fn malformed_checked_lazy_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidLazyFacts\n{THEME}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    text cached\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::LazyDependency,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_lazy_binding_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -10848,6 +10920,87 @@ view
     }
 
     #[test]
+    fn normalizes_lazy_dependency_binding_type_and_owner() {
+        let source = format!(
+            "app LazyHir\n{THEME}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    text cached\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let lazy = program.lazy_view(ViewId(0)).unwrap();
+        assert_eq!(lazy.id, ViewId(0));
+        assert_eq!(lazy.binding.name, "cached");
+        assert_eq!(lazy.binding.ty, Type::Str);
+        assert_eq!(
+            program.checked_facts().local(lazy.binding.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::LazyDependency,
+            }
+        );
+        assert_eq!(
+            program
+                .checked_facts()
+                .expression_use(lazy.dependency)
+                .owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::LazyDependency,
+            }
+        );
+    }
+
+    #[test]
+    fn lazy_lowering_uses_checked_dependency_and_rejects_binding_drift() {
+        let source = format!(
+            "app CheckedLazy\n{THEME}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    text cached\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-lazy.ice",
+        )
+        .unwrap();
+
+        let mut changed_expression = analyze(&source).unwrap();
+        let ViewNode::Lazy { dependency, .. } = &mut changed_expression.document.view else {
+            panic!("fixture root must be lazy");
+        };
+        *dependency = Expr::Str("Poisoned".into());
+        let actual =
+            crate::codegen::generate(&lower(changed_expression).unwrap(), "checked-lazy.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_binding = analyze(&source).unwrap();
+        let ViewNode::Lazy { binding, .. } = &mut changed_binding.document.view else {
+            panic!("fixture root must be lazy");
+        };
+        *binding = "poisoned".into();
+        let error = lower(changed_binding).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding contract diverged"));
+    }
+
+    #[test]
+    fn lazy_codegen_ignores_raw_dependency_and_binding_after_lowering() {
+        let source = format!(
+            "app LoweredLazy\n{THEME}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    text cached\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-lazy.ice").unwrap();
+        let ViewNode::Lazy {
+            dependency,
+            binding,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be lazy");
+        };
+        *dependency = Expr::Str("Poisoned".into());
+        *binding = "poisoned".into();
+        let actual = crate::codegen::generate(&program, "lowered-lazy.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -11104,6 +11257,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized responsives lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized lazy lowering and emission performance contract"]
+    fn performance_contract_four_thousand_lazy_views_lower_and_emit_under_two_seconds() {
+        const LAZY_VIEWS: usize = 4_000;
+        let mut source = format!("app LazyScale\n{THEME}state\n  title = \"Hello\"\nview\n  col\n");
+        for index in 0..LAZY_VIEWS {
+            writeln!(
+                source,
+                "    lazy title as cached_{index}\n      text cached_{index}"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "lazy-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.lazy_views.len(), LAZY_VIEWS);
+        assert_eq!(
+            generated.matches("::iced::widget::lazy(").count(),
+            LAZY_VIEWS
+        );
+        eprintln!("4k normalized lazy views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized lazy views lowered and emitted in {elapsed:?}"
         );
     }
 

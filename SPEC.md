@@ -310,6 +310,12 @@ numeric-fixed and native-length-fixed dimensions separated. Rust generation
 does not reread breakpoint or dimension expressions, binding spellings, or
 checked-flow internals.
 
+Lazy is a completed structural-wrapper HIR slice. The dependency has a stable
+checked expression ID and the callback binding has a typed checked local ID.
+Lowering validates their owner, scope, type, and expression DAG before
+publishing `ResolvedLazy`. Rust generation does not reread the dependency,
+binding spelling, checked flow, or checked local facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
