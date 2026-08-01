@@ -2087,6 +2087,7 @@ impl<'a> FactsBuilder<'a> {
                             self.declarations
                                 .test_target(target_id)
                                 .expect("indexed test target")
+                                .declaration
                                 .origin,
                         )?;
                     }
@@ -2101,6 +2102,7 @@ impl<'a> FactsBuilder<'a> {
                         .declarations
                         .test_target(target_id)
                         .expect("indexed test target")
+                        .declaration
                         .origin,
                 });
                 self.facts.locals_by_owner.insert(owner, local);
@@ -2119,6 +2121,7 @@ impl<'a> FactsBuilder<'a> {
                     .declarations
                     .test_step(step_id)
                     .expect("indexed test step")
+                    .declaration
                     .origin;
                 for (operand, expression) in crate::ast::test_step_expression_roots(step)
                     .into_iter()

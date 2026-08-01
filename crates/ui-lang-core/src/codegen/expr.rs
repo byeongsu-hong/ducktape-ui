@@ -2672,6 +2672,38 @@ pub(in crate::codegen) fn checked_expr_use_code(
     })
 }
 
+pub(in crate::codegen) fn checked_expr_node_code(
+    program: &LoweredProgram,
+    expression_use: CheckedExprUseId,
+    node: CheckedExprId,
+    env: &dyn BindingEnvironment,
+    mode: ValueMode,
+) -> Result<String, Error> {
+    let expression = program
+        .checked_facts()
+        .try_expression(node)
+        .ok_or_else(|| {
+            Error::new(
+                "E196",
+                &Span::line(1),
+                "checked test expression node is outside its arena",
+            )
+        })?;
+    if expression.owner != expression_use {
+        return Err(Error::new(
+            "E196",
+            &Span::line(1),
+            "checked test expression node belongs to another expression use",
+        ));
+    }
+    expr_node_code(
+        ExprNode::Checked(node),
+        env,
+        &ExprEmission::for_checked(program),
+        mode,
+    )
+}
+
 pub(in crate::codegen) fn clamped_f32_code(
     expr: &Expr,
     min: &str,

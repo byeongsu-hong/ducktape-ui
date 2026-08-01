@@ -6,30 +6,30 @@ pub(in crate::codegen) fn generate_test_mounts(
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let render_document = RenderDocument::new(program);
-    let presets = if document.presets.is_empty() {
+    let presets = if program.preset_names().is_empty() {
         String::new()
     } else {
         format!(
             ".presets([{}])",
-            document
-                .presets
+            program
+                .preset_names()
                 .iter()
                 .enumerate()
                 .map(|(index, preset)| format!(
                     "::iced::Preset::new({}, Self::__preset_{index})",
-                    rust_string(&preset.name)
+                    rust_string(preset)
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
     };
-    for (index, test) in document.tests.iter().enumerate() {
-        let Some(mount) = &test.mount else {
+    for test in program.tests() {
+        let Some(mount) = program.test_mount(test.id) else {
             continue;
         };
+        let index = test.id.0 as usize;
         let mut env = checked_state_env(program, "self");
         if daemon {
             env.insert(
@@ -39,10 +39,7 @@ pub(in crate::codegen) fn generate_test_mounts(
                     ty: Type::WindowId,
                     local: true,
                     state: None,
-                    owner: program
-                        .checked_facts()
-                        .daemon_window_local()
-                        .map(BindingOwner::Local),
+                    owner: test.window_local.map(BindingOwner::Local),
                 },
             );
         }
@@ -51,7 +48,7 @@ pub(in crate::codegen) fn generate_test_mounts(
             &render_document,
             message,
             &env,
-            &rust_string(&document.app),
+            &rust_string(program.app_name()),
             None,
         )?
         .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
@@ -99,17 +96,16 @@ pub(in crate::codegen) fn generate_tests(
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
     writeln!(out, "#[cfg(test)]\nmod __ice_tests {{\nuse super::*;").unwrap();
     writeln!(
         out,
         "#[test]\nfn __ice_agent_inspect() {{ ::ui_lang_runtime::testing::agent_inspect(|| {}::__program(), {}); }}",
-        document.app,
+        program.app_name(),
         rust_string(source_path),
     )
     .unwrap();
-    for (index, test) in document.tests.iter().enumerate() {
-        generate_test(out, program, message, source_path, index, test)?;
+    for test in program.tests() {
+        generate_test(out, program, message, source_path, test)?;
     }
     writeln!(out, "}}").unwrap();
     Ok(())
@@ -120,18 +116,30 @@ fn generate_test(
     program: &LoweredProgram,
     message: &str,
     source_path: &str,
-    index: usize,
-    test: &TestDecl,
+    test: &ResolvedTest,
 ) -> Result<(), Error> {
-    let document = program.document();
+    use ResolvedTestStepKind as TestStepKind;
+
+    let expr_code =
+        |value: &ResolvedExpressionId, env: &HashMap<String, Binding>, mode: ValueMode| {
+            checked_expr_use_code(program, *value, env, mode)
+        };
+    let expr_list_code = |values: &[ResolvedExpressionId], env: &HashMap<String, Binding>| {
+        values
+            .iter()
+            .map(|value| checked_expr_use_code(program, *value, env, ValueMode::Owned))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|values| values.join(", "))
+    };
+    let index = test.id.0 as usize;
     writeln!(out, "#[test]\nfn {}() {{", test.name).unwrap();
     let declaration = format!("test {}", test.name);
-    let source = location_code(program, source_path, &test.span, &declaration);
+    let source = location_code(program, source_path, test.origin, &declaration);
     let mut config = format!(
         "::ui_lang_runtime::testing::Config::new({}).source({source})",
         rust_string(&test.name),
     );
-    if let Some((width, height)) = test.viewport {
+    if let Some((width, height)) = test.config.viewport {
         write!(
             config,
             ".viewport({}f32, {}f32)",
@@ -140,14 +148,14 @@ fn generate_test(
         )
         .unwrap();
     }
-    if let Some(timeout_ms) = test.timeout_ms {
+    if let Some(timeout_ms) = test.config.timeout_ms {
         write!(
             config,
             ".timeout(::std::time::Duration::from_millis({timeout_ms}))"
         )
         .unwrap();
     }
-    if let Some(theme) = test.theme {
+    if let Some(theme) = test.config.theme {
         let theme = test_theme_variant(theme);
         write!(
             config,
@@ -155,18 +163,18 @@ fn generate_test(
         )
         .unwrap();
     }
-    if let Some(scale_factor) = test.scale_factor {
+    if let Some(scale_factor) = test.config.scale_factor {
         write!(config, ".scale_factor({}f32)", rust_f64(scale_factor)).unwrap();
     }
-    if let Some(locale) = &test.locale {
+    if let Some(locale) = &test.config.locale {
         write!(config, ".locale({})", rust_string(locale)).unwrap();
     }
-    if let Some(platform) = test.platform {
+    if let Some(platform) = test.config.platform {
         let platform = match platform {
-            TestPlatform::Linux => "Linux",
-            TestPlatform::Windows => "Windows",
-            TestPlatform::Macos => "Macos",
-            TestPlatform::Wasm => "Wasm",
+            ResolvedTestPlatform::Linux => "Linux",
+            ResolvedTestPlatform::Windows => "Windows",
+            ResolvedTestPlatform::Macos => "Macos",
+            ResolvedTestPlatform::Wasm => "Wasm",
         };
         write!(
             config,
@@ -174,17 +182,17 @@ fn generate_test(
         )
         .unwrap();
     }
-    if let Some(reduced_motion) = test.reduced_motion {
+    if let Some(reduced_motion) = test.config.reduced_motion {
         write!(config, ".reduced_motion({reduced_motion})").unwrap();
     }
-    if let Some(preset) = &test.preset {
+    if let Some(preset) = &test.config.preset {
         write!(config, ".preset({})", rust_string(preset)).unwrap();
     }
     writeln!(out, "let __config = {config};").unwrap();
     let test_program = if test.mount.is_some() {
-        format!("{}::__ice_test_program_{index}()", document.app)
+        format!("{}::__ice_test_program_{index}()", program.app_name())
     } else {
-        format!("{}::__program()", document.app)
+        format!("{}::__program()", program.app_name())
     };
     writeln!(
         out,
@@ -192,10 +200,20 @@ fn generate_test(
     )
     .unwrap();
 
-    for step in &test.steps {
-        let statement = test_step_source(step);
-        let location = location_code(program, source_path, &step.span, &statement);
-        let mut env = state_env(document, "__test.state()");
+    for (step_index, step) in test.steps.iter().enumerate() {
+        if step.id
+            != (TestStepId {
+                test: test.id,
+                index: step_index as u32,
+            })
+        {
+            return Err(program.invariant_at_origin(
+                step.origin,
+                "resolved test step identity changed before code generation",
+            ));
+        }
+        let location = location_code(program, source_path, step.origin, &step.source);
+        let mut env = checked_state_env(program, "__test.state()");
         if program.settings().kind == ProgramKind::Daemon {
             env.insert(
                 "window".into(),
@@ -204,12 +222,23 @@ fn generate_test(
                     ty: Type::WindowId,
                     local: true,
                     state: None,
-                    owner: None,
+                    owner: test.window_local.map(BindingOwner::Local),
                 },
             );
         }
-        for target in &test.targets {
-            let path = widget_target_path_code(&target.target, &env, document)?;
+        for (target_index, target) in test.targets.iter().enumerate() {
+            if target.id
+                != (TestTargetId {
+                    test: test.id,
+                    index: target_index as u32,
+                })
+            {
+                return Err(program.invariant_at_origin(
+                    target.origin,
+                    "resolved test target identity changed before code generation",
+                ));
+            }
+            let path = resolved_test_target_path_code(&target.path, &env, program)?;
             env.insert(
                 target.name.clone(),
                 Binding {
@@ -219,7 +248,7 @@ fn generate_test(
                     ty: Type::TestTarget,
                     local: true,
                     state: None,
-                    owner: None,
+                    owner: Some(BindingOwner::Local(target.local)),
                 },
             );
         }
@@ -235,7 +264,7 @@ fn generate_test(
                 button,
                 count,
             } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 let button = test_mouse_button_code(*button);
                 writeln!(
                     out,
@@ -247,15 +276,15 @@ fn generate_test(
                 x,
                 y,
                 button,
-                count: _,
+                count,
             } => {
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 let button = test_mouse_button_code(*button);
-                writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::ClickAt {{ position: ::iced::Point::new(__x, __y), button: {button}, count: 1 }}, {location});").unwrap();
+                writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::ClickAt {{ position: ::iced::Point::new(__x, __y), button: {button}, count: {count} }}, {location});").unwrap();
             }
             TestStepKind::Hover(target) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveTo(__target.to_owned()), {location});"
@@ -263,7 +292,7 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Enter(target) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Enter(__target.to_owned()), {location});"
@@ -273,21 +302,21 @@ fn generate_test(
             TestStepKind::Leave => {
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Leave, {location});").unwrap();
             }
-            TestStepKind::Move(TestPointerPosition::Target(target)) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+            TestStepKind::MoveTarget(target) => {
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveTo(__target.to_owned()), {location});"
                 )
                 .unwrap();
             }
-            TestStepKind::Move(TestPointerPosition::Point(x, y)) => {
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+            TestStepKind::MovePoint(x, y) => {
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveToPoint(::iced::Point::new(__x, __y)), {location});").unwrap();
             }
             TestStepKind::Press { target, button } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 let button = test_mouse_button_code(*button);
                 writeln!(
                     out,
@@ -300,32 +329,32 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Release({button}), {location});").unwrap();
             }
             TestStepKind::Wheel { unit, x, y } => {
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 let delta = match unit {
-                    TestWheelUnit::Pixels => "Pixels",
-                    TestWheelUnit::Lines => "Lines",
+                    ResolvedTestWheelUnit::Pixels => "Pixels",
+                    ResolvedTestWheelUnit::Lines => "Lines",
                 };
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Wheel(::ui_lang_runtime::testing::WheelDelta::{delta} {{ x: __x, y: __y }}), {location});").unwrap();
             }
             TestStepKind::Scroll { mode, target, x, y } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 let action = match mode {
-                    TestScrollMode::To => "ScrollTo",
-                    TestScrollMode::By => "ScrollBy",
+                    ResolvedTestScrollMode::To => "ScrollTo",
+                    ResolvedTestScrollMode::By => "ScrollBy",
                 };
                 writeln!(out, "let __target = {path}; let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::{action} {{ target: __target.to_owned(), x: __x, y: __y }}, {location});").unwrap();
             }
             TestStepKind::Snap { target, x, y } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 writeln!(out, "let __target = {path}; let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Snap {{ target: __target.to_owned(), x: __x, y: __y }}, {location});").unwrap();
             }
             TestStepKind::SnapEnd(target) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::SnapEnd(__target.to_owned()), {location});"
@@ -333,8 +362,8 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Drag { from, to } => {
-                let from = target_ref_path_code(from, test, &env, document)?;
-                let to = target_ref_path_code(to, test, &env, document)?;
+                let from = target_ref_path_code(from, test, &env, program)?;
+                let to = target_ref_path_code(to, test, &env, program)?;
                 writeln!(
                     out,
                     "let __from = {from}; let __to = {to}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Drag {{ from: __from.to_owned(), to: __to.to_owned() }}, {location});"
@@ -342,7 +371,7 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Drop(target) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::DropAt(__target.to_owned()), {location});"
@@ -350,7 +379,7 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Focus(target) => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Focus(__target.to_owned()), {location});"
@@ -370,7 +399,7 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::WindowFocus({focused}), {location});").unwrap();
             }
             TestStepKind::Type(value) => {
-                let value = expr_code(value, &env, document, ValueMode::Owned)?;
+                let value = expr_code(value, &env, ValueMode::Owned)?;
                 writeln!(
                     out,
                     "let __value = {value}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Type(__value), {location});"
@@ -381,7 +410,7 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Clear, {location});").unwrap();
             }
             TestStepKind::Replace(value) => {
-                let value = expr_code(value, &env, document, ValueMode::Owned)?;
+                let value = expr_code(value, &env, ValueMode::Owned)?;
                 writeln!(
                     out,
                     "let __value = {value}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Replace(__value), {location});"
@@ -389,15 +418,15 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Select(start, end) => {
-                let start = expr_code(start, &env, document, ValueMode::Owned)?;
-                let end = expr_code(end, &env, document, ValueMode::Owned)?;
+                let start = expr_code(start, &env, ValueMode::Owned)?;
+                let end = expr_code(end, &env, ValueMode::Owned)?;
                 writeln!(out, "let __start = ::std::primitive::usize::try_from({start}).expect(\"selection start must fit usize\"); let __end = ::std::primitive::usize::try_from({end}).expect(\"selection end must fit usize\"); let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Select {{ start: __start, end: __end }}, {location});").unwrap();
             }
             TestStepKind::SelectAll => {
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::SelectAll, {location});").unwrap();
             }
             TestStepKind::Cursor(index) => {
-                let index = expr_code(index, &env, document, ValueMode::Owned)?;
+                let index = expr_code(index, &env, ValueMode::Owned)?;
                 writeln!(out, "let __index = ::std::primitive::usize::try_from({index}).expect(\"cursor index must fit usize\"); let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Cursor(__index), {location});").unwrap();
             }
             TestStepKind::CursorFront => {
@@ -407,7 +436,7 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::CursorEnd, {location});").unwrap();
             }
             TestStepKind::Composition(composition) => {
-                let composition = test_composition_code(composition, &env, document)?;
+                let composition = test_composition_code(composition, &env, program)?;
                 writeln!(out, "let __composition = {composition}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Composition(__composition), {location});").unwrap();
             }
             TestStepKind::Key(key) => {
@@ -435,11 +464,11 @@ fn generate_test(
             }
             TestStepKind::Repeat { key, count } => {
                 let key = test_key_code(key);
-                let count = expr_code(count, &env, document, ValueMode::Owned)?;
+                let count = expr_code(count, &env, ValueMode::Owned)?;
                 writeln!(out, "let __count = ::std::primitive::usize::try_from({count}).expect(\"repeat count must fit usize\"); let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Repeat {{ key: {key}, count: __count }}, {location});").unwrap();
             }
             TestStepKind::Tap { target, count } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Tap {{ target: __target.to_owned(), count: {count} }}, {location});"
@@ -448,24 +477,24 @@ fn generate_test(
             }
             TestStepKind::Touch { phase, id, x, y } => {
                 let phase = match phase {
-                    TestTouchPhase::Down => "Down",
-                    TestTouchPhase::Move => "Move",
-                    TestTouchPhase::Up => "Up",
-                    TestTouchPhase::Cancel => "Cancel",
+                    ResolvedTestTouchPhase::Down => "Down",
+                    ResolvedTestTouchPhase::Move => "Move",
+                    ResolvedTestTouchPhase::Up => "Up",
+                    ResolvedTestTouchPhase::Cancel => "Cancel",
                 };
-                let id = expr_code(id, &env, document, ValueMode::Owned)?;
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let id = expr_code(id, &env, ValueMode::Owned)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 writeln!(out, "let __id = ::std::primitive::u64::try_from({id}).expect(\"touch id must fit u64\"); let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Touch {{ phase: ::ui_lang_runtime::testing::TouchPhase::{phase}, id: __id, position: ::iced::Point::new(__x, __y) }}, {location});").unwrap();
             }
             TestStepKind::WindowMove(x, y) => {
-                let x = expr_code(x, &env, document, ValueMode::Owned)?;
-                let y = expr_code(y, &env, document, ValueMode::Owned)?;
+                let x = expr_code(x, &env, ValueMode::Owned)?;
+                let y = expr_code(y, &env, ValueMode::Owned)?;
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::WindowMove(::iced::Point::new(__x, __y)), {location});").unwrap();
             }
             TestStepKind::Resize(width, height) => {
-                let width = expr_code(width, &env, document, ValueMode::Owned)?;
-                let height = expr_code(height, &env, document, ValueMode::Owned)?;
+                let width = expr_code(width, &env, ValueMode::Owned)?;
+                let height = expr_code(height, &env, ValueMode::Owned)?;
                 writeln!(
                     out,
                     "let __width = ({width}) as f32; let __height = ({height}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Resize(::iced::Size::new(__width, __height)), {location});"
@@ -473,7 +502,7 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Rescale(value) => {
-                let value = expr_code(value, &env, document, ValueMode::Owned)?;
+                let value = expr_code(value, &env, ValueMode::Owned)?;
                 writeln!(
                     out,
                     "let __scale = ({value}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Rescale(__scale), {location});"
@@ -497,7 +526,7 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::SystemTheme(::ui_lang_runtime::testing::ThemeMode::{theme}), {location});").unwrap();
             }
             TestStepKind::FileHover(value) | TestStepKind::FileDrop(value) => {
-                let value = expr_code(value, &env, document, ValueMode::Owned)?;
+                let value = expr_code(value, &env, ValueMode::Owned)?;
                 let action = if matches!(&step.kind, TestStepKind::FileHover(_)) {
                     "FileHover"
                 } else {
@@ -536,10 +565,10 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Accessibility { action, target } => {
-                let path = target_ref_path_code(target, test, &env, document)?;
+                let path = target_ref_path_code(target, test, &env, program)?;
                 let action = match action {
-                    TestAccessibilityAction::Activate => "Click",
-                    TestAccessibilityAction::Focus => "Focus",
+                    ResolvedTestAccessibilityAction::Activate => "Click",
+                    ResolvedTestAccessibilityAction::Focus => "Focus",
                 };
                 writeln!(
                     out,
@@ -547,9 +576,20 @@ fn generate_test(
                 )
                 .unwrap();
             }
-            TestStepKind::Dispatch { handler, args } => {
-                let variant = handler_variant(handler);
-                let args = expr_list_code(args, &env, document)?;
+            TestStepKind::Dispatch {
+                handler,
+                handler_name,
+                args,
+            } => {
+                let declaration = program.handler(*handler);
+                if declaration.name != *handler_name {
+                    return Err(program.invariant_at_origin(
+                        step.origin,
+                        "test dispatch handler identity changed before code generation",
+                    ));
+                }
+                let variant = handler_variant(handler_name);
+                let args = expr_list_code(args, &env)?;
                 let value = if args.is_empty() {
                     format!("{message}::{variant}")
                 } else {
@@ -562,7 +602,7 @@ fn generate_test(
                 .unwrap();
             }
             TestStepKind::Expect(expectation) => {
-                generate_expectation(out, expectation, test, &env, document, &location)?;
+                generate_expectation(out, expectation, test, &env, program, &location)?;
             }
         }
         writeln!(out, "}});").unwrap();
@@ -573,32 +613,35 @@ fn generate_test(
 
 fn generate_expectation(
     out: &mut String,
-    expectation: &TestExpectation,
-    test: &TestDecl,
+    expectation: &ResolvedTestExpectation,
+    test: &ResolvedTest,
     env: &HashMap<String, Binding>,
-    document: &Document,
+    program: &LoweredProgram,
     location: &str,
 ) -> Result<(), Error> {
     match expectation {
-        TestExpectation::Expr(Expr::Binary { left, op, right })
-            if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) =>
-        {
-            let left = expr_code(left, env, document, ValueMode::Owned)?;
-            let right = expr_code(right, env, document, ValueMode::Owned)?;
-            let method = if *op == BinaryOp::Eq {
-                "check_eq"
-            } else {
-                "check_ne"
-            };
+        ResolvedTestExpectation::Equality {
+            left,
+            right,
+            negated,
+            expression,
+        } => {
+            let left = checked_expr_node_code(program, *expression, *left, env, ValueMode::Owned)?;
+            let right =
+                checked_expr_node_code(program, *expression, *right, env, ValueMode::Owned)?;
+            let method = if *negated { "check_ne" } else { "check_eq" };
             writeln!(
                 out,
                 "let __left = {left}; let __right = {right}; __test.{method}(__left, __right, {location});"
             )
             .unwrap();
         }
-        TestExpectation::Expr(value) => {
-            let mut code = expr_code(value, env, document, ValueMode::Owned)?;
-            if matches!(value, Expr::Unary { .. } | Expr::Binary { .. }) {
+        ResolvedTestExpectation::Expr {
+            expression,
+            unwrap_operator,
+        } => {
+            let mut code = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+            if *unwrap_operator {
                 code = code
                     .strip_prefix('(')
                     .and_then(|code| code.strip_suffix(')'))
@@ -611,32 +654,32 @@ fn generate_expectation(
             )
             .unwrap();
         }
-        TestExpectation::Approx { left, right } => {
-            let left = expr_code(left, env, document, ValueMode::Owned)?;
-            let right = expr_code(right, env, document, ValueMode::Owned)?;
+        ResolvedTestExpectation::Approx { left, right } => {
+            let left = checked_expr_use_code(program, *left, env, ValueMode::Owned)?;
+            let right = checked_expr_use_code(program, *right, env, ValueMode::Owned)?;
             writeln!(
                 out,
                 "let __left = ({left}) as f64; let __right = ({right}) as f64; __test.check_approx(__left, __right, {location});"
             )
             .unwrap();
         }
-        TestExpectation::Exists(target) | TestExpectation::Missing(target) => {
-            let path = target_ref_path_code(target, test, env, document)?;
-            let expected = matches!(expectation, TestExpectation::Exists(_));
+        ResolvedTestExpectation::Exists(target) | ResolvedTestExpectation::Missing(target) => {
+            let path = target_ref_path_code(target, test, env, program)?;
+            let expected = matches!(expectation, ResolvedTestExpectation::Exists(_));
             writeln!(
                 out,
                 "let __target = {path}; __test.check_exists(&__target, {expected}, {location});"
             )
             .unwrap();
         }
-        TestExpectation::Text {
+        ResolvedTestExpectation::Text {
             value,
             within,
             negated,
         } => {
-            let value = expr_code(value, env, document, ValueMode::Owned)?;
+            let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
             if let Some(within) = within {
-                let path = target_ref_path_code(within, test, env, document)?;
+                let path = target_ref_path_code(within, test, env, program)?;
                 writeln!(
                     out,
                     "let __value = {value}; let __within = {path}; __test.check_text(&__value, ::std::option::Option::Some(&__within), {negated}, {location});"
@@ -650,36 +693,37 @@ fn generate_expectation(
                 .unwrap();
             }
         }
-        TestExpectation::Accessibility { target, property } => {
-            let path = target_ref_path_code(target, test, env, document)?;
+        ResolvedTestExpectation::Accessibility { target, property } => {
+            let path = target_ref_path_code(target, test, env, program)?;
             match property {
-                TestAccessibilityProperty::Role(value)
-                | TestAccessibilityProperty::Name(value)
-                | TestAccessibilityProperty::Value(value) => {
+                ResolvedTestAccessibilityProperty::Role(value)
+                | ResolvedTestAccessibilityProperty::Name(value)
+                | ResolvedTestAccessibilityProperty::Value(value) => {
                     let property = match property {
-                        TestAccessibilityProperty::Role(_) => "Role",
-                        TestAccessibilityProperty::Name(_) => "Name",
-                        TestAccessibilityProperty::Value(_) => "Value",
+                        ResolvedTestAccessibilityProperty::Role(_) => "Role",
+                        ResolvedTestAccessibilityProperty::Name(_) => "Name",
+                        ResolvedTestAccessibilityProperty::Value(_) => "Value",
                         _ => unreachable!(),
                     };
-                    let value = expr_code(value, env, document, ValueMode::Owned)?;
+                    let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {value}; __test.check_accessibility_str(&__target, ::ui_lang_runtime::testing::AccessibilityProperty::{property}, &__expected, {location});").unwrap();
                 }
-                TestAccessibilityProperty::Checked(value)
-                | TestAccessibilityProperty::Disabled(value)
-                | TestAccessibilityProperty::Focused(value) => {
+                ResolvedTestAccessibilityProperty::Checked(value)
+                | ResolvedTestAccessibilityProperty::Disabled(value)
+                | ResolvedTestAccessibilityProperty::Focused(value) => {
                     let property = match property {
-                        TestAccessibilityProperty::Checked(_) => "Checked",
-                        TestAccessibilityProperty::Disabled(_) => "Disabled",
-                        TestAccessibilityProperty::Focused(_) => "Focused",
+                        ResolvedTestAccessibilityProperty::Checked(_) => "Checked",
+                        ResolvedTestAccessibilityProperty::Disabled(_) => "Disabled",
+                        ResolvedTestAccessibilityProperty::Focused(_) => "Focused",
                         _ => unreachable!(),
                     };
-                    let value = expr_code(value, env, document, ValueMode::Owned)?;
+                    let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {value}; __test.check_accessibility_bool(&__target, ::ui_lang_runtime::testing::AccessibilityProperty::{property}, __expected, {location});").unwrap();
                 }
-                TestAccessibilityProperty::Action { name, expected } => {
+                ResolvedTestAccessibilityProperty::Action { name, expected } => {
                     let action = accessibility_action_variant(name);
-                    let expected = expr_code(expected, env, document, ValueMode::Owned)?;
+                    let expected =
+                        checked_expr_use_code(program, *expected, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {expected}; __test.check_accessibility_action(&__target, ::ui_lang_runtime::testing::AccessibilityAction::{action}, __expected, {location});").unwrap();
                 }
             }
@@ -688,45 +732,45 @@ fn generate_expectation(
     Ok(())
 }
 
-fn test_theme_variant(theme: TestTheme) -> &'static str {
+fn test_theme_variant(theme: ResolvedTestTheme) -> &'static str {
     match theme {
-        TestTheme::Light => "Light",
-        TestTheme::Dark => "Dark",
-        TestTheme::None => "None",
+        ResolvedTestTheme::Light => "Light",
+        ResolvedTestTheme::Dark => "Dark",
+        ResolvedTestTheme::None => "None",
     }
 }
 
-fn test_mouse_button_code(button: TestMouseButton) -> &'static str {
+fn test_mouse_button_code(button: ResolvedTestMouseButton) -> &'static str {
     match button {
-        TestMouseButton::Left => "::ui_lang_runtime::testing::MouseButton::Left",
-        TestMouseButton::Right => "::ui_lang_runtime::testing::MouseButton::Right",
-        TestMouseButton::Middle => "::ui_lang_runtime::testing::MouseButton::Middle",
-        TestMouseButton::Back => "::ui_lang_runtime::testing::MouseButton::Back",
-        TestMouseButton::Forward => "::ui_lang_runtime::testing::MouseButton::Forward",
+        ResolvedTestMouseButton::Left => "::ui_lang_runtime::testing::MouseButton::Left",
+        ResolvedTestMouseButton::Right => "::ui_lang_runtime::testing::MouseButton::Right",
+        ResolvedTestMouseButton::Middle => "::ui_lang_runtime::testing::MouseButton::Middle",
+        ResolvedTestMouseButton::Back => "::ui_lang_runtime::testing::MouseButton::Back",
+        ResolvedTestMouseButton::Forward => "::ui_lang_runtime::testing::MouseButton::Forward",
     }
 }
 
-fn test_key_code(key: &TestKey) -> String {
+fn test_key_code(key: &ResolvedTestKey) -> String {
     match key {
-        TestKey::Named(name) => format!(
+        ResolvedTestKey::Named(name) => format!(
             "::ui_lang_runtime::testing::Key::named(::iced::keyboard::key::Named::{})",
             test_keyboard_variant_name(name)
         ),
-        TestKey::Character(value) => format!(
+        ResolvedTestKey::Character(value) => format!(
             "::ui_lang_runtime::testing::Key::character({})",
             rust_string(value)
         ),
     }
 }
 
-fn test_modifiers_code(modifiers: TestModifiers) -> String {
+fn test_modifiers_code(modifiers: ResolvedTestModifiers) -> String {
     format!(
         "::ui_lang_runtime::testing::Modifiers::new({}, {}, {}, {})",
         modifiers.shift, modifiers.control, modifiers.alt, modifiers.logo
     )
 }
 
-fn test_key_metadata_code(event: &TestKeyEvent) -> String {
+fn test_key_metadata_code(event: &ResolvedTestKeyEvent) -> String {
     let modified_key = event.modified_key.as_ref().map_or_else(
         || "::std::option::Option::None".into(),
         |key| format!("::std::option::Option::Some({})", test_key_code(key)),
@@ -741,10 +785,10 @@ fn test_key_metadata_code(event: &TestKeyEvent) -> String {
         },
     );
     let location = match event.location {
-        TestKeyLocation::Standard => "Standard",
-        TestKeyLocation::Left => "Left",
-        TestKeyLocation::Right => "Right",
-        TestKeyLocation::Numpad => "Numpad",
+        ResolvedTestKeyLocation::Standard => "Standard",
+        ResolvedTestKeyLocation::Left => "Left",
+        ResolvedTestKeyLocation::Right => "Right",
+        ResolvedTestKeyLocation::Numpad => "Numpad",
     };
     let text = event.text.as_ref().map_or_else(
         || "::std::option::Option::None".into(),
@@ -762,33 +806,37 @@ fn test_key_metadata_code(event: &TestKeyEvent) -> String {
 }
 
 fn test_composition_code(
-    composition: &TestComposition,
+    composition: &ResolvedTestComposition,
     env: &HashMap<String, Binding>,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     Ok(match composition {
-        TestComposition::Start => "::ui_lang_runtime::testing::CompositionPhase::Start".into(),
-        TestComposition::Update { value, selection } => {
+        ResolvedTestComposition::Start => {
+            "::ui_lang_runtime::testing::CompositionPhase::Start".into()
+        }
+        ResolvedTestComposition::Update { value, selection } => {
             let selection = selection.as_ref().map_or_else(
                 || Ok("::std::option::Option::None".to_owned()),
                 |(start, end)| {
                     Ok::<_, Error>(format!(
                         "::std::option::Option::Some(::std::ops::Range {{ start: ::std::primitive::usize::try_from({}).expect(\"composition selection start must fit usize\"), end: ::std::primitive::usize::try_from({}).expect(\"composition selection end must fit usize\") }})",
-                        expr_code(start, env, document, ValueMode::Owned)?,
-                        expr_code(end, env, document, ValueMode::Owned)?
+                        checked_expr_use_code(program, *start, env, ValueMode::Owned)?,
+                        checked_expr_use_code(program, *end, env, ValueMode::Owned)?
                     ))
                 },
             )?;
             format!(
                 "::ui_lang_runtime::testing::CompositionPhase::Update {{ text: {}, selection: {selection} }}",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
             )
         }
-        TestComposition::Commit(value) => format!(
+        ResolvedTestComposition::Commit(value) => format!(
             "::ui_lang_runtime::testing::CompositionPhase::Commit({})",
-            expr_code(value, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
-        TestComposition::Cancel => "::ui_lang_runtime::testing::CompositionPhase::Cancel".into(),
+        ResolvedTestComposition::Cancel => {
+            "::ui_lang_runtime::testing::CompositionPhase::Cancel".into()
+        }
     })
 }
 
@@ -800,42 +848,76 @@ fn accessibility_action_variant(name: &str) -> &'static str {
     }
 }
 
-fn target_ref_path_code(
-    target: &TestTargetRef,
-    test: &TestDecl,
+fn resolved_test_target_path_code(
+    target: &ResolvedTestTargetPath,
     env: &HashMap<String, Binding>,
-    document: &Document,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    if target.segments.iter().all(|segment| segment.key.is_none()) {
+        return Ok(rust_string(&format!(
+            "{}/{}",
+            program.app_name(),
+            target
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>()
+                .join("/")
+        )));
+    }
+    let mut scope = rust_string(program.app_name());
+    for segment in &target.segments {
+        scope = if let Some(key) = segment.key {
+            let key = checked_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+            format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
+        } else {
+            format!("format!(\"{{}}/{}\", {scope})", segment.name)
+        };
+    }
+    Ok(scope)
+}
+
+fn target_ref_path_code(
+    target: &ResolvedTestTargetRef,
+    test: &ResolvedTest,
+    env: &HashMap<String, Binding>,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     let target = match target {
-        TestTargetRef::Alias(name) => {
+        ResolvedTestTargetRef::Alias(id) => {
             &test
                 .targets
                 .iter()
-                .find(|target| target.name == *name)
-                .expect("checker validates test target aliases")
-                .target
+                .find(|target| target.id == *id)
+                .ok_or_else(|| {
+                    program.invariant_at_origin(
+                        test.origin,
+                        "resolved test target alias is outside its test",
+                    )
+                })?
+                .path
         }
-        TestTargetRef::Id(target) => target,
+        ResolvedTestTargetRef::Id(target) => target,
     };
-    widget_target_path_code(target, env, document)
+    resolved_test_target_path_code(target, env, program)
 }
 
 fn location_code(
-    document: &LoweredProgram,
+    program: &LoweredProgram,
     source_path: &str,
-    span: &Span,
+    origin: OriginId,
     statement: &str,
 ) -> String {
-    let (source_path, line) = document
-        .source_origin(span.line)
-        .map_or((source_path.to_owned(), span.line), |(path, line)| {
-            (path.display().to_string(), line)
-        });
+    let origin = program.origin(origin);
+    let source_path = origin
+        .path
+        .as_ref()
+        .map_or_else(|| source_path.to_owned(), |path| path.display().to_string());
     format!(
         "::ui_lang_runtime::testing::Location::new({}, {}, {}, {})",
         rust_string(&source_path),
-        line,
-        span.column,
+        origin.line,
+        origin.column,
         rust_string(statement)
     )
 }
@@ -888,395 +970,4 @@ fn test_program_code(
     format!(
         "{root}{index}){title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}"
     )
-}
-
-fn test_step_source(step: &TestStep) -> String {
-    match &step.kind {
-        TestStepKind::Click {
-            target,
-            button,
-            count,
-        } => format!(
-            "{} {}{}",
-            if *count == 2 { "double-click" } else { "click" },
-            target_ref_source(target),
-            mouse_button_suffix(*button)
-        ),
-        TestStepKind::ClickAt { x, y, button, .. } => format!(
-            "click-at {} {}{}",
-            expr_source(x),
-            expr_source(y),
-            mouse_button_suffix(*button)
-        ),
-        TestStepKind::Hover(target) => format!("hover {}", target_ref_source(target)),
-        TestStepKind::Enter(target) => format!("enter {}", target_ref_source(target)),
-        TestStepKind::Leave => "leave".into(),
-        TestStepKind::Move(TestPointerPosition::Target(target)) => {
-            format!("move {}", target_ref_source(target))
-        }
-        TestStepKind::Move(TestPointerPosition::Point(x, y)) => {
-            format!("move {} {}", expr_source(x), expr_source(y))
-        }
-        TestStepKind::Press { target, button } => format!(
-            "press {}{}",
-            target_ref_source(target),
-            mouse_button_suffix(*button)
-        ),
-        TestStepKind::Release(button) => {
-            format!("release{}", mouse_button_suffix(*button))
-        }
-        TestStepKind::Wheel { unit, x, y } => format!(
-            "wheel {} {} {}",
-            match unit {
-                TestWheelUnit::Pixels => "pixels",
-                TestWheelUnit::Lines => "lines",
-            },
-            expr_source(x),
-            expr_source(y)
-        ),
-        TestStepKind::Scroll { mode, target, x, y } => format!(
-            "{} {} {} {}",
-            match mode {
-                TestScrollMode::To => "scroll-to",
-                TestScrollMode::By => "scroll-by",
-            },
-            target_ref_source(target),
-            expr_source(x),
-            expr_source(y)
-        ),
-        TestStepKind::Snap { target, x, y } => format!(
-            "snap {} {} {}",
-            target_ref_source(target),
-            expr_source(x),
-            expr_source(y)
-        ),
-        TestStepKind::SnapEnd(target) => format!("snap-end {}", target_ref_source(target)),
-        TestStepKind::Drag { from, to } => {
-            format!("drag {} {}", target_ref_source(from), target_ref_source(to))
-        }
-        TestStepKind::Drop(target) => format!("drop {}", target_ref_source(target)),
-        TestStepKind::Focus(target) => format!("focus {}", target_ref_source(target)),
-        TestStepKind::FocusNext => "focus-next".into(),
-        TestStepKind::FocusPrevious => "focus-previous".into(),
-        TestStepKind::Blur => "blur".into(),
-        TestStepKind::WindowFocus(true) => "window focus".into(),
-        TestStepKind::WindowFocus(false) => "window blur".into(),
-        TestStepKind::Type(value) => format!("type {}", expr_source(value)),
-        TestStepKind::Clear => "clear".into(),
-        TestStepKind::Replace(value) => format!("replace {}", expr_source(value)),
-        TestStepKind::Select(start, end) => {
-            format!("select {} {}", expr_source(start), expr_source(end))
-        }
-        TestStepKind::SelectAll => "select-all".into(),
-        TestStepKind::Cursor(index) => format!("cursor {}", expr_source(index)),
-        TestStepKind::CursorFront => "cursor front".into(),
-        TestStepKind::CursorEnd => "cursor end".into(),
-        TestStepKind::Composition(TestComposition::Start) => "composition start".into(),
-        TestStepKind::Composition(TestComposition::Update { value, selection }) => {
-            format!(
-                "composition update {}{}",
-                expr_source(value),
-                selection
-                    .as_ref()
-                    .map_or_else(String::new, |(start, end)| format!(
-                        " {} {}",
-                        expr_source(start),
-                        expr_source(end)
-                    ))
-            )
-        }
-        TestStepKind::Composition(TestComposition::Commit(value)) => {
-            format!("composition commit {}", expr_source(value))
-        }
-        TestStepKind::Composition(TestComposition::Cancel) => "composition cancel".into(),
-        TestStepKind::Key(key) => format!("key {}", test_key_source(key)),
-        TestStepKind::KeyDown(event) => format!("key-down {}", test_key_event_source(event)),
-        TestStepKind::KeyUp(event) => format!("key-up {}", test_key_event_source(event)),
-        TestStepKind::Modifiers(modifiers) => {
-            let values = test_modifiers_source(*modifiers);
-            if values.is_empty() {
-                "modifiers".into()
-            } else {
-                format!("modifiers {values}")
-            }
-        }
-        TestStepKind::Chord { modifiers, key } => {
-            let modifiers = test_modifiers_source(*modifiers);
-            format!(
-                "chord {}{}",
-                if modifiers.is_empty() {
-                    String::new()
-                } else {
-                    format!("{modifiers} ")
-                },
-                test_key_source(key)
-            )
-        }
-        TestStepKind::Repeat { key, count } => {
-            format!("repeat {} {}", test_key_source(key), expr_source(count))
-        }
-        TestStepKind::Tap { target, count } => format!(
-            "tap {}{}",
-            target_ref_source(target),
-            if *count == 1 {
-                String::new()
-            } else {
-                format!(" {count}")
-            }
-        ),
-        TestStepKind::Touch { phase, id, x, y } => format!(
-            "touch {} {} {} {}",
-            match phase {
-                TestTouchPhase::Down => "down",
-                TestTouchPhase::Move => "move",
-                TestTouchPhase::Up => "up",
-                TestTouchPhase::Cancel => "cancel",
-            },
-            expr_source(id),
-            expr_source(x),
-            expr_source(y)
-        ),
-        TestStepKind::WindowMove(x, y) => {
-            format!("window move {} {}", expr_source(x), expr_source(y))
-        }
-        TestStepKind::Resize(width, height) => {
-            format!("resize {} {}", expr_source(width), expr_source(height))
-        }
-        TestStepKind::Rescale(value) => format!("window rescale {}", expr_source(value)),
-        TestStepKind::WindowClose => "window close-request".into(),
-        TestStepKind::WindowOpened => "window opened".into(),
-        TestStepKind::WindowClosed => "window closed".into(),
-        TestStepKind::Redraw => "window redraw".into(),
-        TestStepKind::SystemTheme(theme) => {
-            format!("system-theme {}", test_theme_source(*theme))
-        }
-        TestStepKind::FileHover(value) => format!("file-hover {}", expr_source(value)),
-        TestStepKind::FileDrop(value) => format!("file-drop {}", expr_source(value)),
-        TestStepKind::FileLeave => "file-leave".into(),
-        TestStepKind::Wait(duration) => format!("wait {duration}ms"),
-        TestStepKind::Advance(duration) => format!("advance {duration}ms"),
-        TestStepKind::Idle => "idle".into(),
-        TestStepKind::Capture(name) => format!("capture {name}"),
-        TestStepKind::Accessibility { action, target } => format!(
-            "a11y {} {}",
-            match action {
-                TestAccessibilityAction::Activate => "activate",
-                TestAccessibilityAction::Focus => "focus",
-            },
-            target_ref_source(target)
-        ),
-        TestStepKind::Dispatch { handler, args } => format!(
-            "dispatch {handler}({})",
-            args.iter().map(expr_source).collect::<Vec<_>>().join(", ")
-        ),
-        TestStepKind::Expect(expectation) => format!(
-            "expect {}",
-            match expectation {
-                TestExpectation::Expr(value) => expr_source(value),
-                TestExpectation::Approx { left, right } => {
-                    format!("{} ~= {}", expr_source(left), expr_source(right))
-                }
-                TestExpectation::Exists(target) => {
-                    format!("exists {}", target_ref_source(target))
-                }
-                TestExpectation::Missing(target) => {
-                    format!("missing {}", target_ref_source(target))
-                }
-                TestExpectation::Text {
-                    value,
-                    within,
-                    negated,
-                } => format!(
-                    "{}text {}{}",
-                    if *negated { "no " } else { "" },
-                    expr_source(value),
-                    within.as_ref().map_or_else(String::new, |target| format!(
-                        " within {}",
-                        target_ref_source(target)
-                    ))
-                ),
-                TestExpectation::Accessibility { target, property } => format!(
-                    "a11y {} {}",
-                    target_ref_source(target),
-                    accessibility_property_source(property)
-                ),
-            }
-        ),
-    }
-}
-
-fn test_theme_source(theme: TestTheme) -> &'static str {
-    match theme {
-        TestTheme::Light => "light",
-        TestTheme::Dark => "dark",
-        TestTheme::None => "none",
-    }
-}
-
-fn mouse_button_source(button: TestMouseButton) -> &'static str {
-    match button {
-        TestMouseButton::Left => "left",
-        TestMouseButton::Right => "right",
-        TestMouseButton::Middle => "middle",
-        TestMouseButton::Back => "back",
-        TestMouseButton::Forward => "forward",
-    }
-}
-
-fn mouse_button_suffix(button: TestMouseButton) -> String {
-    if button == TestMouseButton::Left {
-        String::new()
-    } else {
-        format!(" {}", mouse_button_source(button))
-    }
-}
-
-fn test_key_source(key: &TestKey) -> String {
-    match key {
-        TestKey::Named(name) => name.clone(),
-        TestKey::Character(value) => format!("{value:?}"),
-    }
-}
-
-fn test_modifiers_source(modifiers: TestModifiers) -> String {
-    [
-        (modifiers.shift, "shift"),
-        (modifiers.control, "control"),
-        (modifiers.alt, "alt"),
-        (modifiers.logo, "logo"),
-    ]
-    .into_iter()
-    .filter_map(|(enabled, name)| enabled.then_some(name))
-    .collect::<Vec<_>>()
-    .join(" ")
-}
-
-fn test_key_event_source(event: &TestKeyEvent) -> String {
-    let mut values = vec![test_key_source(&event.key)];
-    if let Some(modified) = &event.modified_key {
-        values.push(format!("modified={}", test_key_source(modified)));
-    }
-    if event.location != TestKeyLocation::Standard {
-        values.push(format!(
-            "location={}",
-            match event.location {
-                TestKeyLocation::Standard => "standard",
-                TestKeyLocation::Left => "left",
-                TestKeyLocation::Right => "right",
-                TestKeyLocation::Numpad => "numpad",
-            }
-        ));
-    }
-    if let Some(physical) = &event.physical {
-        values.push(format!("physical={physical}"));
-    }
-    if let Some(text) = &event.text {
-        values.push(format!("text={text:?}"));
-    }
-    if event.repeat {
-        values.push("repeat=true".into());
-    }
-    values.join(" ")
-}
-
-fn accessibility_property_source(property: &TestAccessibilityProperty) -> String {
-    match property {
-        TestAccessibilityProperty::Role(value) => format!("role {}", expr_source(value)),
-        TestAccessibilityProperty::Name(value) => format!("name {}", expr_source(value)),
-        TestAccessibilityProperty::Value(value) => format!("value {}", expr_source(value)),
-        TestAccessibilityProperty::Checked(value) => {
-            format!("checked {}", expr_source(value))
-        }
-        TestAccessibilityProperty::Disabled(value) => {
-            format!("disabled {}", expr_source(value))
-        }
-        TestAccessibilityProperty::Focused(value) => {
-            format!("focused {}", expr_source(value))
-        }
-        TestAccessibilityProperty::Action { name, expected } => {
-            format!("action {name} {}", expr_source(expected))
-        }
-    }
-}
-
-fn target_ref_source(target: &TestTargetRef) -> String {
-    match target {
-        TestTargetRef::Alias(name) => name.clone(),
-        TestTargetRef::Id(target) => widget_target_source(target),
-    }
-}
-
-fn widget_target_source(target: &WidgetTarget) -> String {
-    format!(
-        "#{}",
-        target
-            .segments
-            .iter()
-            .map(|segment| segment.key.as_ref().map_or_else(
-                || segment.name.clone(),
-                |key| format!("{}({})", segment.name, expr_source(key))
-            ))
-            .collect::<Vec<_>>()
-            .join("/")
-    )
-}
-
-fn expr_source(expr: &Expr) -> String {
-    match expr {
-        Expr::Bool(value) => value.to_string(),
-        Expr::I64(value) => value.to_string(),
-        Expr::F64(value) => rust_f64(*value),
-        Expr::Str(value) => format!("{value:?}"),
-        Expr::Bytes(values) => format!(
-            "bytes({})",
-            values
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Expr::EmptyList => "[]".into(),
-        Expr::List(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(expr_source)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Expr::None => "none".into(),
-        Expr::Path(path) => path.join("."),
-        Expr::Call { name, args } => format!(
-            "{name}({})",
-            args.iter().map(expr_source).collect::<Vec<_>>().join(", ")
-        ),
-        Expr::Unary { op, value } => format!(
-            "{}{}",
-            match op {
-                UnaryOp::Not => "!",
-                UnaryOp::Neg => "-",
-            },
-            expr_source(value)
-        ),
-        Expr::Binary { left, op, right } => format!(
-            "({} {} {})",
-            expr_source(left),
-            match op {
-                BinaryOp::Add => "+",
-                BinaryOp::Sub => "-",
-                BinaryOp::Mul => "*",
-                BinaryOp::Div => "/",
-                BinaryOp::Rem => "%",
-                BinaryOp::Eq => "==",
-                BinaryOp::NotEq => "!=",
-                BinaryOp::Lt => "<",
-                BinaryOp::LtEq => "<=",
-                BinaryOp::Gt => ">",
-                BinaryOp::GtEq => ">=",
-                BinaryOp::And => "&&",
-                BinaryOp::Or => "||",
-            },
-            expr_source(right)
-        ),
-    }
 }

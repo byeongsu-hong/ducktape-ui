@@ -428,7 +428,7 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
-Handlers, tasks, canvas locals, tests, and expression-bearing widget options remain outside
+Canvas locals and expression-bearing widget options remain outside
 this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -492,7 +492,7 @@ handler injection, wrong-role/cycle/wrong-kind/same-signature identity swap,
 invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
-Canvas locals, tests, and remaining expression-bearing widget options remain
+Canvas locals and remaining expression-bearing widget options remain
 open HIR slices.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
@@ -500,6 +500,20 @@ normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,
 raw-event-independent `testing::Action` enum and one `Driver::perform_action`
 entry point rather than exposing the private generated application message.
+The private test HIR assigns stable test, target, and step IDs; retains target
+aliases as typed locals; and gives every dynamic path key and action/assertion
+operand a deterministic checked expression owner. Configuration and path/action
+topology are frozen as semantic keys, direct paths carry checked key-expression
+IDs, dispatch carries an exact App handler ID/name/signature, and equality
+expectations retain the checked comparison children. Lowering revalidates
+complete arena consumption, origins, owner scope, expression graphs and types,
+numeric/index/positive constraints, aliases, and handler identity. Production
+test emission consumes only `ResolvedTest` records and checked expression IDs;
+it has no `TestDecl`, `TestStep`, raw `Expr`, or raw route path. Structural and
+corruption tests cover stable IDs, missing owners, config/target/step mutations,
+post-check raw-expression poisoning, exact retained source text, imported
+locations, and all semantic action families. An ignored 4,000-step contract
+bounds combined lowering and Rust emission.
 A persistent headless Iced cache drives click, hover,
 press/release, pointer buttons and coordinates, wheel/scroll/drag/drop, exact
 focus, held keys/modifiers/chords, typing/selection/IME, touch, window/system/file

@@ -247,8 +247,23 @@ struct ComponentDeclarations {
 pub(crate) struct TestDeclaration {
     pub(crate) declaration: Declaration<TestId>,
     pub(crate) name: String,
-    pub(crate) targets: Vec<Declaration<TestTargetId>>,
-    pub(crate) steps: Vec<Declaration<TestStepId>>,
+    pub(crate) semantic_key: String,
+    pub(crate) targets: Vec<TestTargetDeclaration>,
+    pub(crate) steps: Vec<TestStepDeclaration>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TestTargetDeclaration {
+    pub(crate) declaration: Declaration<TestTargetId>,
+    pub(crate) name: String,
+    pub(crate) segments: Vec<(String, bool)>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TestStepDeclaration {
+    pub(crate) declaration: Declaration<TestStepId>,
+    pub(crate) semantic_key: String,
+    pub(crate) source: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -582,29 +597,43 @@ impl DeclarationIndex {
                     .targets
                     .iter()
                     .enumerate()
-                    .map(|(index, target)| Declaration {
-                        id: TestTargetId {
-                            test: id,
-                            index: index as u32,
+                    .map(|(index, target)| TestTargetDeclaration {
+                        declaration: Declaration {
+                            id: TestTargetId {
+                                test: id,
+                                index: index as u32,
+                            },
+                            origin: origins.push(&target.span, Some(origin)),
                         },
-                        origin: origins.push(&target.span, Some(origin)),
+                        name: target.name.clone(),
+                        segments: target
+                            .target
+                            .segments
+                            .iter()
+                            .map(|segment| (segment.name.clone(), segment.key.is_some()))
+                            .collect(),
                     })
                     .collect();
                 let steps = test
                     .steps
                     .iter()
                     .enumerate()
-                    .map(|(index, step)| Declaration {
-                        id: TestStepId {
-                            test: id,
-                            index: index as u32,
+                    .map(|(index, step)| TestStepDeclaration {
+                        declaration: Declaration {
+                            id: TestStepId {
+                                test: id,
+                                index: index as u32,
+                            },
+                            origin: origins.push(&step.span, Some(origin)),
                         },
-                        origin: origins.push(&step.span, Some(origin)),
+                        semantic_key: crate::ast::test_step_semantic_key(step),
+                        source: crate::ast::test_step_source(step),
                     })
                     .collect();
                 TestDeclaration {
                     declaration: Declaration { id, origin },
                     name: test.name.clone(),
+                    semantic_key: crate::ast::test_declaration_semantic_key(test),
                     targets,
                     steps,
                 }
@@ -808,20 +837,18 @@ impl DeclarationIndex {
         self.tests.len()
     }
 
-    pub(crate) fn test_target(&self, id: TestTargetId) -> Option<Declaration<TestTargetId>> {
+    pub(crate) fn test_target(&self, id: TestTargetId) -> Option<&TestTargetDeclaration> {
         self.try_test(id.test)?
             .targets
             .get(id.index as usize)
-            .copied()
-            .filter(|declaration| declaration.id == id)
+            .filter(|declaration| declaration.declaration.id == id)
     }
 
-    pub(crate) fn test_step(&self, id: TestStepId) -> Option<Declaration<TestStepId>> {
+    pub(crate) fn test_step(&self, id: TestStepId) -> Option<&TestStepDeclaration> {
         self.try_test(id.test)?
             .steps
             .get(id.index as usize)
-            .copied()
-            .filter(|declaration| declaration.id == id)
+            .filter(|declaration| declaration.declaration.id == id)
     }
 
     pub(crate) fn app_setting_expression(
