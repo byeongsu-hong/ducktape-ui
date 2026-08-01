@@ -747,20 +747,46 @@ pub(crate) struct LoweredProgram {
 
 impl LoweredProgram {
     pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
+        fn validate_expression_use(
+            program: &LoweredProgram,
+            id: CheckedExprUseId,
+            owner: crate::check::CheckedExprOwner,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            let expression = program.facts.try_expression_use(id).ok_or_else(|| {
+                program.invariant_at_origin(origin, "expression-use ID is outside its arena")
+            })?;
+            if expression.owner != owner {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "expression-use ID belongs to a different HIR owner",
+                ));
+            }
+            if program.facts.try_expression(expression.root).is_none() {
+                return Err(
+                    program.invariant_at_origin(origin, "expression root ID is outside its arena")
+                );
+            }
+            Ok(())
+        }
+
         fn validate_route(
             program: &LoweredProgram,
             route: &ResolvedRoute,
-            statement: StatementId,
+            statement: &ResolvedStatement,
         ) -> Result<(), Error> {
             let declaration = program.declarations.try_route(route.id).ok_or_else(|| {
                 program.invariant_at_origin(route.origin, "route ID is outside its arena")
             })?;
-            if declaration.statement != statement {
+            if declaration.statement != statement.id || declaration.task != statement.task {
                 return Err(program.invariant_at_origin(
                     route.origin,
-                    "route ID belongs to a different statement",
+                    "route ID belongs to a different statement or task",
                 ));
             }
+            let checked = program.facts.try_route(route.id).ok_or_else(|| {
+                program.invariant_at_origin(route.origin, "route has no checked HIR contract")
+            })?;
             let (handler, owner, name) = match &route.target {
                 ResolvedRouteTarget::App { handler, name } => {
                     (*handler, HandlerOwner::App, name.as_str())
@@ -783,6 +809,74 @@ impl LoweredProgram {
                     "route target ID belongs to a different handler",
                 ));
             }
+            if checked.id != route.id
+                || checked.target != handler
+                || checked.target_owner != owner
+                || checked.args.len() != route.args.len()
+                || target.params.len() != route.args.len()
+            {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route target or argument cardinality diverged from its checked contract",
+                ));
+            }
+            let mut payload = 0usize;
+            for (argument, ((resolved, checked_kind), param)) in route
+                .args
+                .iter()
+                .zip(&checked.args)
+                .zip(&target.params)
+                .enumerate()
+            {
+                match (resolved, checked_kind) {
+                    (
+                        ResolvedRouteArg::Expression(expression),
+                        crate::check::CheckedRouteArgKind::Expression,
+                    ) => {
+                        validate_expression_use(
+                            program,
+                            *expression,
+                            crate::check::CheckedExprOwner::Route {
+                                route: route.id,
+                                argument: argument as u32,
+                            },
+                            route.origin,
+                        )?;
+                        let expression = program.facts.expression_use(*expression);
+                        if expression.destination != param.ty {
+                            return Err(program.invariant_at_origin(
+                                route.origin,
+                                "route expression type diverged from its target parameter",
+                            ));
+                        }
+                    }
+                    (
+                        ResolvedRouteArg::Payload { index, ty },
+                        crate::check::CheckedRouteArgKind::Payload,
+                    ) => {
+                        let expected = if checked.ordered_payloads { payload } else { 0 };
+                        let source = checked.source_payloads.get(expected).ok_or_else(|| {
+                            program.invariant_at_origin(
+                                route.origin,
+                                "route payload index is outside its checked source contract",
+                            )
+                        })?;
+                        if *index as usize != expected || source != ty || param.ty != *ty {
+                            return Err(program.invariant_at_origin(
+                                route.origin,
+                                "route payload topology or type diverged from its checked contract",
+                            ));
+                        }
+                        payload += 1;
+                    }
+                    _ => {
+                        return Err(program.invariant_at_origin(
+                            route.origin,
+                            "route argument kind diverged from its checked contract",
+                        ));
+                    }
+                }
+            }
             Ok(())
         }
 
@@ -800,6 +894,48 @@ impl LoweredProgram {
                     "task ID belongs to a different statement",
                 ));
             }
+            let checked = program.facts.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(statement.origin, "task has no checked HIR contract")
+            })?;
+            if checked.id != task {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task ID diverged from its checked HIR contract",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_task_operands(
+            program: &LoweredProgram,
+            task: TaskId,
+            operands: &[CheckedExprUseId],
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            for (operand, expression) in operands.iter().enumerate() {
+                validate_expression_use(
+                    program,
+                    *expression,
+                    crate::check::CheckedExprOwner::Task {
+                        task,
+                        operand: operand as u32,
+                    },
+                    origin,
+                )?;
+            }
+            if program
+                .facts
+                .expression_use_by_owner(crate::check::CheckedExprOwner::Task {
+                    task,
+                    operand: operands.len() as u32,
+                })
+                .is_some()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "task operand cardinality diverged from its checked HIR contract",
+                ));
+            }
             Ok(())
         }
 
@@ -815,6 +951,73 @@ impl LoweredProgram {
                     .invariant_at_origin(origin, "effect extern target ID is outside its arena"));
             }
             Ok(())
+        }
+
+        fn validate_effect_task(
+            program: &LoweredProgram,
+            task: TaskId,
+            kind: EffectKind,
+            target: &ResolvedEffectTarget,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            validate_effect(program, target, origin)?;
+            let checked = program.facts.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(origin, "effect task has no checked HIR contract")
+            })?;
+            let matches = match (&checked.target, target) {
+                (
+                    Some(crate::check::CheckedEffectTarget::Builtin(checked)),
+                    ResolvedEffectTarget::Builtin(resolved),
+                ) => checked == resolved,
+                (
+                    Some(crate::check::CheckedEffectTarget::Extern(checked)),
+                    ResolvedEffectTarget::Extern(resolved),
+                ) => checked == resolved,
+                _ => false,
+            };
+            if !matches {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "effect target diverged from its checked task contract",
+                ));
+            }
+            let kind_matches = match target {
+                ResolvedEffectTarget::Builtin(_) => kind == EffectKind::Task,
+                ResolvedEffectTarget::Extern(id) => program
+                    .declarations
+                    .try_extern_decl(*id)
+                    .is_some_and(|declaration| declaration.kind == ExternKind::from(kind)),
+            };
+            if !kind_matches {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "effect kind diverged from its checked target contract",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_task_source(
+            program: &LoweredProgram,
+            source: &ResolvedTaskSource,
+            statement: &ResolvedStatement,
+        ) -> Result<TaskId, Error> {
+            let (task, operands) = match source {
+                ResolvedTaskSource::Effect {
+                    task,
+                    kind,
+                    target,
+                    args,
+                } => {
+                    validate_effect_task(program, *task, *kind, target, statement.origin)?;
+                    (*task, args.as_slice())
+                }
+                ResolvedTaskSource::Done { task, value } => (*task, ::std::slice::from_ref(value)),
+                ResolvedTaskSource::None { task, .. } => (*task, &[] as &[CheckedExprUseId]),
+            };
+            validate_task(program, task, statement)?;
+            validate_task_operands(program, task, operands, statement.origin)?;
+            Ok(task)
         }
 
         fn validate_widget_operation(
@@ -852,6 +1055,218 @@ impl LoweredProgram {
             Ok(())
         }
 
+        fn widget_target_operands(
+            target: &ResolvedWidgetTarget,
+            operands: &mut Vec<CheckedExprUseId>,
+        ) {
+            operands.extend(target.segments.iter().filter_map(|segment| segment.key));
+        }
+
+        fn pane_reference_operands(
+            reference: &ResolvedPaneReference,
+            operands: &mut Vec<CheckedExprUseId>,
+        ) {
+            if let ResolvedPaneReference::Dynamic { key, .. } = reference {
+                operands.push(*key);
+            }
+        }
+
+        fn statement_operands(statement: &ResolvedStatement) -> Vec<CheckedExprUseId> {
+            let mut operands = Vec::new();
+            match &statement.kind {
+                ResolvedStatementKind::Let { value, .. }
+                | ResolvedStatementKind::MarkdownAppend { value, .. }
+                | ResolvedStatementKind::ComboPush { value, .. }
+                | ResolvedStatementKind::ClipboardWrite { value, .. } => operands.push(*value),
+                ResolvedStatementKind::Assign { value, at, .. } => {
+                    operands.push(*value);
+                    operands.extend(at);
+                }
+                ResolvedStatementKind::ReturnIf { condition } => operands.push(*condition),
+                ResolvedStatementKind::DebugStart { name, .. } => operands.push(*name),
+                ResolvedStatementKind::WidgetOperation { operation, .. } => match operation {
+                    ResolvedWidgetOperation::FocusPrevious | ResolvedWidgetOperation::FocusNext => {
+                    }
+                    ResolvedWidgetOperation::Focus { target }
+                    | ResolvedWidgetOperation::Focused { target }
+                    | ResolvedWidgetOperation::CursorFront { target }
+                    | ResolvedWidgetOperation::CursorEnd { target }
+                    | ResolvedWidgetOperation::SelectAll { target }
+                    | ResolvedWidgetOperation::SnapEnd { target } => {
+                        widget_target_operands(target, &mut operands);
+                    }
+                    ResolvedWidgetOperation::Cursor { target, position } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.push(*position);
+                    }
+                    ResolvedWidgetOperation::Select { target, start, end } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.extend([*start, *end]);
+                    }
+                    ResolvedWidgetOperation::Snap { target, x, y }
+                    | ResolvedWidgetOperation::ScrollTo { target, x, y }
+                    | ResolvedWidgetOperation::ScrollBy { target, x, y } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.extend([*x, *y]);
+                    }
+                    ResolvedWidgetOperation::Find { selector, .. } => match selector {
+                        ResolvedWidgetSelector::Id(target) => {
+                            widget_target_operands(target, &mut operands);
+                        }
+                        ResolvedWidgetSelector::Text(value) => operands.push(*value),
+                        ResolvedWidgetSelector::Point { x, y } => operands.extend([*x, *y]),
+                        ResolvedWidgetSelector::Focused => {}
+                        ResolvedWidgetSelector::Extern { args, .. } => {
+                            operands.extend(args.iter().copied());
+                        }
+                    },
+                },
+                ResolvedStatementKind::PaneOperation { operation, .. } => match operation {
+                    ResolvedPaneOperation::Restore | ResolvedPaneOperation::Maximized => {}
+                    ResolvedPaneOperation::Maximize { pane }
+                    | ResolvedPaneOperation::Adjacent { pane, .. }
+                    | ResolvedPaneOperation::Close { pane }
+                    | ResolvedPaneOperation::Move { pane, .. } => {
+                        pane_reference_operands(pane, &mut operands);
+                    }
+                    ResolvedPaneOperation::Swap { first, second } => {
+                        pane_reference_operands(first, &mut operands);
+                        pane_reference_operands(second, &mut operands);
+                    }
+                    ResolvedPaneOperation::Resize { ratio, .. } => operands.push(*ratio),
+                    ResolvedPaneOperation::Drop { pane, target, .. } => {
+                        pane_reference_operands(pane, &mut operands);
+                        pane_reference_operands(target, &mut operands);
+                    }
+                    ResolvedPaneOperation::Split {
+                        target,
+                        pane,
+                        ratio,
+                        ..
+                    } => {
+                        pane_reference_operands(target, &mut operands);
+                        pane_reference_operands(pane, &mut operands);
+                        operands.push(*ratio);
+                    }
+                },
+                ResolvedStatementKind::WindowOperation {
+                    operation, target, ..
+                } => {
+                    operands.extend(target);
+                    match operation {
+                        ResolvedWindowOperation::Resize(width, height)
+                        | ResolvedWindowOperation::Move(width, height) => {
+                            operands.extend([*width, *height]);
+                        }
+                        ResolvedWindowOperation::Resizable(value)
+                        | ResolvedWindowOperation::Maximize(value)
+                        | ResolvedWindowOperation::Minimize(value)
+                        | ResolvedWindowOperation::MousePassthrough(value)
+                        | ResolvedWindowOperation::AutomaticTabbing(value) => {
+                            operands.push(*value);
+                        }
+                        ResolvedWindowOperation::MinSize(size)
+                        | ResolvedWindowOperation::MaxSize(size)
+                        | ResolvedWindowOperation::ResizeIncrements(size) => {
+                            if let Some((width, height)) = size {
+                                operands.extend([*width, *height]);
+                            }
+                        }
+                        ResolvedWindowOperation::Icon {
+                            pixels,
+                            width,
+                            height,
+                        } => operands.extend([*pixels, *width, *height]),
+                        ResolvedWindowOperation::Callback { args, .. } => {
+                            operands.extend(args.iter().copied());
+                        }
+                        ResolvedWindowOperation::Open(_)
+                        | ResolvedWindowOperation::Oldest
+                        | ResolvedWindowOperation::Latest
+                        | ResolvedWindowOperation::Close
+                        | ResolvedWindowOperation::Drag
+                        | ResolvedWindowOperation::DragResize(_)
+                        | ResolvedWindowOperation::Size
+                        | ResolvedWindowOperation::IsMaximized
+                        | ResolvedWindowOperation::IsMinimized
+                        | ResolvedWindowOperation::Position
+                        | ResolvedWindowOperation::ScaleFactor
+                        | ResolvedWindowOperation::Mode
+                        | ResolvedWindowOperation::SetMode(_)
+                        | ResolvedWindowOperation::ToggleMaximize
+                        | ResolvedWindowOperation::ToggleDecorations
+                        | ResolvedWindowOperation::Attention(_)
+                        | ResolvedWindowOperation::Focus
+                        | ResolvedWindowOperation::SetLevel(_)
+                        | ResolvedWindowOperation::SystemMenu
+                        | ResolvedWindowOperation::RawId
+                        | ResolvedWindowOperation::Screenshot
+                        | ResolvedWindowOperation::MonitorSize => {}
+                    }
+                }
+                ResolvedStatementKind::Exit
+                | ResolvedStatementKind::Run(_)
+                | ResolvedStatementKind::Sip(_)
+                | ResolvedStatementKind::TaskFlow(_)
+                | ResolvedStatementKind::TaskGroup { .. }
+                | ResolvedStatementKind::Abortable { .. }
+                | ResolvedStatementKind::Abort { .. }
+                | ResolvedStatementKind::DebugFinish { .. } => {}
+            }
+            operands
+        }
+
+        fn validate_statement_operands(
+            program: &LoweredProgram,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let checked = program.facts.try_statement(statement.id).ok_or_else(|| {
+                program
+                    .invariant_at_origin(statement.origin, "statement has no checked HIR contract")
+            })?;
+            let operands = statement_operands(statement);
+            if checked.id != statement.id || checked.operand_count as usize != operands.len() {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement operand cardinality diverged from its checked HIR contract",
+                ));
+            }
+            for (operand, expression) in operands.iter().enumerate() {
+                validate_expression_use(
+                    program,
+                    *expression,
+                    crate::check::CheckedExprOwner::HandlerStatement {
+                        statement: statement.id,
+                        operand: operand as u32,
+                    },
+                    statement.origin,
+                )?;
+            }
+            Ok(())
+        }
+
+        fn statement_routes(statement: &ResolvedStatement) -> Vec<&ResolvedRoute> {
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => std::iter::once(&run.success)
+                    .chain(run.error.iter())
+                    .collect(),
+                ResolvedStatementKind::Sip(sip) => std::iter::once(&sip.progress)
+                    .chain(std::iter::once(&sip.success))
+                    .chain(sip.error.iter())
+                    .collect(),
+                ResolvedStatementKind::TaskFlow(flow) => flow
+                    .success
+                    .iter()
+                    .chain(flow.error.iter())
+                    .chain(flow.units.iter())
+                    .collect(),
+                ResolvedStatementKind::WidgetOperation { route, .. }
+                | ResolvedStatementKind::PaneOperation { route, .. }
+                | ResolvedStatementKind::WindowOperation { route, .. } => route.iter().collect(),
+                _ => Vec::new(),
+            }
+        }
+
         fn visit(
             program: &LoweredProgram,
             handler: &ResolvedHandler,
@@ -865,80 +1280,138 @@ impl LoweredProgram {
                     program
                         .invariant_at_origin(statement.origin, "statement ID is outside its arena")
                 })?;
-            if declaration.handler != handler.id || declaration.parent != parent {
+            if declaration.handler != handler.id
+                || declaration.parent != parent
+                || declaration.task != statement.task
+                || declaration.is_final != statement.is_final
+            {
                 return Err(program.invariant_at_origin(
                     statement.origin,
-                    "statement ID belongs to a different handler or parent",
+                    "statement owner, parent, task ID, or finality diverged from its declaration",
                 ));
             }
             if let Some(task) = statement.task {
                 validate_task(program, task, statement)?;
             }
+            validate_statement_operands(program, statement)?;
+            let routes = statement_routes(statement);
+            for route in &routes {
+                validate_route(program, route, statement)?;
+            }
+            if routes.iter().map(|route| route.id).collect::<Vec<_>>() != declaration.routes {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement route cardinality or order diverged from its declaration",
+                ));
+            }
+            let children = match &statement.kind {
+                ResolvedStatementKind::TaskGroup { statements, .. } => {
+                    statements.iter().map(|child| child.id).collect::<Vec<_>>()
+                }
+                ResolvedStatementKind::Abortable { task, .. } => vec![task.id],
+                _ => Vec::new(),
+            };
+            if children != declaration.children {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement child cardinality or order diverged from its declaration",
+                ));
+            }
             match &statement.kind {
                 ResolvedStatementKind::Run(run) => {
-                    validate_effect(program, &run.target, statement.origin)?;
-                    validate_route(program, &run.success, statement.id)?;
-                    if let Some(route) = &run.error {
-                        validate_route(program, route, statement.id)?;
+                    let task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "run statement has no normalized task ID",
+                        )
+                    })?;
+                    validate_effect_task(program, task, run.kind, &run.target, statement.origin)?;
+                    validate_task_operands(program, task, &run.args, statement.origin)?;
+                    if (run.mode == FutureMode::Every) != run.site.is_none()
+                        || run.site != declaration.run_site
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "run mode and stable run-site cardinality diverged",
+                        ));
                     }
                     if let Some(site) = run.site {
-                        let declaration =
+                        let run_site =
                             program.declarations.try_run_site(site).ok_or_else(|| {
                                 program.invariant_at_origin(
                                     statement.origin,
                                     "run-site ID is outside its arena",
                                 )
                             })?;
-                        if declaration.statement != statement.id {
+                        if run_site.statement != statement.id || run_site.mode != run.mode {
                             return Err(program.invariant_at_origin(
                                 statement.origin,
-                                "run-site ID belongs to a different statement",
+                                "run-site ID belongs to a different statement or mode",
                             ));
                         }
                     }
                 }
                 ResolvedStatementKind::Sip(sip) => {
-                    if program.declarations.try_extern_decl(sip.target).is_none() {
+                    let task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "sip statement has no normalized task ID",
+                        )
+                    })?;
+                    let checked_task = program.facts.try_task(task).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "sip task has no checked HIR contract",
+                        )
+                    })?;
+                    if !program
+                        .declarations
+                        .try_extern_decl(sip.target)
+                        .is_some_and(|declaration| declaration.kind == ExternKind::Sip)
+                        || checked_task.target
+                            != Some(crate::check::CheckedEffectTarget::Extern(sip.target))
+                    {
                         return Err(program.invariant_at_origin(
                             statement.origin,
-                            "sip extern target ID is outside its arena",
+                            "sip extern target diverged from its checked task contract",
                         ));
                     }
-                    for route in std::iter::once(&sip.progress)
-                        .chain(std::iter::once(&sip.success))
-                        .chain(sip.error.iter())
-                    {
-                        validate_route(program, route, statement.id)?;
-                    }
+                    validate_task_operands(program, task, &sip.args, statement.origin)?;
                 }
                 ResolvedStatementKind::TaskFlow(flow) => {
-                    let source_task = match &flow.source {
-                        ResolvedTaskSource::Effect { task, .. }
-                        | ResolvedTaskSource::Done { task, .. }
-                        | ResolvedTaskSource::None { task, .. } => *task,
-                    };
-                    if let ResolvedTaskSource::Effect { target, .. } = &flow.source {
-                        validate_effect(program, target, statement.origin)?;
-                    }
-                    validate_task(program, source_task, statement)?;
+                    let mut source_tasks =
+                        vec![validate_task_source(program, &flow.source, statement)?];
                     for transform in &flow.transforms {
                         let task = match transform {
-                            ResolvedTaskTransform::Map { task, .. }
-                            | ResolvedTaskTransform::Then { task, .. }
-                            | ResolvedTaskTransform::AndThen { task, .. }
-                            | ResolvedTaskTransform::MapError { task, .. }
-                            | ResolvedTaskTransform::Collect { task }
-                            | ResolvedTaskTransform::Discard { task } => *task,
+                            ResolvedTaskTransform::Map { task, value, .. }
+                            | ResolvedTaskTransform::MapError { task, value, .. } => {
+                                validate_task(program, *task, statement)?;
+                                validate_task_operands(
+                                    program,
+                                    *task,
+                                    ::std::slice::from_ref(value),
+                                    statement.origin,
+                                )?;
+                                *task
+                            }
+                            ResolvedTaskTransform::Then { source, .. }
+                            | ResolvedTaskTransform::AndThen { source, .. } => {
+                                validate_task_source(program, source, statement)?
+                            }
+                            ResolvedTaskTransform::Collect { task }
+                            | ResolvedTaskTransform::Discard { task } => {
+                                validate_task(program, *task, statement)?;
+                                validate_task_operands(program, *task, &[], statement.origin)?;
+                                *task
+                            }
                         };
-                        validate_task(program, task, statement)?;
+                        source_tasks.push(task);
                     }
-                    for route in flow
-                        .success
-                        .iter()
-                        .chain(flow.error.iter())
-                        .chain(flow.units.iter())
-                    {
-                        validate_route(program, route, statement.id)?;
+                    if source_tasks != declaration.source_tasks {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow source task cardinality or order diverged",
+                        ));
                     }
                 }
                 ResolvedStatementKind::TaskGroup { statements, .. } => {
@@ -949,22 +1422,12 @@ impl LoweredProgram {
                 ResolvedStatementKind::Abortable { task, .. } => {
                     visit(program, handler, task, Some(statement.id))?;
                 }
-                ResolvedStatementKind::WidgetOperation { operation, route } => {
+                ResolvedStatementKind::WidgetOperation { operation, .. } => {
                     validate_widget_operation(program, operation, statement.origin)?;
-                    if let Some(route) = route {
-                        validate_route(program, route, statement.id)?;
-                    }
                 }
-                ResolvedStatementKind::PaneOperation {
-                    route: Some(route), ..
-                } => validate_route(program, route, statement.id)?,
-                ResolvedStatementKind::WindowOperation {
-                    operation, route, ..
-                } => {
+                ResolvedStatementKind::PaneOperation { .. } => {}
+                ResolvedStatementKind::WindowOperation { operation, .. } => {
                     validate_window_operation(program, operation, statement.origin)?;
-                    if let Some(route) = route {
-                        validate_route(program, route, statement.id)?;
-                    }
                 }
                 _ => {}
             }
@@ -978,11 +1441,23 @@ impl LoweredProgram {
             if declaration.owner != handler.owner || declaration.name != handler.name {
                 return Err(self.invariant_at_origin(
                     handler.origin,
-                    "handler ID belongs to a different declaration",
+                    "handler identity diverged from its declaration",
                 ));
             }
             for statement in &handler.statements {
                 visit(self, handler, statement, None)?;
+            }
+            if declaration.statement_roots
+                != handler
+                    .statements
+                    .iter()
+                    .map(|statement| statement.id)
+                    .collect::<Vec<_>>()
+            {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler statement roots diverged from its declaration",
+                ));
             }
         }
 
@@ -4410,7 +4885,7 @@ view
     fn malformed_handler_hir_ids_are_fallible_source_mapped_invariants() {
         fn program() -> LoweredProgram {
             let source = format!(
-                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
             );
             lower(analyze(&source).unwrap()).unwrap()
         }
@@ -4474,6 +4949,113 @@ view
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, expected_line);
         assert!(error.message.contains("task ID"));
+
+        let mut missing_task = program();
+        missing_task.handlers[0].statements[0].task = None;
+        let error = crate::codegen::generate(&missing_task, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("task ID"));
+
+        let mut invalid_mode = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_mode.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.mode = FutureMode::Latest;
+        let error = crate::codegen::generate(&invalid_mode, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run mode"));
+
+        let mut invalid_kind = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_kind.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.kind = EffectKind::Task;
+        let error = crate::codegen::generate(&invalid_kind, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("effect kind"));
+
+        let mut invalid_operand = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_operand.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.args[0] = CheckedExprUseId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_operand, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression-use ID"));
+
+        let mut invalid_route_operand = program();
+        let ResolvedRouteArg::Expression(expression) =
+            &mut route(&mut invalid_route_operand).args[0]
+        else {
+            panic!("fixture route must contain an expression");
+        };
+        *expression = CheckedExprUseId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_route_operand, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression-use ID"));
+    }
+
+    #[test]
+    fn malformed_run_site_and_required_operation_routes_are_e196_not_panics() {
+        let latest = format!(
+            "app Search\nextern crate::backend\n  fetch(query:str) -> str\n{THEME}component SearchBox()\n  state\n    query = \"\"\n    result:str? = none\n  on search\n    run latest fetch(query) -> loaded _\n  on loaded(value)\n    result = some(value)\n  button \"Search\" -> search\nview\n  SearchBox #search\n"
+        );
+        let mut invalid_site = lower(analyze(&latest).unwrap()).unwrap();
+        let statement = invalid_site
+            .handlers
+            .iter_mut()
+            .find(|handler| handler.name == "search")
+            .and_then(|handler| handler.statements.first_mut())
+            .expect("fixture component run");
+        let ResolvedStatementKind::Run(run) = &mut statement.kind else {
+            panic!("fixture must contain a run");
+        };
+        run.site = None;
+        let error = crate::codegen::generate(&invalid_site, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run-site"));
+
+        let widget = format!(
+            "app WidgetRoute\n{THEME}state\n  field = \"\"\n  focused = false\non inspect\n  task widget focused #field -> observed _\non observed(value)\n  focused = value\nview\n  input \"Field\" #field <-> field\n"
+        );
+        let mut invalid_widget = lower(analyze(&widget).unwrap()).unwrap();
+        let statement = &mut invalid_widget.handlers[0].statements[0];
+        let ResolvedStatementKind::WidgetOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a widget operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_widget, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
+
+        let pane = format!(
+            "app PaneRoute\n{THEME}on inspect\n  pane #work maximized -> observed _\non observed(name)\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane).unwrap()).unwrap();
+        let statement = &mut invalid_pane.handlers[0].statements[0];
+        let ResolvedStatementKind::PaneOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a pane operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
+
+        let window = format!(
+            "app WindowRoute\n{THEME}on inspect\n  task window size -> observed _ _\non observed(width, height)\nview\n  text \"Window\"\n"
+        );
+        let mut invalid_window = lower(analyze(&window).unwrap()).unwrap();
+        let statement = &mut invalid_window.handlers[0].statements[0];
+        let ResolvedStatementKind::WindowOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a window operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_window, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
     }
 
     #[test]

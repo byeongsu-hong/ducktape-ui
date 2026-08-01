@@ -29,6 +29,13 @@ pub(crate) struct CheckedExprId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedExprUseId(u32);
 
+#[cfg(test)]
+impl CheckedExprUseId {
+    pub(crate) fn invalid_for_test() -> Self {
+        Self(u32::MAX)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
 
