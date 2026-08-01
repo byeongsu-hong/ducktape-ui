@@ -4,7 +4,7 @@ use crate::check::{
     CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
     CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner, CheckedPathRoot,
     CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef, ContextualBuiltin,
-    SubscriptionExpressionContract, canonical_builtin_type, field_type, resolve_erased_type,
+    canonical_builtin_type, field_type, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
@@ -127,14 +127,14 @@ pub(crate) enum ResolvedSubscriptionSource {
     },
     Run {
         function: ResolvedExternContract,
-        arguments: Vec<CheckedExprUseId>,
+        arguments: Vec<ResolvedExpressionId>,
     },
     Recipe {
         function: ResolvedExternContract,
-        arguments: Vec<CheckedExprUseId>,
+        arguments: Vec<ResolvedExpressionId>,
     },
     Events {
-        identity: CheckedExprUseId,
+        identity: ResolvedExpressionId,
         filter: ResolvedExternContract,
     },
     Event {
@@ -142,7 +142,7 @@ pub(crate) enum ResolvedSubscriptionSource {
     },
     Extern {
         function: ResolvedExternContract,
-        arguments: Vec<CheckedExprUseId>,
+        arguments: Vec<ResolvedExpressionId>,
     },
     InputMethod(InputMethodEvent),
     Keyboard(KeyboardEvent),
@@ -157,7 +157,7 @@ pub(crate) enum ResolvedSubscriptionSource {
 pub(crate) struct ResolvedSubscriptionRoute {
     pub(crate) handler: HandlerId,
     pub(crate) handler_name: String,
-    pub(crate) payloads: Vec<u32>,
+    pub(crate) args: Vec<ResolvedRouteArg>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,8 +168,8 @@ pub(crate) struct ResolvedSubscription {
     pub(crate) source_payloads: Vec<ResolvedType>,
     pub(crate) delivered_payloads: Vec<ResolvedType>,
     pub(crate) filter: Option<ResolvedExternContract>,
-    pub(crate) context: Option<CheckedExprUseId>,
-    pub(crate) condition: Option<CheckedExprUseId>,
+    pub(crate) context: Option<ResolvedExpressionId>,
+    pub(crate) condition: Option<ResolvedExpressionId>,
     pub(crate) window_id: bool,
     pub(crate) status: Option<EventStatus>,
     pub(crate) route: ResolvedSubscriptionRoute,
@@ -181,88 +181,7 @@ struct ValidatedSubscriptionContract {
     source_payloads: Vec<Type>,
     delivered_payloads: Vec<Type>,
     filter: Option<ResolvedExternContract>,
-}
-
-fn subscription_source_matches(
-    checked: &CheckedSubscriptionSource,
-    raw: &SubscriptionSource,
-) -> bool {
-    match (checked, raw) {
-        (
-            CheckedSubscriptionSource::Every { milliseconds },
-            SubscriptionSource::Every {
-                milliseconds: raw_milliseconds,
-            },
-        ) => milliseconds == raw_milliseconds,
-        (
-            CheckedSubscriptionSource::Repeat {
-                function,
-                milliseconds,
-            },
-            SubscriptionSource::Repeat {
-                function: raw_function,
-                milliseconds: raw_milliseconds,
-            },
-        ) => function.name == *raw_function && milliseconds == raw_milliseconds,
-        (
-            CheckedSubscriptionSource::Run {
-                function,
-                arguments,
-            },
-            SubscriptionSource::Run {
-                function: raw_function,
-                args,
-            },
-        )
-        | (
-            CheckedSubscriptionSource::Recipe {
-                function,
-                arguments,
-            },
-            SubscriptionSource::Recipe {
-                function: raw_function,
-                args,
-            },
-        )
-        | (
-            CheckedSubscriptionSource::Extern {
-                function,
-                arguments,
-            },
-            SubscriptionSource::Extern {
-                function: raw_function,
-                args,
-            },
-        ) => function.name == *raw_function && arguments.len() == args.len(),
-        (
-            CheckedSubscriptionSource::Events { filter, .. },
-            SubscriptionSource::Events {
-                filter: raw_filter, ..
-            },
-        ) => filter.name == *raw_filter,
-        (
-            CheckedSubscriptionSource::Event { raw: checked_raw },
-            SubscriptionSource::Event { raw },
-        ) => checked_raw == raw,
-        (
-            CheckedSubscriptionSource::InputMethod(event),
-            SubscriptionSource::InputMethod(raw_event),
-        ) => event == raw_event,
-        (CheckedSubscriptionSource::Keyboard(event), SubscriptionSource::Keyboard(raw_event)) => {
-            event == raw_event
-        }
-        (CheckedSubscriptionSource::Mouse(event), SubscriptionSource::Mouse(raw_event)) => {
-            event == raw_event
-        }
-        (CheckedSubscriptionSource::SystemTheme, SubscriptionSource::SystemTheme) => true,
-        (CheckedSubscriptionSource::Touch(event), SubscriptionSource::Touch(raw_event)) => {
-            event == raw_event
-        }
-        (CheckedSubscriptionSource::Window(event), SubscriptionSource::Window(raw_event)) => {
-            event == raw_event
-        }
-        _ => false,
-    }
+    route_args: Vec<ResolvedRouteArg>,
 }
 
 fn extern_subscription_payload(function: &crate::hir::ExternDeclaration) -> Type {
@@ -707,28 +626,38 @@ pub(crate) fn lower_typed_route_arguments(
             RouteArg::Expr(_) => expression(argument).map(ResolvedRouteArg::Expression),
             RouteArg::Payload => {
                 let source_index = if inputs.ordered { payload_index } else { 0 };
-                let source = inputs.source_payloads.get(source_index).ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        &route.span,
-                        "route payload has no typed source contract",
-                    )
-                })?;
-                if source != target {
-                    return Err(Error::new(
-                        "E196",
-                        &route.span,
-                        "route payload type diverged from its checked target parameter",
-                    ));
-                }
                 payload_index += 1;
-                Ok(ResolvedRouteArg::Payload {
-                    index: source_index as u32,
-                    ty: target.clone(),
-                })
+                lower_typed_payload_argument(
+                    &route.span,
+                    inputs.source_payloads,
+                    source_index as u32,
+                    target,
+                )
             }
         })
         .collect()
+}
+
+fn lower_typed_payload_argument(
+    span: &Span,
+    source_payloads: &[Type],
+    index: u32,
+    target: &Type,
+) -> Result<ResolvedRouteArg, Error> {
+    let source = source_payloads
+        .get(index as usize)
+        .ok_or_else(|| Error::new("E196", span, "route payload has no typed source contract"))?;
+    if source != target {
+        return Err(Error::new(
+            "E196",
+            span,
+            "route payload type diverged from its checked target parameter",
+        ));
+    }
+    Ok(ResolvedRouteArg::Payload {
+        index,
+        ty: target.clone(),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -2549,10 +2478,17 @@ impl LoweredProgram {
             let declaration = self.declarations.try_handler(handler.id).ok_or_else(|| {
                 self.invariant_at_origin(handler.origin, "handler ID is outside its arena")
             })?;
-            if declaration.owner != handler.owner || declaration.name != handler.name {
+            if declaration.owner != handler.owner
+                || declaration.name != handler.name
+                || declaration.declaration.origin != handler.origin
+                || declaration
+                    .payloads
+                    .iter()
+                    .ne(handler.params.iter().map(|param| &param.ty))
+            {
                 return Err(self.invariant_at_origin(
                     handler.origin,
-                    "handler identity diverged from its declaration",
+                    "handler identity, origin, or payloads diverged from its declaration",
                 ));
             }
             let checked = self.facts.try_handler(handler.id).ok_or_else(|| {
@@ -3115,6 +3051,144 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
     }
 }
 
+struct SubscriptionExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    use_id: CheckedExprUseId,
+    span: &'a Span,
+}
+
+impl CheckedExpressionOwnerPolicy for SubscriptionExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "subscription path references an invalid value ID",
+            )
+        })?;
+        match value {
+            CheckedValueRef::AppState(_) => Ok(checked.ty.clone()),
+            CheckedValueRef::Derived(id) => {
+                self.lowerer.declarations.try_derived(id).ok_or_else(|| {
+                    self.lowerer.invariant(
+                        self.span,
+                        "subscription path references an invalid derived value ID",
+                    )
+                })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "subscription path cannot reference a derived value",
+                ))
+            }
+            CheckedValueRef::ComponentParam(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_param(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "subscription path references an invalid component parameter ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "subscription path cannot reference a component parameter",
+                ))
+            }
+            CheckedValueRef::ComponentState(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_state(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "subscription path references an invalid component state ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "subscription path cannot reference component state",
+                ))
+            }
+        }
+    }
+
+    fn local_type(&self, id: CheckedLocalId) -> Result<Type, Error> {
+        let local = self.lowerer.facts.try_local(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "subscription expression references an invalid local ID",
+            )
+        })?;
+        match local.owner {
+            CheckedLocalOwner::ExpressionBinding { expression, .. }
+                if expression == self.use_id => {}
+            CheckedLocalOwner::ExpressionBinding { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "subscription expression binding belongs to another expression use",
+                ));
+            }
+            _ => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "subscription expression cannot reference a non-expression local",
+                ));
+            }
+        }
+        Ok(local.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "subscription expression references an invalid slot ID",
+                )
+            })?;
+        Err(self.lowerer.invariant(
+            self.span,
+            "subscription expression cannot reference a component slot",
+        ))
+    }
+
+    fn palette_type(&self, id: PaletteId) -> Result<Type, Error> {
+        self.lowerer.declarations.palette_name(id).ok_or_else(|| {
+            self.lowerer.invariant(
+                self.span,
+                "subscription path references an invalid palette ID",
+            )
+        })?;
+        let expression = self
+            .lowerer
+            .facts
+            .try_expression_use(self.use_id)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "subscription path has an invalid expression-use ID",
+                )
+            })?;
+        match &expression.source {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                "subscription palette path has no checked theme-contract type",
+            )),
+        }
+    }
+}
+
 impl Lowerer {
     fn new(checked: CheckedDocument) -> Self {
         let CheckedDocument {
@@ -3669,6 +3743,12 @@ impl Lowerer {
                 "expression use references an invalid checked expression ID",
             )
         })?;
+        if expression.owner != policy.use_id() {
+            return Err(self.invariant(
+                policy.span(),
+                "checked expression node belongs to another retained expression use",
+            ));
+        }
         if graph.validated.contains(&(id, scope)) {
             return Ok(expression.ty);
         }
@@ -4060,6 +4140,7 @@ impl Lowerer {
                 if arguments
                     .iter()
                     .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
+                    || function.kind != ExternKind::Sync
                     || function.params.len() != argument_types.len()
                     || function
                         .params
@@ -4419,9 +4500,7 @@ impl Lowerer {
     }
 
     fn lower_subscriptions(&self) -> Result<Vec<ResolvedSubscription>, Error> {
-        if self.facts.subscriptions().len() != self.document.subscriptions.len()
-            || self.facts.subscriptions().len() != self.declarations.subscription_count()
-        {
+        if self.facts.subscriptions().len() != self.declarations.subscription_count() {
             return Err(self.invariant_at(
                 &Span::line(1),
                 "checked subscription topology changed before HIR lowering",
@@ -4430,10 +4509,9 @@ impl Lowerer {
         self.facts
             .subscriptions()
             .iter()
-            .zip(&self.document.subscriptions)
             .enumerate()
-            .map(|(index, (subscription, source))| {
-                self.lower_subscription(index, subscription, source)
+            .map(|(index, subscription)| {
+                self.lower_subscription(index, subscription)
                     .map_err(|error| {
                         if error.path.is_some() {
                             error
@@ -4449,40 +4527,15 @@ impl Lowerer {
         &self,
         index: usize,
         subscription: &CheckedSubscription,
-        raw: &Subscription,
     ) -> Result<ResolvedSubscription, Error> {
         let span = &subscription.span;
         let declaration = self.declarations.try_subscription(index).ok_or_else(|| {
-            self.invariant_at(
-                &raw.span,
-                "checked subscription has no declaration identity",
-            )
+            self.invariant_at(span, "checked subscription has no declaration identity")
         })?;
-        if subscription.id != declaration.id
-            || subscription.origin != declaration.origin
-            || subscription.syntax.ne(raw)
-            || raw.span != subscription.span
-            || raw.window_id != subscription.window_id
-            || raw.status != subscription.status
-            || raw.condition.is_some() != subscription.condition.is_some()
-            || raw.context.is_some() != subscription.context.is_some()
-            || raw.filter.as_deref()
-                != subscription
-                    .filter
-                    .as_ref()
-                    .map(|filter| filter.name.as_str())
-            || raw.route.handler != subscription.route.handler_name
-            || raw.route.args.len() != subscription.route.payloads.len()
-            || raw
-                .route
-                .args
-                .iter()
-                .any(|argument| !matches!(argument, RouteArg::Payload))
-            || !subscription_source_matches(&subscription.source, &raw.source)
-        {
+        if subscription.id != declaration.id || subscription.origin != declaration.origin {
             return Err(Error::new(
                 "E196",
-                &raw.span,
+                span,
                 "checked subscription topology changed before HIR lowering",
             ));
         }
@@ -4490,6 +4543,7 @@ impl Lowerer {
             source_payloads,
             delivered_payloads,
             filter,
+            route_args,
         } = self.validate_subscription_contract(subscription)?;
         let source = match &subscription.source {
             CheckedSubscriptionSource::Every { milliseconds } => {
@@ -4553,16 +4607,6 @@ impl Lowerer {
             CheckedSubscriptionSource::Touch(event) => ResolvedSubscriptionSource::Touch(*event),
             CheckedSubscriptionSource::Window(event) => ResolvedSubscriptionSource::Window(*event),
         };
-        let handler = self
-            .declarations
-            .checked_handler(subscription.route.handler, span)?;
-        if handler.name != subscription.route.handler_name {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription route has a mismatched handler identity",
-            ));
-        }
         let source_payloads = source_payloads
             .iter()
             .map(|payload| self.resolve_type(payload, span))
@@ -4583,12 +4627,45 @@ impl Lowerer {
             status: subscription.status,
             route: ResolvedSubscriptionRoute {
                 handler: subscription.route.handler,
-                handler_name: handler.name.clone(),
-                payloads: subscription.route.payloads.clone(),
+                handler_name: subscription.route.handler_name.clone(),
+                args: route_args,
             },
             span: subscription.span.clone(),
             origin: subscription.origin,
         })
+    }
+
+    fn validate_subscription_expression_use(
+        &self,
+        id: CheckedExprUseId,
+        subscription: SubscriptionId,
+        role: CheckedSubscriptionExprRole,
+        expected: Option<&Type>,
+        span: &Span,
+    ) -> Result<Type, Error> {
+        let owner = CheckedExprOwner::Subscription { subscription, role };
+        let expression = self.facts.try_expression_use(id).ok_or_else(|| {
+            self.invariant(span, "subscription references an invalid expression-use ID")
+        })?;
+        if expression.owner != owner || self.facts.expression_use_by_owner(owner) != Some(id) {
+            return Err(self.invariant(
+                span,
+                "subscription expression has a mismatched owner or role",
+            ));
+        }
+        let expected = expected.unwrap_or(&expression.source);
+        let policy = SubscriptionExpressionPolicy {
+            lowerer: self,
+            use_id: id,
+            span,
+        };
+        self.validate_checked_expression_use_graph(
+            expression,
+            expected,
+            &policy,
+            &mut CheckedExpressionGraph::default(),
+        )?;
+        Ok(expression.destination.clone())
     }
 
     fn validate_subscription_contract(
@@ -4597,16 +4674,12 @@ impl Lowerer {
     ) -> Result<ValidatedSubscriptionContract, Error> {
         let span = &subscription.span;
         if let Some(condition) = subscription.condition {
-            self.facts.validate_subscription_expression_use(
+            self.validate_subscription_expression_use(
                 condition,
-                SubscriptionExpressionContract {
-                    subscription: subscription.id,
-                    role: CheckedSubscriptionExprRole::Condition,
-                    expected: Some(&Type::Bool),
-                    declarations: &self.declarations,
-                    document: &self.document,
-                    span,
-                },
+                subscription.id,
+                CheckedSubscriptionExprRole::Condition,
+                Some(&Type::Bool),
+                span,
             )?;
         }
         let source_payloads = match &subscription.source {
@@ -4641,16 +4714,12 @@ impl Lowerer {
                 vec![function.output.clone()]
             }
             CheckedSubscriptionSource::Events { identity, filter } => {
-                self.facts.validate_subscription_expression_use(
+                self.validate_subscription_expression_use(
                     *identity,
-                    SubscriptionExpressionContract {
-                        subscription: subscription.id,
-                        role: CheckedSubscriptionExprRole::EventIdentity,
-                        expected: None,
-                        declarations: &self.declarations,
-                        document: &self.document,
-                        span,
-                    },
+                    subscription.id,
+                    CheckedSubscriptionExprRole::EventIdentity,
+                    None,
+                    span,
                 )?;
                 let function =
                     self.checked_subscription_extern(filter, ExternKind::EventFilter, span)?;
@@ -4728,16 +4797,12 @@ impl Lowerer {
         if let Some(context) = subscription.context {
             delivered_payloads.insert(
                 0,
-                self.facts.validate_subscription_expression_use(
+                self.validate_subscription_expression_use(
                     context,
-                    SubscriptionExpressionContract {
-                        subscription: subscription.id,
-                        role: CheckedSubscriptionExprRole::Context,
-                        expected: None,
-                        declarations: &self.declarations,
-                        document: &self.document,
-                        span,
-                    },
+                    subscription.id,
+                    CheckedSubscriptionExprRole::Context,
+                    None,
+                    span,
                 )?,
             );
         }
@@ -4751,34 +4816,43 @@ impl Lowerer {
         let handler = self
             .declarations
             .checked_handler(subscription.route.handler, span)?;
-        let routed = subscription
+        if subscription
             .route
             .payloads
             .iter()
-            .map(|index| {
-                delivered_payloads
-                    .get(*index as usize)
-                    .cloned()
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E196",
-                            span,
-                            "checked subscription route references an invalid payload index",
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if handler.name != subscription.route.handler_name || routed != handler.payloads {
+            .copied()
+            .ne(0..subscription.route.payloads.len() as u32)
+        {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked subscription route has a mismatched payload order",
+            ));
+        }
+        if handler.owner != HandlerOwner::App
+            || handler.name != subscription.route.handler_name
+            || handler.payloads.len() != subscription.route.payloads.len()
+        {
             return Err(Error::new(
                 "E196",
                 span,
                 "checked subscription route has a mismatched handler contract",
             ));
         }
+        let route_args = subscription
+            .route
+            .payloads
+            .iter()
+            .zip(&handler.payloads)
+            .map(|(index, target)| {
+                lower_typed_payload_argument(span, &delivered_payloads, *index, target)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ValidatedSubscriptionContract {
             source_payloads,
             delivered_payloads,
             filter: filter.map(|(contract, _)| contract),
+            route_args,
         })
     }
 
@@ -4798,16 +4872,12 @@ impl Lowerer {
         }
         for (index, (argument, (_, expected))) in arguments.iter().zip(&function.params).enumerate()
         {
-            self.facts.validate_subscription_expression_use(
+            self.validate_subscription_expression_use(
                 *argument,
-                SubscriptionExpressionContract {
-                    subscription,
-                    role: CheckedSubscriptionExprRole::SourceArgument(index as u32),
-                    expected: Some(expected),
-                    declarations: &self.declarations,
-                    document: &self.document,
-                    span,
-                },
+                subscription,
+                CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                Some(expected),
+                span,
             )?;
         }
         Ok(())

@@ -504,14 +504,14 @@ pub enum TaskGroupKind {
     Sequential,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Route {
     pub handler: String,
     pub args: Vec<RouteArg>,
     pub span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum RouteArg {
     Expr(Expr),
     Payload,

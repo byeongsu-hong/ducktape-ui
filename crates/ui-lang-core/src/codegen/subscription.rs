@@ -1,7 +1,7 @@
 use super::*;
 use crate::lower::{
-    CheckedExprUseId, ResolvedSubscription, ResolvedSubscriptionRoute, ResolvedSubscriptionSource,
-    ResolvedType,
+    ResolvedExpressionId, ResolvedSubscription, ResolvedSubscriptionRoute,
+    ResolvedSubscriptionSource, ResolvedType,
 };
 
 pub(in crate::codegen) fn identified_window_filter(filter: &str, arity: usize) -> String {
@@ -23,7 +23,6 @@ pub(in crate::codegen) fn generate_subscription(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
     let settings = program.settings();
     let animations = has_animations(program);
     let env = checked_state_env(program, "self");
@@ -75,15 +74,7 @@ pub(in crate::codegen) fn generate_subscription(
             .unwrap_or_default();
         let context = subscription
             .context
-            .map(|context| {
-                checked_expr_use_code_at(
-                    program,
-                    context,
-                    &env,
-                    ValueMode::Owned,
-                    &subscription.span,
-                )
-            })
+            .map(|context| checked_expr_use_code(program, context, &env, ValueMode::Owned))
             .transpose()?
             .map(|context| format!(".with({context})"))
             .unwrap_or_default();
@@ -122,15 +113,7 @@ pub(in crate::codegen) fn generate_subscription(
         let transforms = format!("{filter}{context}");
         let condition = subscription
             .condition
-            .map(|condition| {
-                checked_expr_use_code_at(
-                    program,
-                    condition,
-                    &env,
-                    ValueMode::Owned,
-                    &subscription.span,
-                )
-            })
+            .map(|condition| checked_expr_use_code(program, condition, &env, ValueMode::Owned))
             .transpose()?;
         if let Some(condition) = &condition {
             write!(out, "if {condition} {{ ::iced::Subscription::batch([").unwrap();
@@ -160,13 +143,7 @@ pub(in crate::codegen) fn generate_subscription(
                     let data = arguments
                         .iter()
                         .map(|argument| {
-                            checked_expr_use_code_at(
-                                program,
-                                *argument,
-                                &env,
-                                ValueMode::Owned,
-                                &subscription.span,
-                            )
+                            checked_expr_use_code(program, *argument, &env, ValueMode::Owned)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let types = function
@@ -193,18 +170,11 @@ pub(in crate::codegen) fn generate_subscription(
                 function,
                 arguments,
             } => {
-                let args =
-                    checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
+                let args = checked_subscription_arguments(program, arguments, &env)?;
                 writeln!(out, "::iced::advanced::subscription::from_recipe({}({args})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
             }
             ResolvedSubscriptionSource::Events { identity, filter } => {
-                let id = checked_expr_use_code_at(
-                    program,
-                    *identity,
-                    &env,
-                    ValueMode::Owned,
-                    &subscription.span,
-                )?;
+                let id = checked_expr_use_code(program, *identity, &env, ValueMode::Owned)?;
                 let recipe = event_filter_type(&filter.name);
                 writeln!(out, "::iced::advanced::subscription::from_recipe({recipe} {{ id: {id} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
@@ -222,8 +192,7 @@ pub(in crate::codegen) fn generate_subscription(
                 function,
                 arguments,
             } => {
-                let args =
-                    checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
+                let args = checked_subscription_arguments(program, arguments, &env)?;
                 writeln!(
                     out,
                     "{}({args}){transforms}.map(move |__value| {route}),",
@@ -383,8 +352,8 @@ pub(in crate::codegen) fn generate_subscription(
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     if animations {
-        let active = document
-            .states
+        let active = program
+            .app_states()
             .iter()
             .filter(|state| matches!(state.ty, Type::Animation(_)))
             .map(|state| {
@@ -453,13 +422,12 @@ fn resolved_type_code(
 
 fn checked_subscription_arguments(
     program: &LoweredProgram,
-    arguments: &[CheckedExprUseId],
+    arguments: &[ResolvedExpressionId],
     env: &dyn BindingEnvironment,
-    span: &Span,
 ) -> Result<String, Error> {
     arguments
         .iter()
-        .map(|argument| checked_expr_use_code_at(program, *argument, env, ValueMode::Owned, span))
+        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()
         .map(|arguments| arguments.join(", "))
 }
@@ -471,16 +439,23 @@ fn checked_subscription_route_code(
 ) -> Result<String, Error> {
     let ResolvedSubscriptionRoute {
         handler_name,
-        payloads: route_payloads,
+        args: route_args,
         ..
     } = &subscription.route;
     let variant = handler_variant(handler_name);
-    if route_payloads.is_empty() {
+    if route_args.is_empty() {
         return Ok(format!("{message}::{variant}"));
     }
-    let arguments = route_payloads
+    let arguments = route_args
         .iter()
-        .map(|index| {
+        .map(|argument| {
+            let ResolvedRouteArg::Payload { index, .. } = argument else {
+                return Err(Error::new(
+                    "E196",
+                    &subscription.span,
+                    "subscription route retained a non-payload argument",
+                ));
+            };
             payloads.get(*index as usize).cloned().ok_or_else(|| {
                 Error::new(
                     "E196",

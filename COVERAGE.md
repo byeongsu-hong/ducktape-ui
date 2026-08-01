@@ -478,17 +478,19 @@ subscription, handler, and extern IDs replace source-name lookup. Source
 arguments, event identities, contexts, and conditions retain one authoritative
 typed expression analysis; source payloads and delivered filter/context
 payloads are separate fixed contracts; routes retain only ordered checked
-payload indices. Lowering revalidates expression ownership, roles, DAG shape,
-literal/operator/call/projection types, native payload topology, extern kinds
-and signatures, and handler payloads, then publishes private resolved source,
-filter, and route records. Production codegen consumes only those records,
-without raw subscription AST access, checked-fact/declaration lookup, or
-semantic re-analysis. Native/extern generation tests, raw source/route and
-program-kind mutation tests, wrong-role/cycle/wrong-kind/intrinsic-swap
+payload indices, which become the same typed payload-route arguments used by
+handler effects. Lowering's shared expression graph validator revalidates
+ownership, roles, DAG shape, literal/operator/call/projection types, native
+payload topology, extern kinds and signatures, app-state-only value scope,
+App-handler ownership, and handler payloads, then publishes private resolved
+source, filter, and route records. Production codegen consumes only those records and normalized
+expression IDs, without raw subscription AST, declaration, or extern-name
+lookup. Native/extern generation tests, raw subscription removal, same-name
+component-handler injection, wrong-role/cycle/wrong-kind/intrinsic-swap
 corruption tests, imported diagnostic/source-marker coverage, and an ignored
 500-to-4,000 analyze+lower+codegen linearity contract provide the evidence.
-Handler bodies, task flows, canvas locals,
-settings, tests, and expression-bearing widget options remain open HIR slices.
+Canvas locals, tests, and remaining expression-bearing widget options remain
+open HIR slices.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

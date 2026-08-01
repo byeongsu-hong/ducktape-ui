@@ -1,6 +1,19 @@
 use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TestLookupCount(AtomicUsize);
+
+#[cfg(test)]
+impl Clone for TestLookupCount {
+    fn clone(&self) -> Self {
+        Self(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
+}
 
 macro_rules! arena_id {
     ($name:ident) => {
@@ -240,10 +253,11 @@ pub(crate) struct DeclarationIndex {
     enum_variants_by_owner: HashMap<EnumId, HashMap<String, EnumVariantId>>,
     palettes: Vec<Declaration<PaletteId>>,
     palette_names: Vec<String>,
-    palette_contracts: Vec<String>,
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
+    #[cfg(test)]
+    extern_name_lookups: TestLookupCount,
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
@@ -502,12 +516,6 @@ impl DeclarationIndex {
             .iter()
             .map(|palette| palette.name.clone())
             .collect();
-        let palette_contracts = document
-            .palettes
-            .iter()
-            .map(|palette| palette.contract.clone())
-            .collect();
-
         let externs = document
             .functions
             .iter()
@@ -702,10 +710,11 @@ impl DeclarationIndex {
             enum_variants_by_owner,
             palettes,
             palette_names,
-            palette_contracts,
             palettes_by_name,
             externs,
             externs_by_name,
+            #[cfg(test)]
+            extern_name_lookups: TestLookupCount::default(),
             subscriptions,
             views,
             views_by_site,
@@ -762,6 +771,13 @@ impl DeclarationIndex {
 
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
+    }
+
+    pub(crate) fn try_derived(&self, id: DerivedId) -> Option<Declaration<DerivedId>> {
+        self.derived
+            .get(id.0 as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn component(&self, index: usize) -> Declaration<ComponentId> {
@@ -944,20 +960,20 @@ impl DeclarationIndex {
         self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
-    pub(crate) fn palette_type(&self, id: PaletteId) -> Option<Type> {
-        self.palette_contracts
-            .get(id.0 as usize)
-            .cloned()
-            .map(Type::Palette)
-    }
-
     pub(crate) fn extern_fn(&self, index: usize) -> Declaration<ExternFnId> {
         self.externs[index].declaration
     }
 
     pub(crate) fn extern_decl_by_name(&self, name: &str) -> Option<&ExternDeclaration> {
+        #[cfg(test)]
+        self.extern_name_lookups.0.fetch_add(1, Ordering::Relaxed);
         let id = self.externs_by_name.get(name)?;
         self.externs.get(id.0 as usize)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn extern_name_lookup_count(&self) -> usize {
+        self.extern_name_lookups.0.load(Ordering::Relaxed)
     }
 
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
@@ -978,7 +994,9 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&HandlerDeclaration> {
-        self.handlers.get(id.0 as usize)
+        self.handlers
+            .get(id.0 as usize)
+            .filter(|handler| handler.declaration.id == id)
     }
 
     pub(crate) fn handler_id(&self, owner: HandlerOwner, name: &str) -> Option<HandlerId> {

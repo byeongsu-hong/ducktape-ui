@@ -1169,14 +1169,16 @@ mod tests {
         fixture.write("subscriptions.ice", "subscribe\n  every 10ms -> tick _\n");
         let imported = fixture.path("subscriptions.ice").canonicalize().unwrap();
         let mut checked = analyze_file(fixture.path("app.ice")).unwrap();
-        checked.document.subscriptions[0].source =
-            crate::SubscriptionSource::Mouse(crate::MouseEvent::Moved);
+        checked.facts.corrupt_subscription_source(
+            0,
+            crate::check::CheckedSubscriptionSource::Mouse(crate::MouseEvent::Moved),
+        );
 
         let error = crate::lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!((error.line, error.column), (2, 1));
-        assert!(error.message.contains("topology changed"));
+        assert!(error.message.contains("payload contract"));
     }
 
     #[test]

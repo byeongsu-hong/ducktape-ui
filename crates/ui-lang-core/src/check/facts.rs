@@ -196,7 +196,6 @@ pub(crate) struct CheckedSubscription {
     pub(crate) route: CheckedSubscriptionRoute,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
-    pub(crate) syntax: Subscription,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -301,15 +300,6 @@ pub(crate) enum CheckedSubscriptionExprRole {
     Context,
     SourceArgument(u32),
     EventIdentity,
-}
-
-pub(crate) struct SubscriptionExpressionContract<'a> {
-    pub(crate) subscription: SubscriptionId,
-    pub(crate) role: CheckedSubscriptionExprRole,
-    pub(crate) expected: Option<&'a Type>,
-    pub(crate) declarations: &'a DeclarationIndex,
-    pub(crate) document: &'a Document,
-    pub(crate) span: &'a Span,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -622,6 +612,15 @@ pub(crate) struct CheckedAppSettings {
 
 impl CheckedFacts {
     #[cfg(test)]
+    pub(crate) fn corrupt_subscription_source(
+        &mut self,
+        index: usize,
+        source: CheckedSubscriptionSource,
+    ) {
+        self.subscriptions[index].source = source;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_handler_param_local(
         &mut self,
         handler: HandlerId,
@@ -750,798 +749,6 @@ impl CheckedFacts {
     pub(crate) fn try_expression_use(&self, id: CheckedExprUseId) -> Option<&CheckedExprUse> {
         self.record_lookup();
         self.expression_uses.get(id.0 as usize)
-    }
-
-    pub(crate) fn checked_expression_use(
-        &self,
-        id: CheckedExprUseId,
-        span: &Span,
-    ) -> Result<&CheckedExprUse, Error> {
-        self.expression_uses.get(id.0 as usize).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "checked expression references an invalid expression-use ID",
-            )
-        })
-    }
-
-    pub(crate) fn validate_subscription_expression_use(
-        &self,
-        id: CheckedExprUseId,
-        contract: SubscriptionExpressionContract<'_>,
-    ) -> Result<Type, Error> {
-        let SubscriptionExpressionContract {
-            subscription,
-            role,
-            expected,
-            declarations,
-            document,
-            span,
-        } = contract;
-        let expression_use_id = id;
-        let expression_use = self.checked_expression_use(id, span)?;
-        if expression_use.owner != (CheckedExprOwner::Subscription { subscription, role }) {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription expression has a mismatched owner or role",
-            ));
-        }
-        if expression_use.coercion != CheckedInitializerCoercion::None {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription expression retained an invalid coercion",
-            ));
-        }
-        if expected.is_some_and(|expected| expression_use.destination != *expected)
-            || expected.is_none() && expression_use.destination != expression_use.source
-        {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked subscription expression has a mismatched destination type",
-            ));
-        }
-        enum Visit {
-            Enter(CheckedExprId),
-            Exit(CheckedExprId),
-        }
-        let mut state = HashMap::<CheckedExprId, u8>::new();
-        let mut traversal = vec![Visit::Enter(expression_use.root)];
-        while let Some(visit) = traversal.pop() {
-            let id = match visit {
-                Visit::Exit(id) => {
-                    state.insert(id, 2);
-                    continue;
-                }
-                Visit::Enter(id) => id,
-            };
-            let index = id.0 as usize;
-            let expression = self.expressions.get(index).ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "checked expression references an invalid expression ID",
-                )
-            })?;
-            match state.get(&id).copied().unwrap_or_default() {
-                1 => {
-                    return Err(Error::new(
-                        "E196",
-                        span,
-                        "checked expression graph contains a cycle",
-                    ));
-                }
-                2 => continue,
-                _ => {}
-            }
-            state.insert(id, 1);
-            traversal.push(Visit::Exit(id));
-            traversal.extend(
-                checked_expression_children(&expression.kind)
-                    .into_iter()
-                    .rev()
-                    .map(Visit::Enter),
-            );
-        }
-        let mut pending = vec![expression_use.root];
-        let mut visited = std::collections::HashSet::new();
-        while let Some(id) = pending.pop() {
-            if !visited.insert(id) {
-                continue;
-            }
-            let expression = self.expressions.get(id.0 as usize).ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "checked expression references an invalid expression ID",
-                )
-            })?;
-            if expression.owner != expression_use_id {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked expression node belongs to another expression use",
-                ));
-            }
-            let literal_type_is_valid = match &expression.kind {
-                CheckedExprKind::Bool(_) => expression.ty == Type::Bool,
-                CheckedExprKind::I64(_) => expression.ty == Type::I64,
-                CheckedExprKind::F64(_) => expression.ty == Type::F64,
-                CheckedExprKind::Str(_) => expression.ty == Type::Str,
-                CheckedExprKind::Bytes(_) => expression.ty == Type::Bytes,
-                CheckedExprKind::None => matches!(expression.ty, Type::Option(_)),
-                _ => true,
-            };
-            if !literal_type_is_valid {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked expression literal has a mismatched retained type",
-                ));
-            }
-            match &expression.kind {
-                CheckedExprKind::List(values) => {
-                    let Type::List(element) = &expression.ty else {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked list expression has a non-list type",
-                        ));
-                    };
-                    for value in values {
-                        let value_expression =
-                            self.expressions.get(value.0 as usize).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked list references an invalid expression ID",
-                                )
-                            })?;
-                        if value_expression.ty != **element {
-                            return Err(Error::new(
-                                "E196",
-                                span,
-                                "checked list element has a mismatched type",
-                            ));
-                        }
-                    }
-                    pending.extend(values);
-                }
-                CheckedExprKind::Call { target, arguments } => {
-                    match target {
-                        CheckedCallTarget::Builtin(id) => {
-                            let name = self.builtins.get(id.0 as usize).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid builtin ID",
-                                )
-                            })?;
-                            if let Some(builtin) = ContextualBuiltin::from_name(name) {
-                                let inferred = arguments
-                                    .iter()
-                                    .map(|argument| match argument {
-                                        CheckedCallArgument::Value(id) => self
-                                            .expressions
-                                            .get(id.0 as usize)
-                                            .map(|expression| expression.ty.clone())
-                                            .ok_or_else(|| {
-                                                Error::new(
-                                                    "E196",
-                                                    span,
-                                                    "checked builtin references an invalid argument expression ID",
-                                                )
-                                            }),
-                                        CheckedCallArgument::Binding(id) => self
-                                            .locals
-                                            .get(id.0 as usize)
-                                            .map(|local| local.ty.clone())
-                                            .ok_or_else(|| {
-                                                Error::new(
-                                                    "E196",
-                                                    span,
-                                                    "checked builtin references an invalid binding ID",
-                                                )
-                                            }),
-                                    })
-                                    .collect::<Result<Vec<_>, _>>()?;
-                                let contexts = builtin
-                                    .argument_contexts(&expression.ty, &inferred)
-                                    .map_err(|message| Error::new("E196", span, message))?;
-                                let output_is_valid = match builtin {
-                                    ContextualBuiltin::Aborted
-                                    | ContextualBuiltin::DebugActive
-                                    | ContextualBuiltin::Empty => expression.ty == Type::Bool,
-                                    ContextualBuiltin::Len => expression.ty == Type::I64,
-                                    ContextualBuiltin::LinearAddStops => {
-                                        expression.ty == Type::LinearGradient
-                                    }
-                                    ContextualBuiltin::MouseClick => {
-                                        expression.ty == Type::MouseClick
-                                    }
-                                    ContextualBuiltin::AnimationInterpolate
-                                    | ContextualBuiltin::AnimationProject => {
-                                        expression.ty == Type::F64
-                                            || expression.ty == Type::Option(Box::new(Type::F64))
-                                    }
-                                    ContextualBuiltin::DebugTimeWith
-                                    | ContextualBuiltin::Some
-                                    | ContextualBuiltin::Ok
-                                    | ContextualBuiltin::Err => true,
-                                };
-                                if !output_is_valid {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked builtin has a mismatched result type",
-                                    ));
-                                }
-                                if contexts.len() != arguments.len() {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked builtin has a mismatched argument count",
-                                    ));
-                                }
-                                for (index, (argument, context)) in
-                                    arguments.iter().zip(&contexts).enumerate()
-                                {
-                                    match (argument, context) {
-                                        (
-                                            CheckedCallArgument::Value(id),
-                                            BuiltinArgumentContext::Value { expected }
-                                            | BuiltinArgumentContext::ScopedValue {
-                                                expected, ..
-                                            },
-                                        ) => {
-                                            let argument = &self.expressions[id.0 as usize];
-                                            if expected
-                                                .as_ref()
-                                                .is_some_and(|expected| argument.ty != *expected)
-                                            {
-                                                return Err(Error::new(
-                                                    "E196",
-                                                    span,
-                                                    "checked builtin value argument has a mismatched type",
-                                                ));
-                                            }
-                                            if let BuiltinArgumentContext::ScopedValue {
-                                                binding,
-                                                ..
-                                            } = context
-                                            {
-                                                let Some(CheckedCallArgument::Binding(local)) =
-                                                    arguments.get(*binding)
-                                                else {
-                                                    return Err(Error::new(
-                                                        "E196",
-                                                        span,
-                                                        "checked builtin scoped argument has no binding",
-                                                    ));
-                                                };
-                                                let local = &self.locals[local.0 as usize];
-                                                if !matches!(
-                                                    local.owner,
-                                                    CheckedLocalOwner::ExpressionBinding {
-                                                        expression,
-                                                        body_argument,
-                                                    } if expression == expression_use_id
-                                                        && body_argument == index
-                                                ) {
-                                                    return Err(Error::new(
-                                                        "E196",
-                                                        span,
-                                                        "checked builtin scoped argument has a mismatched binding owner",
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                        (
-                                            CheckedCallArgument::Binding(id),
-                                            BuiltinArgumentContext::Binding { ty, body },
-                                        ) => {
-                                            let local = &self.locals[id.0 as usize];
-                                            if local.ty != *ty
-                                                || !matches!(
-                                                    local.owner,
-                                                    CheckedLocalOwner::ExpressionBinding {
-                                                        expression,
-                                                        body_argument,
-                                                    } if expression == expression_use_id
-                                                        && body_argument == *body
-                                                )
-                                            {
-                                                return Err(Error::new(
-                                                    "E196",
-                                                    span,
-                                                    "checked builtin binding argument has a mismatched contract",
-                                                ));
-                                            }
-                                        }
-                                        _ => {
-                                            return Err(Error::new(
-                                                "E196",
-                                                span,
-                                                "checked builtin retained a mismatched argument topology",
-                                            ));
-                                        }
-                                    }
-                                }
-                            } else if arguments
-                                .iter()
-                                .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
-                            {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked non-contextual builtin retained a binding argument",
-                                ));
-                            }
-                        }
-                        CheckedCallTarget::Extern(id) => {
-                            let function = declarations.checked_extern_decl(*id, span)?;
-                            if function.kind != ExternKind::Sync
-                                || arguments.len() != function.params.len()
-                                || expression.ty != function.output
-                            {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression extern call has a mismatched declaration contract",
-                                ));
-                            }
-                            for (argument, (_, expected)) in arguments.iter().zip(&function.params)
-                            {
-                                let CheckedCallArgument::Value(argument) = argument else {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression extern call retained a binding argument",
-                                    ));
-                                };
-                                let argument = self.expressions.get(argument.0 as usize).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked extern call references an invalid argument expression ID",
-                                    )
-                                })?;
-                                if argument.ty != *expected {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression extern argument has a mismatched type",
-                                    ));
-                                }
-                            }
-                        }
-                        CheckedCallTarget::EnumVariant(id) => {
-                            let variant =
-                                declarations.try_enum_variant_decl(*id).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression references an invalid enum variant ID",
-                                    )
-                                })?;
-                            let owner = declarations.try_enum_decl(id.owner).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid enum owner ID",
-                                )
-                            })?;
-                            if expression.ty != Type::Named(owner.name.clone()) {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked enum constructor has a mismatched result type",
-                                ));
-                            }
-                            let [CheckedCallArgument::Value(argument)] = arguments.as_slice()
-                            else {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked enum constructor has a mismatched payload shape",
-                                ));
-                            };
-                            let argument = self.expressions.get(argument.0 as usize).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked enum constructor references an invalid payload expression ID",
-                                )
-                            })?;
-                            if variant.payload.as_ref() != Some(&argument.ty) {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked enum constructor has a mismatched payload type",
-                                ));
-                            }
-                        }
-                    }
-                    for argument in arguments {
-                        match argument {
-                            CheckedCallArgument::Value(id) => pending.push(*id),
-                            CheckedCallArgument::Binding(id) => {
-                                let local = self.locals.get(id.0 as usize).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression references an invalid local ID",
-                                    )
-                                })?;
-                                if !matches!(
-                                    local.owner,
-                                    CheckedLocalOwner::ExpressionBinding { expression, .. }
-                                        if expression == expression_use_id
-                                ) {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression binding has a mismatched local owner",
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-                CheckedExprKind::Unary { operator, value } => {
-                    let operand = self.expressions.get(value.0 as usize).ok_or_else(|| {
-                        Error::new(
-                            "E196",
-                            span,
-                            "checked unary expression references an invalid operand ID",
-                        )
-                    })?;
-                    let valid = match operator {
-                        CheckedUnaryOperator::BooleanNot => {
-                            expression.ty == Type::Bool && operand.ty == Type::Bool
-                        }
-                        CheckedUnaryOperator::NumericNegation(ty) => {
-                            expression.ty == *ty && operand.ty == *ty
-                        }
-                    };
-                    if !valid {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked unary expression has a mismatched operator contract",
-                        ));
-                    }
-                    pending.push(*value);
-                }
-                CheckedExprKind::Binary {
-                    operator,
-                    left,
-                    right,
-                } => {
-                    let left_expression =
-                        self.expressions.get(left.0 as usize).ok_or_else(|| {
-                            Error::new(
-                                "E196",
-                                span,
-                                "checked binary expression references an invalid left operand ID",
-                            )
-                        })?;
-                    let right_expression =
-                        self.expressions.get(right.0 as usize).ok_or_else(|| {
-                            Error::new(
-                                "E196",
-                                span,
-                                "checked binary expression references an invalid right operand ID",
-                            )
-                        })?;
-                    let (operator_is_valid, result, operand) = match operator {
-                        CheckedBinaryOperator::Boolean(operator) => (
-                            matches!(operator, BinaryOp::And | BinaryOp::Or),
-                            Type::Bool,
-                            Type::Bool,
-                        ),
-                        CheckedBinaryOperator::Equality { op, operand } => (
-                            matches!(op, BinaryOp::Eq | BinaryOp::NotEq),
-                            Type::Bool,
-                            operand.clone(),
-                        ),
-                        CheckedBinaryOperator::Ordering { op, operand } => (
-                            matches!(
-                                op,
-                                BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
-                            ),
-                            Type::Bool,
-                            operand.clone(),
-                        ),
-                        CheckedBinaryOperator::Arithmetic { op, operand } => (
-                            matches!(
-                                op,
-                                BinaryOp::Add
-                                    | BinaryOp::Sub
-                                    | BinaryOp::Mul
-                                    | BinaryOp::Div
-                                    | BinaryOp::Rem
-                            ),
-                            operand.clone(),
-                            operand.clone(),
-                        ),
-                    };
-                    if !operator_is_valid
-                        || expression.ty != result
-                        || left_expression.ty != operand
-                        || right_expression.ty != operand
-                    {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked binary expression has a mismatched operator contract",
-                        ));
-                    }
-                    pending.push(*left);
-                    pending.push(*right);
-                }
-                CheckedExprKind::SlotProvided(id) => {
-                    if declarations.try_component_slot(*id).is_none() {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked expression references an invalid component slot ID",
-                        ));
-                    }
-                    if expression.ty != Type::Bool {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked provided-slot expression has a non-boolean type",
-                        ));
-                    }
-                    return Err(Error::new(
-                        "E196",
-                        span,
-                        "application subscription expression references a component slot",
-                    ));
-                }
-                CheckedExprKind::Path { root, projections } => {
-                    let mut projected = match root {
-                        CheckedPathRoot::Local(id) => self
-                            .locals
-                            .get(id.0 as usize)
-                            .map(|local| local.ty.clone())
-                            .ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid local ID",
-                                )
-                            })?,
-                        CheckedPathRoot::Value(value) => self
-                            .values_by_ref
-                            .get(value)
-                            .and_then(|id| self.values.get(id.0 as usize))
-                            .map(|value| value.ty.clone())
-                            .ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid value ID",
-                                )
-                            })?,
-                        CheckedPathRoot::EnumVariant(id) => declarations
-                            .try_enum_decl(id.owner)
-                            .map(|owner| Type::Named(owner.name.clone()))
-                            .ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid enum owner ID",
-                                )
-                            })?,
-                        CheckedPathRoot::Palette(id) => {
-                            declarations.palette_type(*id).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid palette ID",
-                                )
-                            })?
-                        }
-                    };
-                    match root {
-                        CheckedPathRoot::Local(id) => {
-                            let local = self.locals.get(id.0 as usize).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid local ID",
-                                )
-                            })?;
-                            if !matches!(
-                                local.owner,
-                                CheckedLocalOwner::ExpressionBinding { expression, .. }
-                                    if expression == expression_use_id
-                            ) {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression local has a mismatched owner or scope",
-                                ));
-                            }
-                        }
-                        CheckedPathRoot::Value(value) => {
-                            if !matches!(
-                                value,
-                                CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_)
-                            ) {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "application subscription expression references component state",
-                                ));
-                            }
-                            if self
-                                .values_by_ref
-                                .get(value)
-                                .and_then(|id| self.values.get(id.0 as usize))
-                                .is_none()
-                            {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid value ID",
-                                ));
-                            }
-                        }
-                        CheckedPathRoot::EnumVariant(id) => {
-                            let variant =
-                                declarations.try_enum_variant_decl(*id).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression references an invalid enum variant ID",
-                                    )
-                                })?;
-                            let owner = declarations.try_enum_decl(id.owner).ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
-                                    "checked expression references an invalid enum owner ID",
-                                )
-                            })?;
-                            if variant.payload.is_some()
-                                || expression.ty != Type::Named(owner.name.clone())
-                            {
-                                return Err(Error::new(
-                                    "E196",
-                                    span,
-                                    "checked enum value has a mismatched declaration contract",
-                                ));
-                            }
-                        }
-                        CheckedPathRoot::Palette(id)
-                            if declarations.palette_name(*id).is_none() =>
-                        {
-                            return Err(Error::new(
-                                "E196",
-                                span,
-                                "checked expression references an invalid palette ID",
-                            ));
-                        }
-                        _ => {}
-                    }
-                    for projection in projections {
-                        if projection.input != projected {
-                            return Err(Error::new(
-                                "E196",
-                                span,
-                                "checked projection chain has a mismatched input type",
-                            ));
-                        }
-                        let expected_output = match projection.kind {
-                            CheckedProjectionKind::Struct(id) => {
-                                let field = declarations.try_struct_field_decl(id).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression references an invalid struct field ID",
-                                    )
-                                })?;
-                                let owner = declarations.try_struct_decl(id.owner).ok_or_else(|| {
-                                    Error::new(
-                                        "E196",
-                                        span,
-                                        "checked expression references an invalid struct owner ID",
-                                    )
-                                })?;
-                                if projection.input != Type::Named(owner.name.clone())
-                                    || projection.field != field.name
-                                {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked struct projection has a mismatched declaration contract",
-                                    ));
-                                }
-                                field.ty.clone()
-                            }
-                            CheckedProjectionKind::OptionalWidgetTarget => {
-                                if !matches!(projection.input, Type::Option(ref inner) if **inner == Type::WidgetTarget)
-                                {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked optional widget projection has a mismatched input type",
-                                    ));
-                                }
-                                field_type(&projected, &projection.field, document, span).map_err(
-                                    |_| {
-                                        Error::new(
-                                            "E196",
-                                            span,
-                                            "checked optional widget projection is invalid",
-                                        )
-                                    },
-                                )?
-                            }
-                            CheckedProjectionKind::Native => {
-                                if matches!(projected, Type::Named(_)) {
-                                    return Err(Error::new(
-                                        "E196",
-                                        span,
-                                        "checked named projection lost its struct field identity",
-                                    ));
-                                }
-                                field_type(&projected, &projection.field, document, span).map_err(
-                                    |_| {
-                                        Error::new(
-                                            "E196",
-                                            span,
-                                            "checked native projection is invalid",
-                                        )
-                                    },
-                                )?
-                            }
-                        };
-                        if projection.output != expected_output {
-                            return Err(Error::new(
-                                "E196",
-                                span,
-                                "checked projection output has a mismatched type",
-                            ));
-                        }
-                        projected = expected_output;
-                    }
-                    if projected != expression.ty {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "checked projection result disagrees with its expression type",
-                        ));
-                    }
-                }
-                _ => {}
-            }
-        }
-        let root = self
-            .expressions
-            .get(expression_use.root.0 as usize)
-            .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "checked expression references an invalid root expression ID",
-                )
-            })?;
-        if root.ty != expression_use.source {
-            return Err(Error::new(
-                "E196",
-                span,
-                "checked expression root and source types disagree",
-            ));
-        }
-        Ok(expression_use.destination.clone())
     }
 
     pub(crate) fn expression_use_by_owner(
@@ -4251,7 +3458,6 @@ impl<'a> FactsBuilder<'a> {
                 },
                 span: subscription.span.clone(),
                 origin: declaration.origin,
-                syntax: subscription.clone(),
             });
         }
         Ok(())
@@ -6077,6 +5283,21 @@ view
                 lower::ResolvedType::Value(Type::I64),
             ]
         );
+        assert_eq!(resolved[0].route.handler, HandlerId(0));
+        assert_eq!(resolved[0].route.handler_name, "number");
+        assert!(matches!(
+            resolved[0].route.args.as_slice(),
+            [
+                lower::ResolvedRouteArg::Payload {
+                    index: 0,
+                    ty: Type::I64,
+                },
+                lower::ResolvedRouteArg::Payload {
+                    index: 1,
+                    ty: Type::I64,
+                },
+            ]
+        ));
         assert!(matches!(
             &resolved[1].source,
             lower::ResolvedSubscriptionSource::Recipe { function, .. }
@@ -6132,44 +5353,18 @@ view
     }
 
     #[test]
-    fn subscription_lowering_rejects_raw_source_mutation() {
+    fn subscription_lowering_and_codegen_ignore_raw_subscription_mutations() {
         let source = format!(
             "app FrozenSubscription\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) -> number _\nview\n  text \"ready\"\n"
         );
-        let mut checked = analyze(&source).unwrap();
-        checked.document.subscriptions[0].source = SubscriptionSource::Every { milliseconds: 10 };
-        let error = lower::lower(checked).unwrap_err();
-        assert_eq!(error.code, "E196");
-        assert!(error.message.contains("topology changed"));
-    }
+        let baseline = lower::lower(analyze(&source).unwrap()).unwrap();
+        let baseline = crate::codegen::generate(&baseline, "frozen-subscription.ice").unwrap();
 
-    #[test]
-    fn subscription_lowering_rejects_raw_source_argument_mutation() {
-        let source = format!(
-            "app FrozenSubscriptionArgument\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) -> number _\nview\n  text \"ready\"\n"
-        );
         let mut checked = analyze(&source).unwrap();
-        let SubscriptionSource::Run { args, .. } = &mut checked.document.subscriptions[0].source
-        else {
-            unreachable!();
-        };
-        args[0] = Expr::I64(99);
-
-        let error = lower::lower(checked).unwrap_err();
-        assert_eq!(error.code, "E196");
-        assert!(error.message.contains("topology changed"));
-    }
-
-    #[test]
-    fn subscription_lowering_rejects_raw_route_mutation() {
-        let source = format!(
-            "app FrozenRoute\n{THEME}on tick(value)\non wrong\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
-        );
-        let mut checked = analyze(&source).unwrap();
-        checked.document.subscriptions[0].route.handler = "wrong".into();
-        let error = lower::lower(checked).unwrap_err();
-        assert_eq!(error.code, "E196");
-        assert!(error.message.contains("topology changed"));
+        checked.document.subscriptions.clear();
+        let program = lower::lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "frozen-subscription.ice").unwrap();
+        assert_eq!(generated, baseline);
     }
 
     #[test]
@@ -6243,25 +5438,11 @@ view
                 unreachable!();
             };
             *function = replacement;
-            let SubscriptionSource::Run { function, .. } =
-                &mut checked.document.subscriptions[0].source
-            else {
-                unreachable!();
-            };
-            *function = name.into();
-            let SubscriptionSource::Run { function, .. } =
-                &mut checked.facts.subscriptions[0].syntax.source
-            else {
-                unreachable!();
-            };
-            *function = name.into();
         }
 
         fn replace_filter(checked: &mut crate::CheckedDocument, name: &str) {
             let replacement = extern_ref(checked, name);
             checked.facts.subscriptions[0].filter = Some(replacement);
-            checked.document.subscriptions[0].filter = Some(name.into());
-            checked.facts.subscriptions[0].syntax.filter = Some(name.into());
         }
 
         fn assert_contract_error(checked: crate::CheckedDocument, needle: &str) {
@@ -6282,7 +5463,7 @@ view
 
         let mut wrong_param = analyze(&source).unwrap();
         replace_source(&mut wrong_param, "wrong_param");
-        assert_contract_error(wrong_param, "destination type");
+        assert_contract_error(wrong_param, "type contract");
 
         let mut wrong_output = analyze(&source).unwrap();
         replace_source(&mut wrong_output, "wrong_output");
@@ -6321,15 +5502,33 @@ view
             "app WrongSubscriptionHandler\n{THEME}on tick(now)\non theme(label)\nsubscribe\n  every 10ms -> tick _\n  system theme -> theme _\nview\n  text \"ready\"\n"
         );
         let mut checked = analyze(&source).unwrap();
-        let replacement = checked.declarations.handler_id("theme").unwrap();
+        let replacement = checked
+            .declarations
+            .handler_id(crate::hir::HandlerOwner::App, "theme")
+            .unwrap();
         let span = checked.facts.subscriptions[0].span.clone();
         checked.facts.subscriptions[0].route.handler = replacement;
         checked.facts.subscriptions[0].route.handler_name = "theme".into();
-        checked.document.subscriptions[0].route.handler = "theme".into();
-        checked.facts.subscriptions[0].syntax.route.handler = "theme".into();
         let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("payload type diverged"));
+    }
+
+    #[test]
+    fn subscription_route_rejects_a_same_name_component_handler_id() {
+        let source = format!(
+            "app SubscriptionHandlerOwner\n{THEME}on tick\ncomponent Surface()\n  on tick\n  text \"surface\"\nsubscribe\n  every 10ms -> tick\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let component_tick = checked
+            .declarations
+            .handler_id(crate::hir::HandlerOwner::Component(ComponentId(0)), "tick")
+            .unwrap();
+        checked.facts.subscriptions[0].route.handler = component_tick;
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
         assert!(error.message.contains("handler contract"));
     }
 
@@ -6354,7 +5553,7 @@ view
         let error = lower::lower(invalid_root).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (span.line, span.column));
-        assert!(error.message.contains("invalid expression ID"));
+        assert!(error.message.contains("invalid checked expression ID"));
     }
 
     #[test]
@@ -6378,21 +5577,21 @@ view
 
         let mut wrong_source = checked.clone();
         wrong_source.facts.expression_uses[condition.0 as usize].source = Type::Str;
-        assert_e196(wrong_source, "root and source types");
+        assert_e196(wrong_source, "type contract");
 
         let mut wrong_destination = checked.clone();
         wrong_destination.facts.expression_uses[condition.0 as usize].destination = Type::Str;
-        assert_e196(wrong_destination, "destination type");
+        assert_e196(wrong_destination, "type contract");
 
         let mut wrong_coercion = checked.clone();
         wrong_coercion.facts.expression_uses[condition.0 as usize].coercion =
             CheckedInitializerCoercion::StrToMarkdown;
-        assert_e196(wrong_coercion, "invalid coercion");
+        assert_e196(wrong_coercion, "type contract");
 
         let mut wrong_owner = checked.clone();
         let root = wrong_owner.facts.expression_uses[condition.0 as usize].root;
         wrong_owner.facts.expressions[root.0 as usize].owner = context;
-        assert_e196(wrong_owner, "belongs to another expression use");
+        assert_e196(wrong_owner, "belongs to another retained expression use");
 
         let mut cycle = checked;
         let root = cycle.facts.expression_uses[condition.0 as usize].root;
@@ -6418,6 +5617,8 @@ extern crate::backend
 {THEME}state
   enabled = true
   seed = 7
+derived
+  copied_seed = seed
 on tick(value)
 on timer(now)
 subscribe
@@ -6463,6 +5664,14 @@ view
         *target = CheckedCallTarget::Extern(wrong_id);
         assert_e196(wrong_extern_kind, "extern call");
 
+        let mut wrong_value_scope = checked.clone();
+        let root = argument_root(&wrong_value_scope, 0);
+        wrong_value_scope.facts.expressions[root.0 as usize].kind = CheckedExprKind::Path {
+            root: CheckedPathRoot::Value(CheckedValueRef::Derived(DerivedId(0))),
+            projections: Vec::new(),
+        };
+        assert_e196(wrong_value_scope, "cannot reference a derived value");
+
         let mut wrong_literal = checked.clone();
         let root = argument_root(&wrong_literal, 2);
         let CheckedExprKind::List(items) = &wrong_literal.facts.expressions[root.0 as usize].kind
@@ -6471,7 +5680,7 @@ view
         };
         let item = items[0];
         wrong_literal.facts.expressions[item.0 as usize].kind = CheckedExprKind::Bool(true);
-        assert_e196(wrong_literal, "literal");
+        assert_e196(wrong_literal, "kind does not match its retained type");
 
         let mut wrong_list_item = checked.clone();
         let root = argument_root(&wrong_list_item, 2);
@@ -6481,7 +5690,7 @@ view
         };
         let item = items[0];
         wrong_list_item.facts.expressions[item.0 as usize].ty = Type::Str;
-        assert_e196(wrong_list_item, "list element");
+        assert_e196(wrong_list_item, "kind does not match its retained type");
 
         let mut wrong_builtin = checked.clone();
         let len_root = argument_root(&wrong_builtin, 1);
@@ -6532,7 +5741,6 @@ view
         let mut checked = analyze(&source).unwrap();
         checked.facts.subscriptions[0].source = CheckedSubscriptionSource::Mouse(MouseEvent::Moved);
         checked.document.subscriptions[0].source = SubscriptionSource::Mouse(MouseEvent::Moved);
-        checked.facts.subscriptions[0].syntax.source = SubscriptionSource::Mouse(MouseEvent::Moved);
 
         let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
@@ -6548,7 +5756,7 @@ view
         let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (1, 1));
-        assert!(error.message.contains("program kind changed"));
+        assert!(error.message.contains("application kind changed"));
     }
 
     #[test]
@@ -6606,7 +5814,7 @@ view
             owner: crate::hir::EnumId(u32::MAX),
             index: 0,
         });
-        assert_e196(enum_call, 0, "invalid enum");
+        assert_e196(enum_call, 0, "expression declaration ID");
 
         let mut enum_path = checked.clone();
         let root = argument_root(&enum_path, 1);
@@ -6619,7 +5827,7 @@ view
             owner: crate::hir::EnumId(u32::MAX),
             index: 0,
         });
-        assert_e196(enum_path, 1, "invalid enum");
+        assert_e196(enum_path, 1, "expression declaration ID");
 
         let mut struct_projection = checked.clone();
         let root = argument_root(&struct_projection, 2);
@@ -6632,7 +5840,7 @@ view
             owner: crate::hir::StructId(u32::MAX),
             index: 0,
         });
-        assert_e196(struct_projection, 2, "invalid struct field ID");
+        assert_e196(struct_projection, 2, "expression declaration ID");
 
         let mut palette = checked.clone();
         let root = argument_root(&palette, 3);
@@ -6642,7 +5850,7 @@ view
             unreachable!();
         };
         *root = CheckedPathRoot::Palette(PaletteId(u32::MAX));
-        assert_e196(palette, 3, "invalid palette ID");
+        assert_e196(palette, 3, "expression declaration ID");
 
         let mut slot = checked;
         let root = argument_root(&slot, 1);
@@ -6652,7 +5860,7 @@ view
                 index: 0,
             });
         slot.facts.expressions[root.0 as usize].ty = Type::Bool;
-        assert_e196(slot, 1, "invalid component slot ID");
+        assert_e196(slot, 1, "expression declaration ID");
     }
 
     #[test]
@@ -6665,6 +5873,15 @@ view
         let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("payload"));
+
+        let source = format!(
+            "app ReorderedSubscription\n{THEME}on moved(x, y)\nsubscribe\n  mouse moved -> moved _ _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.subscriptions[0].route.payloads.swap(0, 1);
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("payload order"));
     }
 
     #[test]
@@ -6802,7 +6019,9 @@ view
                     source_payloads: vec![Type::Instant],
                     delivered_payloads: vec![Type::Instant],
                     filter: None,
-                    route_handler: missing_declarations.handler_id("tick").unwrap(),
+                    route_handler: missing_declarations
+                        .handler_id(crate::hir::HandlerOwner::App, "tick")
+                        .unwrap(),
                     route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },
@@ -6836,7 +6055,9 @@ view
                     source_payloads: vec![Type::Instant],
                     delivered_payloads: vec![Type::Instant],
                     filter: None,
-                    route_handler: extra_declarations.handler_id("tick").unwrap(),
+                    route_handler: extra_declarations
+                        .handler_id(crate::hir::HandlerOwner::App, "tick")
+                        .unwrap(),
                     route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },

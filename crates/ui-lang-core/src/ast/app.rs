@@ -490,7 +490,7 @@ pub enum ExternKind {
     PaneGridStyle,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Subscription {
     pub source: SubscriptionSource,
     pub window_id: bool,
@@ -509,7 +509,7 @@ pub enum EventStatus {
     Ignored,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum SubscriptionSource {
     Every { milliseconds: u64 },
     Repeat { function: String, milliseconds: u64 },

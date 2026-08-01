@@ -227,16 +227,19 @@ settings, test, and expression-bearing widget-option families remain later
 vertical slices.
 
 Application subscriptions are also a completed vertical HIR slice. Lowering
-freezes the checked app/daemon kind and converts every native, timer, event,
-stream, recipe, and extern-subscription source into a private
-`ResolvedSubscription`. Extern signatures use stable declaration IDs and
+converts every native, timer, event, stream, recipe, and extern-subscription
+source into a private `ResolvedSubscription`. Extern signatures use stable declaration IDs and
 resolved types; conditions, contexts, identities, and source arguments retain
 typed expression-use IDs; source and delivered payloads plus routes are fixed
-before emission. Lowering rejects changed raw topology, invalid expression
-ownership or graph structure, mismatched intrinsic/extern contracts, and
-invalid route payloads with source-mapped `E196`. The subscription backend
-consumes only these resolved records and performs no checker or declaration
-lookup.
+before emission. The source `Document` subscription list is no longer an input
+to this lowering slice and can be discarded after checking without changing
+generated Rust. Subscription expressions retain the app-state-only scope used
+by semantic checking. Lowering uses the shared typed expression-graph and
+payload-route cores to reject invalid ownership, graph structure,
+intrinsic/extern contracts, handler owners, and route payloads with
+source-mapped `E196`. The subscription backend consumes only resolved records
+and expression IDs; it performs no raw subscription, declaration, or
+extern-name lookup.
 
 The Rust adapter is one manifest-relative include:
 

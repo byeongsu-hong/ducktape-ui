@@ -2632,16 +2632,6 @@ pub(in crate::codegen) fn checked_expr_use_code(
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    checked_expr_use_code_at(program, expression_use, env, mode, &Span::line(1))
-}
-
-pub(in crate::codegen) fn checked_expr_use_code_at(
-    program: &LoweredProgram,
-    expression_use: CheckedExprUseId,
-    env: &dyn BindingEnvironment,
-    mode: ValueMode,
-    _span: &Span,
-) -> Result<String, Error> {
     let facts = program.checked_facts();
     let expression_use = facts.expression_use(expression_use);
     let context = ExprEmission::for_checked(program);
