@@ -583,11 +583,17 @@ only repeated `--test NAME` selections. Captures are collected below a unique
 run directory without deleting older evidence. `--baseline DIR` accepts a
 previous review directory (or a capture directory), compares captures by their
 stable `test-name/capture-name.json` key, and treats changed, new, removed, or
-unreadable evidence as a failed review. With explicit `--test` selections,
-removed-capture checks are scoped to those selected tests; captures belonging
-to unselected tests are not reported as removed. Capture manifests use schema
-2 and review/diff reports use schema 1. Direct diff and review reject missing,
-non-integer, or unsupported schema versions before comparing evidence.
+unreadable evidence as a failed review. A report baseline must be a successful
+`ice_review_bundle`; capture-diff reports and failed or structurally incomplete
+review reports are rejected. With explicit `--test` selections, baseline keys
+are filtered before manifest paths are resolved or read, so evidence belonging
+to unselected tests is outside that run while a full review validates every
+entry. Capture manifests use schema 2 and review/diff reports use schema 1 with
+distinct artifact kinds. Direct diff and review share one structural manifest
+validator covering the published required fields, source provenance, nested
+geometry/accessibility/paint shapes, and sibling PNG identity. Every failure
+after opening an output directory publishes a new run-ID failure bundle; an
+already-written detailed failure report for that run is retained.
 `--package`, `--output`, and the same pixel/ratio/value tolerance flags control
 execution and policy. The output contains `report.json`, `report.html`,
 `diagnostics.json`, test logs, current PNGs/manifests, and per-capture

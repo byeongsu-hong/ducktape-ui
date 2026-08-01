@@ -4778,16 +4778,23 @@ and captures stdout, stderr, duration, exit status, and every named frame
 artifact. The review output is a versioned JSON report plus an HTML index,
 diagnostics inventory, accessibility role/name/action summary, and
 source-mapped structured changes. A baseline may be a previous review bundle
-or capture directory; captures match by the stable test/capture manifest key.
+or capture directory; a report baseline must carry the `ice_review_bundle`
+artifact discriminator, exact schema version, `success: true`, and a typed,
+duplicate-free capture list. A capture-diff report is not a review baseline.
+Captures match by the stable test/capture manifest key.
 When a baseline is supplied, a changed, new, removed, or unreadable capture is
 a review failure under the explicit pixel, ratio, and value tolerances. An
-explicit `--test` selection limits removed-capture checks to the selected test
-names, so evidence from unselected tests is outside that run's baseline scope.
-Capture manifests have schema version 2 and review/diff reports have schema
-version 1; direct diff and review reject missing, non-integer, and unsupported
-versions. Test failure also fails the review. Each run uses a fresh
-artifact/log/diff subdirectory, so publishing a new report never deletes
-earlier evidence.
+explicit `--test` selection filters report keys before resolving, reading, or
+checking manifest paths; evidence from unselected tests is outside that run's
+baseline scope, while full scope validates every entry. Capture manifests have
+schema version 2 and review/diff reports have schema version 1 with distinct
+artifact discriminators. Direct diff and review use the same structural
+validator for all published required top-level fields and core nested source,
+geometry, accessibility, and paint shapes. Test failure also fails the review.
+Each run uses a fresh artifact/log/diff subdirectory. Once the output directory
+is opened, every early error publishes a failure report, diagnostics, and HTML
+for the new run ID; a detailed failure already published for that run is not
+replaced by the generic fallback.
 
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their

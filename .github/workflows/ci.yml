@@ -84,11 +84,53 @@ jobs:
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
             --output target/ci-review/full
+          python3 - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          expected_key = "generated_control_accessibility/accessibility_contract.json"
+          root = Path("target/ci-review")
+          full_dir = root / "full"
+          full = json.loads((full_dir / "report.json").read_text())
+
+          selected_baseline = root / "selected-invalid-baseline"
+          shutil.copytree(full_dir, selected_baseline)
+          selected_report_path = selected_baseline / "report.json"
+          selected_report = json.loads(selected_report_path.read_text())
+          unselected = next(
+              capture for capture in selected_report["captures"]
+              if capture["key"] != expected_key
+          )
+          unselected["manifest"] = "missing/unselected.json"
+          selected_report_path.write_text(json.dumps(selected_report, indent=2) + "\n")
+
+          removed_baseline = root / "full-removed-baseline"
+          shutil.copytree(full_dir, removed_baseline)
+          removed_report_path = removed_baseline / "report.json"
+          removed_report = json.loads(removed_report_path.read_text())
+          source_capture = removed_report["captures"][0]
+          removed_report["captures"].append({
+              "key": "removed_fixture/obsolete.json",
+              "name": "obsolete",
+              "manifest": source_capture["manifest"],
+              "png": source_capture["png"],
+              "comparison": {"status": "not_requested"},
+          })
+          removed_report_path.write_text(json.dumps(removed_report, indent=2) + "\n")
+          PY
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
             --test generated_control_accessibility \
-            --baseline target/ci-review/full \
+            --baseline target/ci-review/selected-invalid-baseline \
             --output target/ci-review/selected
+          if cargo ice review examples/showcase/src/ui/app.ice \
+            --package showcase \
+            --baseline target/ci-review/full-removed-baseline \
+            --output target/ci-review/full-removed-check; then
+            echo "::error::full review accepted a removed baseline capture"
+            exit 1
+          fi
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -103,9 +145,12 @@ jobs:
 
           full_dir, full = load_bundle("full")
           selected_dir, selected = load_bundle("selected")
+          removed_dir, removed = load_bundle("full-removed-check")
+          assert full["artifact_kind"] == "ice_review_bundle"
           assert full["schema_version"] == 1
           assert full["success"] is True
           assert expected_key in {capture["key"] for capture in full["captures"]}
+          assert selected["artifact_kind"] == "ice_review_bundle"
           assert selected["schema_version"] == 1
           assert selected["success"] is True
           assert selected["tests"]["selected"] == ["generated_control_accessibility"]
@@ -117,6 +162,10 @@ jobs:
               assert (selected_dir / capture[field]).is_file(), field
           for field in ("report", "diff_png"):
               assert (selected_dir / capture["comparison"][field]).is_file(), field
+          diff = json.loads(
+              (selected_dir / capture["comparison"]["report"]).read_text()
+          )
+          assert diff["artifact_kind"] == "ice_capture_diff"
           accessibility = selected["accessibility"]
           assert accessibility["semantic_target_count"] > 0
           assert accessibility["named_semantic_target_count"] > 0
@@ -125,6 +174,13 @@ jobs:
           assert all(
               capture["comparison"]["status"] != "removed"
               for capture in selected["captures"]
+          )
+          assert removed["artifact_kind"] == "ice_review_bundle"
+          assert removed["success"] is False
+          assert any(
+              capture["key"] == "removed_fixture/obsolete.json"
+              and capture["comparison"]["status"] == "removed"
+              for capture in removed["captures"]
           )
           PY
       - name: Upload review bundle evidence
@@ -169,6 +225,13 @@ jobs:
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
           cargo test --locked -p markdown-example
+      - name: Run baseline-free selected review smoke
+        shell: bash
+        run: |
+          cargo ice review examples/showcase/src/ui/app.ice \
+            --package showcase \
+            --test generated_control_accessibility \
+            --output target/platform-review
 
   accessibility:
     name: Accessibility (Linux and Windows)

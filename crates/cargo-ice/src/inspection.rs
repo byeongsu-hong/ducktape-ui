@@ -1,4 +1,6 @@
-use crate::evidence::{CAPTURE_SCHEMA_VERSION, REVIEW_SCHEMA_VERSION, require_schema_version};
+use crate::evidence::{
+    CAPTURE_DIFF_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION, validate_capture_manifest,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -396,20 +398,8 @@ pub(super) fn compare_capture_manifests(
 ) -> Result<Value, String> {
     let baseline = read_json(baseline_path)?;
     let current = read_json(current_path)?;
-    require_schema_version(
-        baseline_path,
-        &baseline,
-        CAPTURE_SCHEMA_VERSION,
-        "capture manifest",
-    )?;
-    require_schema_version(
-        current_path,
-        &current,
-        CAPTURE_SCHEMA_VERSION,
-        "capture manifest",
-    )?;
-    let baseline_png = manifest_png(baseline_path, &baseline)?;
-    let current_png = manifest_png(current_path, &current)?;
+    let baseline_png = validate_capture_manifest(baseline_path, &baseline)?.png;
+    let current_png = validate_capture_manifest(current_path, &current)?.png;
     let baseline_image = read_png(&baseline_png)?;
     let current_image = read_png(&current_png)?;
     fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -433,6 +423,7 @@ pub(super) fn compare_capture_manifests(
     let matches = differences.is_empty() && changed_ratio <= thresholds.max_changed_ratio;
     let report_path = output.join("report.json");
     let report = json!({
+        "artifact_kind": CAPTURE_DIFF_ARTIFACT_KIND,
         "schema_version": REVIEW_SCHEMA_VERSION,
         "matches": matches,
         "baseline": { "manifest": baseline_path, "png": baseline_png },
@@ -534,44 +525,6 @@ fn read_json(path: &Path) -> Result<Value, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
-}
-
-pub(super) fn manifest_png(manifest_path: &Path, manifest: &Value) -> Result<PathBuf, String> {
-    let png = manifest["png"]
-        .as_str()
-        .ok_or_else(|| format!("{} omits string field `png`", manifest_path.display()))?;
-    let relative = Path::new(png);
-    if relative.components().count() != 1
-        || !matches!(
-            relative.components().next(),
-            Some(std::path::Component::Normal(_))
-        )
-    {
-        return Err(format!(
-            "{} field `png` must be a sibling basename",
-            manifest_path.display()
-        ));
-    }
-    let directory = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let directory = directory.canonicalize().map_err(|error| {
-        format!(
-            "cannot resolve capture directory {}: {error}",
-            directory.display()
-        )
-    })?;
-    let png = directory.join(relative).canonicalize().map_err(|error| {
-        format!(
-            "cannot resolve capture PNG {}: {error}",
-            directory.join(relative).display()
-        )
-    })?;
-    if !png.starts_with(&directory) || !png.is_file() {
-        return Err(format!(
-            "capture PNG must be a sibling file of {}",
-            manifest_path.display()
-        ));
-    }
-    Ok(png)
 }
 
 fn file_stem(path: &Path) -> String {
@@ -777,6 +730,33 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::CAPTURE_SCHEMA_VERSION;
+
+    fn capture_manifest(name: &str) -> Value {
+        json!({
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "name": name,
+            "png": format!("{name}.png"),
+            "capture_source": {
+                "path": "app.ice", "line": 1, "column": 1, "statement": format!("capture {name}")
+            },
+            "viewport": { "width": 1.0, "height": 1.0 },
+            "physical_size": { "width": 1, "height": 1 },
+            "scale_factor": 1.0,
+            "configured_theme": null,
+            "resolved_theme": { "mode": "light", "name": "Light" },
+            "system_theme": "none",
+            "locale": null,
+            "platform": "linux",
+            "reduced_motion": null,
+            "window": { "position": null, "focused": true },
+            "clock": {
+                "supports_virtual_redraw_advance": true,
+                "iced_timer_futures_are_virtual": false
+            },
+            "targets": [],
+        })
+    }
 
     #[test]
     fn parses_deterministic_inspection_inputs() {
@@ -835,12 +815,10 @@ mod tests {
         let output = fixture.path().join("diff");
         fs::write(
             &current,
-            serde_json::to_vec(&json!({
-                "schema_version": CAPTURE_SCHEMA_VERSION
-            }))
-            .unwrap(),
+            serde_json::to_vec(&capture_manifest("current")).unwrap(),
         )
         .unwrap();
+        fs::write(fixture.path().join("current.png"), []).unwrap();
 
         for invalid in [
             json!({}),
@@ -858,12 +836,10 @@ mod tests {
 
         fs::write(
             &baseline,
-            serde_json::to_vec(&json!({
-                "schema_version": CAPTURE_SCHEMA_VERSION
-            }))
-            .unwrap(),
+            serde_json::to_vec(&capture_manifest("baseline")).unwrap(),
         )
         .unwrap();
+        fs::write(fixture.path().join("baseline.png"), []).unwrap();
         fs::write(
             &current,
             serde_json::to_vec(&json!({ "schema_version": "2" })).unwrap(),
@@ -874,26 +850,17 @@ mod tests {
                 .unwrap_err()
                 .contains(&current.display().to_string())
         );
-    }
 
-    #[test]
-    fn capture_png_must_be_a_sibling_basename() {
-        let fixture = tempfile::tempdir().unwrap();
-        let manifest = fixture.path().join("capture.json");
-        let png = fixture.path().join("capture.png");
-        fs::write(&manifest, "{}").unwrap();
-        fs::write(&png, []).unwrap();
-
-        assert_eq!(
-            manifest_png(&manifest, &json!({ "png": "capture.png" })).unwrap(),
-            png.canonicalize().unwrap()
+        let partial = json!({
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "png": "missing.png"
+        });
+        fs::write(&baseline, serde_json::to_vec(&partial).unwrap()).unwrap();
+        fs::write(&current, serde_json::to_vec(&partial).unwrap()).unwrap();
+        assert!(
+            compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default())
+                .is_err()
         );
-        for escaped in ["../capture.png", "nested/capture.png", "/capture.png"] {
-            assert!(
-                manifest_png(&manifest, &json!({ "png": escaped })).is_err(),
-                "accepted escaping PNG path {escaped:?}"
-            );
-        }
     }
 
     #[test]

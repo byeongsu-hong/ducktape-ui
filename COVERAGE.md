@@ -299,12 +299,16 @@ tests, records their exact process results and captures, reuses the same diff
 engine, summarizes live AccessKit metadata, and maps structured changes back to
 the target or capture statement source. Unit contracts cover option/test
 selection, HTML escaping, accessibility aggregation, source mapping, and the
-shared pixel/manifest comparison. Direct diff and review share strict schema
-contracts (capture 2, report 1), including missing, string, and unsupported
-version rejection. Pull-request CI exercises a full showcase bundle followed
-by a selected-test comparison, asserts that unselected captures are not marked
-removed, verifies the real accessibility inventory and artifact paths, and
-uploads the bundle. Screenshot output is checked as RGBA8 and
+shared pixel/manifest comparison. Direct diff and review share a typed capture
+schema-2 validator for required fields and core nested provenance, geometry,
+accessibility, and paint shapes. Typed review-schema-1 baseline tests reject
+wrong artifact kinds, failed reports, malformed capture entries, duplicates,
+and unsafe paths. Run-ID failure tests prove stale success is replaced while a
+current detailed failure is preserved. Pull-request CI exercises a full
+showcase bundle, a selected comparison whose unselected baseline path is
+invalid, and a full-scope removed capture failure; it verifies accessibility
+and artifact paths and uploads the bundle. macOS and Windows CI also execute a
+baseline-free selected review. Screenshot output is checked as RGBA8 and
 capped at
 16,777,216 physical pixels before renderer allocation.
 The artifact root defaults to `target/ice-test-artifacts`, is replaceable with

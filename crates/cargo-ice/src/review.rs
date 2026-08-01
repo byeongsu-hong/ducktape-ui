@@ -1,7 +1,8 @@
-use crate::evidence::{CAPTURE_SCHEMA_VERSION, REVIEW_SCHEMA_VERSION, require_schema_version};
+use crate::evidence::{REVIEW_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION, validate_capture_manifest};
 use crate::inspection::{
-    DiffThresholds, compare_capture_manifests, containing_package, manifest_png, source_output_name,
+    DiffThresholds, compare_capture_manifests, containing_package, source_output_name,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -25,6 +26,60 @@ struct ReviewOptions {
 enum BaselineScope {
     Full,
     Selected(BTreeSet<String>),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReviewArtifactKind {
+    IceReviewBundle,
+}
+
+#[derive(Deserialize)]
+struct RequiredNullable<T>(Option<T>);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewReportV1 {
+    #[serde(rename = "artifact_kind")]
+    _artifact_kind: ReviewArtifactKind,
+    schema_version: u64,
+    success: bool,
+    #[serde(rename = "source")]
+    _source: String,
+    #[serde(rename = "package")]
+    _package: RequiredNullable<String>,
+    #[serde(rename = "run_id")]
+    _run_id: String,
+    #[serde(rename = "tests")]
+    _tests: BTreeMap<String, Value>,
+    #[serde(rename = "diagnostics")]
+    _diagnostics: BTreeMap<String, Value>,
+    captures: Vec<ReviewCaptureV1>,
+    #[serde(rename = "source_mapped_changes")]
+    _source_mapped_changes: Vec<Value>,
+    #[serde(rename = "accessibility")]
+    _accessibility: BTreeMap<String, Value>,
+    #[serde(rename = "baseline")]
+    _baseline: RequiredNullable<String>,
+    #[serde(rename = "baseline_error")]
+    _baseline_error: RequiredNullable<String>,
+    #[serde(rename = "thresholds")]
+    _thresholds: BTreeMap<String, Value>,
+    #[serde(rename = "failure")]
+    _failure: Option<BTreeMap<String, Value>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewCaptureV1 {
+    key: String,
+    manifest: String,
+    #[serde(rename = "name")]
+    _name: Option<String>,
+    #[serde(rename = "png")]
+    _png: Option<String>,
+    #[serde(rename = "comparison")]
+    _comparison: BTreeMap<String, Value>,
 }
 
 impl BaselineScope {
@@ -60,6 +115,8 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         ));
     }
 
+    let run_id = run_id()?;
+
     let output = options.output.as_ref().map_or_else(
         || {
             root.join("target/ice-review")
@@ -70,9 +127,29 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&output)
         .map_err(|error| format!("cannot create review output {}: {error}", output.display()))?;
     let output = output.canonicalize().unwrap_or(output);
-    let analysis = match ui_lang_core::analyze_file_graph(&source) {
+    match review_opened(root, &source, &output, &options, &run_id) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            match ensure_current_failure_bundle(root, &source, &output, &run_id, &error) {
+                Ok(()) => Err(error),
+                Err(publish_error) => Err(format!(
+                    "{error}\nfailed to publish current review failure bundle: {publish_error}"
+                )),
+            }
+        }
+    }
+}
+
+fn review_opened(
+    root: &Path,
+    source: &Path,
+    output: &Path,
+    options: &ReviewOptions,
+    run_id: &str,
+) -> Result<(), String> {
+    let analysis = match ui_lang_core::analyze_file_graph(source) {
         Ok(analysis) => analysis,
-        Err(error) => return analysis_failure(root, &source, &output, error),
+        Err(error) => return analysis_failure(root, source, output, run_id, error),
     };
     let selected = selected_tests(&analysis.document.tests, &options.tests)?;
     let baseline_scope = BaselineScope::from_selection(&selected, !options.tests.is_empty());
@@ -82,11 +159,10 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         .package
         .clone()
         .map(Ok)
-        .unwrap_or_else(|| containing_package(root, &source, &cargo))?;
-    let run_id = run_id()?;
-    let artifact_dir = output.join("artifacts").join(&run_id);
-    let log_dir = output.join("logs").join(&run_id);
-    let diff_dir = output.join("diffs").join(&run_id);
+        .unwrap_or_else(|| containing_package(root, source, &cargo))?;
+    let artifact_dir = output.join("artifacts").join(run_id);
+    let log_dir = output.join("logs").join(run_id);
+    let diff_dir = output.join("diffs").join(run_id);
     fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&log_dir).map_err(|error| error.to_string())?;
 
@@ -136,8 +212,8 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             "error": execution_error,
             "status_code": output_result.status.code(),
             "elapsed_ms": elapsed_ms,
-            "stdout": relative_path(&output, &stdout_path),
-            "stderr": relative_path(&output, &stderr_path),
+            "stdout": relative_path(output, &stdout_path),
+            "stderr": relative_path(output, &stderr_path),
         }));
     }
 
@@ -150,7 +226,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
                 "severity": "warning",
                 "code": warning.code,
                 "path": warning.path.as_deref().map_or_else(
-                    || relative_path(root, &source),
+                    || relative_path(root, source),
                     |path| relative_path(root, Path::new(path)),
                 ),
                 "line": warning.line,
@@ -171,7 +247,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     let (baseline, baseline_error) = match options
         .baseline
         .as_ref()
-        .map(|path| baseline_index(&root.join(path)))
+        .map(|path| baseline_index(&root.join(path), &baseline_scope))
         .transpose()
     {
         Ok(baseline) => (baseline, None),
@@ -187,19 +263,19 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             Err(error) => {
                 captures.push(json!({
                     "key": key,
-                    "manifest": relative_path(&output, current_path),
+                    "manifest": relative_path(output, current_path),
                     "comparison": { "status": "error", "error": error },
                 }));
                 continue;
             }
         };
         let png = match validate_capture_manifest(current_path, &manifest) {
-            Ok(png) => png,
+            Ok(manifest) => manifest.png,
             Err(error) => {
                 captures.push(json!({
                     "key": key,
                     "name": manifest["name"],
-                    "manifest": relative_path(&output, current_path),
+                    "manifest": relative_path(output, current_path),
                     "comparison": { "status": "error", "error": error },
                 }));
                 continue;
@@ -208,8 +284,8 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
         let mut capture = json!({
             "key": key,
             "name": manifest["name"],
-            "manifest": relative_path(&output, current_path),
-            "png": relative_path(&output, &png),
+            "manifest": relative_path(output, current_path),
+            "png": relative_path(output, &png),
             "comparison": { "status": "not_requested" },
         });
         if !expected_captures.contains(key) {
@@ -247,8 +323,8 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
                             "status": if report["matches"] == true { "match" } else { "changed" },
                             "matches": report["matches"],
                             "baseline_manifest": baseline_path,
-                            "report": relative_path(&output, &destination.join("report.json")),
-                            "diff_png": relative_path(&output, &destination.join("diff.png")),
+                            "report": relative_path(output, &destination.join("report.json")),
+                            "diff_png": relative_path(output, &destination.join("diff.png")),
                             "manifest_differences": report["manifest"]["difference_count"],
                             "changed_ratio": report["pixels"]["changed_ratio"],
                         });
@@ -321,9 +397,10 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
+        "artifact_kind": REVIEW_ARTIFACT_KIND,
         "schema_version": REVIEW_SCHEMA_VERSION,
         "success": success,
-        "source": relative_path(root, &source),
+        "source": relative_path(root, source),
         "package": package,
         "run_id": run_id,
         "tests": {
@@ -333,7 +410,7 @@ pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
             "results": test_results,
         },
         "diagnostics": {
-            "path": relative_path(&output, &diagnostics_path),
+            "path": relative_path(output, &diagnostics_path),
             "warning_count": diagnostics.len(),
             "error_count": 0,
             "items": diagnostics,
@@ -376,6 +453,7 @@ fn analysis_failure(
     root: &Path,
     source: &Path,
     output: &Path,
+    run_id: &str,
     error: ui_lang_core::Error,
 ) -> Result<(), String> {
     let rendered = error.render(&source.display().to_string());
@@ -404,10 +482,12 @@ fn analysis_failure(
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
+        "artifact_kind": REVIEW_ARTIFACT_KIND,
         "schema_version": REVIEW_SCHEMA_VERSION,
         "success": false,
         "source": relative_path(root, source),
         "package": null,
+        "run_id": run_id,
         "tests": { "selected": [], "passed": 0, "failed": 0, "results": [] },
         "diagnostics": {
             "path": relative_path(output, &diagnostics_path),
@@ -437,6 +517,93 @@ fn analysis_failure(
         "{rendered}\nreview evidence failed; see {}",
         report_path.display()
     ))
+}
+
+fn ensure_current_failure_bundle(
+    root: &Path,
+    source: &Path,
+    output: &Path,
+    run_id: &str,
+    error: &str,
+) -> Result<(), String> {
+    let report_path = output.join("report.json");
+    let html_path = output.join("report.html");
+    if let Ok(report) = read_json(&report_path)
+        && report["artifact_kind"] == REVIEW_ARTIFACT_KIND
+        && report["schema_version"] == REVIEW_SCHEMA_VERSION
+        && report["run_id"] == run_id
+        && report["success"] == false
+    {
+        fs::write(&html_path, render_html(&report)).map_err(|write_error| {
+            format!(
+                "cannot finish detailed failure HTML {}: {write_error}",
+                html_path.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    let diagnostic = json!({
+        "severity": "error",
+        "code": "E_REVIEW",
+        "path": relative_path(root, source),
+        "line": 1,
+        "column": 1,
+        "message": error,
+        "hint": null,
+        "rendered": error,
+    });
+    let diagnostics_path = output.join("diagnostics.json");
+    write_json(
+        &diagnostics_path,
+        &json!({
+            "schema_version": REVIEW_SCHEMA_VERSION,
+            "diagnostics": [&diagnostic],
+        }),
+    )?;
+    let report = json!({
+        "artifact_kind": REVIEW_ARTIFACT_KIND,
+        "schema_version": REVIEW_SCHEMA_VERSION,
+        "success": false,
+        "source": relative_path(root, source),
+        "package": null,
+        "run_id": run_id,
+        "tests": { "selected": [], "passed": 0, "failed": 0, "results": [] },
+        "diagnostics": {
+            "path": relative_path(output, &diagnostics_path),
+            "warning_count": 0,
+            "error_count": 1,
+            "items": [diagnostic],
+        },
+        "captures": [],
+        "source_mapped_changes": [],
+        "accessibility": empty_accessibility_summary(),
+        "baseline": null,
+        "baseline_error": error,
+        "failure": {
+            "kind": "tooling",
+            "message": error,
+        },
+    });
+    write_json(&report_path, &report)?;
+    fs::write(&html_path, render_html(&report)).map_err(|write_error| {
+        format!(
+            "cannot write generic failure HTML {}: {write_error}",
+            html_path.display()
+        )
+    })
+}
+
+fn empty_accessibility_summary() -> Value {
+    json!({
+        "target_count": 0,
+        "semantic_target_count": 0,
+        "named_semantic_target_count": 0,
+        "actionable_target_count": 0,
+        "actionable_without_name_count": 0,
+        "actionable_without_name": [],
+        "roles": {},
+    })
 }
 
 fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
@@ -570,40 +737,128 @@ fn capture_index(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     Ok(index)
 }
 
-fn baseline_index(path: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+fn baseline_index(path: &Path, scope: &BaselineScope) -> Result<BTreeMap<String, PathBuf>, String> {
     let report_path = if path.is_dir() {
         path.join("report.json")
     } else {
         path.to_owned()
     };
     if report_path.is_file() {
-        let report = read_json(&report_path)?;
-        require_schema_version(
-            &report_path,
-            &report,
-            REVIEW_SCHEMA_VERSION,
-            "review report",
-        )?;
+        let value = read_json(&report_path)?;
+        let report = serde_json::from_value::<ReviewReportV1>(value).map_err(|error| {
+            format!(
+                "{} is not a strict review report v{REVIEW_SCHEMA_VERSION}: {error}",
+                report_path.display()
+            )
+        })?;
+        if report.schema_version != REVIEW_SCHEMA_VERSION {
+            return Err(format!(
+                "{} uses unsupported review report schema version {}; expected {}",
+                report_path.display(),
+                report.schema_version,
+                REVIEW_SCHEMA_VERSION
+            ));
+        }
+        if !report.success {
+            return Err(format!(
+                "{} is not a successful review baseline",
+                report_path.display()
+            ));
+        }
+        if report._baseline_error.0.is_some() {
+            return Err(format!(
+                "{} claims success while retaining `baseline_error`",
+                report_path.display()
+            ));
+        }
+        if report._source.is_empty()
+            || report._package.0.as_deref().is_none_or(str::is_empty)
+            || report._run_id.is_empty()
+            || report._failure.is_some()
+        {
+            return Err(format!(
+                "{} has an inconsistent successful review envelope",
+                report_path.display()
+            ));
+        }
         let directory = report_path.parent().unwrap_or_else(|| Path::new("."));
         let mut index = BTreeMap::new();
-        for capture in report["captures"].as_array().into_iter().flatten() {
-            let Some(key) = capture["key"].as_str() else {
-                continue;
-            };
-            let Some(manifest) = capture["manifest"].as_str() else {
-                continue;
-            };
-            let manifest = resolve_report_path(directory, manifest)?;
-            if index.insert(key.to_owned(), manifest).is_some() {
+        let mut keys = BTreeSet::new();
+        for capture in &report.captures {
+            validate_report_capture_key(&report_path, &capture.key)?;
+            if !matches!(
+                capture._comparison.get("status").and_then(Value::as_str),
+                Some("not_requested" | "match")
+            ) {
                 return Err(format!(
-                    "{} contains duplicate capture key `{key}`",
-                    report_path.display()
+                    "{} claims success with a non-passing comparison for capture `{}`",
+                    report_path.display(),
+                    capture.key
+                ));
+            }
+            if !keys.insert(capture.key.clone()) {
+                return Err(format!(
+                    "{} contains duplicate capture key `{}`",
+                    report_path.display(),
+                    capture.key
+                ));
+            }
+        }
+        for capture in report.captures {
+            if !scope.contains_capture(&capture.key) {
+                continue;
+            }
+            let manifest = resolve_report_path(directory, &capture.manifest)?;
+            validate_baseline_manifest(&manifest)?;
+            if index.insert(capture.key.clone(), manifest).is_some() {
+                return Err(format!(
+                    "{} contains duplicate capture key `{}`",
+                    report_path.display(),
+                    capture.key
                 ));
             }
         }
         return Ok(index);
     }
-    capture_index(path)
+    let mut index = capture_index(path)?;
+    index.retain(|key, _| scope.contains_capture(key));
+    for manifest in index.values() {
+        validate_baseline_manifest(manifest)?;
+    }
+    Ok(index)
+}
+
+fn validate_baseline_manifest(path: &Path) -> Result<(), String> {
+    let manifest = read_json(path)?;
+    validate_capture_manifest(path, &manifest).map(|_| ())
+}
+
+fn validate_report_capture_key(report_path: &Path, key: &str) -> Result<(), String> {
+    let Some((test, capture)) = key.split_once('/') else {
+        return Err(format!(
+            "{} contains invalid capture key {key:?}; expected test/capture.json",
+            report_path.display()
+        ));
+    };
+    if test.is_empty()
+        || capture.is_empty()
+        || capture.contains('/')
+        || !capture.ends_with(".json")
+        || ![test, capture.trim_end_matches(".json")]
+            .into_iter()
+            .all(|component| {
+                !component.is_empty()
+                    && component.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                    })
+            })
+    {
+        return Err(format!(
+            "{} contains invalid capture key {key:?}; expected safe test/capture.json",
+            report_path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_report_path(directory: &Path, value: &str) -> Result<PathBuf, String> {
@@ -726,40 +981,6 @@ fn source_change(
         "baseline": difference["baseline"],
         "current": difference["current"],
     })
-}
-
-fn validate_capture_manifest(path: &Path, manifest: &Value) -> Result<PathBuf, String> {
-    let object = manifest
-        .as_object()
-        .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    require_schema_version(path, manifest, CAPTURE_SCHEMA_VERSION, "capture manifest")?;
-    let name = object
-        .get("name")
-        .and_then(Value::as_str)
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| format!("{} omits non-empty string field `name`", path.display()))?;
-    if path.file_stem().and_then(|stem| stem.to_str()) != Some(name) {
-        return Err(format!(
-            "{} capture name {name:?} does not match its filename",
-            path.display()
-        ));
-    }
-    for field in [
-        "capture_source",
-        "viewport",
-        "physical_size",
-        "resolved_theme",
-        "window",
-        "clock",
-    ] {
-        if !object.get(field).is_some_and(Value::is_object) {
-            return Err(format!("{} omits object field `{field}`", path.display()));
-        }
-    }
-    if !object.get("targets").is_some_and(Value::is_array) {
-        return Err(format!("{} omits array field `targets`", path.display()));
-    }
-    manifest_png(path, manifest)
 }
 
 fn change_source<'a>(path: &str, manifest: &'a Value) -> Option<&'a Value> {
@@ -958,6 +1179,7 @@ fn unit_f64(flag: &str, value: &str) -> Result<f64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::CAPTURE_SCHEMA_VERSION;
     use ui_lang_core::{Span, TestDecl};
 
     fn fixture(name: &str) -> PathBuf {
@@ -987,6 +1209,61 @@ mod tests {
             steps: Vec::new(),
             span: Span::line(1),
         }
+    }
+
+    fn review_report(captures: Value) -> Value {
+        json!({
+            "artifact_kind": REVIEW_ARTIFACT_KIND,
+            "schema_version": REVIEW_SCHEMA_VERSION,
+            "success": true,
+            "source": "app.ice",
+            "package": "fixture",
+            "run_id": "fixture-run",
+            "tests": {},
+            "diagnostics": {},
+            "captures": captures,
+            "source_mapped_changes": [],
+            "accessibility": {},
+            "baseline": null,
+            "baseline_error": null,
+            "thresholds": {},
+        })
+    }
+
+    fn capture_entry(key: &str, manifest: &str) -> Value {
+        json!({
+            "key": key,
+            "manifest": manifest,
+            "name": "ready",
+            "png": "ready.png",
+            "comparison": { "status": "not_requested" },
+        })
+    }
+
+    fn capture_manifest(name: &str) -> Value {
+        json!({
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "name": name,
+            "png": format!("{name}.png"),
+            "capture_source": {
+                "path": "app.ice", "line": 1, "column": 1, "statement": format!("capture {name}")
+            },
+            "viewport": { "width": 320.0, "height": 240.0 },
+            "physical_size": { "width": 320, "height": 240 },
+            "scale_factor": 1.0,
+            "configured_theme": null,
+            "resolved_theme": { "mode": "light", "name": "Light" },
+            "system_theme": "none",
+            "locale": null,
+            "platform": "linux",
+            "reduced_motion": null,
+            "window": { "position": null, "focused": true },
+            "clock": {
+                "supports_virtual_redraw_advance": true,
+                "iced_timer_futures_are_virtual": false
+            },
+            "targets": [],
+        })
     }
 
     #[test]
@@ -1083,19 +1360,21 @@ mod tests {
     fn previous_review_reports_resolve_stable_capture_keys() {
         let fixture = fixture("baseline");
         fs::create_dir_all(fixture.join("artifacts/run/test")).unwrap();
-        fs::write(fixture.join("artifacts/run/test/wide.json"), "{}").unwrap();
         write_json(
-            &fixture.join("report.json"),
-            &json!({
-                "schema_version": REVIEW_SCHEMA_VERSION,
-                "captures": [{
-                    "key": "test/wide.json",
-                    "manifest": "artifacts/run/test/wide.json"
-                }]
-            }),
+            &fixture.join("artifacts/run/test/wide.json"),
+            &capture_manifest("wide"),
         )
         .unwrap();
-        let index = baseline_index(&fixture).unwrap();
+        fs::write(fixture.join("artifacts/run/test/wide.png"), []).unwrap();
+        write_json(
+            &fixture.join("report.json"),
+            &review_report(json!([capture_entry(
+                "test/wide.json",
+                "artifacts/run/test/wide.json"
+            )])),
+        )
+        .unwrap();
+        let index = baseline_index(&fixture, &BaselineScope::Full).unwrap();
         assert_eq!(
             index["test/wide.json"],
             fixture.join("artifacts/run/test/wide.json")
@@ -1109,31 +1388,51 @@ mod tests {
         fs::create_dir_all(&fixture).unwrap();
         write_json(
             &fixture.join("report.json"),
-            &json!({
-                "schema_version": REVIEW_SCHEMA_VERSION,
-                "captures": [{
-                    "key": "test/wide.json",
-                    "manifest": "../outside.json"
-                }]
-            }),
+            &review_report(json!([capture_entry("test/wide.json", "../outside.json")])),
         )
         .unwrap();
-        assert!(baseline_index(&fixture).is_err());
+        assert!(baseline_index(&fixture, &BaselineScope::Full).is_err());
 
         fs::create_dir_all(fixture.join("artifacts")).unwrap();
         fs::write(fixture.join("artifacts/wide.json"), "{}").unwrap();
         write_json(
             &fixture.join("report.json"),
-            &json!({
-                "schema_version": REVIEW_SCHEMA_VERSION,
-                "captures": [
-                    { "key": "test/wide.json", "manifest": "artifacts/wide.json" },
-                    { "key": "test/wide.json", "manifest": "artifacts/wide.json" }
-                ]
-            }),
+            &review_report(json!([
+                capture_entry("test/wide.json", "artifacts/wide.json"),
+                capture_entry("test/wide.json", "artifacts/wide.json")
+            ])),
         )
         .unwrap();
-        assert!(baseline_index(&fixture).is_err());
+        assert!(baseline_index(&fixture, &BaselineScope::Full).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn selected_reports_do_not_resolve_unselected_manifest_paths() {
+        let fixture = fixture("selected-path-scope");
+        fs::create_dir_all(fixture.join("artifacts")).unwrap();
+        write_json(
+            &fixture.join("artifacts/wide.json"),
+            &capture_manifest("wide"),
+        )
+        .unwrap();
+        fs::write(fixture.join("artifacts/wide.png"), []).unwrap();
+        write_json(
+            &fixture.join("report.json"),
+            &review_report(json!([
+                capture_entry("wide/ready.json", "artifacts/wide.json"),
+                capture_entry("narrow/ready.json", "missing/unselected.json")
+            ])),
+        )
+        .unwrap();
+
+        let selected = BaselineScope::from_selection(&["wide".into()], true);
+        let index = baseline_index(&fixture, &selected).unwrap();
+        assert_eq!(
+            index.keys().cloned().collect::<Vec<_>>(),
+            ["wide/ready.json"]
+        );
+        assert!(baseline_index(&fixture, &BaselineScope::Full).is_err());
         fs::remove_dir_all(fixture).unwrap();
     }
 
@@ -1142,12 +1441,66 @@ mod tests {
         let fixture = fixture("baseline-schema");
         fs::create_dir_all(&fixture).unwrap();
         for schema in [Value::Null, json!("1"), json!(REVIEW_SCHEMA_VERSION + 1)] {
-            let mut report = json!({ "captures": [] });
+            let mut report = review_report(json!([]));
             if !schema.is_null() {
                 report["schema_version"] = schema;
+            } else {
+                report.as_object_mut().unwrap().remove("schema_version");
             }
             write_json(&fixture.join("report.json"), &report).unwrap();
-            assert!(baseline_index(&fixture).is_err());
+            assert!(baseline_index(&fixture, &BaselineScope::Full).is_err());
+        }
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn baselines_require_review_kind_success_and_typed_captures() {
+        let fixture = fixture("baseline-envelope");
+        fs::create_dir_all(&fixture).unwrap();
+        for mutate in [
+            "diff-kind",
+            "failed",
+            "missing-captures",
+            "missing-manifest",
+            "null-package",
+            "failure-marker",
+            "mistyped-tests",
+            "missing-baseline-error",
+            "non-passing-comparison",
+            "unknown-field",
+        ] {
+            let mut report = review_report(json!([]));
+            match mutate {
+                "diff-kind" => report["artifact_kind"] = json!("ice_capture_diff"),
+                "failed" => report["success"] = json!(false),
+                "missing-captures" => {
+                    report.as_object_mut().unwrap().remove("captures");
+                }
+                "missing-manifest" => {
+                    report["captures"] = json!([{
+                        "key": "wide/ready.json",
+                        "comparison": {}
+                    }]);
+                }
+                "null-package" => report["package"] = Value::Null,
+                "failure-marker" => report["failure"] = json!({ "kind": "tooling" }),
+                "mistyped-tests" => report["tests"] = json!([]),
+                "missing-baseline-error" => {
+                    report.as_object_mut().unwrap().remove("baseline_error");
+                }
+                "non-passing-comparison" => {
+                    report["captures"] =
+                        json!([capture_entry("wide/ready.json", "missing/unselected.json")]);
+                    report["captures"][0]["comparison"] = json!({ "status": "changed" });
+                }
+                "unknown-field" => report["extra"] = json!(true),
+                _ => unreachable!(),
+            }
+            write_json(&fixture.join("report.json"), &report).unwrap();
+            assert!(
+                baseline_index(&fixture, &BaselineScope::Full).is_err(),
+                "{mutate}"
+            );
         }
         fs::remove_dir_all(fixture).unwrap();
     }
@@ -1160,20 +1513,9 @@ mod tests {
         let png = fixture.join("ready.png");
         fs::write(&path, "{}").unwrap();
         fs::write(&png, []).unwrap();
-        let manifest = json!({
-            "schema_version": 2,
-            "name": "ready",
-            "png": "ready.png",
-            "capture_source": {},
-            "viewport": {},
-            "physical_size": {},
-            "resolved_theme": {},
-            "window": {},
-            "clock": {},
-            "targets": [],
-        });
+        let manifest = capture_manifest("ready");
         assert_eq!(
-            validate_capture_manifest(&path, &manifest).unwrap(),
+            validate_capture_manifest(&path, &manifest).unwrap().png,
             png.canonicalize().unwrap()
         );
 
@@ -1238,13 +1580,112 @@ mod tests {
             message: "unknown view node `wat`".into(),
             hint: None,
         };
-        let failure = analysis_failure(&fixture, &source, &output, error).unwrap_err();
+        let failure =
+            analysis_failure(&fixture, &source, &output, "analysis-run", error).unwrap_err();
         assert!(failure.contains("review evidence failed"));
         let report = read_json(&output.join("report.json")).unwrap();
+        assert_eq!(report["artifact_kind"], REVIEW_ARTIFACT_KIND);
+        assert_eq!(report["run_id"], "analysis-run");
         assert_eq!(report["success"], false);
         assert_eq!(report["diagnostics"]["error_count"], 1);
         assert!(output.join("report.html").is_file());
         assert!(output.join("diagnostics.json").is_file());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn generic_failure_replaces_a_stale_success_for_the_new_run() {
+        let fixture = fixture("stale-success");
+        let output = fixture.join("review");
+        fs::create_dir_all(&output).unwrap();
+        let source = fixture.join("app.ice");
+        fs::write(&source, "app Fixture\n").unwrap();
+        write_json(&output.join("report.json"), &review_report(json!([]))).unwrap();
+
+        ensure_current_failure_bundle(
+            &fixture,
+            &source,
+            &output,
+            "new-run",
+            "package lookup failed",
+        )
+        .unwrap();
+        let report = read_json(&output.join("report.json")).unwrap();
+        assert_eq!(report["artifact_kind"], REVIEW_ARTIFACT_KIND);
+        assert_eq!(report["run_id"], "new-run");
+        assert_eq!(report["success"], false);
+        assert_eq!(report["failure"]["message"], "package lookup failed");
+        assert!(output.join("report.html").is_file());
+        assert!(output.join("diagnostics.json").is_file());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn opened_review_errors_publish_a_new_failure_instead_of_stale_success() {
+        let fixture = fixture("opened-review-failure");
+        let output = fixture.join("review");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(
+            fixture.join("app.ice"),
+            concat!(
+                "app Fixture\n",
+                "theme contract AppTheme\n",
+                "  bg\n  fg\n  primary\n  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n",
+                "test only\n  expect true\n",
+                "view\n  text \"fixture\"\n",
+            ),
+        )
+        .unwrap();
+        write_json(&output.join("report.json"), &review_report(json!([]))).unwrap();
+
+        let error = review(
+            &fixture,
+            &[
+                "app.ice".into(),
+                "--test".into(),
+                "missing".into(),
+                "--output".into(),
+                "review".into(),
+            ],
+        )
+        .unwrap_err();
+        assert!(error.contains("does not declare Ice test `missing`"));
+        let report = read_json(&output.join("report.json")).unwrap();
+        assert_eq!(report["artifact_kind"], REVIEW_ARTIFACT_KIND);
+        assert_eq!(report["success"], false);
+        assert_ne!(report["run_id"], "fixture-run");
+        assert!(
+            report["failure"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing")
+        );
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn generic_failure_does_not_replace_current_detailed_failure() {
+        let fixture = fixture("detailed-failure");
+        let output = fixture.join("review");
+        fs::create_dir_all(&output).unwrap();
+        let source = fixture.join("app.ice");
+        fs::write(&source, "app Broken\n").unwrap();
+        let error = ui_lang_core::Error {
+            code: "E121",
+            path: None,
+            line: 1,
+            column: 1,
+            message: "detailed diagnostic".into(),
+            hint: None,
+        };
+        analysis_failure(&fixture, &source, &output, "same-run", error).unwrap_err();
+        let before = fs::read(output.join("report.json")).unwrap();
+
+        ensure_current_failure_bundle(&fixture, &source, &output, "same-run", "generic fallback")
+            .unwrap();
+        assert_eq!(fs::read(output.join("report.json")).unwrap(), before);
         fs::remove_dir_all(fixture).unwrap();
     }
 
