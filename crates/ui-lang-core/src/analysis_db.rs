@@ -11,6 +11,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+const DEFAULT_CONTENT_VALIDATION_INTERVAL: Duration = Duration::from_millis(750);
+
 /// The Ice language contract used by the current compiler.
 pub const LANGUAGE_REVISION: &str = "2.0";
 
@@ -20,7 +22,11 @@ pub struct ContentHash([u8; 32]);
 
 impl ContentHash {
     pub fn of(source: &str) -> Self {
-        Self(Sha256::digest(source.as_bytes()).into())
+        Self::of_bytes(source.as_bytes())
+    }
+
+    pub fn of_bytes(source: &[u8]) -> Self {
+        Self(Sha256::digest(source).into())
     }
 
     pub fn bytes(self) -> [u8; 32] {
@@ -134,6 +140,35 @@ pub struct AnalysisInvalidation {
     pub affected_roots: BTreeSet<PathBuf>,
 }
 
+/// Bounds how long a retained result may skip disk validation.
+///
+/// Metadata checks catch ordinary edits cheaply. Content checks are the
+/// authoritative fallback for timestamp-preserving writes and replacements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValidationPolicy {
+    pub metadata_interval: Duration,
+    pub content_interval: Duration,
+}
+
+impl ValidationPolicy {
+    pub const fn new(metadata_interval: Duration, content_interval: Duration) -> Self {
+        Self {
+            metadata_interval,
+            content_interval,
+        }
+    }
+
+    pub const fn always() -> Self {
+        Self::new(Duration::ZERO, Duration::ZERO)
+    }
+}
+
+impl Default for ValidationPolicy {
+    fn default() -> Self {
+        Self::new(Duration::ZERO, DEFAULT_CONTENT_VALIDATION_INTERVAL)
+    }
+}
+
 #[derive(Clone, Debug)]
 enum ParsedLine {
     Import {
@@ -162,29 +197,63 @@ struct CheckedRoot {
     analysis: Arc<FileAnalysis>,
     source_stamps: Vec<(PathBuf, DiskStamp)>,
     asset_stamps: Vec<(PathBuf, DiskStamp)>,
+    metadata_validated_at: Instant,
+    content_validated_at: Instant,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiskStamp {
+    link_target: Option<PathBuf>,
+    resolved_path: Option<PathBuf>,
     len: u64,
     modified: Option<SystemTime>,
     is_file: bool,
+    content_hash: Option<ContentHash>,
 }
 
+type DiskStamps = Vec<(PathBuf, DiskStamp)>;
+
 impl DiskStamp {
-    fn read(path: &Path) -> Self {
-        fs::metadata(path).map_or(
-            Self {
+    fn read(path: &Path, content_hash: Option<ContentHash>) -> Self {
+        let link_target = fs::symlink_metadata(path)
+            .ok()
+            .filter(|metadata| metadata.file_type().is_symlink())
+            .and_then(|_| fs::read_link(path).ok());
+        let resolved_path = path.canonicalize().ok();
+        match fs::metadata(path) {
+            Err(_) => Self {
+                link_target,
+                resolved_path,
                 len: 0,
                 modified: None,
                 is_file: false,
+                content_hash,
             },
-            |metadata| Self {
+            Ok(metadata) => Self {
+                link_target,
+                resolved_path,
                 len: metadata.len(),
                 modified: metadata.modified().ok(),
                 is_file: metadata.is_file(),
+                content_hash,
             },
-        )
+        }
+    }
+
+    fn same_identity(&self, other: &Self) -> bool {
+        self.link_target == other.link_target
+            && self.resolved_path == other.resolved_path
+            && self.len == other.len
+            && self.modified == other.modified
+            && self.is_file == other.is_file
+    }
+
+    fn same_resolved_input(&self, other: &Self) -> bool {
+        self.link_target == other.link_target && self.resolved_path == other.resolved_path
+    }
+
+    fn matches_path(&self, path: &Path) -> bool {
+        self.resolved_path.as_deref() == Some(path)
     }
 }
 
@@ -199,10 +268,11 @@ struct LoadedGraph {
 /// The owner controls its lifetime. The DB never writes a cache to disk and it
 /// does not use global state, so LSP/dev processes can retain it while one-shot
 /// callers can create it for a single command.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct AnalysisDb {
     config: AnalysisConfig,
     overlays: HashMap<PathBuf, Arc<str>>,
+    overlay_aliases: HashMap<PathBuf, PathBuf>,
     parsed_files: HashMap<FileKey, Arc<ParsedFile>>,
     current_files: HashMap<PathBuf, FileKey>,
     dependencies: HashMap<PathBuf, BTreeSet<PathBuf>>,
@@ -213,6 +283,7 @@ pub struct AnalysisDb {
     dirty_roots: BTreeSet<PathBuf>,
     checked_roots: HashMap<PathBuf, CheckedRoot>,
     metrics: AnalysisMetrics,
+    validation_policy: ValidationPolicy,
 }
 
 impl AnalysisDb {
@@ -235,12 +306,32 @@ impl AnalysisDb {
         std::mem::take(&mut self.metrics)
     }
 
-    /// Run a candidate analysis against a cheap fork and discard every cache,
-    /// overlay, and dependency mutation while retaining exact work counters.
-    pub fn speculate<T>(&mut self, operation: impl FnOnce(&mut AnalysisDb) -> T) -> T {
-        let mut candidate = self.clone();
-        candidate.metrics = AnalysisMetrics::default();
-        let result = operation(&mut candidate);
+    pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
+        self.validation_policy = policy;
+    }
+
+    pub fn validation_policy(&self) -> ValidationPolicy {
+        self.validation_policy
+    }
+
+    /// Analyze one candidate root overlay against a snapshot limited to that
+    /// root's source closure. The retained workspace DB is never mutated.
+    pub fn analyze_overlay_candidate(
+        &mut self,
+        path: impl AsRef<Path>,
+        source: impl Into<String>,
+    ) -> Result<Arc<FileAnalysis>, Error> {
+        let root = self.normalize_db_path(path.as_ref()).map_err(|error| {
+            file_error(
+                "E181",
+                path.as_ref(),
+                1,
+                format!("cannot resolve candidate path: {error}"),
+            )
+        })?;
+        let mut candidate = self.root_snapshot(&root);
+        candidate.set_overlay(&root, source)?;
+        let result = candidate.query_root(&root);
         self.metrics.files_loaded += candidate.metrics.files_loaded;
         self.metrics.bytes_loaded += candidate.metrics.bytes_loaded;
         self.metrics.files_hashed += candidate.metrics.files_hashed;
@@ -275,7 +366,7 @@ impl AnalysisDb {
 
     /// Whether a root must be analyzed before its previous result can be used.
     pub fn needs_analysis(&self, path: impl AsRef<Path>) -> bool {
-        let Ok(path) = normalize_path(path.as_ref()) else {
+        let Ok(path) = self.normalize_db_path(path.as_ref()) else {
             return true;
         };
         !self.known_roots.contains(&path)
@@ -285,7 +376,7 @@ impl AnalysisDb {
 
     /// Stop retaining a checked root while keeping reusable parsed imports.
     pub fn forget_root(&mut self, path: impl AsRef<Path>) -> bool {
-        let Ok(path) = normalize_path(path.as_ref()) else {
+        let Ok(path) = self.normalize_db_path(path.as_ref()) else {
             return false;
         };
         self.known_roots.remove(&path);
@@ -297,14 +388,14 @@ impl AnalysisDb {
     }
 
     pub fn dependencies(&self, path: impl AsRef<Path>) -> BTreeSet<PathBuf> {
-        normalize_path(path.as_ref())
+        self.normalize_db_path(path.as_ref())
             .ok()
             .and_then(|path| self.dependencies.get(&path).cloned())
             .unwrap_or_default()
     }
 
     pub fn reverse_dependencies(&self, path: impl AsRef<Path>) -> BTreeSet<PathBuf> {
-        normalize_path(path.as_ref())
+        self.normalize_db_path(path.as_ref())
             .ok()
             .and_then(|path| self.reverse_dependencies.get(&path).cloned())
             .unwrap_or_default()
@@ -318,7 +409,7 @@ impl AnalysisDb {
         source: impl Into<String>,
     ) -> Result<AnalysisInvalidation, Error> {
         let source = source.into();
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let lexical_path = absolute_lexical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -326,6 +417,20 @@ impl AnalysisDb {
                 format!("cannot resolve overlay path: {error}"),
             )
         })?;
+        let path = self
+            .overlay_aliases
+            .get(&lexical_path)
+            .cloned()
+            .map_or_else(|| normalize_path(&lexical_path), Ok)
+            .map_err(|error| {
+                file_error(
+                    "E181",
+                    &lexical_path,
+                    1,
+                    format!("cannot resolve overlay path: {error}"),
+                )
+            })?;
+        self.overlay_aliases.insert(lexical_path, path.clone());
         if self
             .overlays
             .get(&path)
@@ -358,7 +463,7 @@ impl AnalysisDb {
         &mut self,
         path: impl AsRef<Path>,
     ) -> Result<AnalysisInvalidation, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let lexical_path = absolute_lexical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -366,6 +471,21 @@ impl AnalysisDb {
                 format!("cannot resolve overlay path: {error}"),
             )
         })?;
+        let path = self
+            .overlay_aliases
+            .remove(&lexical_path)
+            .map_or_else(|| normalize_path(&lexical_path), Ok)
+            .map_err(|error| {
+                file_error(
+                    "E181",
+                    &lexical_path,
+                    1,
+                    format!("cannot resolve overlay path: {error}"),
+                )
+            })?;
+        if self.overlay_aliases.values().any(|key| key == &path) {
+            return Ok(AnalysisInvalidation::default());
+        }
         let Some(previous) = self.overlays.remove(&path) else {
             return Ok(AnalysisInvalidation::default());
         };
@@ -403,7 +523,7 @@ impl AnalysisDb {
 
     /// Refresh one disk input. Equal content keeps every checked root reusable.
     pub fn refresh_file(&mut self, path: impl AsRef<Path>) -> Result<AnalysisInvalidation, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let path = self.normalize_db_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -447,7 +567,7 @@ impl AnalysisDb {
                 format!("cannot resolve source path: {error}"),
             )
         })?;
-        let root = normalize_path(&requested).map_err(|error| {
+        let root = self.normalize_db_path(&requested).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -464,14 +584,23 @@ impl AnalysisDb {
         if let Some(cached) = self.checked_roots.get(&root)
             && cached.fingerprint == graph.fingerprint
         {
-            check_assets(&cached.analysis.document, &graph.loaded)
+            let cached_analysis = Arc::clone(&cached.analysis);
+            check_assets(&cached_analysis.document, &graph.loaded)
                 .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
+            let (source_stamps, asset_stamps) = self.analysis_stamps(&cached_analysis);
+            let now = Instant::now();
+            if let Some(cached) = self.checked_roots.get_mut(&root) {
+                cached.source_stamps = source_stamps;
+                cached.asset_stamps = asset_stamps;
+                cached.metadata_validated_at = now;
+                cached.content_validated_at = now;
+            }
             self.metrics.roots_reused += 1;
             self.dirty_roots.remove(&root);
-            if cached.analysis.dependencies.contains(&requested_path) {
-                return Ok(Arc::clone(&cached.analysis));
+            if cached_analysis.dependencies.contains(&requested_path) {
+                return Ok(cached_analysis);
             }
-            let mut analysis = cached.analysis.as_ref().clone();
+            let mut analysis = cached_analysis.as_ref().clone();
             analysis.dependencies.push(requested_path);
             analysis.dependencies.sort();
             analysis.dependencies.dedup();
@@ -483,10 +612,7 @@ impl AnalysisDb {
         let document = analyze_loaded_without_assets(&graph.loaded);
         self.metrics.elapsed.check += started.elapsed();
         let document = document?;
-        let asset_dependencies = asset_dependencies(&document, &graph.loaded)
-            .into_iter()
-            .map(|path| normalize_path(&path).unwrap_or(path))
-            .collect::<Vec<_>>();
+        let asset_dependencies = asset_dependencies(&document, &graph.loaded);
         self.replace_root_assets(root.clone(), asset_dependencies.iter().cloned().collect());
         check_assets(&document, &graph.loaded)
             .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
@@ -500,17 +626,8 @@ impl AnalysisDb {
             dependencies,
             asset_dependencies,
         });
-        let source_stamps = analysis
-            .dependencies
-            .iter()
-            .filter(|path| !self.overlays.contains_key(*path))
-            .map(|path| (path.clone(), DiskStamp::read(path)))
-            .collect();
-        let asset_stamps = analysis
-            .asset_dependencies
-            .iter()
-            .map(|path| (path.clone(), DiskStamp::read(path)))
-            .collect();
+        let (source_stamps, asset_stamps) = self.analysis_stamps(&analysis);
+        let now = Instant::now();
         self.checked_roots.insert(
             root.clone(),
             CheckedRoot {
@@ -518,18 +635,21 @@ impl AnalysisDb {
                 analysis: Arc::clone(&analysis),
                 source_stamps,
                 asset_stamps,
+                metadata_validated_at: now,
+                content_validated_at: now,
             },
         );
         self.dirty_roots.remove(&root);
         Ok(analysis)
     }
 
-    /// Return a retained checked root after cheaply proving every disk input is
-    /// still fresh. Watch notifications are only an eager invalidation hint;
-    /// correctness does not depend on clients supporting or delivering them.
+    /// Return a retained checked root after validating disk inputs on the
+    /// configured bounded metadata/content epochs. Watch notifications are only
+    /// an eager invalidation hint; correctness does not depend on clients
+    /// supporting or delivering them.
     pub fn query_root(&mut self, path: impl AsRef<Path>) -> Result<Arc<FileAnalysis>, Error> {
         let requested = path.as_ref().to_owned();
-        let root = normalize_path(&requested).map_err(|error| {
+        let root = self.normalize_db_path(&requested).map_err(|error| {
             file_error(
                 "E181",
                 &requested,
@@ -551,7 +671,7 @@ impl AnalysisDb {
     /// Refresh a watched path only when it belongs to a retained source graph
     /// or asset set. Unrelated workspace notifications do no source I/O.
     pub fn refresh_input(&mut self, path: impl AsRef<Path>) -> Result<AnalysisInvalidation, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let lexical_path = absolute_lexical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -559,23 +679,27 @@ impl AnalysisDb {
                 format!("cannot resolve input path: {error}"),
             )
         })?;
-        if self.current_files.contains_key(&path) || self.reverse_dependencies.contains_key(&path) {
-            let stamp = DiskStamp::read(&path);
-            let invalidation = self.refresh_file(&path)?;
-            if !invalidation.changed {
-                for checked in self.checked_roots.values_mut() {
-                    if let Some((_, previous)) = checked
-                        .source_stamps
-                        .iter_mut()
-                        .find(|(source, _)| source == &path)
-                    {
-                        *previous = stamp.clone();
+        let resolved_path = normalize_path(&lexical_path).unwrap_or_else(|_| lexical_path.clone());
+        let mut affected_roots = self.roots_for_input(&lexical_path, &resolved_path);
+        let resolution_changed = self.input_resolution_changed(&lexical_path);
+        let source_input = self.current_files.contains_key(&resolved_path)
+            || self.reverse_dependencies.contains_key(&resolved_path)
+            || self.reverse_dependencies.contains_key(&lexical_path);
+        if source_input {
+            match self.refresh_file(&lexical_path) {
+                Ok(invalidation) if !invalidation.changed && !resolution_changed => {
+                    return Ok(invalidation);
+                }
+                Ok(invalidation) => affected_roots.extend(invalidation.affected_roots),
+                Err(error) => {
+                    for root in &affected_roots {
+                        self.checked_roots.remove(root);
+                        self.dirty_roots.insert(root.clone());
                     }
+                    return Err(error);
                 }
             }
-            return Ok(invalidation);
         }
-        let affected_roots = self.asset_roots.get(&path).cloned().unwrap_or_default();
         for root in &affected_roots {
             self.checked_roots.remove(root);
             self.dirty_roots.insert(root.clone());
@@ -648,47 +772,108 @@ impl AnalysisDb {
         let Some(checked) = self.checked_roots.get(root) else {
             return Ok(());
         };
-        let source_checks = checked
-            .source_stamps
-            .iter()
-            .filter(|(path, _)| !self.overlays.contains_key(path))
-            .count();
-        let changed_sources = checked
-            .source_stamps
-            .iter()
-            .filter(|(path, _)| !self.overlays.contains_key(path))
-            .filter_map(|(path, previous)| {
-                let current = DiskStamp::read(path);
-                (&current != previous).then(|| (path.clone(), current))
-            })
-            .collect::<Vec<_>>();
-        let asset_checks = checked.asset_stamps.len();
-        let changed_asset = checked.asset_stamps.iter().find_map(|(path, previous)| {
-            (DiskStamp::read(path) != *previous).then(|| path.clone())
-        });
-        self.metrics.source_stamps_checked += source_checks;
-        self.metrics.asset_stamps_checked += asset_checks;
+        let now = Instant::now();
+        let metadata_due = now.duration_since(checked.metadata_validated_at)
+            >= self.validation_policy.metadata_interval;
+        let content_due = now.duration_since(checked.content_validated_at)
+            >= self.validation_policy.content_interval;
+        if !metadata_due && !content_due {
+            return Ok(());
+        }
+        let source_stamps = checked.source_stamps.clone();
+        let asset_stamps = checked.asset_stamps.clone();
+        let mut next_sources = Vec::with_capacity(source_stamps.len());
+        let mut next_assets = Vec::with_capacity(asset_stamps.len());
 
-        for (path, current) in changed_sources {
-            let invalidation = self.refresh_file(&path)?;
-            if invalidation.changed {
+        for (path, previous) in source_stamps {
+            self.metrics.source_stamps_checked += 1;
+            let mut metadata = DiskStamp::read(&path, None);
+            metadata.content_hash = previous.content_hash;
+            let current = if content_due || !metadata.same_identity(&previous) {
+                self.disk_stamp_with_content(&path)
+            } else {
+                metadata
+            };
+            if !current.same_resolved_input(&previous)
+                || !current.is_file
+                || current.content_hash != previous.content_hash
+            {
+                self.checked_roots.remove(root);
+                self.dirty_roots.insert(root.to_owned());
                 return Ok(());
             }
-            if let Some(checked) = self.checked_roots.get_mut(root)
-                && let Some((_, stamp)) = checked
-                    .source_stamps
-                    .iter_mut()
-                    .find(|(candidate, _)| candidate == &path)
+            next_sources.push((path, current));
+        }
+        for (path, previous) in asset_stamps {
+            self.metrics.asset_stamps_checked += 1;
+            let mut metadata = DiskStamp::read(&path, None);
+            metadata.content_hash = previous.content_hash;
+            let current = if content_due || !metadata.same_identity(&previous) {
+                self.disk_stamp_with_content(&path)
+            } else {
+                metadata
+            };
+            if !current.same_resolved_input(&previous)
+                || !current.is_file
+                || current.content_hash != previous.content_hash
             {
-                *stamp = current;
+                self.checked_roots.remove(root);
+                self.dirty_roots.insert(root.to_owned());
+                return Ok(());
             }
+            next_assets.push((path, current));
         }
 
-        if changed_asset.is_some() {
-            self.checked_roots.remove(root);
-            self.dirty_roots.insert(root.to_owned());
+        if let Some(checked) = self.checked_roots.get_mut(root) {
+            checked.source_stamps = next_sources;
+            checked.asset_stamps = next_assets;
+            checked.metadata_validated_at = now;
+            if content_due {
+                checked.content_validated_at = now;
+            }
         }
         Ok(())
+    }
+
+    fn disk_stamp_with_content(&mut self, path: &Path) -> DiskStamp {
+        let content_hash = fs::read(path).ok().map(|bytes| {
+            self.metrics.files_loaded += 1;
+            self.metrics.bytes_loaded += bytes.len();
+            self.metrics.files_hashed += 1;
+            self.metrics.bytes_hashed += bytes.len();
+            ContentHash::of_bytes(&bytes)
+        });
+        DiskStamp::read(path, content_hash)
+    }
+
+    fn analysis_stamps(&mut self, analysis: &FileAnalysis) -> (DiskStamps, DiskStamps) {
+        let source_paths = analysis
+            .dependencies
+            .iter()
+            .filter(|path| !self.is_overlay_path(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let source_stamps = source_paths
+            .into_iter()
+            .map(|path| {
+                let content_hash = normalize_path(&path)
+                    .ok()
+                    .and_then(|resolved| self.current_files.get(&resolved))
+                    .map(FileKey::content_hash)
+                    .or_else(|| self.disk_stamp_with_content(&path).content_hash);
+                let stamp = DiskStamp::read(&path, content_hash);
+                (path, stamp)
+            })
+            .collect();
+        let asset_paths = analysis.asset_dependencies.clone();
+        let asset_stamps = asset_paths
+            .into_iter()
+            .map(|path| {
+                let stamp = self.disk_stamp_with_content(&path);
+                (path, stamp)
+            })
+            .collect();
+        (source_stamps, asset_stamps)
     }
 
     fn read_source(&mut self, path: &Path) -> Result<Arc<str>, Error> {
@@ -937,6 +1122,11 @@ impl AnalysisDb {
         source: &Path,
         line: usize,
     ) -> Result<PathBuf, Error> {
+        if let Ok(lexical) = absolute_lexical_path(candidate)
+            && let Some(path) = self.overlay_aliases.get(&lexical)
+        {
+            return Ok(path.clone());
+        }
         match candidate.canonicalize() {
             Ok(path) => Ok(path),
             Err(error) => {
@@ -1036,6 +1226,168 @@ impl AnalysisDb {
         self.parsed_files
             .retain(|key, _| reachable.contains(key.canonical_path()));
     }
+
+    fn normalize_db_path(&self, path: &Path) -> std::io::Result<PathBuf> {
+        let lexical = absolute_lexical_path(path)?;
+        self.overlay_aliases
+            .get(&lexical)
+            .cloned()
+            .map_or_else(|| normalize_path(&lexical), Ok)
+    }
+
+    fn is_overlay_path(&self, path: &Path) -> bool {
+        self.overlays.contains_key(path)
+            || absolute_lexical_path(path)
+                .ok()
+                .and_then(|lexical| self.overlay_aliases.get(&lexical))
+                .is_some_and(|key| self.overlays.contains_key(key))
+            || normalize_path(path)
+                .ok()
+                .is_some_and(|resolved| self.overlays.contains_key(&resolved))
+    }
+
+    fn roots_for_input(&self, lexical: &Path, resolved: &Path) -> BTreeSet<PathBuf> {
+        let mut roots = self
+            .asset_roots
+            .get(lexical)
+            .into_iter()
+            .chain(self.asset_roots.get(resolved))
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for (root, checked) in &self.checked_roots {
+            if checked
+                .source_stamps
+                .iter()
+                .chain(&checked.asset_stamps)
+                .any(|(path, stamp)| {
+                    path == lexical
+                        || path == resolved
+                        || stamp.matches_path(lexical)
+                        || stamp.matches_path(resolved)
+                })
+            {
+                roots.insert(root.clone());
+            }
+        }
+        roots.extend(self.invalidate_targets_for_path(lexical));
+        roots.extend(self.invalidate_targets_for_path(resolved));
+        roots
+    }
+
+    fn input_resolution_changed(&self, lexical: &Path) -> bool {
+        let current = DiskStamp::read(lexical, None);
+        self.checked_roots.values().any(|checked| {
+            checked
+                .source_stamps
+                .iter()
+                .chain(&checked.asset_stamps)
+                .any(|(path, previous)| path == lexical && !current.same_resolved_input(previous))
+        })
+    }
+
+    fn invalidate_targets_for_path(&self, path: &Path) -> BTreeSet<PathBuf> {
+        let mut affected = BTreeSet::new();
+        let mut pending = vec![path.to_owned()];
+        let mut visited = HashSet::new();
+        while let Some(path) = pending.pop() {
+            if !visited.insert(path.clone()) {
+                continue;
+            }
+            if self.known_roots.contains(&path) {
+                affected.insert(path.clone());
+            }
+            pending.extend(
+                self.reverse_dependencies
+                    .get(&path)
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+        }
+        affected
+    }
+
+    fn root_snapshot(&self, root: &Path) -> Self {
+        let mut reachable = HashSet::from([root.to_owned()]);
+        let mut pending = vec![root.to_owned()];
+        while let Some(path) = pending.pop() {
+            for dependency in self.dependencies.get(&path).into_iter().flatten() {
+                if reachable.insert(dependency.clone()) {
+                    pending.push(dependency.clone());
+                }
+            }
+        }
+        let overlays = self
+            .overlays
+            .iter()
+            .filter(|(path, _)| reachable.contains(*path))
+            .map(|(path, source)| (path.clone(), Arc::clone(source)))
+            .collect();
+        let overlay_aliases = self
+            .overlay_aliases
+            .iter()
+            .filter(|(alias, key)| reachable.contains(*alias) || reachable.contains(*key))
+            .map(|(alias, key)| (alias.clone(), key.clone()))
+            .collect();
+        let current_files = self
+            .current_files
+            .iter()
+            .filter(|(path, _)| reachable.contains(*path))
+            .map(|(path, key)| (path.clone(), key.clone()))
+            .collect::<HashMap<_, _>>();
+        let parsed_files = self
+            .parsed_files
+            .iter()
+            .filter(|(key, _)| reachable.contains(key.canonical_path()))
+            .map(|(key, parsed)| (key.clone(), Arc::clone(parsed)))
+            .collect();
+        let dependencies = self
+            .dependencies
+            .iter()
+            .filter(|(path, _)| reachable.contains(*path))
+            .map(|(path, dependencies)| (path.clone(), dependencies.clone()))
+            .collect::<HashMap<_, _>>();
+        let mut reverse_dependencies = HashMap::<PathBuf, BTreeSet<PathBuf>>::new();
+        for (source, targets) in &dependencies {
+            for target in targets {
+                reverse_dependencies
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(source.clone());
+            }
+        }
+        let checked_roots = self
+            .checked_roots
+            .get(root)
+            .cloned()
+            .map(|checked| HashMap::from([(root.to_owned(), checked)]))
+            .unwrap_or_default();
+        Self {
+            config: self.config.clone(),
+            overlays,
+            overlay_aliases,
+            parsed_files,
+            current_files,
+            dependencies,
+            reverse_dependencies,
+            root_assets: HashMap::new(),
+            asset_roots: HashMap::new(),
+            known_roots: if self.known_roots.contains(root) {
+                BTreeSet::from([root.to_owned()])
+            } else {
+                BTreeSet::new()
+            },
+            dirty_roots: if self.dirty_roots.contains(root) {
+                BTreeSet::from([root.to_owned()])
+            } else {
+                BTreeSet::new()
+            },
+            checked_roots,
+            metrics: AnalysisMetrics::default(),
+            validation_policy: self.validation_policy,
+        }
+    }
 }
 
 fn remap_origin(mut error: Error, origins: &[(PathBuf, usize)]) -> Error {
@@ -1104,13 +1456,15 @@ fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisConfig, AnalysisDb, CompilerFeatureSet, LANGUAGE_REVISION};
+    use super::{
+        AnalysisConfig, AnalysisDb, CompilerFeatureSet, LANGUAGE_REVISION, ValidationPolicy,
+    };
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -1270,6 +1624,164 @@ mod tests {
     }
 
     #[test]
+    fn content_epoch_detects_same_length_source_with_restored_mtime() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("part.ice", &component("Part", "same"));
+        let root = fixture.path("app.ice");
+        let part = fixture.path("part.ice");
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::new(
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+        ));
+        db.query_root(&root).unwrap();
+        let metadata = fs::metadata(&part).unwrap();
+
+        fixture.write("part.ice", &component("Tile", "same"));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&part)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed().unwrap())
+                    .set_modified(metadata.modified().unwrap()),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+
+        let error = db.query_root(root).unwrap_err();
+        assert!(
+            error.message.contains("unknown component `Part`"),
+            "{error:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn content_epoch_detects_timestamp_preserving_atomic_replacement() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("part.ice", &component("Part", "same"));
+        let root = fixture.path("app.ice");
+        let part = fixture.path("part.ice");
+        let replacement = fixture.path("replacement.ice");
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::always());
+        db.query_root(&root).unwrap();
+        let metadata = fs::metadata(&part).unwrap();
+        fixture.write("replacement.ice", &component("Tile", "same"));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed().unwrap())
+                    .set_modified(metadata.modified().unwrap()),
+            )
+            .unwrap();
+
+        fs::rename(replacement, part).unwrap();
+
+        assert!(
+            db.query_root(root)
+                .unwrap_err()
+                .message
+                .contains("unknown component `Part`")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_symlink_retarget_changes_the_retained_source_closure() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write("a.ice", &component("Part", "same"));
+        fixture.write("b.ice", &component("Part", "same"));
+        let a = fixture.path("a.ice");
+        let b = fixture.path("b.ice");
+        let link = fixture.path("part.ice");
+        let metadata = fs::metadata(&a).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&b)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed().unwrap())
+                    .set_modified(metadata.modified().unwrap()),
+            )
+            .unwrap();
+        symlink("a.ice", &link).unwrap();
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::always());
+        let first = db.query_root(fixture.path("app.ice")).unwrap();
+
+        fs::remove_file(&link).unwrap();
+        symlink("b.ice", &link).unwrap();
+        let second = db.query_root(fixture.path("app.ice")).unwrap();
+
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(second.dependencies.contains(&b));
+        assert!(!second.dependencies.contains(&a));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn asset_symlink_retarget_rechecks_the_resolved_target() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\n  window\n    icon-rgba \"icon.rgba\" 1 1\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+        );
+        fixture.write("a.rgba", "RGBA");
+        fixture.write("b.rgba", "RGBAFAIL");
+        let link = fixture.path("icon.rgba");
+        symlink("a.rgba", &link).unwrap();
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::always());
+        db.query_root(fixture.path("app.ice")).unwrap();
+
+        fs::remove_file(&link).unwrap();
+        symlink("b.rgba", &link).unwrap();
+
+        assert_eq!(
+            db.query_root(fixture.path("app.ice")).unwrap_err().code,
+            "E193"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn root_symlink_overlay_closes_against_its_opened_target() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        let a = fixture.path("a.ice");
+        let link = fixture.path("app.ice");
+        fixture.write("a.ice", &inline_app("A", "disk a"));
+        fixture.write("b.ice", &inline_app("B", "disk b"));
+        symlink("a.ice", &link).unwrap();
+        let mut db = AnalysisDb::default();
+        db.set_overlay(&link, inline_app("Unsaved", "overlay"))
+            .unwrap();
+        db.query_root(&link).unwrap();
+
+        fs::remove_file(&link).unwrap();
+        symlink("b.ice", &link).unwrap();
+        db.remove_overlay(&link).unwrap();
+        let analysis = db.query_root(&a).unwrap();
+
+        assert_eq!(analysis.document.app, "A");
+    }
+
+    #[test]
     fn metadata_only_source_change_does_not_recheck_semantics() {
         let fixture = Fixture::new();
         fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
@@ -1289,6 +1801,28 @@ mod tests {
         assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
         assert_eq!(metrics.files_loaded, 1, "{metrics:?}");
         assert_eq!(metrics.files_hashed, 1, "{metrics:?}");
+    }
+
+    #[test]
+    fn metadata_only_watcher_refresh_keeps_the_retained_root() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        let part_source = component("Part", "same");
+        fixture.write("part.ice", &part_source);
+        let root = fixture.path("app.ice");
+        let part = fixture.path("part.ice");
+        let mut db = AnalysisDb::default();
+        let first = db.query_root(&root).unwrap();
+        db.take_metrics();
+        fixture.write("part.ice", &part_source);
+
+        let invalidation = db.refresh_input(&part).unwrap();
+        let second = db.query_root(&root).unwrap();
+        let metrics = db.take_metrics();
+
+        assert!(!invalidation.changed);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
     }
 
     #[test]
@@ -1334,6 +1868,37 @@ mod tests {
     }
 
     #[test]
+    fn content_epoch_detects_same_length_asset_with_restored_mtime() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\n  window\n    icon-rgba \"app.rgba\" 1 1\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"Hi\"\n",
+        );
+        fixture.write("app.rgba", "RGBA");
+        let root = fixture.path("app.ice");
+        let asset = fixture.path("app.rgba");
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::always());
+        let first = db.query_root(&root).unwrap();
+        let metadata = fs::metadata(&asset).unwrap();
+
+        fixture.write("app.rgba", "DIFF");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&asset)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed().unwrap())
+                    .set_modified(metadata.modified().unwrap()),
+            )
+            .unwrap();
+        let second = db.query_root(root).unwrap();
+
+        assert!(!Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
     fn speculative_analysis_preserves_the_retained_root() {
         let fixture = Fixture::new();
         fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
@@ -1342,13 +1907,11 @@ mod tests {
         let retained = db.query_root(fixture.path("app.ice")).unwrap();
         db.take_metrics();
 
-        let candidate_checked = db.speculate(|candidate| {
-            candidate
-                .set_overlay(fixture.path("part.ice"), component("Part", "candidate"))
-                .unwrap();
-            candidate.query_root(fixture.path("app.ice")).is_ok()
-        });
-        assert!(candidate_checked);
+        let candidate = app("Candidate", "part.ice", "Part");
+        assert!(
+            db.analyze_overlay_candidate(fixture.path("app.ice"), candidate)
+                .is_ok()
+        );
         let current = db.query_root(fixture.path("app.ice")).unwrap();
         assert!(Arc::ptr_eq(&retained, &current));
 
@@ -1356,6 +1919,46 @@ mod tests {
         assert_eq!(metrics.speculative_runs, 1);
         assert_eq!(metrics.roots_checked, 1);
         assert_eq!(metrics.root_cache_hits, 1);
+    }
+
+    #[test]
+    #[ignore = "disk validation syscall contract; run explicitly"]
+    fn validation_epoch_bounds_large_disk_closure_probes() {
+        const IMPORTS: usize = 1_000;
+        const REQUESTS: usize = 100;
+
+        let fixture = Fixture::new();
+        let mut source = String::from("app Scale\n");
+        for index in 0..IMPORTS {
+            let name = format!("part-{index}.ice");
+            fixture.write(&name, &format!("// fragment {index}\n"));
+            source.push_str(&format!("use \"{name}\"\n"));
+        }
+        source.push_str(
+            "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ready\"\n",
+        );
+        fixture.write("app.ice", &source);
+        let root = fixture.path("app.ice");
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::new(
+            Duration::from_millis(750),
+            Duration::from_millis(750),
+        ));
+        db.query_root(&root).unwrap();
+        db.take_metrics();
+
+        let started = Instant::now();
+        for _ in 0..REQUESTS {
+            db.query_root(&root).unwrap();
+        }
+        let elapsed = started.elapsed();
+        let metrics = db.take_metrics();
+
+        assert_eq!(metrics.source_stamps_checked, 0, "{metrics:?}");
+        assert_eq!(metrics.files_loaded, 0, "{metrics:?}");
+        assert_eq!(metrics.files_hashed, 0, "{metrics:?}");
+        assert_eq!(metrics.root_cache_hits, REQUESTS, "{metrics:?}");
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
     }
 
     #[test]

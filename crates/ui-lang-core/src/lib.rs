@@ -13,7 +13,7 @@ mod test_support;
 
 pub use analysis_db::{
     AnalysisConfig, AnalysisDb, AnalysisInvalidation, AnalysisMetrics, AnalysisTimings,
-    CompilerFeatureSet, ContentHash, FileKey, LANGUAGE_REVISION,
+    CompilerFeatureSet, ContentHash, FileKey, LANGUAGE_REVISION, ValidationPolicy,
 };
 pub use api::*;
 pub use ast::*;
