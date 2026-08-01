@@ -4,10 +4,13 @@ use crate::check::{
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
     CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner,
-    CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjectionKind, CheckedTableLength,
-    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
-    CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
-    lazy_hashable, resolve_erased_type,
+    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
+    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
+    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedProjectionKind,
+    CheckedTableLength, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole,
+    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
+    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -36,6 +39,7 @@ mod keyed_column;
 mod lazy;
 mod match_view;
 mod media;
+mod pane_grid;
 mod pin;
 mod responsive;
 mod style;
@@ -52,6 +56,7 @@ pub(crate) use keyed_column::*;
 pub(crate) use lazy::*;
 pub(crate) use match_view::*;
 pub(crate) use media::*;
+pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
 pub(crate) use table::*;
@@ -1466,6 +1471,7 @@ pub(crate) struct LoweredProgram {
     match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     tables: HashMap<ViewId, ResolvedTable>,
+    pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -3060,6 +3066,17 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn pane_grid(&self, id: ViewId) -> Option<&ResolvedPaneGrid> {
+        self.pane_grids.get(&id)
+    }
+
+    pub(crate) fn pane_grids(&self) -> Vec<&ResolvedPaneGrid> {
+        let mut panes = self.pane_grids.values().collect::<Vec<_>>();
+        panes.sort_by_key(|pane| pane.id.0);
+        panes
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3342,6 +3359,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "table reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_pane_grid_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedPaneGrid, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pane grid reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "pane grid reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.pane_grids.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pane grid reached code generation without normalized HIR",
             )
         })
     }
@@ -3696,6 +3742,7 @@ pub(crate) struct Lowerer {
     match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     tables: HashMap<ViewId, ResolvedTable>,
+    pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -3765,6 +3812,7 @@ struct ViewWidgetExpressionPolicy<'a> {
     span: &'a Span,
     canvas_locals: bool,
     own_view_locals: bool,
+    allowed_own_view_locals: Option<&'a HashSet<CheckedLocalId>>,
     family: &'static str,
 }
 
@@ -3829,7 +3877,11 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
                 let mut found = false;
                 while let Some(id) = current {
                     if id == view {
-                        found = id != self.view || self.own_view_locals;
+                        found = id != self.view
+                            || (self.own_view_locals
+                                && self
+                                    .allowed_own_view_locals
+                                    .is_none_or(|allowed| allowed.contains(&local)));
                         break;
                     }
                     current = self.lowerer.facts.view(id).parent;
@@ -4418,6 +4470,7 @@ impl Lowerer {
             match_views: HashMap::new(),
             lazy_views: HashMap::new(),
             tables: HashMap::new(),
+            pane_grids: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4503,6 +4556,7 @@ impl Lowerer {
             match_views: self.match_views,
             lazy_views: self.lazy_views,
             tables: self.tables,
+            pane_grids: self.pane_grids,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -8418,8 +8472,12 @@ impl Lowerer {
                 self.lower_view(layer, outer_component)?;
             }
             ViewNode::PaneGrid {
-                panes, templates, ..
+                panes,
+                templates,
+                span,
+                ..
             } => {
+                self.lower_pane_grid(span, outer_component)?;
                 for child in panes
                     .iter()
                     .flat_map(PaneView::nodes)
@@ -11465,6 +11523,219 @@ view
     }
 
     #[test]
+    fn normalizes_complete_pane_grid_state_templates_routes_styles_and_origins() {
+        let source = format!(
+            "app PaneHir\nextern crate::backend\n  Task(id:i64, title:str)\n  panes-style dynamic_panes(active:bool)\n{THEME}state\n  tasks:[Task] = []\n  active = true\non clicked(name)\nview\n  panes #work w=fill h=64.0 gap=8.0 min-size=120.0 resize=6.0 drag click=clicked(_) style=dynamic_panes(active)\n    style\n      hovered-region bg=primary/25 border=fg border-w=2.0 r=4.0\n      hovered-split color=primary w=3.0\n      picked-split color=danger w=4.0\n    split workspace_root vertical ratio=0.7\n      pane files maximized=files_maximized bg=bg text=fg border=primary border-w=1.0 r=2.0 shadow=black/50 shadow-x=1.0 shadow-y=2.0 shadow-blur=3.0 px-snap=true\n        title p=4.0 always-controls bg=primary/50 text=fg\n          text \"Files\"\n        controls\n          text \"Controls\"\n        text \"Files body\"\n      pane editor\n        text \"Editor\"\n    pane task in tasks by=task.id maximized=task_maximized\n      col\n        if task_maximized\n          text task.title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let pane = program.pane_grid(ViewId(0)).unwrap();
+        assert_eq!(pane.id, ViewId(0));
+        assert_eq!(pane.name, "work");
+        assert!(matches!(pane.width, Some(ResolvedPaneLength::Fill)));
+        assert!(matches!(pane.height, Some(ResolvedPaneLength::FixedF64(_))));
+        assert!(pane.spacing.is_some());
+        assert!(pane.min_size.is_some());
+        assert!(pane.resize_leeway.is_some());
+        assert!(pane.draggable);
+        assert!(matches!(
+            pane.configuration,
+            ResolvedPaneConfiguration::Split {
+                ref name,
+                axis: ResolvedPaneAxis::Vertical,
+                ratio,
+                ..
+            } if name.as_deref() == Some("workspace_root") && ratio == 0.7
+        ));
+        let route = pane.click.as_ref().unwrap();
+        assert!(matches!(
+            route.args.as_slice(),
+            [ResolvedInteractionRouteArg::Payload {
+                index: 0,
+                ty: Type::Str
+            }]
+        ));
+        let custom = pane.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(custom.function).name,
+            "dynamic_panes"
+        );
+        assert_eq!(custom.arguments.len(), 1);
+        assert!(matches!(
+            pane.style.hovered_split,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+        assert_eq!(pane.panes.len(), 2);
+        assert_eq!(pane.panes[0].name, "files");
+        assert_eq!(pane.panes[0].maximized.as_ref().unwrap().ty, Type::Bool);
+        assert!(pane.panes[0].surface.pixel_snap.is_some());
+        let title = pane.panes[0].title.as_ref().unwrap();
+        assert!(title.padding.all.is_some());
+        assert!(title.always_show_controls);
+        assert!(title.has_controls);
+        assert!(!title.has_compact_controls);
+        assert_eq!(pane.templates.len(), 1);
+        let template = &pane.templates[0];
+        assert_eq!(template.item.name, "task");
+        assert_eq!(template.item.ty, Type::Named("Task".into()));
+        assert_eq!(template.key_type, Type::I64);
+        assert_eq!(template.pane.maximized.as_ref().unwrap().ty, Type::Bool);
+        assert_eq!(program.origin(template.origin).parent, Some(pane.origin));
+        assert_eq!(
+            program.origin(template.pane.origin).parent,
+            Some(template.origin)
+        );
+        assert_eq!(
+            program.checked_facts().local(template.item.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::PaneTemplateItem(0),
+            }
+        );
+        assert!(matches!(template.items, ResolvedPaneItems::Value(_)));
+    }
+
+    #[test]
+    fn source_merged_pane_styles_are_owned_before_origins_remap_to_physical_lines() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pane-style-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("pane.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedPane\nuse \"pane.ice\"\n{THEME}view\n  panes #work\n    pane files bg=bg\n      title text=fg\n        text \"Files\"\n      text \"Body\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContent()\n  text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pane = program.pane_grids().into_iter().next().unwrap();
+        assert_eq!(
+            program.origin(pane.panes[0].origin).path.as_deref(),
+            Some(root.as_path())
+        );
+        assert!(pane.panes[0].utility_style.background.is_none());
+        assert!(
+            pane.panes[0]
+                .title
+                .as_ref()
+                .unwrap()
+                .utility_style
+                .text_color
+                .is_none()
+        );
+        crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_pane_expression_local_and_origin_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidPaneFacts\nextern crate::backend\n  Task(id:i64, title:str)\n{THEME}state\n  tasks:[Task] = []\nview\n  panes #work gap=8.0\n    pane files\n      text \"Files\"\n    pane task in tasks by=task.id\n      text task.title\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_expression_id(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_template_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_template_origin(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.leak_pane_template_key_into_spacing(ViewId(0));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("another scope"), "{}", error.message);
+    }
+
+    #[test]
+    fn pane_grid_lowering_and_codegen_ignore_raw_semantics_before_and_after_lowering() {
+        let source = format!(
+            "app CheckedPane\nextern crate::backend\n  Task(id:i64, title:str)\n{THEME}state\n  tasks:[Task] = []\nview\n  panes #work w=fill gap=8.0 resize=6.0 drag\n    split root vertical ratio=0.7\n      pane files maximized=files_maximized bg=bg\n        title p=4.0 always-controls\n          text \"Files\"\n        controls\n          text \"Controls\"\n        text \"Files body\"\n      pane editor\n        text \"Editor\"\n    pane task in tasks by=task.id maximized=task_maximized\n      text task.title\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-pane.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_pane_semantics(&mut checked.document.view);
+        let mut program = lower(checked).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-pane.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        poison_raw_pane_semantics(&mut program.document.view);
+        let actual = crate::codegen::generate(&program, "checked-pane.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    fn poison_raw_pane_semantics(node: &mut ViewNode) {
+        let ViewNode::PaneGrid {
+            name,
+            configuration,
+            options,
+            panes,
+            templates,
+            ..
+        } = node
+        else {
+            panic!("fixture root must be a pane grid");
+        };
+        *name = "poisoned".into();
+        *configuration = PaneConfiguration::Pane("poisoned".into());
+        options.width = Some(LengthValue::Shrink);
+        options.spacing = Some(Expr::F64(999.0));
+        options.resize_leeway = None;
+        options.draggable = false;
+        options.style.hovered_split = Some("danger".into());
+        panes[0].name = "poisoned_static".into();
+        panes[0].maximized = Some("poisoned_maximized".into());
+        panes[0].style.background = Some(BackgroundValue::Color("danger".into()));
+        let title = panes[0].title.as_mut().unwrap();
+        title.padding.all = Some(Expr::F64(999.0));
+        title.always_show_controls = false;
+        templates[0].items = "poisoned_items".into();
+        templates[0].item = "poisoned_item".into();
+        templates[0].key = Expr::Bool(false);
+        templates[0].pane.name = "poisoned_template".into();
+        templates[0].pane.maximized = Some("poisoned_template_maximized".into());
+    }
+
+    #[test]
     fn normalizes_if_condition_type_owner_and_scope() {
         let source = format!(
             "app IfHir\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
@@ -12087,6 +12358,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized tables lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized pane-grid lowering and emission performance contract"]
+    fn performance_contract_four_thousand_pane_grids_lower_and_emit_under_two_seconds() {
+        const PANE_GRIDS: usize = 4_000;
+        let mut source = format!("app PaneScale\n{THEME}view\n  col\n");
+        for index in 0..PANE_GRIDS {
+            writeln!(
+                source,
+                "    panes #work_{index} w=fill gap=8.0\n      pane main\n        text \"Pane {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "pane-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.pane_grids.len(), PANE_GRIDS);
+        let pane_render_count = generated
+            .matches("::iced::widget::pane_grid(&self.")
+            .count();
+        assert_eq!(pane_render_count, PANE_GRIDS);
+        eprintln!("4k normalized pane grids lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized pane grids lowered and emitted in {elapsed:?}"
         );
     }
 

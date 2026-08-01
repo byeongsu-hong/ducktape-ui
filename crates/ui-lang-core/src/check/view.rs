@@ -196,6 +196,28 @@ pub(super) fn retain_interaction_analyses(
     })
 }
 
+pub(super) fn retain_pane_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pane analysis session has no active view analysis",
+            )
+        })?;
+        let pane = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "pane grid has no shared view ID"))?;
+        active.analyses.retain_interaction(pane, analyses)
+    })
+}
+
 pub(super) fn retain_float_analyses(
     span: &Span,
     analyses: super::expr::HandlerAnalyses,

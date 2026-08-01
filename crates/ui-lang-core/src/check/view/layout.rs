@@ -268,6 +268,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
             ..
         } => {
+            let pane_analysis_guard = expr::HandlerAnalysisGuard::start();
             if !ids.insert(name.clone()) {
                 return Err(Error::new(
                     "E161",
@@ -331,9 +332,9 @@ pub(in crate::check) fn infer_layout_group(
                 infer_route(click, Some(Type::Str), env, document, signatures)?;
             }
             for pane in panes {
-                infer_pane_view(pane, env, document, signatures, ids)?;
+                check_pane_view_options(pane, env, document)?;
             }
-            for (template_index, template) in templates.iter().enumerate() {
+            for template in templates {
                 let Some(Type::List(item_type)) = env.get_type(&template.items) else {
                     return Err(Error::new(
                         "E187",
@@ -346,14 +347,7 @@ pub(in crate::check) fn infer_layout_group(
                 };
                 let mut template_env = scoped_view_env(env);
                 template_env.insert(template.item.clone(), (**item_type).clone());
-                let key_type = retained_view_expr_type_at(
-                    &template.key,
-                    &template_env,
-                    document,
-                    span,
-                    &template.span,
-                    CheckedViewExprRole::PaneTemplateKey(template_index as u32),
-                )?;
+                let key_type = expr_type(&template.key, &template_env, document, &template.span)?;
                 if !matches!(key_type, Type::Bool | Type::I64 | Type::F64 | Type::Str) {
                     return Err(Error::new(
                         "E187",
@@ -361,7 +355,26 @@ pub(in crate::check) fn infer_layout_group(
                         "dynamic pane keys must be bool, i64, f64, or str values",
                     ));
                 }
-                infer_pane_view(&template.pane, &template_env, document, signatures, ids)?;
+                check_pane_view_options(&template.pane, &template_env, document)?;
+            }
+            retain_pane_analyses(span, pane_analysis_guard.finish())?;
+            for pane in panes {
+                infer_pane_view_nodes(pane, env, document, signatures, ids)?;
+            }
+            for template in templates {
+                let Some(Type::List(item_type)) = env.get_type(&template.items) else {
+                    return Err(Error::new(
+                        "E187",
+                        &template.span,
+                        format!(
+                            "dynamic pane template `{}` requires list state `{}`",
+                            template.item, template.items
+                        ),
+                    ));
+                };
+                let mut template_env = scoped_view_env(env);
+                template_env.insert(template.item.clone(), (**item_type).clone());
+                infer_pane_view_nodes(&template.pane, &template_env, document, signatures, ids)?;
             }
         }
         _ => return Ok(false),

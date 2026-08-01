@@ -261,6 +261,7 @@ impl Lowerer {
             span,
             canvas_locals: false,
             own_view_locals,
+            allowed_own_view_locals: None,
             family: "keyed column",
         };
         let mut graph = CheckedExpressionGraph::default();

@@ -248,10 +248,6 @@ pub(crate) enum CheckedViewFlow {
         item: CheckedLocalId,
         layout: CheckedTableLayout,
     },
-    PaneGrid {
-        static_maximized: Vec<Option<CheckedLocalId>>,
-        templates: Vec<CheckedPaneTemplate>,
-    },
     ResponsiveBreakpoint {
         semantic_key: String,
         breakpoint: CheckedExprUseId,
@@ -341,11 +337,158 @@ pub(crate) struct CheckedTableLayout {
     pub(crate) columns: Vec<CheckedTableColumn>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedPaneAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedPaneConfiguration {
+    Pane(String),
+    Split {
+        name: Option<String>,
+        axis: CheckedPaneAxis,
+        ratio: f32,
+        a: Box<CheckedPaneConfiguration>,
+        b: Box<CheckedPaneConfiguration>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedPaneLength {
+    None,
+    Fill,
+    FillPortion(u16),
+    Shrink,
+    Fixed {
+        expression: CheckedExprUseId,
+        source: Type,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneGradientStop {
+    pub(crate) color: String,
+    pub(crate) offset: CheckedExprUseId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedPaneBackground {
+    Color(String),
+    Linear {
+        angle: CheckedExprUseId,
+        stops: Vec<CheckedPaneGradientStop>,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CheckedPaneRadius {
+    pub(crate) all: Option<CheckedExprUseId>,
+    pub(crate) top_left: Option<CheckedExprUseId>,
+    pub(crate) top_right: Option<CheckedExprUseId>,
+    pub(crate) bottom_right: Option<CheckedExprUseId>,
+    pub(crate) bottom_left: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CheckedPaneSurface {
+    pub(crate) background: Option<CheckedPaneBackground>,
+    pub(crate) text_color: Option<String>,
+    pub(crate) border_color: Option<String>,
+    pub(crate) border_width: Option<CheckedExprUseId>,
+    pub(crate) radius: CheckedPaneRadius,
+    pub(crate) shadow_color: Option<String>,
+    pub(crate) shadow_x: Option<CheckedExprUseId>,
+    pub(crate) shadow_y: Option<CheckedExprUseId>,
+    pub(crate) shadow_blur: Option<CheckedExprUseId>,
+    pub(crate) pixel_snap: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CheckedPanePadding {
+    pub(crate) all: Option<CheckedExprUseId>,
+    pub(crate) x: Option<CheckedExprUseId>,
+    pub(crate) y: Option<CheckedExprUseId>,
+    pub(crate) top: Option<CheckedExprUseId>,
+    pub(crate) right: Option<CheckedExprUseId>,
+    pub(crate) bottom: Option<CheckedExprUseId>,
+    pub(crate) left: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneTitle {
+    pub(crate) padding: CheckedPanePadding,
+    pub(crate) always_show_controls: bool,
+    pub(crate) has_controls: bool,
+    pub(crate) has_compact_controls: bool,
+    pub(crate) surface: CheckedPaneSurface,
+    pub(crate) style_site: CheckedPaneStyleSite,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CheckedPaneStyleSite {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneView {
+    pub(crate) name: String,
+    pub(crate) maximized: Option<CheckedLocalId>,
+    pub(crate) surface: CheckedPaneSurface,
+    pub(crate) style_site: CheckedPaneStyleSite,
+    pub(crate) title: Option<CheckedPaneTitle>,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedPaneTemplate {
-    pub(crate) key: CheckedExprUseId,
+    pub(crate) items: CheckedPathRoot,
     pub(crate) item: CheckedLocalId,
-    pub(crate) maximized: Option<CheckedLocalId>,
+    pub(crate) key: CheckedExprUseId,
+    pub(crate) key_type: Type,
+    pub(crate) pane: CheckedPaneView,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneGridStyle {
+    pub(crate) region_background: Option<CheckedPaneBackground>,
+    pub(crate) region_border: Option<String>,
+    pub(crate) region_border_width: Option<CheckedExprUseId>,
+    pub(crate) region_radius: CheckedPaneRadius,
+    pub(crate) hovered_split: Option<String>,
+    pub(crate) hovered_split_width: Option<CheckedExprUseId>,
+    pub(crate) picked_split: Option<String>,
+    pub(crate) picked_split_width: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneCustomStyle {
+    pub(crate) function: ExternFnId,
+    pub(crate) arguments: Vec<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneGrid {
+    pub(crate) id: ViewId,
+    pub(crate) name: String,
+    pub(crate) configuration: CheckedPaneConfiguration,
+    pub(crate) width: CheckedPaneLength,
+    pub(crate) height: CheckedPaneLength,
+    pub(crate) spacing: Option<CheckedExprUseId>,
+    pub(crate) min_size: Option<CheckedExprUseId>,
+    pub(crate) resize_leeway: Option<CheckedExprUseId>,
+    pub(crate) draggable: bool,
+    pub(crate) click: Option<CheckedInteractionRoute>,
+    pub(crate) custom_style: Option<CheckedPaneCustomStyle>,
+    pub(crate) style: CheckedPaneGridStyle,
+    pub(crate) panes: Vec<CheckedPaneView>,
+    pub(crate) templates: Vec<CheckedPaneTemplate>,
+    pub(crate) expression_count: u32,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -464,7 +607,6 @@ pub(crate) enum CheckedViewExprRole {
     TableSeparatorX,
     TableSeparatorY,
     TableColumnWidth(u32),
-    PaneTemplateKey(u32),
     ResponsiveBreakpoint,
     ResponsiveWidthDimension,
     ResponsiveHeightDimension,
@@ -813,6 +955,7 @@ pub(crate) struct CheckedFacts {
     media: HashMap<ViewId, CheckedMedia>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
+    pane_grids: HashMap<ViewId, CheckedPaneGrid>,
     subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
@@ -905,6 +1048,34 @@ impl CheckedFacts {
             panic!("test view must be a table");
         };
         *item = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pane_expression_id(&mut self, view: ViewId, raw: u32) {
+        self.pane_grids.get_mut(&view).unwrap().spacing = Some(CheckedExprUseId(raw));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn leak_pane_template_key_into_spacing(&mut self, view: ViewId) {
+        let pane = &self.pane_grids[&view];
+        let spacing = pane.spacing.unwrap();
+        let item = pane.templates[0].item;
+        let root = self.expression_uses[spacing.0 as usize].root;
+        self.expressions[root.0 as usize].ty = self.locals[item.0 as usize].ty.clone();
+        self.expressions[root.0 as usize].kind = CheckedExprKind::Path {
+            root: CheckedPathRoot::Local(item),
+            projections: Vec::new(),
+        };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pane_template_item_local(&mut self, view: ViewId, raw: u32) {
+        self.pane_grids.get_mut(&view).unwrap().templates[0].item = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pane_template_origin(&mut self, view: ViewId, raw: u32) {
+        self.pane_grids.get_mut(&view).unwrap().templates[0].origin = OriginId(raw);
     }
 
     #[cfg(test)]
@@ -1050,6 +1221,10 @@ impl CheckedFacts {
         self.interactions
             .get(&id)
             .filter(|interaction| interaction.id == id)
+    }
+
+    pub(crate) fn pane_grid(&self, id: ViewId) -> Option<&CheckedPaneGrid> {
+        self.pane_grids.get(&id).filter(|pane| pane.id == id)
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -3546,6 +3721,703 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(span, "duplicate checked interaction expression owner"));
         }
         Ok(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_optional_expression(
+        &mut self,
+        pane: ViewId,
+        expression: Option<&Expr>,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<Option<CheckedExprUseId>, Error> {
+        expression
+            .map(|expression| {
+                self.push_interaction_expression(
+                    pane,
+                    expression_count,
+                    expression,
+                    expected,
+                    env,
+                    span,
+                    parent,
+                )
+            })
+            .transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_length(
+        &mut self,
+        pane: ViewId,
+        length: &Option<LengthValue>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPaneLength, Error> {
+        Ok(match length {
+            None => CheckedPaneLength::None,
+            Some(LengthValue::Fill) => CheckedPaneLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedPaneLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedPaneLength::Shrink,
+            Some(LengthValue::Fixed(expression)) => {
+                let expression = self.push_interaction_expression(
+                    pane,
+                    expression_count,
+                    expression,
+                    None,
+                    env,
+                    span,
+                    parent,
+                )?;
+                let source = self.facts.expression_use(expression).source.clone();
+                CheckedPaneLength::Fixed { expression, source }
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_background(
+        &mut self,
+        pane: ViewId,
+        background: &BackgroundValue,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPaneBackground, Error> {
+        Ok(match background {
+            BackgroundValue::Color(color) => CheckedPaneBackground::Color(color.clone()),
+            BackgroundValue::Linear { angle, stops } => {
+                let angle = self.push_interaction_expression(
+                    pane,
+                    expression_count,
+                    angle,
+                    Some(&Type::F64),
+                    env,
+                    span,
+                    parent,
+                )?;
+                let stops = stops
+                    .iter()
+                    .map(|stop| {
+                        Ok(CheckedPaneGradientStop {
+                            color: stop.color.clone(),
+                            offset: self.push_interaction_expression(
+                                pane,
+                                expression_count,
+                                &stop.offset,
+                                Some(&Type::F64),
+                                env,
+                                span,
+                                parent,
+                            )?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                CheckedPaneBackground::Linear { angle, stops }
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_radius(
+        &mut self,
+        pane: ViewId,
+        all: Option<&Expr>,
+        corners: [Option<&Expr>; 4],
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPaneRadius, Error> {
+        Ok(CheckedPaneRadius {
+            all: self.lower_pane_optional_expression(
+                pane,
+                all,
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )?,
+            top_left: self.lower_pane_optional_expression(
+                pane,
+                corners[0],
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )?,
+            top_right: self.lower_pane_optional_expression(
+                pane,
+                corners[1],
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )?,
+            bottom_right: self.lower_pane_optional_expression(
+                pane,
+                corners[2],
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )?,
+            bottom_left: self.lower_pane_optional_expression(
+                pane,
+                corners[3],
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )?,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_surface(
+        &mut self,
+        pane: ViewId,
+        style: &ContainerStyleOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPaneSurface, Error> {
+        let background = style
+            .background
+            .as_ref()
+            .map(|background| {
+                self.lower_pane_background(pane, background, env, span, parent, expression_count)
+            })
+            .transpose()?;
+        let border_width = self.lower_pane_optional_expression(
+            pane,
+            style.border_width.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        let radius = self.lower_pane_radius(
+            pane,
+            style.radius.as_ref(),
+            [
+                style.radius_top_left.as_ref(),
+                style.radius_top_right.as_ref(),
+                style.radius_bottom_right.as_ref(),
+                style.radius_bottom_left.as_ref(),
+            ],
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        let shadow_x = self.lower_pane_optional_expression(
+            pane,
+            style.shadow_x.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        let shadow_y = self.lower_pane_optional_expression(
+            pane,
+            style.shadow_y.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        let shadow_blur = self.lower_pane_optional_expression(
+            pane,
+            style.shadow_blur.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        let pixel_snap = self.lower_pane_optional_expression(
+            pane,
+            style.pixel_snap.as_ref(),
+            Some(&Type::Bool),
+            env,
+            span,
+            parent,
+            expression_count,
+        )?;
+        Ok(CheckedPaneSurface {
+            background,
+            text_color: style.text_color.clone(),
+            border_color: style.border_color.clone(),
+            border_width,
+            radius,
+            shadow_color: style.shadow_color.clone(),
+            shadow_x,
+            shadow_y,
+            shadow_blur,
+            pixel_snap,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_padding(
+        &mut self,
+        pane: ViewId,
+        padding: &PaddingOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPanePadding, Error> {
+        let mut take = |value: Option<&Expr>| {
+            self.lower_pane_optional_expression(
+                pane,
+                value,
+                Some(&Type::F64),
+                env,
+                span,
+                parent,
+                expression_count,
+            )
+        };
+        Ok(CheckedPanePadding {
+            all: take(padding.all.as_ref())?,
+            x: take(padding.x.as_ref())?,
+            y: take(padding.y.as_ref())?,
+            top: take(padding.top.as_ref())?,
+            right: take(padding.right.as_ref())?,
+            bottom: take(padding.bottom.as_ref())?,
+            left: take(padding.left.as_ref())?,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_view_body(
+        &mut self,
+        pane: ViewId,
+        source: &PaneView,
+        maximized: Option<CheckedLocalId>,
+        env: &dyn FactEnvironment,
+        origin: OriginId,
+        expression_count: &mut u32,
+    ) -> Result<CheckedPaneView, Error> {
+        let surface = self.lower_pane_surface(
+            pane,
+            &source.style,
+            env,
+            &source.span,
+            origin,
+            expression_count,
+        )?;
+        let title = source
+            .title
+            .as_ref()
+            .map(|title| {
+                let title_origin = self.origins.push(&title.span, Some(origin));
+                Ok(CheckedPaneTitle {
+                    padding: self.lower_pane_padding(
+                        pane,
+                        &title.padding,
+                        env,
+                        &title.span,
+                        title_origin,
+                        expression_count,
+                    )?,
+                    always_show_controls: title.always_show_controls,
+                    has_controls: title.controls.is_some(),
+                    has_compact_controls: title.compact_controls.is_some(),
+                    surface: self.lower_pane_surface(
+                        pane,
+                        &title.style,
+                        env,
+                        &title.span,
+                        title_origin,
+                        expression_count,
+                    )?,
+                    style_site: CheckedPaneStyleSite {
+                        line: title.span.line,
+                        column: title.span.column,
+                    },
+                    origin: title_origin,
+                })
+            })
+            .transpose()?;
+        for child in source.nodes() {
+            self.lower_view_expression_tree(child, env)?;
+        }
+        Ok(CheckedPaneView {
+            name: source.name.clone(),
+            maximized,
+            surface,
+            style_site: CheckedPaneStyleSite {
+                line: source.span.line,
+                column: source.span.column,
+            },
+            title,
+            origin,
+        })
+    }
+
+    fn checked_pane_configuration(source: &PaneConfiguration) -> CheckedPaneConfiguration {
+        match source {
+            PaneConfiguration::Pane(name) => CheckedPaneConfiguration::Pane(name.clone()),
+            PaneConfiguration::Split {
+                name,
+                axis,
+                ratio,
+                a,
+                b,
+            } => CheckedPaneConfiguration::Split {
+                name: name.clone(),
+                axis: match axis {
+                    PaneAxis::Horizontal => CheckedPaneAxis::Horizontal,
+                    PaneAxis::Vertical => CheckedPaneAxis::Vertical,
+                },
+                ratio: *ratio,
+                a: Box::new(Self::checked_pane_configuration(a)),
+                b: Box::new(Self::checked_pane_configuration(b)),
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pane_grid_facts(
+        &mut self,
+        pane: ViewId,
+        name: &str,
+        configuration: &PaneConfiguration,
+        options: &PaneGridOptions,
+        panes: &[PaneView],
+        templates: &[PaneTemplate],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let origin = self.declarations.view(pane).origin;
+        let mut expression_count = 0u32;
+        let width = self.lower_pane_length(
+            pane,
+            &options.width,
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let height = self.lower_pane_length(
+            pane,
+            &options.height,
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let spacing = self.lower_pane_optional_expression(
+            pane,
+            options.spacing.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let min_size = self.lower_pane_optional_expression(
+            pane,
+            options.min_size.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let resize_leeway = self.lower_pane_optional_expression(
+            pane,
+            options.resize_leeway.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let custom_style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                let function = self
+                    .declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::PaneGridStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "pane style extern disappeared"))?;
+                let arguments = style
+                    .args
+                    .iter()
+                    .map(|argument| {
+                        self.push_interaction_expression(
+                            pane,
+                            &mut expression_count,
+                            argument,
+                            None,
+                            env,
+                            span,
+                            origin,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(CheckedPaneCustomStyle {
+                    function,
+                    arguments,
+                })
+            })
+            .transpose()?;
+        let region_background = options
+            .style
+            .region_background
+            .as_ref()
+            .map(|background| {
+                self.lower_pane_background(
+                    pane,
+                    background,
+                    env,
+                    span,
+                    origin,
+                    &mut expression_count,
+                )
+            })
+            .transpose()?;
+        let region_border_width = self.lower_pane_optional_expression(
+            pane,
+            options.style.region_border_width.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let region_radius = self.lower_pane_radius(
+            pane,
+            options.style.region_radius.as_ref(),
+            [
+                options.style.region_radius_top_left.as_ref(),
+                options.style.region_radius_top_right.as_ref(),
+                options.style.region_radius_bottom_right.as_ref(),
+                options.style.region_radius_bottom_left.as_ref(),
+            ],
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let hovered_split_width = self.lower_pane_optional_expression(
+            pane,
+            options.style.hovered_split_width.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let picked_split_width = self.lower_pane_optional_expression(
+            pane,
+            options.style.picked_split_width.as_ref(),
+            Some(&Type::F64),
+            env,
+            span,
+            origin,
+            &mut expression_count,
+        )?;
+        let click = options
+            .click
+            .as_ref()
+            .map(|route| {
+                self.lower_interaction_route(pane, 0, route, env, &mut expression_count, origin)
+            })
+            .transpose()?;
+
+        let mut checked_panes = Vec::with_capacity(panes.len());
+        for (index, source) in panes.iter().enumerate() {
+            let pane_origin = self.origins.push(&source.span, Some(origin));
+            let maximized = source.maximized.as_ref().map(|binding| {
+                self.push_view_local_with_parent(
+                    binding,
+                    Type::Bool,
+                    pane,
+                    CheckedViewLocalRole::PaneMaximized(index as u32),
+                    &source.span,
+                    pane_origin,
+                )
+            });
+            let checked = if let (Some(binding), Some(local)) = (&source.maximized, maximized) {
+                let scoped = LayeredFactEnv {
+                    base: env,
+                    name: binding.clone(),
+                    value: (CheckedPathRoot::Local(local), Type::Bool),
+                };
+                self.facts.metrics.scope_env_overlays += 1;
+                self.lower_pane_view_body(
+                    pane,
+                    source,
+                    maximized,
+                    &scoped,
+                    pane_origin,
+                    &mut expression_count,
+                )?
+            } else {
+                self.lower_pane_view_body(
+                    pane,
+                    source,
+                    maximized,
+                    env,
+                    pane_origin,
+                    &mut expression_count,
+                )?
+            };
+            checked_panes.push(checked);
+        }
+
+        let mut checked_templates = Vec::with_capacity(templates.len());
+        for (index, template) in templates.iter().enumerate() {
+            let template_origin = self.origins.push(&template.span, Some(origin));
+            let (items, item_ty) = env.get(&template.items).cloned().ok_or_else(|| {
+                self.invariant(&template.span, "pane template list has no checked path")
+            })?;
+            let Type::List(item_ty) = item_ty else {
+                return Err(
+                    self.invariant(&template.span, "pane template checked path is not a list")
+                );
+            };
+            let item_local = self.push_view_local_with_parent(
+                &template.item,
+                item_ty.as_ref().clone(),
+                pane,
+                CheckedViewLocalRole::PaneTemplateItem(index as u32),
+                &template.span,
+                template_origin,
+            );
+            let item_scoped = LayeredFactEnv {
+                base: env,
+                name: template.item.clone(),
+                value: (CheckedPathRoot::Local(item_local), item_ty.as_ref().clone()),
+            };
+            self.facts.metrics.scope_env_overlays += 1;
+            let key = self.push_interaction_expression(
+                pane,
+                &mut expression_count,
+                &template.key,
+                None,
+                &item_scoped,
+                &template.span,
+                template_origin,
+            )?;
+            let key_type = self.facts.expression_use(key).source.clone();
+            let pane_origin = self
+                .origins
+                .push(&template.pane.span, Some(template_origin));
+            let maximized = template.pane.maximized.as_ref().map(|binding| {
+                self.push_view_local_with_parent(
+                    binding,
+                    Type::Bool,
+                    pane,
+                    CheckedViewLocalRole::PaneTemplateMaximized(index as u32),
+                    &template.pane.span,
+                    pane_origin,
+                )
+            });
+            let checked_pane =
+                if let (Some(binding), Some(local)) = (&template.pane.maximized, maximized) {
+                    let scoped = LayeredFactEnv {
+                        base: &item_scoped,
+                        name: binding.clone(),
+                        value: (CheckedPathRoot::Local(local), Type::Bool),
+                    };
+                    self.facts.metrics.scope_env_overlays += 1;
+                    self.lower_pane_view_body(
+                        pane,
+                        &template.pane,
+                        maximized,
+                        &scoped,
+                        pane_origin,
+                        &mut expression_count,
+                    )?
+                } else {
+                    self.lower_pane_view_body(
+                        pane,
+                        &template.pane,
+                        maximized,
+                        &item_scoped,
+                        pane_origin,
+                        &mut expression_count,
+                    )?
+                };
+            checked_templates.push(CheckedPaneTemplate {
+                items,
+                item: item_local,
+                key,
+                key_type,
+                pane: checked_pane,
+                origin: template_origin,
+            });
+        }
+
+        let remaining_expressions = self
+            .analyses
+            .interaction_entries
+            .keys()
+            .filter(|(owner, _)| *owner == pane)
+            .count();
+        let remaining_routes = self
+            .analyses
+            .interaction_route_inputs
+            .keys()
+            .filter(|(owner, _)| *owner == pane)
+            .count();
+        if remaining_expressions != 0 || remaining_routes != 0 {
+            return Err(self.invariant(span, "pane grid left authoritative analyses unconsumed"));
+        }
+        let checked = CheckedPaneGrid {
+            id: pane,
+            name: name.to_owned(),
+            configuration: Self::checked_pane_configuration(configuration),
+            width,
+            height,
+            spacing,
+            min_size,
+            resize_leeway,
+            draggable: options.draggable,
+            click,
+            custom_style,
+            style: CheckedPaneGridStyle {
+                region_background,
+                region_border: options.style.region_border.clone(),
+                region_border_width,
+                region_radius,
+                hovered_split: options.style.hovered_split.clone(),
+                hovered_split_width,
+                picked_split: options.style.picked_split.clone(),
+                picked_split_width,
+            },
+            panes: checked_panes,
+            templates: checked_templates,
+            expression_count,
+            origin,
+        };
+        if self.facts.pane_grids.insert(pane, checked).is_some() {
+            return Err(self.invariant(span, "pane grid facts were produced more than once"));
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6411,107 +7283,25 @@ impl<'a> FactsBuilder<'a> {
                 }
             }
             ViewNode::PaneGrid {
+                name,
+                configuration,
+                options,
                 panes,
                 templates,
-                span: _,
+                span,
                 ..
             } => {
-                let mut static_maximized = Vec::with_capacity(panes.len());
-                for (index, pane) in panes.iter().enumerate() {
-                    if let Some(name) = &pane.maximized {
-                        let local = self.push_view_local(
-                            name,
-                            Type::Bool,
-                            view,
-                            CheckedViewLocalRole::PaneMaximized(index as u32),
-                            &pane.span,
-                        );
-                        let scoped = LayeredFactEnv {
-                            base: env,
-                            name: name.clone(),
-                            value: (CheckedPathRoot::Local(local), Type::Bool),
-                        };
-                        self.facts.metrics.scope_env_overlays += 1;
-                        for child in pane.nodes() {
-                            self.lower_view_expression_tree(child, &scoped)?;
-                        }
-                        static_maximized.push(Some(local));
-                    } else {
-                        for child in pane.nodes() {
-                            self.lower_view_expression_tree(child, env)?;
-                        }
-                        static_maximized.push(None);
-                    }
-                }
-                let mut checked_templates = Vec::with_capacity(templates.len());
-                for (index, template) in templates.iter().enumerate() {
-                    let (_, list_ty) = env.get(&template.items).ok_or_else(|| {
-                        self.invariant(&template.span, "pane template list has no checked path")
-                    })?;
-                    let Type::List(item_ty) = list_ty else {
-                        return Err(self.invariant(
-                            &template.span,
-                            "pane template checked path is not a list",
-                        ));
-                    };
-                    let item_local = self.push_view_local(
-                        &template.item,
-                        item_ty.as_ref().clone(),
-                        view,
-                        CheckedViewLocalRole::PaneTemplateItem(index as u32),
-                        &template.span,
-                    );
-                    let item_scoped = LayeredFactEnv {
-                        base: env,
-                        name: template.item.clone(),
-                        value: (CheckedPathRoot::Local(item_local), item_ty.as_ref().clone()),
-                    };
-                    self.facts.metrics.scope_env_overlays += 1;
-                    let key = self.push_view_expression(
-                        CheckedExprOwner::View {
-                            view,
-                            role: CheckedViewExprRole::PaneTemplateKey(index as u32),
-                        },
-                        &template.key,
-                        None,
-                        &item_scoped,
-                        &template.span,
-                        origin,
-                    )?;
-                    let maximized = template.pane.maximized.as_ref().map(|name| {
-                        self.push_view_local(
-                            name,
-                            Type::Bool,
-                            view,
-                            CheckedViewLocalRole::PaneTemplateMaximized(index as u32),
-                            &template.pane.span,
-                        )
-                    });
-                    if let Some(maximized) = maximized {
-                        let scoped = LayeredFactEnv {
-                            base: &item_scoped,
-                            name: template.pane.maximized.clone().unwrap(),
-                            value: (CheckedPathRoot::Local(maximized), Type::Bool),
-                        };
-                        self.facts.metrics.scope_env_overlays += 1;
-                        for child in template.pane.nodes() {
-                            self.lower_view_expression_tree(child, &scoped)?;
-                        }
-                    } else {
-                        for child in template.pane.nodes() {
-                            self.lower_view_expression_tree(child, &item_scoped)?;
-                        }
-                    }
-                    checked_templates.push(CheckedPaneTemplate {
-                        key,
-                        item: item_local,
-                        maximized,
-                    });
-                }
-                CheckedViewFlow::PaneGrid {
-                    static_maximized,
-                    templates: checked_templates,
-                }
+                self.lower_pane_grid_facts(
+                    view,
+                    name,
+                    configuration,
+                    options,
+                    panes,
+                    templates,
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
             }
             ViewNode::Responsive {
                 content,
@@ -9101,23 +9891,16 @@ view
                 .parent,
             Some(arms[0].origin)
         );
-        let pane = program
-            .checked_facts()
-            .views()
-            .iter()
-            .find(|view| matches!(view.flow, CheckedViewFlow::PaneGrid { .. }))
-            .unwrap();
-        let CheckedViewFlow::PaneGrid { templates, .. } = &pane.flow else {
-            unreachable!();
-        };
+        let pane = program.pane_grids().into_iter().next().unwrap();
+        let checked_pane = program.checked_facts().pane_grid(pane.id).unwrap();
         let key_origin = program.origin(
             program
                 .checked_facts()
-                .expression_use(templates[0].key)
+                .expression_use(checked_pane.templates[0].key)
                 .origin,
         );
         assert_eq!(key_origin.line, pane_template_line);
-        assert_eq!(key_origin.parent, Some(pane.origin));
+        assert_eq!(key_origin.parent, Some(checked_pane.templates[0].origin));
         let generated = crate::codegen::generate(&program, "arena.ice").unwrap();
         assert!(generated.contains("for (__ice_index, row) in self.items.iter()"));
         assert!(generated.contains("::std::option::Option::Some(label)"));

@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::check::{
-    CheckedLocalId, CheckedValueRef, CheckedViewFlow, controlled_editor_bindings,
-    controlled_state_bindings, expr_type,
+    CheckedLocalId, CheckedValueRef, controlled_editor_bindings, controlled_state_bindings,
+    expr_type,
 };
 use crate::hir::{HandlerId, RunSiteId};
 use crate::lower::*;
@@ -441,20 +441,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid {
-            name,
-            configuration,
-            templates,
-            ..
-        } = node
-        else {
-            unreachable!()
-        };
-        let pane_state = if templates.is_empty() {
+    for (pane, test_only) in document_pane_grids(program) {
+        let pane_state = if pane.templates.is_empty() {
             "&'static str".into()
         } else {
-            pane_type(name)
+            pane_type(&pane.name)
         };
         if test_only {
             writeln!(out, "#[cfg(test)]").unwrap();
@@ -462,17 +453,20 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         writeln!(
             out,
             "pub(crate) {}: ::iced::widget::pane_grid::State<{pane_state}>,",
-            pane_field(name)
+            pane_field(&pane.name)
         )
         .unwrap();
-        if pane_split_slots(configuration).iter().any(Option::is_some) {
+        if pane_split_slots(&pane.configuration)
+            .iter()
+            .any(Option::is_some)
+        {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
             writeln!(
                 out,
                 "pub(crate) {}: ::std::collections::BTreeMap<&'static str, ::iced::widget::pane_grid::Split>,",
-                pane_splits_field(name)
+                pane_splits_field(&pane.name)
             )
             .unwrap();
         }
@@ -597,29 +591,26 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     if has_animations(program) {
         writeln!(out, "__AnimationFrame,").unwrap();
     }
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid { name, options, .. } = node else {
-            unreachable!()
-        };
-        if options.resize_leeway.is_some() {
+    for (pane, test_only) in document_pane_grids(program) {
+        if pane.resize_leeway.is_some() {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
             writeln!(
                 out,
                 "{}(::iced::widget::pane_grid::ResizeEvent),",
-                pane_resize_variant(name)
+                pane_resize_variant(&pane.name)
             )
             .unwrap();
         }
-        if options.draggable {
+        if pane.draggable {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
             writeln!(
                 out,
                 "{}(::iced::widget::pane_grid::DragEvent),",
-                pane_drag_variant(name)
+                pane_drag_variant(&pane.name)
             )
             .unwrap();
         }

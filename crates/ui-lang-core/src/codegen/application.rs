@@ -251,17 +251,8 @@ pub(in crate::codegen) fn generate_boot(
 ) -> Result<(), Error> {
     let accessibility_root = rust_string(program.app_name());
     writeln!(out, "fn __state() -> Self {{").unwrap();
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid {
-            name,
-            configuration,
-            templates,
-            ..
-        } = node
-        else {
-            unreachable!()
-        };
-        let field = pane_field(name);
+    for (pane, test_only) in document_pane_grids(program) {
+        let field = pane_field(&pane.name);
         if test_only {
             writeln!(out, "#[cfg(test)]").unwrap();
         }
@@ -269,12 +260,14 @@ pub(in crate::codegen) fn generate_boot(
             out,
             "let {field} = ::iced::widget::pane_grid::State::with_configuration({});",
             pane_configuration_code(
-                configuration,
-                (!templates.is_empty()).then(|| pane_type(name)).as_deref()
+                &pane.configuration,
+                (!pane.templates.is_empty())
+                    .then(|| pane_type(&pane.name))
+                    .as_deref()
             )
         )
         .unwrap();
-        let slots = pane_split_slots(configuration);
+        let slots = pane_split_slots(&pane.configuration);
         if slots.iter().any(Option::is_some) {
             let slots = slots
                 .iter()
@@ -292,7 +285,7 @@ pub(in crate::codegen) fn generate_boot(
             writeln!(
                 out,
                 "let {} = [{slots}].into_iter().zip({field}.layout().splits().copied()).filter_map(|(__name, __split)| __name.map(|__name| (__name, __split))).collect();",
-                pane_splits_field(name)
+                pane_splits_field(&pane.name)
             )
             .unwrap();
         }
@@ -339,24 +332,19 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid {
-            name,
-            configuration,
-            ..
-        } = node
-        else {
-            unreachable!()
-        };
+    for (pane, test_only) in document_pane_grids(program) {
         if test_only {
             writeln!(out, "#[cfg(test)]").unwrap();
         }
-        writeln!(out, "{},", pane_field(name)).unwrap();
-        if pane_split_slots(configuration).iter().any(Option::is_some) {
+        writeln!(out, "{},", pane_field(&pane.name)).unwrap();
+        if pane_split_slots(&pane.configuration)
+            .iter()
+            .any(Option::is_some)
+        {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
-            writeln!(out, "{},", pane_splits_field(name)).unwrap();
+            writeln!(out, "{},", pane_splits_field(&pane.name)).unwrap();
         }
     }
     writeln!(out, "}}\n}}").unwrap();
@@ -459,14 +447,11 @@ pub(in crate::codegen) fn generate_update(
         .any(|handler| handler.name != "mount")
         || program.components().iter().any(|component| {
             !component.handlers.is_empty()
-                || component
-                    .states
-                    .iter()
-                    .any(|state| state.ty == Type::Str)
+                || component.states.iter().any(|state| state.ty == Type::Str)
         })
-        || document_pane_grids(program).into_iter().any(|(node, _)| {
-            matches!(node, ViewNode::PaneGrid { options, .. } if options.resize_leeway.is_some() || options.draggable)
-        })
+        || document_pane_grids(program)
+            .into_iter()
+            .any(|(pane, _)| pane.resize_leeway.is_some() || pane.draggable)
         || !controlled_state_bindings(document, false)
             .expect("checker validates controlled input bindings")
             .is_empty()
@@ -710,31 +695,28 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
         }
     }
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid { name, options, .. } = node else {
-            unreachable!()
-        };
-        if options.resize_leeway.is_some() {
+    for (pane, test_only) in document_pane_grids(program) {
+        if pane.resize_leeway.is_some() {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
             writeln!(
                 out,
                 "{message}::{}(__event) => {{ self.{}.resize(__event.split, __event.ratio); ::iced::Task::none() }},",
-                pane_resize_variant(name),
-                pane_field(name)
+                pane_resize_variant(&pane.name),
+                pane_field(&pane.name)
             )
             .unwrap();
         }
-        if options.draggable {
+        if pane.draggable {
             if test_only {
                 writeln!(out, "#[cfg(test)]").unwrap();
             }
             writeln!(
                 out,
                 "{message}::{}(__event) => {{ if let ::iced::widget::pane_grid::DragEvent::Dropped {{ pane, target }} = __event {{ self.{}.drop(pane, target); }} ::iced::Task::none() }},",
-                pane_drag_variant(name),
-                pane_field(name)
+                pane_drag_variant(&pane.name),
+                pane_field(&pane.name)
             )
             .unwrap();
         }

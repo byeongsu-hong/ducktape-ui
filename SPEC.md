@@ -353,6 +353,19 @@ ownership, origin parentage, and static option/column topology before publishing
 does not reread table expressions, metadata, checked flow, or checked local
 facts.
 
+PaneGrid is a completed stateful structural collection HIR slice. One checked
+record owns the persistent grid name and configuration tree, dimensions and
+bounded metrics, resize/drag/click behavior, custom and typed grid styles,
+static panes, dynamic templates, typed item/maximized locals, pane/title
+surfaces, control topology, and parented source origins. Lowering validates
+every expression DAG against its exact lexical-local contract, resolves routes,
+externs, theme colors, lengths, bindings, and split identities, then publishes
+`ResolvedPaneGrid`. Application fields, pane enums and configuration, message
+and update arms, helper discovery, and rendering all consume that record. Source
+pane nodes supply only content/title/control subtrees; generation does not
+reread PaneGrid expressions, names, configuration, options, styles, routes, or
+checker facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

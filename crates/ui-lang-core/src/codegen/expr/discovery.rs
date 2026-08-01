@@ -93,57 +93,33 @@ pub(in crate::codegen) fn generate_pane_types(
     out: &mut String,
     program: &LoweredProgram,
 ) -> Result<(), Error> {
-    for (node, test_only) in document_pane_grids(program) {
-        let ViewNode::PaneGrid {
-            name,
-            templates,
-            span,
-            ..
-        } = node
-        else {
-            unreachable!()
-        };
-        if templates.is_empty() {
+    for (pane, test_only) in document_pane_grids(program) {
+        if pane.templates.is_empty() {
             continue;
         }
-        let pane_type = pane_type(name);
+        let pane_type = pane_type(&pane.name);
         let cfg = if test_only { "#[cfg(test)]\n" } else { "" };
         writeln!(
             out,
             "{cfg}#[derive(Debug, Clone, PartialEq)]\npub(crate) enum {pane_type} {{\n__Static(&'static str),"
         )
         .unwrap();
-        let CheckedViewFlow::PaneGrid {
-            templates: checked_templates,
-            ..
-        } = &program.checked_view(span)?.flow
-        else {
-            return Err(Error::new("E196", span, "pane type has no checked flow"));
-        };
-        if templates.len() != checked_templates.len() {
-            return Err(Error::new(
-                "E196",
-                span,
-                "pane type checked template arena length diverged",
-            ));
-        }
-        for (template, checked) in templates.iter().zip(checked_templates) {
-            let key_type = &program.checked_facts().expression_use(checked.key).source;
+        for template in &pane.templates {
             writeln!(
                 out,
                 "{}({}),",
-                pane_template_variant(&template.item),
-                key_type.rust(&program.document().structs)
+                pane_template_variant(&template.item.name),
+                template.key_type.rust(&program.document().structs)
             )
             .unwrap();
         }
         writeln!(out, "}}\n{cfg}impl {pane_type} {{\nfn __name(&self) -> ::std::string::String {{\nmatch self {{\nSelf::__Static(__name) => (*__name).to_owned(),").unwrap();
-        for template in templates {
+        for template in &pane.templates {
             writeln!(
                 out,
                 "Self::{}(__key) => ::std::format!({}, __key),",
-                pane_template_variant(&template.item),
-                rust_string(&format!("{}({{}})", template.item))
+                pane_template_variant(&template.item.name),
+                rust_string(&format!("{}({{}})", template.item.name))
             )
             .unwrap();
         }
@@ -152,9 +128,14 @@ pub(in crate::codegen) fn generate_pane_types(
     Ok(())
 }
 
-pub(in crate::codegen) fn pane_split_slots(configuration: &PaneConfiguration) -> Vec<Option<&str>> {
-    fn collect<'a>(configuration: &'a PaneConfiguration, output: &mut Vec<Option<&'a str>>) {
-        if let PaneConfiguration::Split { name, a, b, .. } = configuration {
+pub(in crate::codegen) fn pane_split_slots(
+    configuration: &ResolvedPaneConfiguration,
+) -> Vec<Option<&str>> {
+    fn collect<'a>(
+        configuration: &'a ResolvedPaneConfiguration,
+        output: &mut Vec<Option<&'a str>>,
+    ) {
+        if let ResolvedPaneConfiguration::Split { name, a, b, .. } = configuration {
             output.push(name.as_deref());
             collect(b, output);
             collect(a, output);
@@ -167,23 +148,23 @@ pub(in crate::codegen) fn pane_split_slots(configuration: &PaneConfiguration) ->
 }
 
 pub(in crate::codegen) fn pane_configuration_code(
-    configuration: &PaneConfiguration,
+    configuration: &ResolvedPaneConfiguration,
     pane_type: Option<&str>,
 ) -> String {
     match configuration {
-        PaneConfiguration::Pane(name) => {
+        ResolvedPaneConfiguration::Pane(name) => {
             let value = pane_type.map_or_else(
                 || rust_string(name),
                 |pane_type| format!("{pane_type}::__Static({})", rust_string(name)),
             );
             format!("::iced::widget::pane_grid::Configuration::Pane({value})")
         }
-        PaneConfiguration::Split {
+        ResolvedPaneConfiguration::Split {
             axis, ratio, a, b, ..
         } => {
             let axis = match axis {
-                PaneAxis::Horizontal => "Horizontal",
-                PaneAxis::Vertical => "Vertical",
+                ResolvedPaneAxis::Horizontal => "Horizontal",
+                ResolvedPaneAxis::Vertical => "Vertical",
             };
             format!(
                 "::iced::widget::pane_grid::Configuration::Split {{ axis: ::iced::widget::pane_grid::Axis::{axis}, ratio: {ratio:?}, a: ::std::boxed::Box::new({}), b: ::std::boxed::Box::new({}) }}",
@@ -210,84 +191,9 @@ pub(in crate::codegen) fn pane_drag_variant(name: &str) -> String {
     }
 }
 
-pub(in crate::codegen) fn pane_grids(root: &ViewNode) -> Vec<&ViewNode> {
-    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<&'a ViewNode>) {
-        match node {
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                output.push(node);
-                for pane in panes {
-                    for node in pane.nodes() {
-                        collect(node, output);
-                    }
-                }
-                for template in templates {
-                    for node in template.pane.nodes() {
-                        collect(node, output);
-                    }
-                }
-            }
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            } => collect(content, output),
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
-        }
-    }
-    let mut output = Vec::new();
-    collect(root, &mut output);
-    output
-}
-
-pub(in crate::codegen) fn document_pane_grids(program: &LoweredProgram) -> Vec<(&ViewNode, bool)> {
+pub(in crate::codegen) fn document_pane_grids(
+    program: &LoweredProgram,
+) -> Vec<(&ResolvedPaneGrid, bool)> {
     fn statements_reference_grid(statements: &[ResolvedStatement], name: &str) -> bool {
         statements.iter().any(|statement| match statement {
             ResolvedStatement {
@@ -314,23 +220,10 @@ pub(in crate::codegen) fn document_pane_grids(program: &LoweredProgram) -> Vec<(
                 .preset_handlers()
                 .any(|handler| statements_reference_grid(&handler.statements, name))
     };
-    let document = program.document();
-    pane_grids(&document.view)
+    program
+        .pane_grids()
         .into_iter()
-        .map(|node| (node, false))
-        .chain(
-            document
-                .tests
-                .iter()
-                .filter_map(|test| test.mount.as_ref())
-                .flat_map(pane_grids)
-                .map(|node| {
-                    let ViewNode::PaneGrid { name, .. } = node else {
-                        unreachable!()
-                    };
-                    (node, !referenced(name))
-                }),
-        )
+        .map(|pane| (pane, pane.test_scope && !referenced(&pane.name)))
         .collect()
 }
 

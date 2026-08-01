@@ -487,11 +487,39 @@ impl Lowerer {
         })
     }
 
-    fn validate_interaction_expression_graphs(
+    pub(super) fn validate_interaction_expression_graphs(
         &self,
         widget: ViewId,
         scope: CheckedViewScope,
         count: u32,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.validate_interaction_expression_graphs_with_locals(widget, scope, count, None, span)
+    }
+
+    pub(super) fn validate_interaction_expression_graphs_with_local_contracts(
+        &self,
+        widget: ViewId,
+        scope: CheckedViewScope,
+        count: u32,
+        allowed_locals: &HashMap<CheckedExprUseId, HashSet<CheckedLocalId>>,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.validate_interaction_expression_graphs_with_locals(
+            widget,
+            scope,
+            count,
+            Some(allowed_locals),
+            span,
+        )
+    }
+
+    fn validate_interaction_expression_graphs_with_locals(
+        &self,
+        widget: ViewId,
+        scope: CheckedViewScope,
+        count: u32,
+        allowed_locals: Option<&HashMap<CheckedExprUseId, HashSet<CheckedLocalId>>>,
         span: &Span,
     ) -> Result<(), Error> {
         let mut graph = CheckedExpressionGraph::default();
@@ -506,6 +534,13 @@ impl Lowerer {
             if expression.owner != owner {
                 return Err(self.invariant(span, "interaction expression owner mapping diverged"));
             }
+            let expression_allowed_locals = allowed_locals
+                .map(|allowed| {
+                    allowed.get(&use_id).ok_or_else(|| {
+                        self.invariant(span, "interaction expression has no local-scope contract")
+                    })
+                })
+                .transpose()?;
             let policy = ViewWidgetExpressionPolicy {
                 lowerer: self,
                 view: widget,
@@ -513,7 +548,8 @@ impl Lowerer {
                 use_id,
                 span,
                 canvas_locals: false,
-                own_view_locals: false,
+                own_view_locals: allowed_locals.is_some(),
+                allowed_own_view_locals: expression_allowed_locals,
                 family: "interaction",
             };
             let root_scope = graph.root_scope();

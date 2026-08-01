@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -383,6 +383,20 @@ role, origin parentage, and static table/column topology, then publishes
 for header and cell subtrees. Malformed IDs, post-check expression/static
 mutation, post-lowering AST poisoning, complete configured codegen, and an
 ignored 4,000-table lower+emit budget provide the executable evidence.
+
+PaneGrid is a completed stateful structural collection slice. One checked
+record owns its persistent identity, recursive split configuration, dimensions,
+metrics, resize/drag/click behavior, custom and typed grid styles, static panes,
+dynamic templates, typed item/maximized locals, pane/title surfaces, control
+topology, and parented origins. Lowering validates exact lexical-local contracts
+for every expression along with DAGs, scope, types, routes, externs, theme
+tokens, local roles, and origin links before publishing `ResolvedPaneGrid`.
+Application storage, enum/configuration generation, messages, updates, helper
+discovery, and rendering consume that record; source nodes provide only
+content/title/control subtrees. Structural snapshots, malformed IDs,
+pre-/post-lowering AST poisoning, source-merged style ownership before physical
+origin remapping, complete production codegen, and an ignored 4,000-grid
+lower+emit budget provide the executable evidence.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.

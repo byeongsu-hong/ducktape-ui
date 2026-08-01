@@ -430,7 +430,7 @@ one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
 MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn,
-Table, If, For, and Match families remain outside this slice.
+Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -494,8 +494,8 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, If, For,
-and Match remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -650,6 +650,20 @@ emission consumes that record and checked expression IDs; source columns supply
 only header and cell subtrees. Malformed expression/local IDs, post-check
 expression/static mutation, post-lowering AST poisoning, complete configured
 codegen, and an ignored 4,000-table lower+emit contract cover the boundary.
+
+PaneGrid has a complete private HIR boundary. A dedicated checked record owns
+the stable grid identity and configuration, all dimensions and metrics,
+resize/drag/click behavior, custom and typed grid styles, static panes, dynamic
+templates, typed item/maximized locals, pane/title surfaces, control topology,
+and source origins. Lowering revalidates complete expression and route arena
+consumption, exact lexical-local access per expression, DAGs, scope and types,
+extern and theme identities, local owner roles, and origin parentage before
+publishing `ResolvedPaneGrid`. Production field/message/update discovery and
+rendering consume only that record; source nodes provide content, title, and
+control subtrees. Structural HIR assertions, malformed expression/local/origin
+IDs, pre- and post-lowering AST poisoning, existing full styled/dynamic codegen,
+source-merged style ownership before physical-origin remapping, and an ignored
+4,000-grid lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

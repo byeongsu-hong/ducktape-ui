@@ -495,6 +495,27 @@ pub(super) struct StyleProgramBuilder {
 }
 
 impl StyleProgramBuilder {
+    pub(super) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
+        let site = CallSite {
+            line: span.line,
+            column: span.column,
+        };
+        let id = self.style_uses_by_site.get(&site).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "style use reached lowering without normalized style facts",
+            )
+        })?;
+        self.style_uses.get(id.0 as usize).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "style use references an invalid normalized style ID",
+            )
+        })
+    }
+
     pub(super) fn finish(self) -> Option<StyleProgram> {
         Some(StyleProgram {
             theme: self.theme?,
