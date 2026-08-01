@@ -1,3 +1,6 @@
+use crate::evidence::{
+    CAPTURE_DIFF_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION, validate_capture_manifest,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -223,7 +226,11 @@ fn parse_inspect(args: &[String]) -> Result<InspectOptions, String> {
     Ok(options)
 }
 
-fn containing_package(root: &Path, source: &Path, cargo: &str) -> Result<String, String> {
+pub(super) fn containing_package(
+    root: &Path,
+    source: &Path,
+    cargo: &str,
+) -> Result<String, String> {
     let output = Command::new(cargo)
         .current_dir(root)
         .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -299,7 +306,7 @@ fn validate_capture_name(name: &str) -> Result<(), String> {
     }
 }
 
-fn source_output_name(root: &Path, source: &Path) -> String {
+pub(super) fn source_output_name(root: &Path, source: &Path) -> String {
     let source = source.strip_prefix(root).unwrap_or(source);
     let mut name = source
         .with_extension("")
@@ -329,17 +336,17 @@ struct DiffOptions {
     value_tolerance: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct DiffThresholds {
+    pub(super) pixel: u8,
+    pub(super) max_changed_ratio: f64,
+    pub(super) value: f64,
+}
+
 pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_diff(args)?;
     let baseline_path = root.join(&options.baseline);
     let current_path = root.join(&options.current);
-    let baseline = read_json(&baseline_path)?;
-    let current = read_json(&current_path)?;
-    let baseline_png = manifest_png(&baseline_path, &baseline)?;
-    let current_png = manifest_png(&current_path, &current)?;
-    let baseline_image = read_png(&baseline_png)?;
-    let current_image = read_png(&current_png)?;
-
     let output = options.output.as_ref().map_or_else(
         || {
             root.join("target/ice-diff").join(format!(
@@ -350,20 +357,59 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         },
         |path| root.join(path),
     );
-    fs::create_dir_all(&output).map_err(|error| error.to_string())?;
-    let output = output.canonicalize().unwrap_or(output);
+    let report = compare_capture_manifests(
+        &baseline_path,
+        &current_path,
+        &output,
+        DiffThresholds {
+            pixel: options.pixel_threshold,
+            max_changed_ratio: options.max_changed_ratio,
+            value: options.value_tolerance,
+        },
+    )?;
+    let matches = report["matches"]
+        .as_bool()
+        .expect("capture diff report has a boolean result");
+    let report_path = output.join("report.json");
     let diff_png = output.join("diff.png");
-    let pixels = compare_pixels(&baseline_image, &current_image, options.pixel_threshold)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "matches": matches,
+            "report": report_path,
+            "diff_png": diff_png,
+            "manifest_differences": report["manifest"]["difference_count"],
+            "changed_ratio": report["pixels"]["changed_ratio"],
+        }))
+        .expect("diff output is serializable")
+    );
+    if matches {
+        Ok(())
+    } else {
+        Err(format!("inspection differs; see {}", report_path.display()))
+    }
+}
+
+pub(super) fn compare_capture_manifests(
+    baseline_path: &Path,
+    current_path: &Path,
+    output: &Path,
+    thresholds: DiffThresholds,
+) -> Result<Value, String> {
+    let baseline = read_json(baseline_path)?;
+    let current = read_json(current_path)?;
+    let baseline_png = validate_capture_manifest(baseline_path, &baseline)?.png;
+    let current_png = validate_capture_manifest(current_path, &current)?.png;
+    let baseline_image = read_png(&baseline_png)?;
+    let current_image = read_png(&current_png)?;
+    fs::create_dir_all(output).map_err(|error| error.to_string())?;
+    let output = output.canonicalize().unwrap_or_else(|_| output.to_owned());
+    let diff_png = output.join("diff.png");
+    let pixels = compare_pixels(&baseline_image, &current_image, thresholds.pixel)?;
     write_png(&diff_png, pixels.width, pixels.height, &pixels.rgba)?;
 
     let mut differences = Vec::new();
-    compare_json(
-        "",
-        &baseline,
-        &current,
-        options.value_tolerance,
-        &mut differences,
-    );
+    compare_json("", &baseline, &current, thresholds.value, &mut differences);
     differences.retain(|difference| {
         difference["path"]
             .as_str()
@@ -374,22 +420,23 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
     } else {
         pixels.changed as f64 / pixels.total as f64
     };
-    let matches = differences.is_empty() && changed_ratio <= options.max_changed_ratio;
+    let matches = differences.is_empty() && changed_ratio <= thresholds.max_changed_ratio;
     let report_path = output.join("report.json");
     let report = json!({
-        "schema_version": 1,
+        "artifact_kind": CAPTURE_DIFF_ARTIFACT_KIND,
+        "schema_version": REVIEW_SCHEMA_VERSION,
         "matches": matches,
         "baseline": { "manifest": baseline_path, "png": baseline_png },
         "current": { "manifest": current_path, "png": current_png },
         "manifest": {
-            "value_tolerance": options.value_tolerance,
+            "value_tolerance": thresholds.value,
             "ignored_paths": IGNORED_MANIFEST_PATHS,
             "difference_count": differences.len(),
             "differences": differences,
         },
         "pixels": {
-            "threshold": options.pixel_threshold,
-            "max_changed_ratio": options.max_changed_ratio,
+            "threshold": thresholds.pixel,
+            "max_changed_ratio": thresholds.max_changed_ratio,
             "changed": pixels.changed,
             "total": pixels.total,
             "changed_ratio": changed_ratio,
@@ -404,22 +451,7 @@ pub(super) fn diff(root: &Path, args: &[String]) -> Result<(), String> {
         serde_json::to_vec_pretty(&report).expect("diff report is serializable"),
     )
     .map_err(|error| error.to_string())?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "matches": matches,
-            "report": report_path,
-            "diff_png": diff_png,
-            "manifest_differences": report["manifest"]["difference_count"],
-            "changed_ratio": changed_ratio,
-        }))
-        .expect("diff output is serializable")
-    );
-    if matches {
-        Ok(())
-    } else {
-        Err(format!("inspection differs; see {}", report_path.display()))
-    }
+    Ok(report)
 }
 
 fn parse_diff(args: &[String]) -> Result<DiffOptions, String> {
@@ -493,16 +525,6 @@ fn read_json(path: &Path) -> Result<Value, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
-}
-
-fn manifest_png(manifest_path: &Path, manifest: &Value) -> Result<PathBuf, String> {
-    let png = manifest["png"]
-        .as_str()
-        .ok_or_else(|| format!("{} omits string field `png`", manifest_path.display()))?;
-    Ok(manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(png))
 }
 
 fn file_stem(path: &Path) -> String {
@@ -708,6 +730,33 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::CAPTURE_SCHEMA_VERSION;
+
+    fn capture_manifest(name: &str) -> Value {
+        json!({
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "name": name,
+            "png": format!("{name}.png"),
+            "capture_source": {
+                "path": "app.ice", "line": 1, "column": 1, "statement": format!("capture {name}")
+            },
+            "viewport": { "width": 1.0, "height": 1.0 },
+            "physical_size": { "width": 1, "height": 1 },
+            "scale_factor": 1.0,
+            "configured_theme": null,
+            "resolved_theme": { "mode": "light", "name": "Light" },
+            "system_theme": "none",
+            "locale": null,
+            "platform": "linux",
+            "reduced_motion": null,
+            "window": { "position": null, "focused": true },
+            "clock": {
+                "supports_virtual_redraw_advance": true,
+                "iced_timer_futures_are_virtual": false
+            },
+            "targets": [],
+        })
+    }
 
     #[test]
     fn parses_deterministic_inspection_inputs() {
@@ -756,6 +805,62 @@ mod tests {
         compare_json("", &baseline, &current, 0.0, &mut differences);
         assert_eq!(differences[0]["path"], "/source");
         assert_eq!(differences[0]["current"]["$missing"], true);
+    }
+
+    #[test]
+    fn direct_diff_rejects_missing_string_and_unsupported_capture_schemas() {
+        let fixture = tempfile::tempdir().unwrap();
+        let baseline = fixture.path().join("baseline.json");
+        let current = fixture.path().join("current.json");
+        let output = fixture.path().join("diff");
+        fs::write(
+            &current,
+            serde_json::to_vec(&capture_manifest("current")).unwrap(),
+        )
+        .unwrap();
+        fs::write(fixture.path().join("current.png"), []).unwrap();
+
+        for invalid in [
+            json!({}),
+            json!({ "schema_version": "2" }),
+            json!({
+                "schema_version": CAPTURE_SCHEMA_VERSION + 1
+            }),
+        ] {
+            fs::write(&baseline, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(
+                compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default(),)
+                    .is_err()
+            );
+        }
+
+        fs::write(
+            &baseline,
+            serde_json::to_vec(&capture_manifest("baseline")).unwrap(),
+        )
+        .unwrap();
+        fs::write(fixture.path().join("baseline.png"), []).unwrap();
+        fs::write(
+            &current,
+            serde_json::to_vec(&json!({ "schema_version": "2" })).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default())
+                .unwrap_err()
+                .contains(&current.display().to_string())
+        );
+
+        let partial = json!({
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "png": "missing.png"
+        });
+        fs::write(&baseline, serde_json::to_vec(&partial).unwrap()).unwrap();
+        fs::write(&current, serde_json::to_vec(&partial).unwrap()).unwrap();
+        assert!(
+            compare_capture_manifests(&baseline, &current, &output, DiffThresholds::default())
+                .is_err()
+        );
     }
 
     #[test]

@@ -1,3 +1,6 @@
+use crate::evidence::{
+    CAPTURE_DIFF_ARTIFACT_KIND, CAPTURE_SCHEMA_VERSION, REVIEW_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION,
+};
 use serde_json::{Value, json};
 
 pub use ui_lang_core::LANGUAGE_REVISION;
@@ -1930,14 +1933,15 @@ fn test_target_fields() -> Value {
 fn capture_manifest_schema() -> Value {
     json!({
         "required": [
-            "schema_version", "name", "png", "viewport", "physical_size",
+            "schema_version", "name", "png", "capture_source", "viewport", "physical_size",
             "scale_factor", "configured_theme", "resolved_theme", "system_theme",
             "locale", "platform", "reduced_motion", "window", "clock", "targets"
         ],
         "fields": {
-            "schema_version": { "type": "integer", "const": 1 },
+            "schema_version": { "type": "integer", "const": CAPTURE_SCHEMA_VERSION },
             "name": { "type": "string" },
             "png": { "type": "string", "path": "sibling basename" },
+            "capture_source": { "ref": "capture_source" },
             "viewport": { "ref": "logical_size" },
             "physical_size": { "ref": "physical_size" },
             "scale_factor": { "type": "number" },
@@ -1959,6 +1963,25 @@ fn capture_manifest_schema() -> Value {
             }
         },
         "definitions": {
+            "source_origin": {
+                "type": "object",
+                "required": ["path", "line", "column"],
+                "fields": {
+                    "path": { "type": "string" },
+                    "line": { "type": "integer" },
+                    "column": { "type": "integer" }
+                }
+            },
+            "capture_source": {
+                "type": "object",
+                "required": ["path", "line", "column", "statement"],
+                "fields": {
+                    "path": { "type": "string" },
+                    "line": { "type": "integer" },
+                    "column": { "type": "integer" },
+                    "statement": { "type": "string" }
+                }
+            },
             "logical_size": {
                 "type": "object",
                 "required": ["width", "height"],
@@ -2229,12 +2252,13 @@ fn capture_manifest_schema() -> Value {
             "target": {
                 "type": "object",
                 "required": [
-                    "id", "kind", "geometry", "visible", "content", "translation", "scroll",
+                    "id", "kind", "source", "geometry", "visible", "content", "translation", "scroll",
                     "value", "focused", "accessibility", "paint"
                 ],
                 "fields": {
                     "id": { "type": "string" },
                     "kind": { "type": "string" },
+                    "source": { "type": ["object", "null"], "ref": "source_origin" },
                     "geometry": { "ref": "target_geometry" },
                     "visible": { "ref": "visible_geometry" },
                     "content": { "ref": "optional_rectangle" },
@@ -2373,6 +2397,20 @@ fn test_contract() -> Value {
             "pixelGoldenComparison": false,
             "ambiguousMatch": "runtime failure; never guessed",
             "customRendererPaint": false,
+            "reviewBundle": {
+                "command": "cargo ice review ROOT.ice [options]",
+                "artifactKind": REVIEW_ARTIFACT_KIND,
+                "schemaVersion": REVIEW_SCHEMA_VERSION,
+                "captureDiffArtifactKind": CAPTURE_DIFF_ARTIFACT_KIND,
+                "formats": ["report.json", "report.html", "diagnostics.json", "test logs", "capture PNG/JSON", "diff PNG/JSON"],
+                "testSelection": "all declared first-class Ice tests or repeated --test NAME",
+                "baselineIdentity": "stable test-name/capture-name manifest key",
+                "baselineReport": "exact-schema successful ice_review_bundle with typed unique capture entries",
+                "selectedBaselineScope": "filter keys before resolving, reading, or checking manifest paths",
+                "failurePublication": "every failure after opening output publishes the current run ID; preserve a detailed current-run failure",
+                "failurePolicy": ["test failure", "changed capture", "new capture", "removed capture", "unreadable evidence"],
+                "summaries": ["semantic diagnostics", "AccessKit role/name/action inventory", "source-mapped structured changes"],
+            },
         },
         "legacyIcedTestIceSyntax": false,
         "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "general virtual clock", "built-in pixel-golden comparison", "multi-window orchestration"],
@@ -2664,8 +2702,9 @@ pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCESSKIT_WINDOWS_VERSION, COMPLETIONS, ICED_VERSION, ICED_WIDGET_VERSION,
-        UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items, document,
+        ACCESSKIT_WINDOWS_VERSION, CAPTURE_SCHEMA_VERSION, COMPLETIONS, ICED_VERSION,
+        ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items,
+        document,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -3166,9 +3205,21 @@ mod tests {
         let required = manifest["required"].as_array().unwrap();
         assert!(required.contains(&json!("configured_theme")));
         assert!(required.contains(&json!("resolved_theme")));
+        assert!(required.contains(&json!("capture_source")));
         assert!(!required.contains(&json!("theme")));
-        assert_eq!(manifest["fields"]["schema_version"]["const"], 1);
+        assert_eq!(
+            manifest["fields"]["schema_version"]["const"],
+            CAPTURE_SCHEMA_VERSION
+        );
         assert_eq!(manifest["fields"]["png"]["path"], "sibling basename");
+        assert_eq!(
+            manifest["fields"]["capture_source"]["ref"],
+            "capture_source"
+        );
+        assert_eq!(
+            definitions["capture_source"]["required"],
+            json!(["path", "line", "column", "statement"])
+        );
         assert!(manifest["fields"]["theme"].is_null());
         assert_eq!(
             manifest["fields"]["configured_theme"]["type"],
@@ -3193,6 +3244,16 @@ mod tests {
             16_777_216
         );
         assert_eq!(manifest["fields"]["targets"]["items"]["ref"], "target");
+        assert!(
+            definitions["target"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("source"))
+        );
+        assert_eq!(
+            definitions["target"]["fields"]["source"]["ref"],
+            "source_origin"
+        );
         assert_eq!(
             manifest["fields"]["targets"]["excludesIdsWithFinalSegmentPrefix"],
             "@"
@@ -3225,6 +3286,16 @@ mod tests {
         assert_eq!(
             definitions["paint"]["fields"]["texts"]["items"]["ref"],
             "text"
+        );
+        let review = &contract["inspection"]["reviewBundle"];
+        assert_eq!(review["artifactKind"], "ice_review_bundle");
+        assert_eq!(review["schemaVersion"], 1);
+        assert_eq!(review["captureDiffArtifactKind"], "ice_capture_diff");
+        assert!(
+            review["selectedBaselineScope"]
+                .as_str()
+                .unwrap()
+                .contains("before resolving")
         );
         assert_eq!(
             definitions["paint"]["fields"]["images"]["items"]["ref"],
@@ -3386,6 +3457,14 @@ mod tests {
             "text-line-height"
         );
         assert_eq!(contract["inspection"]["pixelGoldenComparison"], false);
+        assert_eq!(
+            contract["inspection"]["reviewBundle"]["command"],
+            "cargo ice review ROOT.ice [options]"
+        );
+        assert_eq!(
+            contract["inspection"]["reviewBundle"]["baselineIdentity"],
+            "stable test-name/capture-name manifest key"
+        );
     }
 
     #[test]

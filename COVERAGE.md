@@ -294,7 +294,21 @@ observation-only. Generated identified targets retain their originating
 imported `.ice` path, line, and column. `cargo ice inspect` activates an
 otherwise inert generated entry for one real app `Program`, fixed environment,
 and preset; `cargo ice diff` externally compares structured values and RGBA
-pixels and writes JSON/PNG reports. Screenshot output is checked as RGBA8 and
+pixels and writes JSON/PNG reports. `cargo ice review` selects declared Ice
+tests, records their exact process results and captures, reuses the same diff
+engine, summarizes live AccessKit metadata, and maps structured changes back to
+the target or capture statement source. Unit contracts cover option/test
+selection, HTML escaping, accessibility aggregation, source mapping, and the
+shared pixel/manifest comparison. Direct diff and review share a typed capture
+schema-2 validator for required fields and core nested provenance, geometry,
+accessibility, and paint shapes. Typed review-schema-1 baseline tests reject
+wrong artifact kinds, failed reports, malformed capture entries, duplicates,
+and unsafe paths. Run-ID failure tests prove stale success is replaced while a
+current detailed failure is preserved. Pull-request CI exercises a full
+showcase bundle, a selected comparison whose unselected baseline path is
+invalid, and a full-scope removed capture failure; it verifies accessibility
+and artifact paths and uploads the bundle. macOS and Windows CI also execute a
+baseline-free selected review. Screenshot output is checked as RGBA8 and
 capped at
 16,777,216 physical pixels before renderer allocation.
 The artifact root defaults to `target/ice-test-artifacts`, is replaceable with

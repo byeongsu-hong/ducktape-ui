@@ -5,3 +5,4 @@ test packaged_consumer_contract
   expect root.width > 0.0
   expect message.visible
   expect text "Hello from packaged crates" within message
+  capture packaged_consumer

@@ -470,6 +470,9 @@ path, line, and column. A target constructed wholly inside a Rust widget may
 report no finer provenance. `cargo ice inspect` exposes the same real headless
 app `Program` without requiring an authored test capture, while
 `cargo ice diff` compares two manifests and their PNGs outside the runtime.
+`cargo ice review` runs selected first-class Ice tests and packages their
+captures, diagnostics, accessibility inventory, baseline diffs, and
+source-mapped changes into one JSON/HTML evidence bundle.
 
 Tests use the same checked components, handlers, presets, expressions, and Rust
 extern boundary as production code. IDs select rendered widgets after real
@@ -552,6 +555,7 @@ cargo ice inspect examples/showcase/src/ui/app.ice --viewport 1440x900 --theme l
 cargo ice diff baseline/showcase_light.json target/ice-inspect/examples_showcase_src_ui_app/showcase_light.json
 cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
 cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
+cargo ice review examples/showcase/src/ui/app.ice --test smooth_chart_surface --output review
 cargo ice schema
 cargo ice lsp
 scripts/a11y-smoke.sh
@@ -573,6 +577,27 @@ package selection. `cargo ice diff BASE.json CURRENT.json` writes
 `report.json` and `diff.png`, then fails when structured values differ or the
 changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
+
+`cargo ice review ROOT.ice` runs every declared Ice test in the root graph, or
+only repeated `--test NAME` selections. Captures are collected below a unique
+run directory without deleting older evidence. `--baseline DIR` accepts a
+previous review directory (or a capture directory), compares captures by their
+stable `test-name/capture-name.json` key, and treats changed, new, removed, or
+unreadable evidence as a failed review. A report baseline must be a successful
+`ice_review_bundle`; capture-diff reports and failed or structurally incomplete
+review reports are rejected. With explicit `--test` selections, baseline keys
+are filtered before manifest paths are resolved or read, so evidence belonging
+to unselected tests is outside that run while a full review validates every
+entry. Capture manifests use schema 2 and review/diff reports use schema 1 with
+distinct artifact kinds. Direct diff and review share one structural manifest
+validator covering the published required fields, source provenance, nested
+geometry/accessibility/paint shapes, and sibling PNG identity. Every failure
+after opening an output directory publishes a new run-ID failure bundle; an
+already-written detailed failure report for that run is retained.
+`--package`, `--output`, and the same pixel/ratio/value tolerance flags control
+execution and policy. The output contains `report.json`, `report.html`,
+`diagnostics.json`, test logs, current PNGs/manifests, and per-capture
+`diff.png`/`report.json` files.
 
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
 one native app or daemon, watches its complete Ice and Cargo input graph, and

@@ -4772,6 +4772,30 @@ widget tree immediately before drawing so status-aware widgets render their
 current active, hovered, pressed, or disabled style; messages produced by that
 observational redraw are not applied to application state.
 
+`cargo ice review ROOT.ice` analyzes one complete root graph, runs each
+declared first-class Ice test selected by zero or more `--test NAME` options,
+and captures stdout, stderr, duration, exit status, and every named frame
+artifact. The review output is a versioned JSON report plus an HTML index,
+diagnostics inventory, accessibility role/name/action summary, and
+source-mapped structured changes. A baseline may be a previous review bundle
+or capture directory; a report baseline must carry the `ice_review_bundle`
+artifact discriminator, exact schema version, `success: true`, and a typed,
+duplicate-free capture list. A capture-diff report is not a review baseline.
+Captures match by the stable test/capture manifest key.
+When a baseline is supplied, a changed, new, removed, or unreadable capture is
+a review failure under the explicit pixel, ratio, and value tolerances. An
+explicit `--test` selection filters report keys before resolving, reading, or
+checking manifest paths; evidence from unselected tests is outside that run's
+baseline scope, while full scope validates every entry. Capture manifests have
+schema version 2 and review/diff reports have schema version 1 with distinct
+artifact discriminators. Direct diff and review use the same structural
+validator for all published required top-level fields and core nested source,
+geometry, accessibility, and paint shapes. Test failure also fails the review.
+Each run uses a fresh artifact/log/diff subdirectory. Once the output directory
+is opened, every early error publishes a failure report, diagnostics, and HTML
+for the new run ID; a detailed failure already published for that run is not
+replaced by the generic fallback.
+
 `dispatch` constructs the checked message for a top-level handler;
 component-local handlers remain private and are exercised through their
 rendered controls. Semantic steps keep generated-message construction internal:
@@ -5291,6 +5315,7 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |
 | `cargo ice api diff BASE.json CURRENT.json [--format human\|json]` | verifies both fingerprints, classifies public changes, and exits nonzero when any breaking change is present |
+| `cargo ice review FILE [options]` | runs selected first-class Ice tests and writes one JSON/HTML bundle containing logs, diagnostics, captures, accessibility summary, baseline diffs, and source-mapped changes |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
 | `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
 
