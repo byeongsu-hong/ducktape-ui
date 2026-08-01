@@ -6,12 +6,27 @@ pub(in crate::codegen) fn render_pane_grid(
     options: &PaneGridOptions,
     panes: &[PaneView],
     templates: &[PaneTemplate],
+    span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
+    let CheckedViewFlow::PaneGrid {
+        static_maximized,
+        templates: checked_templates,
+    } = &document.program().checked_view(span)?.flow
+    else {
+        return Err(Error::new("E196", span, "pane grid has no checked flow"));
+    };
+    if panes.len() != static_maximized.len() || templates.len() != checked_templates.len() {
+        return Err(Error::new(
+            "E196",
+            span,
+            "pane grid checked local arena length diverged",
+        ));
+    }
     let id = Id {
         name: name.to_owned(),
         key: None,
@@ -20,17 +35,24 @@ pub(in crate::codegen) fn render_pane_grid(
     let pane_type = (!templates.is_empty()).then(|| pane_type(name));
     let mut arms = panes
         .iter()
-        .map(|pane| {
-            let mut pane_env = env.clone();
-            if let Some(binding) = &pane.maximized {
+        .zip(static_maximized)
+        .map(|(pane, maximized)| {
+            let mut pane_env = ScopedBindingEnv::new(env);
+            if let Some(local) = maximized {
+                let binding = document
+                    .program()
+                    .checked_facts()
+                    .local(*local)
+                    .name
+                    .clone();
                 pane_env.insert(
-                    binding.clone(),
-                    Binding {
-                        code: "__pane_maximized".into(),
-                        ty: Type::Bool,
-                        local: true,
-                        state: None,
-                    },
+                    binding,
+                    checked_local_binding(
+                        document.program(),
+                        *local,
+                        "__pane_maximized".into(),
+                        true,
+                    ),
                 );
             }
             let pane_scope = format!("format!(\"{{}}/{}\", {pane_grid_scope})", pane.name);
@@ -45,33 +67,39 @@ pub(in crate::codegen) fn render_pane_grid(
             ))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    for template in templates {
-        let (item_type, _) = pane_template_types(template, document)?;
-        let mut template_env = env.clone();
+    for (template, checked) in templates.iter().zip(checked_templates) {
+        let item = document
+            .program()
+            .checked_facts()
+            .local(checked.item)
+            .name
+            .clone();
+        let mut template_env = ScopedBindingEnv::new(env);
         template_env.insert(
-            template.item.clone(),
-            Binding {
-                code: format!("(*{})", template.item),
-                ty: item_type,
-                local: false,
-                state: None,
-            },
+            item.clone(),
+            checked_local_binding(
+                document.program(),
+                checked.item,
+                format!("(*{item})"),
+                false,
+            ),
         );
-        if let Some(binding) = &template.pane.maximized {
+        if let Some(local) = checked.maximized {
+            let binding = document.program().checked_facts().local(local).name.clone();
             template_env.insert(
-                binding.clone(),
-                Binding {
-                    code: "__pane_maximized".into(),
-                    ty: Type::Bool,
-                    local: true,
-                    state: None,
-                },
+                binding,
+                checked_local_binding(document.program(), local, "__pane_maximized".into(), true),
             );
         }
-        let key = expr_code(&template.key, &template_env, document, ValueMode::Owned)?;
+        let key = checked_expr_use_code(
+            document.program(),
+            checked.key,
+            &template_env,
+            ValueMode::Owned,
+        )?;
         let pane_scope = format!(
             "format!(\"{{}}/{}({{}})\", {pane_grid_scope}, __pane_key)",
-            template.item
+            item
         );
         let content = render_pane_content(
             &template.pane,
@@ -89,9 +117,9 @@ pub(in crate::codegen) fn render_pane_grid(
             "{}::{}(__pane_key) => match {items}.iter().find(|{}| {key} == (*__pane_key).clone()) {{ ::std::option::Option::Some({}) => {content}, ::std::option::Option::None => ::iced::widget::pane_grid::Content::new(::iced::widget::text(::std::format!({}, __pane_key))), }}",
             pane_type.as_deref().expect("dynamic pane type"),
             pane_template_variant(&template.item),
-            template.item,
-            template.item,
-            rust_string(&format!("Missing pane `{}({{}})`", template.item)),
+            item,
+            item,
+            rust_string(&format!("Missing pane `{}({{}})`", item)),
         ));
     }
     let arms = arms.join(", ");
@@ -172,7 +200,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
     code: &mut String,
     style: &PaneGridStyle,
     custom: Option<&ExternCall>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let has_radius = style.region_radius.is_some()
@@ -285,7 +313,7 @@ pub(in crate::codegen) fn render_pane_content(
     pane: &PaneView,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
@@ -353,7 +381,7 @@ pub(in crate::codegen) fn render_pane_content(
 pub(in crate::codegen) fn render_rich_span(
     item: &RichSpan,
     document: &RenderDocument<'_>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let style = &document.program().style_use(&item.span)?.style;
     let value = expr_code(&item.value, env, document, ValueMode::Owned)?;

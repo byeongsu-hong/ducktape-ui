@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_layout_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -333,8 +333,8 @@ pub(in crate::check) fn infer_layout_group(
             for pane in panes {
                 infer_pane_view(pane, env, document, signatures, ids)?;
             }
-            for template in templates {
-                let Some(Type::List(item_type)) = env.get(&template.items) else {
+            for (template_index, template) in templates.iter().enumerate() {
+                let Some(Type::List(item_type)) = env.get_type(&template.items) else {
                     return Err(Error::new(
                         "E187",
                         &template.span,
@@ -344,9 +344,16 @@ pub(in crate::check) fn infer_layout_group(
                         ),
                     ));
                 };
-                let mut template_env = env.clone();
+                let mut template_env = scoped_view_env(env);
                 template_env.insert(template.item.clone(), (**item_type).clone());
-                let key_type = expr_type(&template.key, &template_env, document, &template.span)?;
+                let key_type = retained_view_expr_type_at(
+                    &template.key,
+                    &template_env,
+                    document,
+                    span,
+                    &template.span,
+                    CheckedViewExprRole::PaneTemplateKey(template_index as u32),
+                )?;
                 if !matches!(key_type, Type::Bool | Type::I64 | Type::F64 | Type::Str) {
                     return Err(Error::new(
                         "E187",

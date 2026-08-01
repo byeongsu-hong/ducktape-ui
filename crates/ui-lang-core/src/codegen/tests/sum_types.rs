@@ -57,3 +57,36 @@ view
     assert!(generated.contains("::std::result::Result::Err(error) =>"));
     assert!(generated.contains("RequestState::Ready(items) =>"));
 }
+
+#[test]
+fn lowers_palette_matches_from_resolved_palette_ids() {
+    let source = r#"app PaletteMatch
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette light for AppTheme
+  bg #ffffff
+  fg #000000
+  primary #3366ff
+  danger #ff0000
+palette dark for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #6699ff
+  danger #ff0000
+state
+  active:palette[AppTheme] = AppTheme.light
+view
+  col
+    match active
+      AppTheme.light
+        text "light"
+      AppTheme.dark
+        text "dark"
+"#;
+    let generated = compile(source, "palette_match.ice").unwrap();
+    assert!(generated.contains("AppTheme::Light =>"));
+    assert!(generated.contains("AppTheme::Dark =>"));
+}

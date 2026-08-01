@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_documents_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -14,7 +14,13 @@ pub(in crate::check) fn infer_documents_group(
             span,
         } => {
             require_type(
-                &expr_type(condition, env, document, span)?,
+                &retained_view_expr_type(
+                    condition,
+                    env,
+                    document,
+                    span,
+                    CheckedViewExprRole::IfCondition,
+                )?,
                 &Type::Bool,
                 span,
             )?;
@@ -28,17 +34,25 @@ pub(in crate::check) fn infer_documents_group(
             children,
             span,
         } => {
-            let Type::List(inner) = expr_type(items, env, document, span)? else {
+            let Type::List(inner) =
+                retained_view_expr_type(items, env, document, span, CheckedViewExprRole::ForItems)?
+            else {
                 return Err(Error::new("E121", span, "for expects a list expression"));
             };
-            let mut child_env = env.clone();
+            let mut child_env = scoped_view_env(env);
             child_env.insert(item.clone(), *inner);
             for child in children {
                 infer_view(child, &child_env, document, signatures, ids)?;
             }
         }
         ViewNode::Match { value, arms, span } => {
-            let value_ty = expr_type(value, env, document, span)?;
+            let value_ty = retained_view_expr_type(
+                value,
+                env,
+                document,
+                span,
+                CheckedViewExprRole::MatchValue,
+            )?;
             infer_match_arms(&value_ty, arms, env, document, signatures, ids, span)?;
         }
         ViewNode::KeyedColumn {
@@ -51,12 +65,25 @@ pub(in crate::check) fn infer_documents_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            let Type::List(inner) = expr_type(items, env, document, span)? else {
+            let Type::List(inner) = retained_view_expr_type(
+                items,
+                env,
+                document,
+                span,
+                CheckedViewExprRole::KeyedItems,
+            )?
+            else {
                 return Err(Error::new("E138", span, "keyed expects a list expression"));
             };
-            let mut child_env = env.clone();
+            let mut child_env = scoped_view_env(env);
             child_env.insert(item.clone(), *inner);
-            let key_type = expr_type(key, &child_env, document, span)?;
+            let key_type = retained_view_expr_type(
+                key,
+                &child_env,
+                document,
+                span,
+                CheckedViewExprRole::KeyedKey,
+            )?;
             if !matches!(key_type, Type::Bool | Type::I64 | Type::F64) {
                 return Err(Error::new(
                     "E138",
@@ -93,7 +120,13 @@ pub(in crate::check) fn infer_documents_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            let dependency_type = expr_type(dependency, env, document, span)?;
+            let dependency_type = retained_view_expr_type(
+                dependency,
+                env,
+                document,
+                span,
+                CheckedViewExprRole::LazyDependency,
+            )?;
             if !lazy_hashable(&dependency_type) || contains_ui_enum(&dependency_type, document) {
                 return Err(Error::new(
                     "E139",
@@ -119,7 +152,7 @@ pub(in crate::check) fn infer_documents_group(
         } => {
             record_read(content, span);
             check_id(id, env, document, ids, span)?;
-            let content_type = env.get(content).ok_or_else(|| {
+            let content_type = env.get_type(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
             })?;
             require_type(content_type, &Type::Markdown, span)?;
@@ -160,7 +193,7 @@ pub(in crate::check) fn infer_documents_group(
             record_read(binding, span);
             record_write(binding, span);
             check_id(id, env, document, ids, span)?;
-            let binding_type = env.get(binding).ok_or_else(|| {
+            let binding_type = env.get_type(binding).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown editor state `{binding}`"))
             })?;
             require_type(binding_type, &Type::Editor, span)?;
@@ -249,7 +282,9 @@ pub(in crate::check) fn infer_documents_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            let Type::List(inner) = expr_type(rows, env, document, span)? else {
+            let Type::List(inner) =
+                retained_view_expr_type(rows, env, document, span, CheckedViewExprRole::TableRows)?
+            else {
                 return Err(Error::new("E139", span, "table expects a list of rows"));
             };
             if let Some(length) = &options.width {
@@ -267,7 +302,7 @@ pub(in crate::check) fn infer_documents_group(
                     require_nonnegative_f64(value, env, document, label, span)?;
                 }
             }
-            let mut cell_env = env.clone();
+            let mut cell_env = scoped_view_env(env);
             cell_env.insert(item.clone(), *inner);
             for column in columns {
                 if let Some(length) = &column.width {
@@ -288,7 +323,7 @@ pub(in crate::check) fn infer_documents_group(
 fn infer_match_arms(
     value_ty: &Type,
     arms: &[MatchArm],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -428,7 +463,7 @@ fn infer_match_arms(
             (_, MatchPattern::Wildcard) => None,
             _ => return Err(pattern_type_error(value_ty, &arm.span)),
         };
-        let mut child_env = env.clone();
+        let mut child_env = scoped_view_env(env);
         if let Some((name, ty)) = binding {
             child_env.insert(name.clone(), ty);
         }

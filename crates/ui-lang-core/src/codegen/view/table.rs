@@ -2,32 +2,27 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_table(
-    item: &str,
-    rows: &Expr,
     options: &TableOptions,
     columns: &[TableColumn],
     span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let Type::List(inner) = expr_type(rows, &env_types(env), document, span)? else {
-        unreachable!("checker validates table rows")
+    let CheckedViewFlow::Table { rows, item } = &document.program().checked_view(span)?.flow else {
+        return Err(Error::new("E196", span, "table has no checked flow"));
     };
-    let rows = expr_code(rows, env, document, ValueMode::Owned)?;
-    let row_type = *inner;
+    let rows = checked_expr_use_code(document.program(), *rows, env, ValueMode::Owned)?;
+    let checked_item = document.program().checked_facts().local(*item);
+    let item_name = &checked_item.name;
+    let row_type = checked_item.ty.clone();
     let row_rust = row_type.rust(&document.structs);
-    let mut cell_env = env.clone();
+    let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
-        item.into(),
-        Binding {
-            code: item.into(),
-            ty: row_type,
-            local: true,
-            state: None,
-        },
+        item_name.clone(),
+        checked_local_binding(document.program(), *item, item_name.clone(), true),
     );
     let mut column_codes = Vec::with_capacity(columns.len());
     for (index, column) in columns.iter().enumerate() {
@@ -43,7 +38,7 @@ pub(in crate::codegen) fn render_table(
             slot,
         )?;
         let mut code = format!(
-            "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
+            "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
         if let Some(width) = &column.width {
             write!(
@@ -122,37 +117,32 @@ pub(in crate::codegen) fn render_table(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_keyed_column(
-    item: &str,
-    items: &Expr,
-    key: &Expr,
     options: &LayoutOptions,
     child: &ViewNode,
     span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let Type::List(inner) = expr_type(items, &env_types(env), document, span)? else {
-        unreachable!("checker validates keyed lists")
+    let CheckedViewFlow::Keyed { items, key, item } = &document.program().checked_view(span)?.flow
+    else {
+        return Err(Error::new("E196", span, "keyed column has no checked flow"));
     };
-    let items = expr_code(items, env, document, ValueMode::Borrowed)?;
-    let mut child_env = env.clone();
+    let items = checked_expr_use_code(document.program(), *items, env, ValueMode::Borrowed)?;
+    let checked_item = document.program().checked_facts().local(*item);
+    let item_name = &checked_item.name;
+    let mut child_env = ScopedBindingEnv::new(env);
     child_env.insert(
-        item.into(),
-        Binding {
-            code: item.into(),
-            ty: *inner,
-            local: false,
-            state: None,
-        },
+        item_name.clone(),
+        checked_local_binding(document.program(), *item, item_name.clone(), false),
     );
-    let key = expr_code(key, &child_env, document, ValueMode::Owned)?;
+    let key = checked_expr_use_code(document.program(), *key, &child_env, ValueMode::Owned)?;
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
-        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item} in {items}.iter() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::keyed_column(__children)"
+        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::keyed_column(__children)"
     );
     if let Some(spacing) = &options.spacing {
         write!(

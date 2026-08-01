@@ -213,8 +213,18 @@ semantic IDs; Rust emission consumes only those checked records. Semantic
 struct, field, enum, variant, and extern declarations retain physical imported
 origins and parent links, so initializer facts never recover declarations from
 raw `Document` positions. Scoped binding expressions borrow layered
-environments and do not clone the complete surrounding scope. Call-site
-component arguments and view/canvas expressions remain in later slices.
+environments and do not clone the complete surrounding scope.
+
+Supplied component arguments and lexical view-control expressions use the same
+checked arena. Every supplied argument has a checked expression-use ID, and a
+bind argument is writable only when its checked root is an unprojected mutable
+state or bind parameter. `if`, `for`, typed `match`, keyed, lazy, table, pane,
+responsive, and daemon-window scopes retain typed locals and resolved patterns
+or declaration IDs before Rust generation. Slot-presence expressions retain a
+component-slot ID. Their migrated emitters do not inspect raw expressions or
+repeat scope, match, binding, or slot resolution. Handler, task, canvas,
+settings, test, and expression-bearing widget-option families remain later
+vertical slices.
 
 The Rust adapter is one manifest-relative include:
 

@@ -84,6 +84,12 @@ component source names, while other unmigrated generation paths still consume
 AST names and nodes. Component state storage, boot, update, mounted cleanup, and
 call rendering consume the resolved contract.
 
+Supplied component arguments now carry an unconditional checked expression-use
+ID; defaults retain the same representation. Bind writability is decided from
+the checked path root and projections, so lowering no longer re-resolves a raw
+argument expression or keeps a second argument-expression variant. Component
+calls and checked view facts share one `ComponentCallId`/`ViewId` arena.
+
 Normalized component records carry root/import locations through `OriginId`.
 The table's parent links are scaffolding for future expansion stacks: current
 lowering errors and generated source markers do not traverse them and continue
@@ -109,13 +115,12 @@ family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors, expressions/matches,
-asynchronous call sites, other application settings, tests, and remaining views
-therefore remain open implementation slices; this status does not satisfy the
-migration-complete criteria below. `OriginId` parent links remain scaffolding:
-the new style/theme nodes retain physical root/import locations, but current
-diagnostics and generated source markers still do not traverse expansion
-stacks.
+The remaining expression-backed native styles/colors, handlers, tasks and
+asynchronous call sites, canvas locals, other application settings, tests, and
+remaining widget options therefore remain open implementation slices; this
+status does not satisfy the migration-complete criteria below. Current
+diagnostics and generated source markers still use the established source-map
+path rather than traversing `OriginId` parent stacks.
 
 The checker now also preserves the first expression-family facts in a private,
 owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
@@ -132,15 +137,33 @@ arena. Imported physical locations and declaration-parent links therefore
 survive across expression and declaration slices without a parallel origin
 table.
 
-This slice now covers app-state, derived-value, component-default, and
-component-state initializers through production Rust emission. Lowering retains
-their checked expression-use IDs, explicit coercions, and resolved animation
-options, including a typed extern ID for custom easing. The backend emits those
-facts directly. The former initializer AST helper and its unchecked `Default`
-recovery are removed. Component arguments supplied at a call site, canvas-local
-state, view expressions, handlers, and matches remain in later expression/view
-slices; component defaults selected by a call are already HIR-backed. The
-full-HIR completion criteria therefore remain open.
+This slice covers app-state, derived-value, component-default, component-state,
+and supplied component-argument expressions through production Rust emission.
+Lowering retains their checked expression-use IDs, explicit initializer
+coercions, and resolved animation options, including a typed extern ID for
+custom easing. The backend emits those facts directly. The former initializer
+and component-argument AST helpers, unchecked `Default` recovery, and optional
+raw-expression argument representation are removed.
+
+Lexical view-flow expressions are normalized as well. Checked view records own
+`if`, `for`, exhaustive typed `match`, keyed, lazy, table, pane-template, and
+responsive expression uses plus their resolved local bindings. Match arms carry
+resolved option/result/enum/palette patterns, variant or palette IDs, payload
+locals, and arm origins. `provided(Slot)` carries a resolved
+`ComponentSlotId`. Daemon windows, loop items, match payloads, keyed items, lazy
+dependencies, table rows, pane maximized/template locals, and responsive size
+locals all have explicit owner roles. Ordinary and flex flow generation,
+component arguments, keyed/table/lazy/pane/responsive generation consume this
+checked arena. Component call facts also fix whether each prop was supplied or
+defaulted; raw argument topology cannot silently change that choice after
+checking. Emission matches checked paths to semantic value/local owner IDs and
+validates raw view kind/children against the stable checked topology. Invalid
+owner, topology, match binding, and enum IDs therefore fail with source-mapped
+`E196`. Imported expressions retain physical locations and parent chains;
+missing, duplicate, or leftover authoritative analyses also fail with `E196`.
+Handler/task/canvas/settings/test expressions and expression-bearing
+widget options remain later slices, so the full-HIR completion criteria remain
+open.
 
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and
@@ -161,10 +184,11 @@ that local rather than to an unresolved source path. Exact analysis-pass,
 query, analyzed-node, cache-hit, local, lowered-expression, layered-scope, and
 full-clone counters make the linearity and scope contracts testable. Each
 lexical scope constructs its base path and type views once. Binding bodies such
-as `animation.project` borrow that base through one-entry overlays in both
-checking and fact lowering instead of cloning the full environment. The
-500-to-4,000 repeated-projection contract verifies exact linear node/overlay
-growth and zero full-scope clones under a wall-clock ceiling. The thread-local
+as `animation.project` and view-flow locals borrow that base through small
+overlays in checking, fact lowering, and code generation instead of cloning the
+full environment. The 500-to-4,000 repeated-projection and sibling-scope
+contracts verify exact overlay growth, linear binding allocations, and zero
+full-scope clones under wall-clock ceilings. The thread-local
 collection context is guarded across both ordinary errors and panic unwinding.
 
 The migration is complete when:

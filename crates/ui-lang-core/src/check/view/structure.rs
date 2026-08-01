@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::check) fn infer_structure_group(
     node: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
@@ -49,7 +49,7 @@ pub(in crate::check) fn infer_structure_group(
         } => {
             check_id(id, env, document, ids, span)?;
             require_type(&expr_type(scale, env, document, span)?, &Type::F64, span)?;
-            let mut translate_env = env.clone();
+            let mut translate_env = scoped_view_env(env);
             for name in [
                 "original_x",
                 "original_y",
@@ -155,7 +155,13 @@ pub(in crate::check) fn infer_structure_group(
                     wide,
                 } => {
                     require_type(
-                        &expr_type(breakpoint, env, document, span)?,
+                        &retained_view_expr_type(
+                            breakpoint,
+                            env,
+                            document,
+                            span,
+                            CheckedViewExprRole::ResponsiveBreakpoint,
+                        )?,
                         &Type::F64,
                         span,
                     )?;
@@ -174,7 +180,7 @@ pub(in crate::check) fn infer_structure_group(
                     height,
                     content,
                 } => {
-                    let mut child_env = env.clone();
+                    let mut child_env = scoped_view_env(env);
                     child_env.insert(width.clone(), Type::F64);
                     child_env.insert(height.clone(), Type::F64);
                     infer_view(content, &child_env, document, signatures, ids)?;

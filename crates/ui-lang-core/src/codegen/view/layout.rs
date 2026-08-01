@@ -9,7 +9,7 @@ pub(in crate::codegen) fn render_layout(
     span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
@@ -431,7 +431,7 @@ fn render_flexbox(
     span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
@@ -594,19 +594,21 @@ fn render_flex_children(
     children: &[ViewNode],
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
     min_cell: Option<&Expr>,
 ) -> Result<(), Error> {
     for child in children {
         match child {
-            ViewNode::If {
-                condition,
-                children,
-                ..
-            } => {
-                let condition = expr_code(condition, env, document, ValueMode::Owned)?;
+            ViewNode::If { children, span, .. } => {
+                let CheckedViewFlow::If { condition } =
+                    &document.program().checked_view(span)?.flow
+                else {
+                    return Err(Error::new("E196", span, "flex if has no checked flow"));
+                };
+                let condition =
+                    checked_expr_use_code(document.program(), *condition, env, ValueMode::Owned)?;
                 if condition == "false" {
                     continue;
                 }
@@ -620,57 +622,80 @@ fn render_flex_children(
                 render_flex_children(out, children, document, message, env, scope, slot, min_cell)?;
                 out.push_str(" }");
             }
-            ViewNode::For {
-                item,
-                items,
-                children,
-                span,
-            } => {
-                let Type::List(inner) = expr_type(items, &env_types(env), document, span)? else {
-                    return Err(Error::new("E121", span, "for expects a list"));
+            ViewNode::For { children, span, .. } => {
+                let CheckedViewFlow::For { items, item } =
+                    &document.program().checked_view(span)?.flow
+                else {
+                    return Err(Error::new("E196", span, "flex for has no checked flow"));
                 };
-                let items = expr_code(items, env, document, ValueMode::Borrowed)?;
+                let local = document.program().checked_facts().local(*item);
+                let item_name = &local.name;
+                let items =
+                    checked_expr_use_code(document.program(), *items, env, ValueMode::Borrowed)?;
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
-                    " for (__ice_index, {item}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
+                    " for (__ice_index, {item_name}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
                     span.line
                 )
                 .unwrap();
-                let mut child_env = env.clone();
+                let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
-                    item.clone(),
-                    Binding {
-                        code: item.clone(),
-                        ty: *inner,
-                        local: false,
-                        state: None,
-                    },
+                    item_name.clone(),
+                    checked_local_binding(document.program(), *item, item_name.clone(), false),
                 );
-                set_reconciliation_scope(&mut child_env, "__for_scope.clone()".into());
+                child_env.insert(
+                    RECONCILIATION_SCOPE_BINDING.into(),
+                    reconciliation_scope_binding("__for_scope.clone()".into()),
+                );
                 render_flex_children(
                     out, children, document, message, &child_env, scope, slot, min_cell,
                 )?;
                 out.push_str(" }");
             }
-            ViewNode::Match { value, arms, span } => {
-                let value_ty = expr_type(value, &env_types(env), document, span)?;
-                let value = expr_code(value, env, document, ValueMode::Borrowed)?;
+            ViewNode::Match { arms, span, .. } => {
+                let CheckedViewFlow::Match {
+                    value,
+                    arms: checked_arms,
+                } = &document.program().checked_view(span)?.flow
+                else {
+                    return Err(Error::new("E196", span, "flex match has no checked flow"));
+                };
+                if arms.len() != checked_arms.len() {
+                    return Err(Error::new(
+                        "E196",
+                        span,
+                        "flex match arm arena length diverged",
+                    ));
+                }
+                let value_ty = document
+                    .program()
+                    .checked_facts()
+                    .expression_use(*value)
+                    .source
+                    .clone();
+                let value =
+                    checked_expr_use_code(document.program(), *value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
-                for arm in arms {
-                    write!(out, " {} => {{", match_pattern_code(&arm.pattern)).unwrap();
-                    let mut child_env = env.clone();
-                    if let Some((name, ty)) =
-                        match_pattern_binding(&arm.pattern, &value_ty, document)
-                    {
+                for (arm, checked_arm) in arms.iter().zip(checked_arms) {
+                    write!(
+                        out,
+                        " {} => {{",
+                        checked_match_pattern_code(
+                            document.program(),
+                            &checked_arm.pattern,
+                            checked_arm.binding,
+                            &value_ty,
+                            &arm.span,
+                        )?
+                    )
+                    .unwrap();
+                    let mut child_env = ScopedBindingEnv::new(env);
+                    if let Some(local) = checked_arm.binding {
+                        let name = document.program().checked_facts().local(local).name.clone();
                         child_env.insert(
                             name.clone(),
-                            Binding {
-                                code: name,
-                                ty,
-                                local: false,
-                                state: None,
-                            },
+                            checked_local_binding(document.program(), local, name, false),
                         );
                     }
                     render_flex_children(
@@ -719,7 +744,7 @@ fn render_flex_children(
 fn flex_item_code(
     child: &str,
     options: Option<&FlexItemOptions>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let mut code = format!("::ui_lang_runtime::flex_item({child})");
@@ -821,7 +846,7 @@ fn flex_margin_side<'a>(
 
 fn flex_margin_code(
     margin: Option<&FlexMarginValue>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(match margin {
@@ -875,7 +900,7 @@ fn flex_content_alignment_name(align: FlexContentAlignment) -> &'static str {
 
 pub(in crate::codegen) fn scroll_bar_code(
     scroll: &ScrollOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let constructor = if scroll.hidden_bar { "hidden" } else { "new" };
@@ -901,7 +926,7 @@ pub(in crate::codegen) fn scroll_bar_code(
 pub(in crate::codegen) fn scroll_style_code(
     styles: &[ScrollStatusStyle],
     custom: Option<&ExternCall>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = custom
@@ -976,7 +1001,7 @@ pub(in crate::codegen) fn scroll_selector_code(style: &ScrollStatusStyle) -> Str
 pub(in crate::codegen) fn append_scroll_status_style(
     code: &mut String,
     style: &ScrollStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     append_scroll_surface_style(
@@ -1038,7 +1063,7 @@ pub(in crate::codegen) fn append_scroll_surface_style(
     target: &str,
     optional_background: bool,
     text: bool,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     let mut options = options.clone();

@@ -154,7 +154,7 @@ pub(in crate::check) fn require_f32_literal_range(
 
 pub(in crate::check) fn require_nonnegative_f64(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     label: &str,
     span: &Span,
@@ -165,7 +165,7 @@ pub(in crate::check) fn require_nonnegative_f64(
 
 pub(in crate::check) fn require_f32_value(
     expr: &Expr,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     label: &str,
     span: &Span,
@@ -176,7 +176,7 @@ pub(in crate::check) fn require_f32_value(
 
 pub(in crate::check) fn check_background_value(
     background: &BackgroundValue,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
     code: &'static str,
@@ -204,12 +204,12 @@ pub(in crate::check) fn check_background_value(
 
 pub(in crate::check) fn infer_pane_view(
     pane: &PaneView,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
     ids: &mut HashSet<String>,
 ) -> Result<(), Error> {
-    let mut pane_env = env.clone();
+    let mut pane_env = ScopedTypeEnv::new(env);
     if let Some(binding) = &pane.maximized {
         pane_env.insert(binding.clone(), Type::Bool);
     }
@@ -257,7 +257,7 @@ pub(in crate::check) fn infer_pane_view(
 
 pub(in crate::check) fn check_container_style_options(
     style: &ContainerStyleOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
     code: &'static str,
@@ -299,7 +299,7 @@ pub(in crate::check) fn check_container_style_options(
 
 pub(in crate::check) fn check_markdown_style(
     style: &MarkdownStyleOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -357,7 +357,7 @@ pub(in crate::check) fn check_markdown_style(
 
 pub(in crate::check) fn check_float_style_options(
     style: &FloatStyleOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -397,7 +397,7 @@ pub(in crate::check) fn f64_literal(expr: &Expr) -> Option<f64> {
 
 pub(in crate::check) fn check_accessibility_options(
     options: &AccessibilityOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -409,7 +409,7 @@ pub(in crate::check) fn check_accessibility_options(
 
 pub(in crate::check) fn check_bool_control_options(
     options: &BoolControlOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -450,7 +450,7 @@ pub(in crate::check) fn check_bool_control_options(
 
 pub(in crate::check) fn check_checkbox_styles(
     styles: &CheckboxStyleSet,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     parent_span: &Span,
 ) -> Result<(), Error> {
@@ -504,7 +504,7 @@ pub(in crate::check) fn check_checkbox_styles(
 
 pub(in crate::check) fn check_toggler_styles(
     styles: &TogglerStyleSet,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     parent_span: &Span,
 ) -> Result<(), Error> {
@@ -561,7 +561,7 @@ pub(in crate::check) fn check_toggler_styles(
 
 pub(in crate::check) fn check_radio_styles(
     styles: &RadioStyleSet,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     parent_span: &Span,
 ) -> Result<(), Error> {
@@ -596,7 +596,7 @@ pub(in crate::check) fn check_radio_styles(
 
 pub(in crate::check) fn check_pick_list_handle(
     handle: Option<&PickListHandle>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -633,7 +633,7 @@ pub(in crate::check) fn check_pick_list_handle(
 
 pub(in crate::check) fn check_pick_list_styles(
     options: &PickListOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -663,7 +663,7 @@ pub(in crate::check) fn check_pick_list_styles(
 
 pub(in crate::check) fn check_menu_style(
     style: Option<&MenuStyleOptions>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -688,7 +688,7 @@ pub(in crate::check) fn check_menu_style(
 
 pub(in crate::check) fn check_text_input_icon(
     icon: Option<&TextInputIcon>,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     widget: &str,
 ) -> Result<(), Error> {
@@ -712,7 +712,7 @@ pub(in crate::check) fn check_text_input_icon(
 
 pub(in crate::check) fn check_text_input_styles(
     styles: &TextInputStyleSet,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
     widget: &str,
@@ -751,7 +751,7 @@ pub(in crate::check) fn check_text_input_styles(
 
 pub(in crate::check) fn check_scroll_styles(
     styles: &[ScrollStatusStyle],
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
 ) -> Result<(), Error> {
     for style in styles {
@@ -777,7 +777,7 @@ pub(in crate::check) fn check_scroll_styles(
 
 pub(in crate::check) fn check_slider_styles(
     styles: &SliderStyleSet,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     parent_span: &Span,
 ) -> Result<(), Error> {
@@ -850,7 +850,7 @@ pub(in crate::check) fn check_slider_styles(
 /// own, and only the typed `border=` names one the lowering can read.
 pub(in crate::check) fn check_border_dash(
     options: &ContainerOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {
@@ -917,7 +917,7 @@ pub(in crate::check) fn check_text_tracking(
 
 pub(in crate::check) fn check_text_options(
     options: &TextOptions,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     span: &Span,
 ) -> Result<(), Error> {

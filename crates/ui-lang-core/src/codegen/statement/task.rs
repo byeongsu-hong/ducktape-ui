@@ -95,6 +95,7 @@ pub(in crate::codegen) fn task_flow_code(
                         ty: output,
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 )]);
                 let value = expr_code(value, &map_env, document, ValueMode::Owned)?;
@@ -129,6 +130,7 @@ pub(in crate::codegen) fn task_flow_code(
                         ty: binding_ty,
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 )]);
                 let next = task_source_code(source, document, &next_env)?;
@@ -150,6 +152,7 @@ pub(in crate::codegen) fn task_flow_code(
                         ty: error,
                         local: false,
                         state: None,
+                        owner: None,
                     },
                 )]);
                 let value = expr_code(value, &map_env, document, ValueMode::Owned)?;

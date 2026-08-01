@@ -4,7 +4,7 @@ pub(in crate::codegen) fn render_foundation(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
@@ -42,9 +42,10 @@ pub(in crate::codegen) fn render_foundation(
             options,
             panes,
             templates,
+            span,
             ..
         } => render_pane_grid(
-            name, options, panes, templates, document, message, env, scope, slot,
+            name, options, panes, templates, span, document, message, env, scope, slot,
         ),
         ViewNode::Text {
             value,
@@ -257,7 +258,7 @@ fn text_code(
     options: &TextOptions,
     style: &ResolvedStyle,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let mut glyph = String::new();
@@ -325,7 +326,7 @@ fn append_glyph_options(
     code: &mut String,
     options: &TextOptions,
     style: &ResolvedStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     append_text_options(code, options, style, env, document)?;

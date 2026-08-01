@@ -89,37 +89,16 @@ pub(in crate::codegen) fn pane_template_variant(name: &str) -> String {
     }
 }
 
-pub(in crate::codegen) fn pane_template_types(
-    template: &PaneTemplate,
-    document: &Document,
-) -> Result<(Type, Type), Error> {
-    let state = document
-        .states
-        .iter()
-        .find(|state| state.name == template.items)
-        .expect("checker validates dynamic pane state");
-    let Type::List(item_type) = &state.ty else {
-        unreachable!("checker validates dynamic pane lists")
-    };
-    let mut env = document
-        .states
-        .iter()
-        .map(|state| (state.name.clone(), state.ty.clone()))
-        .collect::<HashMap<_, _>>();
-    env.insert(template.item.clone(), (**item_type).clone());
-    Ok((
-        (**item_type).clone(),
-        expr_type(&template.key, &env, document, &template.span)?,
-    ))
-}
-
 pub(in crate::codegen) fn generate_pane_types(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<(), Error> {
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program.document()) {
         let ViewNode::PaneGrid {
-            name, templates, ..
+            name,
+            templates,
+            span,
+            ..
         } = node
         else {
             unreachable!()
@@ -134,13 +113,27 @@ pub(in crate::codegen) fn generate_pane_types(
             "{cfg}#[derive(Debug, Clone, PartialEq)]\npub(crate) enum {pane_type} {{\n__Static(&'static str),"
         )
         .unwrap();
-        for template in templates {
-            let (_, key_type) = pane_template_types(template, document)?;
+        let CheckedViewFlow::PaneGrid {
+            templates: checked_templates,
+            ..
+        } = &program.checked_view(span)?.flow
+        else {
+            return Err(Error::new("E196", span, "pane type has no checked flow"));
+        };
+        if templates.len() != checked_templates.len() {
+            return Err(Error::new(
+                "E196",
+                span,
+                "pane type checked template arena length diverged",
+            ));
+        }
+        for (template, checked) in templates.iter().zip(checked_templates) {
+            let key_type = &program.checked_facts().expression_use(checked.key).source;
             writeln!(
                 out,
                 "{}({}),",
                 pane_template_variant(&template.item),
-                key_type.rust(&document.structs)
+                key_type.rust(&program.document().structs)
             )
             .unwrap();
         }

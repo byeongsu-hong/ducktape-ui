@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn pick_list_handle_code(
     handle: &PickListHandle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(match handle {
@@ -33,7 +33,7 @@ pub(in crate::codegen) fn pick_list_handle_code(
 
 pub(in crate::codegen) fn pick_list_icon_code(
     icon: &PickListIcon,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let font = icon.font.as_ref().map_or_else(
@@ -75,7 +75,7 @@ pub(in crate::codegen) fn pick_list_icon_code(
 
 pub(in crate::codegen) fn pick_list_style_code(
     options: &PickListOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = options
@@ -158,7 +158,7 @@ pub(in crate::codegen) fn pick_list_style_code(
 fn append_pick_list_status_style(
     code: &mut String,
     style: &PickListStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     append_select_surface_overrides(code, &style.options, env, document, false)?;
@@ -184,7 +184,7 @@ fn append_pick_list_status_style(
 pub(in crate::codegen) fn menu_style_code(
     style: Option<&MenuStyleOptions>,
     custom: Option<&ExternCall>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = custom
@@ -226,7 +226,7 @@ pub(in crate::codegen) fn menu_style_code(
 pub(in crate::codegen) fn append_select_surface_overrides(
     code: &mut String,
     options: &ContainerStyleOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     shadow: bool,
 ) -> Result<(), Error> {
@@ -300,7 +300,7 @@ pub(in crate::codegen) fn append_select_surface_overrides(
 
 pub(in crate::codegen) fn text_input_icon_code(
     icon: &TextInputIcon,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let font = icon.font.as_ref().map_or_else(
@@ -334,7 +334,7 @@ pub(in crate::codegen) fn text_input_style_code(
     styles: &TextInputStyleSet,
     custom: Option<&ExternCall>,
     utilities: Option<&ResolvedStyle>,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     method: &str,
     widget: &str,
@@ -448,7 +448,7 @@ pub(in crate::codegen) fn text_input_style_code(
 pub(in crate::codegen) fn append_text_input_style_overrides(
     code: &mut String,
     style: &TextInputStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(background) = &style.options.background {

@@ -7,7 +7,7 @@ pub(in crate::codegen) fn render_canvas(
     events: &[CanvasEvent],
     document: &Document,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let state_fields = locals
         .iter()
@@ -25,7 +25,7 @@ pub(in crate::codegen) fn render_canvas(
         })
         .collect::<Result<Vec<_>, Error>>()?
         .join(" ");
-    let mut canvas_env = env.clone();
+    let mut canvas_env = env.snapshot();
     for local in locals {
         canvas_env.insert(
             local.name.clone(),
@@ -34,6 +34,7 @@ pub(in crate::codegen) fn render_canvas(
                 ty: local.ty.clone(),
                 local: false,
                 state: None,
+                owner: None,
             },
         );
     }
@@ -44,6 +45,7 @@ pub(in crate::codegen) fn render_canvas(
             ty: Type::F64,
             local: true,
             state: None,
+            owner: None,
         },
     );
     canvas_env.insert(
@@ -53,15 +55,10 @@ pub(in crate::codegen) fn render_canvas(
             ty: Type::F64,
             local: true,
             state: None,
+            owner: None,
         },
     );
-    let mut captures = env
-        .values()
-        .filter_map(|binding| match &binding.state {
-            Some(StateBinding::Component { scope, .. }) => Some(scope.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut captures = component_state_scopes(env);
     if let Some((_, context)) = component_context(env) {
         captures.push(context.code.clone());
     }
@@ -207,11 +204,11 @@ fn canvas_initial_code(state: &State, document: &Document) -> Result<String, Err
 }
 
 fn canvas_capture_env(
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     captures: &[String],
     phase: &str,
 ) -> (HashMap<String, Binding>, String) {
-    let mut captured = env.clone();
+    let mut captured = env.snapshot();
     let mut setup = String::new();
 
     for (index, scope) in captures.iter().enumerate() {

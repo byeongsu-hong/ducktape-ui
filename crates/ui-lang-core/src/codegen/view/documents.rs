@@ -4,7 +4,7 @@ pub(in crate::codegen) fn render_documents(
     node: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
@@ -310,15 +310,11 @@ pub(in crate::codegen) fn render_documents(
             }
         }
         ViewNode::Table {
-            item,
-            rows,
             options,
             columns,
             span,
             ..
         } => render_table(
-            item,
-            rows,
             options,
             columns,
             span,

@@ -9,7 +9,7 @@ pub(in crate::check) struct WidgetIdSlot {
 
 pub(in crate::check) fn widget_operation_ids(
     root: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
 ) -> Result<Vec<WidgetIdPath>, Error> {
     Ok(collect_widget_ids(root, env, document, false)?.targets)
@@ -22,7 +22,7 @@ pub(in crate::check) struct TestWidgetIds {
 
 pub(in crate::check) fn test_widget_ids(
     root: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
 ) -> Result<TestWidgetIds, Error> {
     collect_widget_ids(root, env, document, true)
@@ -30,13 +30,13 @@ pub(in crate::check) fn test_widget_ids(
 
 fn collect_widget_ids(
     root: &ViewNode,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     inspect_all: bool,
 ) -> Result<TestWidgetIds, Error> {
     fn segment(
         id: &Id,
-        env: &HashMap<String, Type>,
+        env: &dyn ExprTypeEnv,
         document: &Document,
         span: &Span,
     ) -> Result<(String, Option<Type>), Error> {
@@ -52,7 +52,7 @@ fn collect_widget_ids(
     fn scoped(
         scope: &WidgetIdPath,
         id: &Option<Id>,
-        env: &HashMap<String, Type>,
+        env: &dyn ExprTypeEnv,
         document: &Document,
         span: &Span,
     ) -> Result<WidgetIdPath, Error> {
@@ -66,7 +66,7 @@ fn collect_widget_ids(
     fn record(
         scope: &WidgetIdPath,
         id: &Option<Id>,
-        env: &HashMap<String, Type>,
+        env: &dyn ExprTypeEnv,
         document: &Document,
         span: &Span,
         output: &mut Vec<WidgetIdPath>,
@@ -116,7 +116,7 @@ fn collect_widget_ids(
     #[allow(clippy::too_many_arguments)]
     fn collect(
         node: &ViewNode,
-        env: &HashMap<String, Type>,
+        env: &dyn ExprTypeEnv,
         document: &Document,
         scope: &WidgetIdPath,
         slot: Option<&WidgetIdSlot>,
@@ -242,7 +242,7 @@ fn collect_widget_ids(
                 let Type::List(inner) = expr_type(items, env, document, span)? else {
                     unreachable!("checker validates for lists")
                 };
-                let mut child_env = env.clone();
+                let mut child_env = ScopedTypeEnv::new(env);
                 child_env.insert(item.clone(), *inner);
                 for child in children {
                     collect(
@@ -261,7 +261,7 @@ fn collect_widget_ids(
             ViewNode::Match { value, arms, span } => {
                 let value_ty = expr_type(value, env, document, span)?;
                 for arm in arms {
-                    let mut child_env = env.clone();
+                    let mut child_env = ScopedTypeEnv::new(env);
                     if let Some((name, ty)) = match_binding_type(&arm.pattern, &value_ty, document)
                     {
                         child_env.insert(name, ty);
@@ -296,7 +296,7 @@ fn collect_widget_ids(
                 let Type::List(inner) = expr_type(items, env, document, span)? else {
                     unreachable!("checker validates keyed lists")
                 };
-                let mut child_env = env.clone();
+                let mut child_env = ScopedTypeEnv::new(env);
                 child_env.insert(item.clone(), *inner);
                 let mut child_scope = scoped(scope, id, env, document, span)?;
                 child_scope.push((
@@ -325,7 +325,7 @@ fn collect_widget_ids(
                 if inspect_all {
                     record(scope, id, env, document, span, output)?;
                 }
-                let mut child_env = env.clone();
+                let mut child_env = ScopedTypeEnv::new(env);
                 child_env.insert(binding.clone(), expr_type(dependency, env, document, span)?);
                 let child_scope = scoped(scope, id, env, document, span)?;
                 collect(
@@ -420,7 +420,7 @@ fn collect_widget_ids(
                     output.push(grid_scope.clone());
                 }
                 for pane in panes {
-                    let mut pane_env = env.clone();
+                    let mut pane_env = ScopedTypeEnv::new(env);
                     if let Some(binding) = &pane.maximized {
                         pane_env.insert(binding.clone(), Type::Bool);
                     }
@@ -442,12 +442,12 @@ fn collect_widget_ids(
                 }
                 for template in templates {
                     let Type::List(item_type) = env
-                        .get(&template.items)
+                        .get_type(&template.items)
                         .expect("checker validates dynamic pane state")
                     else {
                         unreachable!("checker validates dynamic pane lists")
                     };
-                    let mut template_env = env.clone();
+                    let mut template_env = ScopedTypeEnv::new(env);
                     template_env.insert(template.item.clone(), (**item_type).clone());
                     if let Some(binding) = &template.pane.maximized {
                         template_env.insert(binding.clone(), Type::Bool);
@@ -492,7 +492,7 @@ fn collect_widget_ids(
                 let Type::List(inner) = expr_type(rows, env, document, span)? else {
                     unreachable!("checker validates table rows")
                 };
-                let mut cell_env = env.clone();
+                let mut cell_env = ScopedTypeEnv::new(env);
                 cell_env.insert(item.clone(), *inner);
                 for column in columns {
                     let mut header_scope = child_scope.clone();
@@ -566,7 +566,7 @@ fn collect_widget_ids(
                 let component_slot = (!slots.is_empty()).then(|| WidgetIdSlot {
                     entries: slots
                         .iter()
-                        .map(|slot| (slot.name.clone(), (*slot.content).clone(), env.clone()))
+                        .map(|slot| (slot.name.clone(), (*slot.content).clone(), env.snapshot()))
                         .collect(),
                     parent: slot.cloned().map(Box::new),
                 });
@@ -673,7 +673,7 @@ fn collect_widget_ids(
                         height,
                         content,
                     } => {
-                        let mut child_env = env.clone();
+                        let mut child_env = ScopedTypeEnv::new(env);
                         child_env.insert(width.clone(), Type::F64);
                         child_env.insert(height.clone(), Type::F64);
                         collect(
@@ -907,7 +907,7 @@ fn unknown_widget_target_hint(label: &str, operation_ids: &[WidgetIdPath]) -> St
 
 pub(in crate::check) fn check_widget_target(
     target: &WidgetTarget,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     operation_ids: &[WidgetIdPath],
     span: &Span,
@@ -1034,7 +1034,7 @@ pub(in crate::check) fn widget_selector_output(
 
 pub(in crate::check) fn check_widget_selector(
     selector: &WidgetSelector,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
     document: &Document,
     operation_ids: &[WidgetIdPath],
     span: &Span,

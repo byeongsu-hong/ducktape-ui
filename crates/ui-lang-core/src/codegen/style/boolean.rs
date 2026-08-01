@@ -4,7 +4,7 @@ pub(in crate::codegen) fn append_text_options(
     code: &mut String,
     options: &TextOptions,
     style: &ResolvedStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(size) = &options.size {
@@ -78,7 +78,7 @@ pub(in crate::codegen) fn append_text_options(
 pub(in crate::codegen) fn append_bool_control_options(
     code: &mut String,
     options: &BoolControlOptions,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     toggler: bool,
 ) -> Result<(), Error> {
@@ -169,7 +169,7 @@ pub(in crate::codegen) fn append_bool_control_options(
 
 pub(in crate::codegen) fn checkbox_style_code(
     styles: &CheckboxStyleSet,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = styles
@@ -248,7 +248,7 @@ pub(in crate::codegen) fn checkbox_style_code(
 fn append_checkbox_status_style(
     code: &mut String,
     style: &CheckboxStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(background) = &style.background {
@@ -309,7 +309,7 @@ fn append_checkbox_status_style(
 
 pub(in crate::codegen) fn toggler_style_code(
     styles: &TogglerStyleSet,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = styles
@@ -378,7 +378,7 @@ pub(in crate::codegen) fn toggler_style_code(
 fn append_toggler_status_style(
     code: &mut String,
     style: &TogglerStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(background) = &style.background {
@@ -467,7 +467,7 @@ fn append_toggler_status_style(
 
 pub(in crate::codegen) fn radio_style_code(
     styles: &RadioStyleSet,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let custom = styles
@@ -534,7 +534,7 @@ pub(in crate::codegen) fn radio_style_code(
 fn append_radio_status_style(
     code: &mut String,
     style: &RadioStatusStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<(), Error> {
     if let Some(background) = &style.background {

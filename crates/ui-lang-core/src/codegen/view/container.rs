@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_container(
     span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
@@ -129,7 +129,7 @@ pub(in crate::codegen) fn render_container(
 fn border_dash_code(
     options: &ContainerOptions,
     style: &ResolvedStyle,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let color = options
@@ -176,7 +176,7 @@ pub(in crate::codegen) fn render_overlay(
     layer: &ViewNode,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
@@ -217,7 +217,7 @@ pub(in crate::codegen) fn render_rich_text(
     node_span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
     let spans = spans

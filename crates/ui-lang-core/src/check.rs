@@ -58,7 +58,7 @@ fn check(
     reachable: &HashSet<String>,
     reachable_handlers: &HandlerReachability,
     declarations: &crate::hir::DeclarationIndex,
-) -> Result<facts::InitializerAnalyses, Error> {
+) -> Result<facts::CheckedAnalyses, Error> {
     check_unique(document)?;
     check_fonts(document)?;
     check_slots(document)?;
@@ -78,7 +78,7 @@ fn check(
         .iter()
         .map(|state| (state.name.clone(), state.ty.clone()))
         .collect();
-    let mut initializer_analyses = facts::InitializerAnalyses::default();
+    let mut initializer_analyses = facts::CheckedAnalyses::default();
     let derived = without_usage(|| {
         check_derived(document, &states, declarations, &mut initializer_analyses)
     })?;
@@ -302,6 +302,7 @@ fn check(
         }
     }
 
+    let view_analysis_guard = view::ViewAnalysisGuard::start(document, declarations);
     let mut ids = HashSet::new();
     let mut view_states = app_values.clone();
     if document.daemon {
@@ -339,6 +340,10 @@ fn check(
                 .map(|(name, _, _)| (format!("\0slot-provided:{name}"), Type::Bool)),
         );
         env.insert(component_context_key(&component.name), Type::Unit);
+        env.insert(
+            COMPONENT_CONTEXT_INDEX.into(),
+            Type::Named(component.name.clone()),
+        );
         env.insert(
             component_output_key(&component.name),
             component.output.clone(),
@@ -381,7 +386,13 @@ fn check(
             .iter()
             .map(|state| (state.name.clone(), state.ty.clone()))
             .collect();
-        let env = HashMap::from([(component_context_key(&component.name), Type::Unit)]);
+        let env = HashMap::from([
+            (component_context_key(&component.name), Type::Unit),
+            (
+                COMPONENT_CONTEXT_INDEX.into(),
+                Type::Named(component.name.clone()),
+            ),
+        ]);
         for handler in &component.handlers {
             with_component_scope(
                 &component.name,
@@ -496,6 +507,7 @@ fn check(
         }
     }
     check_tests(document, &view_states)?;
+    initializer_analyses.extend(view_analysis_guard.finish())?;
     Ok(initializer_analyses)
 }
 
@@ -532,7 +544,7 @@ fn check_derived(
     document: &mut Document,
     states: &HashMap<String, Type>,
     declarations: &crate::hir::DeclarationIndex,
-    analyses: &mut facts::InitializerAnalyses,
+    analyses: &mut facts::CheckedAnalyses,
 ) -> Result<HashMap<String, Type>, Error> {
     fn dependencies(expr: &Expr, names: &HashMap<String, usize>, output: &mut Vec<usize>) {
         match expr {
@@ -578,7 +590,7 @@ fn check_derived(
         states: &'a HashMap<String, Type>,
         names: &'a HashMap<String, usize>,
         declarations: &'a crate::hir::DeclarationIndex,
-        analyses: &'a mut facts::InitializerAnalyses,
+        analyses: &'a mut facts::CheckedAnalyses,
         marks: Vec<u8>,
         types: Vec<Option<Type>>,
     }
@@ -682,6 +694,7 @@ fn check_derived(
 }
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";
+const COMPONENT_CONTEXT_INDEX: &str = "\0component-context";
 const COMPONENT_OUTPUT_PREFIX: &str = "\0component-output:";
 
 fn component_context_key(component: &str) -> String {
@@ -692,14 +705,15 @@ fn component_output_key(component: &str) -> String {
     format!("{COMPONENT_OUTPUT_PREFIX}{component}")
 }
 
-fn component_context(env: &HashMap<String, Type>) -> Option<&str> {
-    env.keys()
-        .find_map(|name| name.strip_prefix(COMPONENT_CONTEXT_PREFIX))
+fn component_context(env: &dyn ExprTypeEnv) -> Option<&str> {
+    match env.get_type(COMPONENT_CONTEXT_INDEX) {
+        Some(Type::Named(component)) => Some(component),
+        _ => None,
+    }
 }
 
-fn component_output(env: &HashMap<String, Type>) -> Option<&Type> {
-    env.iter()
-        .find_map(|(name, output)| name.starts_with(COMPONENT_OUTPUT_PREFIX).then_some(output))
+fn component_output(env: &dyn ExprTypeEnv) -> Option<&Type> {
+    env.type_with_prefix(COMPONENT_OUTPUT_PREFIX)
 }
 
 fn component_handler_key(component: &str, handler: &str) -> String {
@@ -762,12 +776,15 @@ use usage::*;
 use view::*;
 use widgets::*;
 
-pub(crate) use expr::{ExprTypeEnv, expr_type};
+pub(crate) use expr::{ExprTypeEnv, ScopedTypeEnv, expr_type};
 use expr::{check_length_value, contains_ui_enum};
+#[cfg(test)]
+pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
-    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,
-    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
-    CheckedProjection, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
+    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedComponentArgumentSource,
+    CheckedExprId, CheckedExprKind, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
+    CheckedLocalId, CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
+    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 

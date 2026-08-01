@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::codegen) fn canvas_paint_code(
     paint: &CanvasPaint,
     path: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let mut code = String::new();
@@ -29,7 +29,7 @@ pub(in crate::codegen) fn canvas_paint_code(
 pub(in crate::codegen) fn canvas_fill_code(
     fill: &BackgroundValue,
     rule: CanvasFillRule,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let rule = match rule {
@@ -44,7 +44,7 @@ pub(in crate::codegen) fn canvas_fill_code(
 
 pub(in crate::codegen) fn canvas_stroke_code(
     stroke: &CanvasStroke,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let cap = match stroke.cap {
@@ -73,7 +73,7 @@ pub(in crate::codegen) fn canvas_stroke_code(
 
 pub(in crate::codegen) fn canvas_style_code(
     style: &BackgroundValue,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(match style {
@@ -111,7 +111,7 @@ pub(in crate::codegen) fn canvas_radius_is_empty(radius: &CanvasRadius) -> bool 
 
 pub(in crate::codegen) fn canvas_radius_code(
     radius: &CanvasRadius,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     radius_code(
@@ -131,7 +131,7 @@ pub(in crate::codegen) fn canvas_radius_code(
 pub(in crate::codegen) fn canvas_point_code(
     x: &Expr,
     y: &Expr,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(format!(
@@ -144,7 +144,7 @@ pub(in crate::codegen) fn canvas_point_code(
 pub(in crate::codegen) fn canvas_size_code(
     width: &Expr,
     height: &Expr,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(format!(
@@ -156,7 +156,7 @@ pub(in crate::codegen) fn canvas_size_code(
 
 pub(in crate::codegen) fn canvas_expr_code(
     value: &Expr,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     expr_code(value, env, document, ValueMode::Owned)

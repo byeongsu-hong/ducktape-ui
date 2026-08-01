@@ -4,8 +4,9 @@ use super::expr::{
 };
 use super::*;
 use crate::hir::{
-    AppStateId, ComponentId, ComponentParamId, ComponentStateId, DeclarationIndex, DerivedId,
-    EnumVariantId, ExternFnId, OriginArena, OriginId, PaletteId, StructFieldId, TestId,
+    AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId,
+    DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, OriginArena, OriginId, PaletteId,
+    StructFieldId, TestId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -22,9 +23,6 @@ pub(crate) struct CheckedValueId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedLocalId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedViewId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedBuiltinId(u32);
@@ -56,9 +54,35 @@ pub(crate) struct CheckedValue {
 pub(crate) struct CheckedLocal {
     pub(crate) name: String,
     pub(crate) ty: Type,
-    pub(crate) owner: CheckedExprUseId,
-    pub(crate) body_argument: usize,
+    pub(crate) owner: CheckedLocalOwner,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CheckedLocalOwner {
+    ExpressionBinding {
+        expression: CheckedExprUseId,
+        body_argument: usize,
+    },
+    View {
+        view: ViewId,
+        role: CheckedViewLocalRole,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CheckedViewLocalRole {
+    DaemonWindow,
+    ForItem,
+    MatchPayload(u32),
+    KeyedItem,
+    LazyDependency,
+    TableRow,
+    PaneMaximized(u32),
+    PaneTemplateItem(u32),
+    PaneTemplateMaximized(u32),
+    ResponsiveWidth,
+    ResponsiveHeight,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,16 +94,111 @@ pub(crate) enum CheckedViewScope {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedView {
+    pub(crate) id: ViewId,
     pub(crate) kind: &'static str,
     pub(crate) scope: CheckedViewScope,
-    pub(crate) parent: Option<CheckedViewId>,
-    pub(crate) children: Vec<CheckedViewId>,
+    pub(crate) parent: Option<ViewId>,
+    pub(crate) children: Vec<ViewId>,
+    pub(crate) flow: CheckedViewFlow,
     pub(crate) origin: OriginId,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
+pub(crate) enum CheckedViewFlow {
+    #[default]
+    None,
+    If {
+        condition: CheckedExprUseId,
+    },
+    For {
+        items: CheckedExprUseId,
+        item: CheckedLocalId,
+    },
+    Match {
+        value: CheckedExprUseId,
+        arms: Vec<CheckedMatchArm>,
+    },
+    Keyed {
+        items: CheckedExprUseId,
+        key: CheckedExprUseId,
+        item: CheckedLocalId,
+    },
+    Lazy {
+        dependency: CheckedExprUseId,
+        binding: CheckedLocalId,
+    },
+    Table {
+        rows: CheckedExprUseId,
+        item: CheckedLocalId,
+    },
+    PaneGrid {
+        static_maximized: Vec<Option<CheckedLocalId>>,
+        templates: Vec<CheckedPaneTemplate>,
+    },
+    ResponsiveBreakpoint {
+        breakpoint: CheckedExprUseId,
+    },
+    ResponsiveSize {
+        width: CheckedLocalId,
+        height: CheckedLocalId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedPaneTemplate {
+    pub(crate) key: CheckedExprUseId,
+    pub(crate) item: CheckedLocalId,
+    pub(crate) maximized: Option<CheckedLocalId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedMatchArm {
+    pub(crate) pattern: CheckedMatchPattern,
+    pub(crate) binding: Option<CheckedLocalId>,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedMatchPattern {
+    Some,
+    None,
+    Ok,
+    Err,
+    Enum(EnumVariantId),
+    Palette(PaletteId),
+    Wildcard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedExprOwner {
     Value(CheckedValueRef),
+    ComponentArgument {
+        call: ComponentCallId,
+        param: ComponentParamId,
+    },
+    View {
+        view: ViewId,
+        role: CheckedViewExprRole,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedComponentArgumentSource {
+    Supplied(CheckedExprUseId),
+    Default(CheckedExprUseId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CheckedViewExprRole {
+    IfCondition,
+    ForItems,
+    MatchValue,
+    KeyedItems,
+    KeyedKey,
+    LazyDependency,
+    TableRows,
+    PaneTemplateKey(u32),
+    ResponsiveBreakpoint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -160,6 +279,7 @@ pub(crate) enum CheckedExprKind {
     Bytes(Vec<u8>),
     List(Vec<CheckedExprId>),
     None,
+    SlotProvided(ComponentSlotId),
     Path {
         root: CheckedPathRoot,
         projections: Vec<CheckedProjection>,
@@ -197,6 +317,7 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) type_analysis_nodes: usize,
     pub(crate) type_analysis_cache_hits: usize,
     pub(crate) initializer_analysis_passes: usize,
+    pub(crate) view_analysis_passes: usize,
     pub(crate) type_scope_env_overlays: usize,
     pub(crate) type_scope_env_full_clones: usize,
     pub(crate) declaration_lookups: usize,
@@ -205,6 +326,8 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) scope_env_entries: usize,
     pub(crate) scope_env_overlays: usize,
     pub(crate) scope_env_full_clones: usize,
+    pub(crate) view_scope_env_overlays: usize,
+    pub(crate) view_scope_env_full_clones: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -214,6 +337,9 @@ pub(crate) struct CheckedFacts {
     locals: Vec<CheckedLocal>,
     views: Vec<CheckedView>,
     expression_uses: Vec<CheckedExprUse>,
+    expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
+    component_argument_sources:
+        HashMap<(ComponentCallId, ComponentParamId), CheckedComponentArgumentSource>,
     expressions: Vec<CheckedExpr>,
     builtins: Vec<String>,
     metrics: CheckedFactMetrics,
@@ -244,11 +370,26 @@ impl CheckedFacts {
         &self.locals[id.0 as usize]
     }
 
+    pub(crate) fn daemon_window_local(&self) -> Option<CheckedLocalId> {
+        self.locals
+            .iter()
+            .position(|local| {
+                matches!(
+                    local.owner,
+                    CheckedLocalOwner::View {
+                        role: CheckedViewLocalRole::DaemonWindow,
+                        ..
+                    }
+                )
+            })
+            .map(|index| CheckedLocalId(index as u32))
+    }
+
     pub(crate) fn views(&self) -> &[CheckedView] {
         &self.views
     }
 
-    pub(crate) fn view(&self, id: CheckedViewId) -> &CheckedView {
+    pub(crate) fn view(&self, id: ViewId) -> &CheckedView {
         self.record_lookup();
         &self.views[id.0 as usize]
     }
@@ -256,6 +397,21 @@ impl CheckedFacts {
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
         self.record_lookup();
         &self.expression_uses[id.0 as usize]
+    }
+
+    pub(crate) fn expression_use_by_owner(
+        &self,
+        owner: CheckedExprOwner,
+    ) -> Option<CheckedExprUseId> {
+        self.expression_uses_by_owner.get(&owner).copied()
+    }
+
+    pub(crate) fn component_argument_source(
+        &self,
+        call: ComponentCallId,
+        param: ComponentParamId,
+    ) -> Option<CheckedComponentArgumentSource> {
+        self.component_argument_sources.get(&(call, param)).copied()
     }
 
     pub(crate) fn expression(&self, id: CheckedExprId) -> &CheckedExpr {
@@ -295,38 +451,57 @@ pub(in crate::check) fn build(
     document: &Document,
     declarations: &DeclarationIndex,
     origins: &mut OriginArena,
-    analyses: InitializerAnalyses,
+    analyses: CheckedAnalyses,
 ) -> Result<CheckedFacts, Error> {
     FactsBuilder::new(document, declarations, origins, analyses).build()
 }
 
 #[derive(Debug, Default)]
-pub(super) struct InitializerAnalyses {
-    entries: HashMap<CheckedValueRef, ExprTypeAnalysis>,
+pub(super) struct CheckedAnalyses {
+    entries: HashMap<CheckedExprOwner, ExprTypeAnalysis>,
+    pub(super) view_scope_env_overlays: usize,
+    pub(super) view_scope_env_full_clones: usize,
 }
 
-impl InitializerAnalyses {
+impl CheckedAnalyses {
     pub(super) fn insert(
         &mut self,
         owner: CheckedValueRef,
+        analysis: ExprTypeAnalysis,
+    ) -> Result<(), Error> {
+        self.insert_expression(CheckedExprOwner::Value(owner), analysis)
+    }
+
+    pub(super) fn insert_expression(
+        &mut self,
+        owner: CheckedExprOwner,
         analysis: ExprTypeAnalysis,
     ) -> Result<(), Error> {
         if self.entries.insert(owner, analysis).is_some() {
             return Err(Error::new(
                 "E196",
                 &Span::line(1),
-                "initializer was analyzed more than once",
+                "checked expression owner was analyzed more than once",
             ));
         }
         Ok(())
     }
 
-    fn remove(&mut self, owner: CheckedValueRef) -> Option<ExprTypeAnalysis> {
+    fn remove(&mut self, owner: CheckedExprOwner) -> Option<ExprTypeAnalysis> {
         self.entries.remove(&owner)
     }
 
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub(super) fn extend(&mut self, other: Self) -> Result<(), Error> {
+        self.view_scope_env_overlays += other.view_scope_env_overlays;
+        self.view_scope_env_full_clones += other.view_scope_env_full_clones;
+        for (owner, analysis) in other.entries {
+            self.insert_expression(owner, analysis)?;
+        }
+        Ok(())
     }
 }
 
@@ -337,12 +512,13 @@ struct FactsBuilder<'a> {
     facts: CheckedFacts,
     values_by_scope: HashMap<ValueScope, HashMap<String, CheckedValueId>>,
     builtins_by_name: HashMap<String, CheckedBuiltinId>,
-    analyses: InitializerAnalyses,
+    analyses: CheckedAnalyses,
 }
 
 #[derive(Debug, Default)]
 struct FactEnv {
     paths: HashMap<String, (CheckedPathRoot, Type)>,
+    slots: HashMap<String, ComponentSlotId>,
 }
 
 impl FactEnv {
@@ -351,17 +527,26 @@ impl FactEnv {
     }
 
     fn len(&self) -> usize {
-        self.paths.len()
+        self.paths.len() + self.slots.len()
+    }
+
+    fn insert_slot(&mut self, name: String, slot: ComponentSlotId) {
+        self.slots.insert(name, slot);
     }
 }
 
 trait FactEnvironment {
     fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)>;
+    fn slot(&self, name: &str) -> Option<ComponentSlotId>;
 }
 
 impl FactEnvironment for FactEnv {
     fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
         self.paths.get(name)
+    }
+
+    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
+        self.slots.get(name).copied()
     }
 }
 
@@ -379,6 +564,10 @@ impl FactEnvironment for LayeredFactEnv<'_> {
             self.base.get(name)
         }
     }
+
+    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
+        self.base.slot(name)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -394,13 +583,16 @@ impl<'a> FactsBuilder<'a> {
         document: &'a Document,
         declarations: &'a DeclarationIndex,
         origins: &'a mut OriginArena,
-        analyses: InitializerAnalyses,
+        analyses: CheckedAnalyses,
     ) -> Self {
+        let mut facts = CheckedFacts::default();
+        facts.metrics.view_scope_env_overlays = analyses.view_scope_env_overlays;
+        facts.metrics.view_scope_env_full_clones = analyses.view_scope_env_full_clones;
         Self {
             document,
             declarations,
             origins,
-            facts: CheckedFacts::default(),
+            facts,
             values_by_scope: HashMap::new(),
             builtins_by_name: HashMap::new(),
             analyses,
@@ -410,13 +602,11 @@ impl<'a> FactsBuilder<'a> {
     fn build(mut self) -> Result<CheckedFacts, Error> {
         self.index_values()?;
         self.lower_initializers()?;
+        self.index_views()?;
+        self.lower_view_expressions()?;
         if !self.analyses.is_empty() {
-            return Err(self.invariant(
-                &Span::line(1),
-                "checked initializer analyses were not consumed",
-            ));
+            return Err(self.invariant(&Span::line(1), "checked analyses were not consumed"));
         }
-        self.index_views();
         if let Some(expression) = self
             .facts
             .expressions
@@ -567,6 +757,759 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    fn lower_view_expressions(&mut self) -> Result<(), Error> {
+        let mut app_env = self.fact_env(ValueScope::App);
+        if self.document.daemon {
+            let view = self
+                .declarations
+                .view_id(self.document.view.span())
+                .ok_or_else(|| {
+                    self.invariant(self.document.view.span(), "daemon root has no view ID")
+                })?;
+            let local = self.push_view_local(
+                "window",
+                Type::WindowId,
+                view,
+                CheckedViewLocalRole::DaemonWindow,
+                self.document.view.span(),
+            );
+            app_env.insert(
+                "window".into(),
+                CheckedPathRoot::Local(local),
+                Type::WindowId,
+            );
+        }
+        self.lower_view_expression_tree(&self.document.view, &app_env)?;
+
+        for (index, component) in self.document.components.iter().enumerate() {
+            let component_id = self.declarations.component(index).id;
+            let mut env = self.fact_env(ValueScope::Component(component_id));
+            for (slot_index, (name, _, _)) in crate::check::component_slots(&component.root)
+                .into_iter()
+                .enumerate()
+            {
+                env.insert_slot(
+                    name.to_owned(),
+                    self.declarations
+                        .component_slot(component_id, slot_index)
+                        .id,
+                );
+            }
+            self.lower_view_expression_tree(&component.root, &env)?;
+        }
+        for test in &self.document.tests {
+            if let Some(mount) = &test.mount {
+                self.lower_view_expression_tree(mount, &app_env)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn fact_env(&mut self, scope: ValueScope) -> FactEnv {
+        let mut env = FactEnv::default();
+        for (name, id) in self.values_by_scope.get(&scope).into_iter().flatten() {
+            let value = &self.facts.values[id.0 as usize];
+            env.insert(
+                name.clone(),
+                CheckedPathRoot::Value(value.id),
+                value.ty.clone(),
+            );
+        }
+        self.facts.metrics.scope_env_builds += 1;
+        self.facts.metrics.scope_env_entries += env.len();
+        env
+    }
+
+    fn push_view_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        expr: &Expr,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let analysis = self.analyses.remove(owner).ok_or_else(|| {
+            self.invariant(span, "missing authoritative view expression analysis")
+        })?;
+        let analysis_metrics = analysis.metrics();
+        self.facts.metrics.view_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
+        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += analysis_metrics.scoped_env_full_clones;
+        let inferred = analysis
+            .type_of(expr)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained view expression root type"))?;
+        let source = resolve_erased_type(&contextual_type(inferred, expected));
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "view expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: expected.cloned().unwrap_or(source),
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked view expression owner"));
+        }
+        Ok(id)
+    }
+
+    fn push_view_local(
+        &mut self,
+        name: &str,
+        ty: Type,
+        view: ViewId,
+        role: CheckedViewLocalRole,
+        span: &Span,
+    ) -> CheckedLocalId {
+        let parent = self.declarations.view(view).origin;
+        self.push_view_local_with_parent(name, ty, view, role, span, parent)
+    }
+
+    fn push_view_local_with_parent(
+        &mut self,
+        name: &str,
+        ty: Type,
+        view: ViewId,
+        role: CheckedViewLocalRole,
+        span: &Span,
+        parent: OriginId,
+    ) -> CheckedLocalId {
+        let id = CheckedLocalId(self.facts.locals.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        self.facts.locals.push(CheckedLocal {
+            name: name.to_owned(),
+            ty,
+            owner: CheckedLocalOwner::View { view, role },
+            origin,
+        });
+        id
+    }
+
+    fn lower_view_expression_tree(
+        &mut self,
+        node: &ViewNode,
+        env: &dyn FactEnvironment,
+    ) -> Result<(), Error> {
+        let view = self.declarations.view_id(node.span()).ok_or_else(|| {
+            self.invariant(node.span(), "view expression owner has no shared view ID")
+        })?;
+        let origin = self.declarations.view(view).origin;
+        let flow = match node {
+            ViewNode::If {
+                condition,
+                children,
+                span,
+            } => {
+                let condition = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::IfCondition,
+                    },
+                    condition,
+                    Some(&Type::Bool),
+                    env,
+                    span,
+                    origin,
+                )?;
+                for child in children {
+                    self.lower_view_expression_tree(child, env)?;
+                }
+                CheckedViewFlow::If { condition }
+            }
+            ViewNode::For {
+                item,
+                items,
+                children,
+                span,
+            } => {
+                let items_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::ForItems,
+                    },
+                    items,
+                    None,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let Type::List(item_ty) = self.facts.expression_use(items_use).source.clone()
+                else {
+                    return Err(self.invariant(span, "checked for items are not a list"));
+                };
+                let local = self.push_view_local(
+                    item,
+                    *item_ty.clone(),
+                    view,
+                    CheckedViewLocalRole::ForItem,
+                    span,
+                );
+                let scoped = LayeredFactEnv {
+                    base: env,
+                    name: item.clone(),
+                    value: (CheckedPathRoot::Local(local), *item_ty),
+                };
+                self.facts.metrics.scope_env_overlays += 1;
+                for child in children {
+                    self.lower_view_expression_tree(child, &scoped)?;
+                }
+                CheckedViewFlow::For {
+                    items: items_use,
+                    item: local,
+                }
+            }
+            ViewNode::Match { value, arms, span } => {
+                let value_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::MatchValue,
+                    },
+                    value,
+                    None,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let value_ty = self.facts.expression_use(value_use).source.clone();
+                let mut checked_arms = Vec::with_capacity(arms.len());
+                for (index, arm) in arms.iter().enumerate() {
+                    let arm_origin = self.origins.push(&arm.span, Some(origin));
+                    let (pattern, binding) = self.resolve_match_pattern(
+                        &value_ty,
+                        &arm.pattern,
+                        view,
+                        index as u32,
+                        &arm.span,
+                        arm_origin,
+                    )?;
+                    if let Some(local) = binding {
+                        let checked = self.facts.local(local);
+                        let scoped = LayeredFactEnv {
+                            base: env,
+                            name: checked.name.clone(),
+                            value: (CheckedPathRoot::Local(local), checked.ty.clone()),
+                        };
+                        self.facts.metrics.scope_env_overlays += 1;
+                        for child in &arm.children {
+                            self.lower_view_expression_tree(child, &scoped)?;
+                        }
+                    } else {
+                        for child in &arm.children {
+                            self.lower_view_expression_tree(child, env)?;
+                        }
+                    }
+                    checked_arms.push(CheckedMatchArm {
+                        pattern,
+                        binding,
+                        origin: arm_origin,
+                    });
+                }
+                CheckedViewFlow::Match {
+                    value: value_use,
+                    arms: checked_arms,
+                }
+            }
+            ViewNode::KeyedColumn {
+                item,
+                items,
+                key,
+                child,
+                span,
+                ..
+            } => {
+                let items_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::KeyedItems,
+                    },
+                    items,
+                    None,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let Type::List(item_ty) = self.facts.expression_use(items_use).source.clone()
+                else {
+                    return Err(self.invariant(span, "checked keyed items are not a list"));
+                };
+                let local = self.push_view_local(
+                    item,
+                    *item_ty.clone(),
+                    view,
+                    CheckedViewLocalRole::KeyedItem,
+                    span,
+                );
+                let scoped = LayeredFactEnv {
+                    base: env,
+                    name: item.clone(),
+                    value: (CheckedPathRoot::Local(local), *item_ty),
+                };
+                self.facts.metrics.scope_env_overlays += 1;
+                let key_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::KeyedKey,
+                    },
+                    key,
+                    None,
+                    &scoped,
+                    span,
+                    origin,
+                )?;
+                self.lower_view_expression_tree(child, &scoped)?;
+                CheckedViewFlow::Keyed {
+                    items: items_use,
+                    key: key_use,
+                    item: local,
+                }
+            }
+            ViewNode::Lazy {
+                dependency,
+                binding,
+                child,
+                span,
+                ..
+            } => {
+                let dependency_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::LazyDependency,
+                    },
+                    dependency,
+                    None,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let ty = self.facts.expression_use(dependency_use).source.clone();
+                let local = self.push_view_local(
+                    binding,
+                    ty.clone(),
+                    view,
+                    CheckedViewLocalRole::LazyDependency,
+                    span,
+                );
+                let empty = FactEnv::default();
+                let scoped = LayeredFactEnv {
+                    base: &empty,
+                    name: binding.clone(),
+                    value: (CheckedPathRoot::Local(local), ty),
+                };
+                self.facts.metrics.scope_env_overlays += 1;
+                self.lower_view_expression_tree(child, &scoped)?;
+                CheckedViewFlow::Lazy {
+                    dependency: dependency_use,
+                    binding: local,
+                }
+            }
+            ViewNode::Table {
+                item,
+                rows,
+                columns,
+                span,
+                ..
+            } => {
+                let rows_use = self.push_view_expression(
+                    CheckedExprOwner::View {
+                        view,
+                        role: CheckedViewExprRole::TableRows,
+                    },
+                    rows,
+                    None,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let Type::List(row_ty) = self.facts.expression_use(rows_use).source.clone() else {
+                    return Err(self.invariant(span, "checked table rows are not a list"));
+                };
+                let local = self.push_view_local(
+                    item,
+                    *row_ty.clone(),
+                    view,
+                    CheckedViewLocalRole::TableRow,
+                    span,
+                );
+                let scoped = LayeredFactEnv {
+                    base: env,
+                    name: item.clone(),
+                    value: (CheckedPathRoot::Local(local), *row_ty),
+                };
+                self.facts.metrics.scope_env_overlays += 1;
+                for column in columns {
+                    self.lower_view_expression_tree(&column.header, env)?;
+                    self.lower_view_expression_tree(&column.cell, &scoped)?;
+                }
+                CheckedViewFlow::Table {
+                    rows: rows_use,
+                    item: local,
+                }
+            }
+            ViewNode::PaneGrid {
+                panes,
+                templates,
+                span: _,
+                ..
+            } => {
+                let mut static_maximized = Vec::with_capacity(panes.len());
+                for (index, pane) in panes.iter().enumerate() {
+                    if let Some(name) = &pane.maximized {
+                        let local = self.push_view_local(
+                            name,
+                            Type::Bool,
+                            view,
+                            CheckedViewLocalRole::PaneMaximized(index as u32),
+                            &pane.span,
+                        );
+                        let scoped = LayeredFactEnv {
+                            base: env,
+                            name: name.clone(),
+                            value: (CheckedPathRoot::Local(local), Type::Bool),
+                        };
+                        self.facts.metrics.scope_env_overlays += 1;
+                        for child in pane.nodes() {
+                            self.lower_view_expression_tree(child, &scoped)?;
+                        }
+                        static_maximized.push(Some(local));
+                    } else {
+                        for child in pane.nodes() {
+                            self.lower_view_expression_tree(child, env)?;
+                        }
+                        static_maximized.push(None);
+                    }
+                }
+                let mut checked_templates = Vec::with_capacity(templates.len());
+                for (index, template) in templates.iter().enumerate() {
+                    let (_, list_ty) = env.get(&template.items).ok_or_else(|| {
+                        self.invariant(&template.span, "pane template list has no checked path")
+                    })?;
+                    let Type::List(item_ty) = list_ty else {
+                        return Err(self.invariant(
+                            &template.span,
+                            "pane template checked path is not a list",
+                        ));
+                    };
+                    let item_local = self.push_view_local(
+                        &template.item,
+                        item_ty.as_ref().clone(),
+                        view,
+                        CheckedViewLocalRole::PaneTemplateItem(index as u32),
+                        &template.span,
+                    );
+                    let item_scoped = LayeredFactEnv {
+                        base: env,
+                        name: template.item.clone(),
+                        value: (CheckedPathRoot::Local(item_local), item_ty.as_ref().clone()),
+                    };
+                    self.facts.metrics.scope_env_overlays += 1;
+                    let key = self.push_view_expression(
+                        CheckedExprOwner::View {
+                            view,
+                            role: CheckedViewExprRole::PaneTemplateKey(index as u32),
+                        },
+                        &template.key,
+                        None,
+                        &item_scoped,
+                        &template.span,
+                        origin,
+                    )?;
+                    let maximized = template.pane.maximized.as_ref().map(|name| {
+                        self.push_view_local(
+                            name,
+                            Type::Bool,
+                            view,
+                            CheckedViewLocalRole::PaneTemplateMaximized(index as u32),
+                            &template.pane.span,
+                        )
+                    });
+                    if let Some(maximized) = maximized {
+                        let scoped = LayeredFactEnv {
+                            base: &item_scoped,
+                            name: template.pane.maximized.clone().unwrap(),
+                            value: (CheckedPathRoot::Local(maximized), Type::Bool),
+                        };
+                        self.facts.metrics.scope_env_overlays += 1;
+                        for child in template.pane.nodes() {
+                            self.lower_view_expression_tree(child, &scoped)?;
+                        }
+                    } else {
+                        for child in template.pane.nodes() {
+                            self.lower_view_expression_tree(child, &item_scoped)?;
+                        }
+                    }
+                    checked_templates.push(CheckedPaneTemplate {
+                        key,
+                        item: item_local,
+                        maximized,
+                    });
+                }
+                CheckedViewFlow::PaneGrid {
+                    static_maximized,
+                    templates: checked_templates,
+                }
+            }
+            ViewNode::Responsive { content, span, .. } => match content {
+                ResponsiveContent::Breakpoint {
+                    breakpoint,
+                    narrow,
+                    wide,
+                } => {
+                    let breakpoint = self.push_view_expression(
+                        CheckedExprOwner::View {
+                            view,
+                            role: CheckedViewExprRole::ResponsiveBreakpoint,
+                        },
+                        breakpoint,
+                        Some(&Type::F64),
+                        env,
+                        span,
+                        origin,
+                    )?;
+                    self.lower_view_expression_tree(narrow, env)?;
+                    self.lower_view_expression_tree(wide, env)?;
+                    CheckedViewFlow::ResponsiveBreakpoint { breakpoint }
+                }
+                ResponsiveContent::Size {
+                    width,
+                    height,
+                    content,
+                } => {
+                    let width_local = self.push_view_local(
+                        width,
+                        Type::F64,
+                        view,
+                        CheckedViewLocalRole::ResponsiveWidth,
+                        span,
+                    );
+                    let width_scoped = LayeredFactEnv {
+                        base: env,
+                        name: width.clone(),
+                        value: (CheckedPathRoot::Local(width_local), Type::F64),
+                    };
+                    let height_local = self.push_view_local(
+                        height,
+                        Type::F64,
+                        view,
+                        CheckedViewLocalRole::ResponsiveHeight,
+                        span,
+                    );
+                    let scoped = LayeredFactEnv {
+                        base: &width_scoped,
+                        name: height.clone(),
+                        value: (CheckedPathRoot::Local(height_local), Type::F64),
+                    };
+                    self.facts.metrics.scope_env_overlays += 2;
+                    self.lower_view_expression_tree(content, &scoped)?;
+                    CheckedViewFlow::ResponsiveSize {
+                        width: width_local,
+                        height: height_local,
+                    }
+                }
+            },
+            ViewNode::Component {
+                name,
+                args,
+                slots,
+                span,
+                ..
+            } => {
+                let component = self
+                    .declarations
+                    .component_id(name)
+                    .ok_or_else(|| self.invariant(span, "component call has no declaration"))?;
+                let call = self
+                    .declarations
+                    .component_call_id(view)
+                    .ok_or_else(|| self.invariant(span, "component view has no call ID"))?;
+                let source_component = &self.document.components[component.0 as usize];
+                let mut supplied = HashMap::new();
+                for arg in args {
+                    let index = source_component
+                        .params
+                        .iter()
+                        .position(|param| param.name == arg.name)
+                        .ok_or_else(|| {
+                            self.invariant(span, "component argument has no parameter")
+                        })?;
+                    let param = self.declarations.component_param(component, index).id;
+                    let expected = source_component.params[index].ty.clone();
+                    let expression = self.push_view_expression(
+                        CheckedExprOwner::ComponentArgument { call, param },
+                        &arg.value,
+                        Some(&expected),
+                        env,
+                        span,
+                        origin,
+                    )?;
+                    if supplied.insert(param, expression).is_some() {
+                        return Err(self.invariant(span, "duplicate checked component argument"));
+                    }
+                }
+                for (index, param) in source_component.params.iter().enumerate() {
+                    let param_id = self.declarations.component_param(component, index).id;
+                    let source = if let Some(expression) = supplied.remove(&param_id) {
+                        CheckedComponentArgumentSource::Supplied(expression)
+                    } else {
+                        let default = self
+                            .facts
+                            .value_by_ref(CheckedValueRef::ComponentParam(param_id))
+                            .initializer
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    span,
+                                    format!("required prop `{}` has no checked source", param.name),
+                                )
+                            })?;
+                        CheckedComponentArgumentSource::Default(default)
+                    };
+                    if self
+                        .facts
+                        .component_argument_sources
+                        .insert((call, param_id), source)
+                        .is_some()
+                    {
+                        return Err(
+                            self.invariant(span, "duplicate checked component argument source")
+                        );
+                    }
+                }
+                for slot in slots {
+                    self.lower_view_expression_tree(&slot.content, env)?;
+                }
+                CheckedViewFlow::None
+            }
+            _ => {
+                for child in crate::hir::view_children(node) {
+                    self.lower_view_expression_tree(child, env)?;
+                }
+                CheckedViewFlow::None
+            }
+        };
+        self.facts.views[view.0 as usize].flow = flow;
+        Ok(())
+    }
+
+    fn resolve_match_pattern(
+        &mut self,
+        value_ty: &Type,
+        pattern: &MatchPattern,
+        view: ViewId,
+        arm: u32,
+        span: &Span,
+        arm_origin: OriginId,
+    ) -> Result<(CheckedMatchPattern, Option<CheckedLocalId>), Error> {
+        let resolved = match (value_ty, pattern) {
+            (Type::Option(inner), MatchPattern::Some(name)) => {
+                let local = self.push_view_local_with_parent(
+                    name,
+                    inner.as_ref().clone(),
+                    view,
+                    CheckedViewLocalRole::MatchPayload(arm),
+                    span,
+                    arm_origin,
+                );
+                (CheckedMatchPattern::Some, Some(local))
+            }
+            (Type::Option(_), MatchPattern::None) => (CheckedMatchPattern::None, None),
+            (Type::Result(output, _), MatchPattern::Ok(name)) => {
+                let local = self.push_view_local_with_parent(
+                    name,
+                    output.as_ref().clone(),
+                    view,
+                    CheckedViewLocalRole::MatchPayload(arm),
+                    span,
+                    arm_origin,
+                );
+                (CheckedMatchPattern::Ok, Some(local))
+            }
+            (Type::Result(_, error), MatchPattern::Err(name)) => {
+                let local = self.push_view_local_with_parent(
+                    name,
+                    error.as_ref().clone(),
+                    view,
+                    CheckedViewLocalRole::MatchPayload(arm),
+                    span,
+                    arm_origin,
+                );
+                (CheckedMatchPattern::Err, Some(local))
+            }
+            (
+                Type::Named(enum_name),
+                MatchPattern::Enum {
+                    enum_name: actual,
+                    variant,
+                    binding,
+                },
+            ) if enum_name == actual => {
+                let owner = self
+                    .declarations
+                    .enum_decl_by_name(enum_name)
+                    .ok_or_else(|| self.invariant(span, "match enum has no declaration"))?;
+                let variant = self
+                    .declarations
+                    .enum_variant(owner.declaration.id, variant)
+                    .ok_or_else(|| self.invariant(span, "match variant has no declaration"))?;
+                let local = match (&variant.payload, binding) {
+                    (Some(ty), Some(name)) => Some(self.push_view_local_with_parent(
+                        name,
+                        ty.clone(),
+                        view,
+                        CheckedViewLocalRole::MatchPayload(arm),
+                        span,
+                        arm_origin,
+                    )),
+                    (None, None) => None,
+                    _ => return Err(self.invariant(span, "match payload binding diverged")),
+                };
+                (CheckedMatchPattern::Enum(variant.declaration.id), local)
+            }
+            (
+                Type::Palette(contract),
+                MatchPattern::Enum {
+                    enum_name,
+                    variant,
+                    binding: None,
+                },
+            ) if contract == enum_name => {
+                let palette = self
+                    .declarations
+                    .palette_id(variant)
+                    .ok_or_else(|| self.invariant(span, "match palette has no declaration"))?;
+                (CheckedMatchPattern::Palette(palette), None)
+            }
+            (_, MatchPattern::Wildcard) => (CheckedMatchPattern::Wildcard, None),
+            _ => {
+                return Err(self.invariant(span, "checked match pattern does not match value type"));
+            }
+        };
+        Ok(resolved)
+    }
+
     fn value_id(
         &mut self,
         scope: ValueScope,
@@ -595,7 +1538,7 @@ impl<'a> FactsBuilder<'a> {
         let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self
             .analyses
-            .remove(owner_ref)
+            .remove(CheckedExprOwner::Value(owner_ref))
             .ok_or_else(|| self.invariant(span, "missing authoritative initializer analysis"))?;
         let analysis_metrics = analysis.metrics();
         self.facts.metrics.initializer_analysis_passes += 1;
@@ -631,6 +1574,14 @@ impl<'a> FactsBuilder<'a> {
             coercion,
             origin,
         });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(CheckedExprOwner::Value(owner_ref), id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked initializer expression owner"));
+        }
         self.facts.values[owner.0 as usize].initializer = Some(id);
         Ok(id)
     }
@@ -669,6 +1620,33 @@ impl<'a> FactsBuilder<'a> {
                 Expr::None => CheckedExprKind::None,
                 Expr::Path(path) => self.lower_path(path, env, lowering.span)?,
                 Expr::Call { name, args } => {
+                    if unqualified_name(name) == "provided" {
+                        let [Expr::Path(path)] = args.as_slice() else {
+                            return Err(self.invariant(
+                                lowering.span,
+                                "checked provided call has malformed slot argument",
+                            ));
+                        };
+                        let [slot] = path.as_slice() else {
+                            return Err(self.invariant(
+                                lowering.span,
+                                "checked provided call has malformed slot path",
+                            ));
+                        };
+                        let slot = env.slot(unqualified_name(slot)).ok_or_else(|| {
+                            self.invariant(
+                                lowering.span,
+                                "checked provided call has no resolved component slot",
+                            )
+                        })?;
+                        let id = CheckedExprId(self.facts.expressions.len() as u32);
+                        self.facts.expressions.push(CheckedExpr {
+                            ty,
+                            kind: CheckedExprKind::SlotProvided(slot),
+                            origin: lowering.origin,
+                        });
+                        return Ok(id);
+                    }
                     let target = self.resolve_call_target(name, lowering.span)?;
                     let arguments = self.lower_call_arguments(&target, args, &ty, env, lowering)?;
                     CheckedExprKind::Call { target, arguments }
@@ -819,7 +1797,11 @@ impl<'a> FactsBuilder<'a> {
         Ok(CheckedExprKind::Path { root, projections })
     }
 
-    fn resolve_call_target(&mut self, name: &str, span: &Span) -> Result<CheckedCallTarget, Error> {
+    fn resolve_call_target(
+        &mut self,
+        name: &str,
+        _span: &Span,
+    ) -> Result<CheckedCallTarget, Error> {
         if let Some((enum_name, variant_name)) = name.split_once('.')
             && let Some(variant) = self.enum_variant(enum_name, variant_name)
         {
@@ -832,12 +1814,7 @@ impl<'a> FactsBuilder<'a> {
             return Ok(CheckedCallTarget::Extern(declaration.declaration.id));
         }
         let name = unqualified_name(name);
-        if name == "provided" {
-            return Err(self.invariant(
-                span,
-                "provided slot facts belong to the future view-expression slice",
-            ));
-        }
+        debug_assert_ne!(name, "provided");
         self.facts.metrics.builtin_intern_lookups += 1;
         let id = if let Some(id) = self.builtins_by_name.get(name).copied() {
             id
@@ -902,8 +1879,10 @@ impl<'a> FactsBuilder<'a> {
                     self.facts.locals.push(CheckedLocal {
                         name: name.clone(),
                         ty,
-                        owner: lowering.owner,
-                        body_argument: body,
+                        owner: CheckedLocalOwner::ExpressionBinding {
+                            expression: lowering.owner,
+                            body_argument: body,
+                        },
                         origin: lowering.origin,
                     });
                     bindings.insert(index, (name.clone(), id));
@@ -979,54 +1958,52 @@ impl<'a> FactsBuilder<'a> {
         })
     }
 
-    fn index_views(&mut self) {
+    fn index_views(&mut self) -> Result<(), Error> {
         for (index, component) in self.document.components.iter().enumerate() {
             let declaration = self.declarations.component(index);
             self.index_view(
                 &component.root,
                 None,
                 CheckedViewScope::Component(declaration.id),
-                Some(declaration.origin),
-            );
+            )?;
         }
-        self.index_view(&self.document.view, None, CheckedViewScope::App, None);
+        self.index_view(&self.document.view, None, CheckedViewScope::App)?;
         for (index, test) in self.document.tests.iter().enumerate() {
             if let Some(mount) = &test.mount {
-                self.index_view(
-                    mount,
-                    None,
-                    CheckedViewScope::Test(TestId(index as u32)),
-                    None,
-                );
+                self.index_view(mount, None, CheckedViewScope::Test(TestId(index as u32)))?;
             }
         }
+        Ok(())
     }
 
     fn index_view(
         &mut self,
         node: &ViewNode,
-        parent: Option<CheckedViewId>,
+        parent: Option<ViewId>,
         scope: CheckedViewScope,
-        root_parent_origin: Option<OriginId>,
-    ) -> CheckedViewId {
-        let id = CheckedViewId(self.facts.views.len() as u32);
-        let parent_origin = parent
-            .map(|parent| self.facts.views[parent.0 as usize].origin)
-            .or(root_parent_origin);
-        let origin = self.origins.push(node.span(), parent_origin);
+    ) -> Result<ViewId, Error> {
+        let id = self.declarations.view_id(node.span()).ok_or_else(|| {
+            self.invariant(node.span(), "checked view has no shared declaration ID")
+        })?;
+        if id.0 as usize != self.facts.views.len() {
+            return Err(self.invariant(node.span(), "checked view arena order diverged"));
+        }
+        let origin = self.declarations.view(id).origin;
         self.facts.views.push(CheckedView {
-            kind: view_kind(node),
+            id,
+            kind: crate::hir::view_kind(node),
             scope,
             parent,
             children: Vec::new(),
+            flow: CheckedViewFlow::None,
             origin,
         });
-        let children = view_children(node)
+        let children = crate::hir::view_children(node)
             .into_iter()
-            .map(|child| self.index_view(child, Some(id), scope, None))
-            .collect();
+            .map(|child| self.index_view(child, Some(id), scope))
+            .collect::<Result<Vec<_>, _>>()?;
         self.facts.views[id.0 as usize].children = children;
-        id
+        Ok(id)
     }
 
     fn invariant(&self, span: &Span, message: impl Into<String>) -> Error {
@@ -1097,95 +2074,6 @@ fn compatible_operand(left: &Type, right: &Type) -> Type {
     resolve_erased_type(&unify_type_evidence(left, right))
 }
 
-fn view_kind(node: &ViewNode) -> &'static str {
-    match node {
-        ViewNode::Layout { .. } => "layout",
-        ViewNode::Container { .. } => "container",
-        ViewNode::Overlay { .. } => "overlay",
-        ViewNode::PaneGrid { .. } => "pane-grid",
-        ViewNode::Text { .. } => "text",
-        ViewNode::RichText { .. } => "rich-text",
-        ViewNode::Input { .. } => "input",
-        ViewNode::Button { .. } => "button",
-        ViewNode::Checkbox { .. } => "checkbox",
-        ViewNode::Toggler { .. } => "toggler",
-        ViewNode::Slider { .. } => "slider",
-        ViewNode::Progress { .. } => "progress",
-        ViewNode::Radio { .. } => "radio",
-        ViewNode::PickList { .. } => "pick-list",
-        ViewNode::ComboBox { .. } => "combo-box",
-        ViewNode::Rule { .. } => "rule",
-        ViewNode::QrCode { .. } => "qr-code",
-        ViewNode::Space { .. } => "space",
-        ViewNode::If { .. } => "if",
-        ViewNode::Match { .. } => "match",
-        ViewNode::For { .. } => "for",
-        ViewNode::KeyedColumn { .. } => "keyed-column",
-        ViewNode::Lazy { .. } => "lazy",
-        ViewNode::Markdown { .. } => "markdown",
-        ViewNode::TextEditor { .. } => "text-editor",
-        ViewNode::Table { .. } => "table",
-        ViewNode::Component { .. } => "component",
-        ViewNode::Slot { .. } => "slot",
-        ViewNode::ExternComponent { .. } => "extern-component",
-        ViewNode::Themer { .. } => "themer",
-        ViewNode::Shader { .. } => "shader",
-        ViewNode::Media { .. } => "media",
-        ViewNode::Tooltip { .. } => "tooltip",
-        ViewNode::MouseArea { .. } => "mouse-area",
-        ViewNode::ResizeHandle { .. } => "resize-handle",
-        ViewNode::Canvas { .. } => "canvas",
-        ViewNode::Theme { .. } => "theme",
-        ViewNode::Float { .. } => "float",
-        ViewNode::Pin { .. } => "pin",
-        ViewNode::Sensor { .. } => "sensor",
-        ViewNode::Responsive { .. } => "responsive",
-    }
-}
-
-fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
-    match node {
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => children.iter().collect(),
-        ViewNode::Match { arms, .. } => arms.iter().flat_map(|arm| arm.children.iter()).collect(),
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Container { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => vec![content],
-        ViewNode::Tooltip { content, tip, .. } => vec![content, tip],
-        ViewNode::Overlay { content, layer, .. } => vec![content, layer],
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => panes
-            .iter()
-            .flat_map(PaneView::nodes)
-            .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            .collect(),
-        ViewNode::Table { columns, .. } => columns
-            .iter()
-            .flat_map(|column| [&column.header, &column.cell])
-            .collect(),
-        ViewNode::Component { slots, .. } => {
-            slots.iter().map(|slot| slot.content.as_ref()).collect()
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => vec![narrow, wide],
-            ResponsiveContent::Size { content, .. } => vec![content],
-        },
-        _ => Vec::new(),
-    }
-}
-
 #[cfg(test)]
 impl CheckedFacts {
     fn structural_snapshot(&self) -> String {
@@ -1216,8 +2104,8 @@ impl CheckedFacts {
         for (index, local) in self.locals.iter().enumerate() {
             writeln!(
                 output,
-                "local l{index} {}:{:?} owner=u{} body_arg={} origin=o{}",
-                local.name, local.ty, local.owner.0, local.body_argument, local.origin.0
+                "local l{index} {}:{:?} owner={:?} origin=o{}",
+                local.name, local.ty, local.owner, local.origin.0
             )
             .unwrap();
         }
@@ -1230,6 +2118,7 @@ impl CheckedFacts {
                 CheckedExprKind::Bytes(value) => format!("bytes {value:?}"),
                 CheckedExprKind::List(values) => format!("list {values:?}"),
                 CheckedExprKind::None => "none".into(),
+                CheckedExprKind::SlotProvided(slot) => format!("slot-provided {slot:?}"),
                 CheckedExprKind::Path { root, projections } => {
                     format!("path {root:?} {projections:?}")
                 }
@@ -1260,8 +2149,8 @@ impl CheckedFacts {
         for (index, view) in self.views.iter().enumerate() {
             writeln!(
                 output,
-                "view w{index} {} {:?} parent={:?} children={:?} origin=o{}",
-                view.kind, view.scope, view.parent, view.children, view.origin.0
+                "view w{index} {} {:?} parent={:?} children={:?} flow={:?} origin=o{}",
+                view.kind, view.scope, view.parent, view.children, view.flow, view.origin.0
             )
             .unwrap();
         }
@@ -1341,6 +2230,7 @@ use u3 Value(Derived(DerivedId(0))) root=e7 source=Str destination=Str coercion=
 use u4 Value(Derived(DerivedId(1))) root=e14 source=Bool destination=Bool coercion=None origin=o4
 use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 })) root=e15 source=Str destination=Str coercion=None origin=o6
 use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
+use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o22
 expr e0 i64 1 : I64 origin=o0
 expr e1 call Extern(ExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
@@ -1358,13 +2248,14 @@ expr e13 binary Equality { op: NotEq, operand: Str } e11 e12 : Bool origin=o4
 expr e14 binary Boolean(And) e10 e13 : Bool origin=o4
 expr e15 str "Card" : Str origin=o6
 expr e16 bool false : Bool origin=o7
-view w0 layout Component(ComponentId(0)) parent=None children=[CheckedViewId(1), CheckedViewId(2)] origin=o15
-view w1 text Component(ComponentId(0)) parent=Some(CheckedViewId(0)) children=[] origin=o16
-view w2 if Component(ComponentId(0)) parent=Some(CheckedViewId(0)) children=[CheckedViewId(3)] origin=o17
-view w3 text Component(ComponentId(0)) parent=Some(CheckedViewId(2)) children=[] origin=o18
-view w4 layout App parent=None children=[CheckedViewId(5), CheckedViewId(6)] origin=o19
-view w5 component App parent=Some(CheckedViewId(4)) children=[] origin=o20
-view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
+expr e17 path Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) [] : Bool origin=o22
+view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
+view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
+view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(7) } origin=o17
+view w3 text Component(ComponentId(0)) parent=Some(ViewId(2)) children=[] flow=None origin=o18
+view w4 layout App parent=None children=[ViewId(5), ViewId(6)] flow=None origin=o19
+view w5 component App parent=Some(ViewId(4)) children=[] flow=None origin=o20
+view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
 "#
         );
         assert_eq!(
@@ -1373,20 +2264,23 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
                 values: 7,
                 locals: 0,
                 views: 7,
-                expression_uses: 7,
-                expressions: 17,
-                type_analysis_queries: 17,
-                type_analysis_nodes: 17,
+                expression_uses: 8,
+                expressions: 18,
+                type_analysis_queries: 18,
+                type_analysis_nodes: 18,
                 type_analysis_cache_hits: 0,
                 initializer_analysis_passes: 7,
+                view_analysis_passes: 1,
                 type_scope_env_overlays: 0,
                 type_scope_env_full_clones: 0,
-                declaration_lookups: 17,
+                declaration_lookups: 18,
                 builtin_intern_lookups: 1,
-                scope_env_builds: 1,
-                scope_env_entries: 5,
+                scope_env_builds: 3,
+                scope_env_entries: 12,
                 scope_env_overlays: 0,
                 scope_env_full_clones: 0,
+                view_scope_env_overlays: 0,
+                view_scope_env_full_clones: 0,
             }
         );
     }
@@ -1418,6 +2312,488 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
         let generated = crate::codegen::generate(&program, "facts.ice").unwrap();
         assert!(generated.contains("value: ::iced::Color::BLACK"));
         assert!(!generated.contains("value: ::iced::Color::WHITE"));
+    }
+
+    #[test]
+    fn view_and_component_codegen_ignore_post_check_expression_mutations() {
+        let source = format!(
+            "app Frozen\n{THEME}state\n  count = 1\n  visible = true\n  values = [1, 2]\n  choice:str? = some(\"ready\")\ncomponent Card(value:i64)\n  col\n    text value\n    if provided(Footer)\n      slot Footer?\nview\n  col\n    Card value=(count + 1)\n      Footer:\n        text \"footer-from-slot\"\n    if visible\n      text \"visible\"\n    for value in values\n      text value\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout {
+            children: component_children,
+            ..
+        } = &mut checked.document.components[0].root
+        else {
+            panic!("component root must be a layout");
+        };
+        let ViewNode::If {
+            condition: provided,
+            ..
+        } = &mut component_children[1]
+        else {
+            panic!("component child must be a provided guard");
+        };
+        *provided = Expr::Bool(false);
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Component { args, .. } = &mut children[0] else {
+            panic!("first child must be a component call");
+        };
+        args[0].value = Expr::Bool(false);
+        let ViewNode::If { condition, .. } = &mut children[1] else {
+            panic!("second child must be an if");
+        };
+        *condition = Expr::Bool(false);
+        let ViewNode::For { item, items, .. } = &mut children[2] else {
+            panic!("third child must be a for");
+        };
+        *item = "mutated".into();
+        *items = Expr::Bool(false);
+        let ViewNode::Match { value, arms, .. } = &mut children[3] else {
+            panic!("fourth child must be a match");
+        };
+        *value = Expr::Bool(false);
+        arms[0].pattern = MatchPattern::Wildcard;
+
+        let program = lower::lower(checked).unwrap();
+        let provided = program
+            .checked_facts()
+            .views()
+            .iter()
+            .find_map(|view| match view.flow {
+                CheckedViewFlow::If { condition }
+                    if matches!(view.scope, CheckedViewScope::Component(_)) =>
+                {
+                    Some(condition)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(matches!(
+            program
+                .checked_facts()
+                .expression(program.checked_facts().expression_use(provided).root)
+                .kind,
+            CheckedExprKind::SlotProvided(ComponentSlotId {
+                component: ComponentId(0),
+                index: 0,
+            })
+        ));
+        let generated = crate::codegen::generate(&program, "frozen.ice").unwrap();
+        assert!(generated.contains("footer-from-slot"));
+        assert!(generated.contains("self.count + 1"));
+        assert!(generated.contains("visible"));
+        assert!(generated.contains("for (__ice_index, value) in self.values.iter()"));
+        assert!(generated.contains("::std::option::Option::Some(label)"));
+        assert!(!generated.contains("for (__ice_index, mutated)"));
+    }
+
+    #[test]
+    fn missing_and_leftover_view_analyses_are_e196_invariants() {
+        let missing_source =
+            format!("app Missing\n{THEME}view\n  col\n    if true\n      text \"ok\"\n");
+        let missing_document = crate::parse(&missing_source).unwrap();
+        let mut missing_origins = OriginArena::default();
+        let missing_declarations = DeclarationIndex::build(&missing_document, &mut missing_origins);
+        let missing = build(
+            &missing_document,
+            &missing_declarations,
+            &mut missing_origins,
+            CheckedAnalyses::default(),
+        )
+        .unwrap_err();
+        assert_eq!(missing.code, "E196");
+        assert!(
+            missing
+                .message
+                .contains("missing authoritative view expression analysis")
+        );
+
+        let extra_source = format!("app Extra\n{THEME}view\n  text \"ok\"\n");
+        let extra_document = crate::parse(&extra_source).unwrap();
+        let mut extra_origins = OriginArena::default();
+        let extra_declarations = DeclarationIndex::build(&extra_document, &mut extra_origins);
+        let root = extra_declarations
+            .view_id(extra_document.view.span())
+            .unwrap();
+        let expression = Expr::Bool(true);
+        let analysis = crate::check::expr::analyze_expr_types(
+            &expression,
+            &HashMap::new(),
+            &extra_document,
+            extra_document.view.span(),
+        )
+        .unwrap();
+        let mut analyses = CheckedAnalyses::default();
+        analyses
+            .insert_expression(
+                CheckedExprOwner::View {
+                    view: root,
+                    role: CheckedViewExprRole::IfCondition,
+                },
+                analysis,
+            )
+            .unwrap();
+        let leftover = build(
+            &extra_document,
+            &extra_declarations,
+            &mut extra_origins,
+            analyses,
+        )
+        .unwrap_err();
+        assert_eq!(leftover.code, "E196");
+        assert!(
+            leftover
+                .message
+                .contains("checked analyses were not consumed")
+        );
+    }
+
+    #[test]
+    fn missing_component_argument_source_is_an_e196_invariant() {
+        let source = format!(
+            "app MissingArg\n{THEME}state\n  count = 1\ncomponent Card(value:i64)\n  text value\nview\n  Card value=count\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let call_view = checked
+            .declarations
+            .view_id(checked.document.view.span())
+            .unwrap();
+        let call = checked.declarations.component_call_id(call_view).unwrap();
+        let component = checked.declarations.component(0).id;
+        let param = checked.declarations.component_param(component, 0).id;
+        checked
+            .facts
+            .component_argument_sources
+            .remove(&(call, param));
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("component argument has no checked source")
+        );
+    }
+
+    #[test]
+    fn component_argument_raw_supplied_default_mutation_is_an_e196_invariant() {
+        let source = format!(
+            "app MutatedArg\n{THEME}state\n  count = 1\ncomponent Card(value:i64=9)\n  text value\nview\n  Card value=count\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Component { args, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        args.clear();
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("supplied/default topology diverged"));
+    }
+
+    #[test]
+    fn raw_view_topology_mutation_is_rejected_before_emission() {
+        let source =
+            format!("app MutatedView\n{THEME}state\n  count = 1\nview\n  col\n    text count\n");
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, span, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let expected_line = span.line;
+        children.clear();
+
+        let program = lower::lower(checked).unwrap();
+        let error = crate::codegen::generate(&program, "mutated-view.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("checked topology"));
+    }
+
+    #[test]
+    fn malformed_match_hir_reports_the_raw_arm_source() {
+        let source = format!(
+            "app MutatedMatch\n{THEME}state\n  choice:i64? = some(1)\nview\n  col\n    match choice\n      some(value)\n        text value\n      none\n        text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let raw_match = &children[0];
+        let view = checked.declarations.view_id(raw_match.span()).unwrap();
+        let ViewNode::Match { arms, .. } = raw_match else {
+            panic!("fixture child must be a match");
+        };
+        let expected_line = arms[0].span.line;
+        let CheckedViewFlow::Match { arms, .. } = &mut checked.facts.views[view.0 as usize].flow
+        else {
+            panic!("fixture must have checked match flow");
+        };
+        arms[0].binding = None;
+
+        let program = lower::lower(checked).unwrap();
+        let error = crate::codegen::generate(&program, "mutated-match.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("some pattern has no payload local"));
+    }
+
+    #[test]
+    fn invalid_match_enum_id_is_a_fallible_source_mapped_invariant() {
+        let source = format!(
+            "app MutatedEnum\n{THEME}enum Status\n  ready\nstate\n  status:Status = Status.ready\nview\n  col\n    match status\n      Status.ready\n        text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let raw_match = &children[0];
+        let view = checked.declarations.view_id(raw_match.span()).unwrap();
+        let ViewNode::Match { arms: raw_arms, .. } = raw_match else {
+            panic!("fixture child must be a match");
+        };
+        let expected_line = raw_arms[0].span.line;
+        let CheckedViewFlow::Match { arms, .. } = &mut checked.facts.views[view.0 as usize].flow
+        else {
+            panic!("fixture must have checked match flow");
+        };
+        arms[0].pattern = CheckedMatchPattern::Enum(EnumVariantId {
+            owner: crate::hir::EnumId(u32::MAX),
+            index: 0,
+        });
+
+        let program = lower::lower(checked).unwrap();
+        let error = crate::codegen::generate(&program, "mutated-enum.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("invalid enum ID"));
+    }
+
+    #[test]
+    fn daemon_window_is_a_checked_view_local_used_by_component_arguments() {
+        let source = format!(
+            "daemon Agent\n  window dashboard\n    size 800 600\n{THEME}component AgentWindow(id:window-id)\n  text \"agent\"\nview\n  AgentWindow id=window\n"
+        );
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let window = program
+            .checked_facts()
+            .locals()
+            .iter()
+            .find(|local| local.name == "window")
+            .unwrap();
+        assert!(matches!(
+            window.owner,
+            CheckedLocalOwner::View {
+                role: CheckedViewLocalRole::DaemonWindow,
+                ..
+            }
+        ));
+        let argument = program
+            .component_call(program.document().view.span())
+            .unwrap()
+            .arguments[0]
+            .expression;
+        let root = program.checked_facts().expression_use(argument).root;
+        assert!(matches!(
+            program.checked_facts().expression(root).kind,
+            CheckedExprKind::Path {
+                root: CheckedPathRoot::Local(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lexical_view_locals_have_explicit_owner_roles() {
+        let source = format!(
+            "app Arena\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\n  choice:str? = some(\"ready\")\nview\n  col\n    for row in items\n      text row.name\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n    keyed keyed_row in items by=keyed_row.id\n      text keyed_row.name\n    lazy choice as cached\n      text \"cached\"\n    table table_row in items\n      col\n        header\n          text \"Name\"\n        cell\n          text table_row.name\n    panes #work\n      pane files maximized=files_maximized\n        col\n          if files_maximized\n            text \"files\"\n      pane pane_item in items by=pane_item.id maximized=pane_maximized\n        col\n          if pane_maximized\n            text pane_item.name\n    responsive size=(available_width, available_height)\n      col\n        if available_width < available_height\n          text \"portrait\"\n"
+        );
+        let pane_template_line = source
+            .lines()
+            .position(|line| line.contains("pane pane_item in items"))
+            .unwrap()
+            + 1;
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let roles = program
+            .checked_facts()
+            .locals()
+            .iter()
+            .filter_map(|local| match local.owner {
+                CheckedLocalOwner::View { role, .. } => Some(role),
+                CheckedLocalOwner::ExpressionBinding { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        for role in [
+            CheckedViewLocalRole::ForItem,
+            CheckedViewLocalRole::MatchPayload(0),
+            CheckedViewLocalRole::KeyedItem,
+            CheckedViewLocalRole::LazyDependency,
+            CheckedViewLocalRole::TableRow,
+            CheckedViewLocalRole::PaneMaximized(0),
+            CheckedViewLocalRole::PaneTemplateItem(0),
+            CheckedViewLocalRole::PaneTemplateMaximized(0),
+            CheckedViewLocalRole::ResponsiveWidth,
+            CheckedViewLocalRole::ResponsiveHeight,
+        ] {
+            assert!(roles.contains(&role), "missing checked local role {role:?}");
+        }
+        let checked_match = program
+            .checked_facts()
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap();
+        let CheckedViewFlow::Match { arms, .. } = &checked_match.flow else {
+            unreachable!();
+        };
+        let payload = arms[0].binding.unwrap();
+        assert_eq!(
+            program
+                .origin(program.checked_facts().local(payload).origin)
+                .parent,
+            Some(arms[0].origin)
+        );
+        let pane = program
+            .checked_facts()
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::PaneGrid { .. }))
+            .unwrap();
+        let CheckedViewFlow::PaneGrid { templates, .. } = &pane.flow else {
+            unreachable!();
+        };
+        let key_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(templates[0].key)
+                .origin,
+        );
+        assert_eq!(key_origin.line, pane_template_line);
+        assert_eq!(key_origin.parent, Some(pane.origin));
+        let generated = crate::codegen::generate(&program, "arena.ice").unwrap();
+        assert!(generated.contains("for (__ice_index, row) in self.items.iter()"));
+        assert!(generated.contains("::std::option::Option::Some(label)"));
+        assert!(generated.contains("for keyed_row in self.items.iter()"));
+        assert!(generated.contains("move |(__row, table_row)"));
+        assert!(generated.contains("__pane_maximized"));
+        assert!(generated.contains("(__size.width as f64)"));
+    }
+
+    #[test]
+    fn every_typed_match_family_uses_resolved_patterns_and_payload_locals() {
+        let source = r#"app MatchFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette light for AppTheme
+  bg #ffffff
+  fg #000000
+  primary #3366ff
+  danger #ff0000
+palette dark for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #6699ff
+  danger #ff0000
+enum RequestState
+  idle
+  ready([str])
+state
+  choice:str? = some("selected")
+  outcome:result[str,str] = err("failed")
+  request:RequestState = RequestState.ready(["one"])
+  active:palette[AppTheme] = AppTheme.light
+view
+  col
+    match choice
+      some(value)
+        text value
+      none
+        text "none"
+    match outcome
+      ok(value)
+        text value
+      err(error)
+        text error
+    match request
+      RequestState.idle
+        text "idle"
+      RequestState.ready(items)
+        text len(items)
+    match active
+      AppTheme.light
+        text "light"
+      AppTheme.dark
+        text "dark"
+"#;
+        let mut checked = analyze(source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        for child in children {
+            let ViewNode::Match { value, arms, .. } = child else {
+                panic!("every fixture child must be a typed match");
+            };
+            *value = Expr::Bool(false);
+            for arm in arms {
+                arm.pattern = MatchPattern::Wildcard;
+            }
+        }
+
+        let program = lower::lower(checked).unwrap();
+        let matches = program
+            .checked_facts()
+            .views()
+            .iter()
+            .filter(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 4);
+        let arms = |index: usize| match &matches[index].flow {
+            CheckedViewFlow::Match { arms, .. } => arms.as_slice(),
+            _ => unreachable!(),
+        };
+        assert!(matches!(arms(0)[0].pattern, CheckedMatchPattern::Some));
+        assert!(matches!(arms(0)[1].pattern, CheckedMatchPattern::None));
+        assert!(matches!(arms(1)[0].pattern, CheckedMatchPattern::Ok));
+        assert!(matches!(arms(1)[1].pattern, CheckedMatchPattern::Err));
+        assert!(matches!(
+            arms(2)[0].pattern,
+            CheckedMatchPattern::Enum(EnumVariantId { index: 0, .. })
+        ));
+        assert!(matches!(
+            arms(2)[1].pattern,
+            CheckedMatchPattern::Enum(EnumVariantId { index: 1, .. })
+        ));
+        assert!(matches!(
+            arms(3)[0].pattern,
+            CheckedMatchPattern::Palette(PaletteId(0))
+        ));
+        assert!(matches!(
+            arms(3)[1].pattern,
+            CheckedMatchPattern::Palette(PaletteId(1))
+        ));
+        for (match_index, bound_arms) in
+            [(0, vec![0]), (1, vec![0, 1]), (2, vec![1]), (3, Vec::new())]
+        {
+            for arm_index in bound_arms {
+                let local = arms(match_index)[arm_index].binding.unwrap();
+                assert!(matches!(
+                    program.checked_facts().local(local).owner,
+                    CheckedLocalOwner::View {
+                        view,
+                        role: CheckedViewLocalRole::MatchPayload(role_arm),
+                    } if view == matches[match_index].id && role_arm == arm_index as u32
+                ));
+            }
+        }
+        let generated = crate::codegen::generate(&program, "match_facts.ice").unwrap();
+        assert!(generated.contains("::std::option::Option::Some(value) =>"));
+        assert!(generated.contains("::std::result::Result::Err(error) =>"));
+        assert!(generated.contains("RequestState::Ready(items) =>"));
+        assert!(generated.contains("AppTheme::Light =>"));
     }
 
     #[test]
@@ -1492,6 +2868,53 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
         );
         assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(expression_origin.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_view_expression_origins_keep_physical_parent_chains() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-view-expression-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("card.ice");
+        fs::write(
+            &root,
+            format!("app Facts\nuse \"card.ice\" as ui\n{THEME}view\n  ui::Card\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Card()\n  state\n    open = true\n  col\n    if open\n      text \"Open\"\n",
+        )
+        .unwrap();
+
+        let program = lower::lower(analyze_file(&root).unwrap()).unwrap();
+        let checked_if = program
+            .checked_facts()
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::If { .. }))
+            .unwrap();
+        let CheckedViewFlow::If { condition } = checked_if.flow else {
+            unreachable!();
+        };
+        let expression = program.checked_facts().expression_use(condition);
+        let expression_origin = program.origin(expression.origin);
+        assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(expression_origin.line, 5);
+        assert_eq!(expression_origin.parent, Some(checked_if.origin));
+        let if_origin = program.origin(checked_if.origin);
+        assert_eq!(if_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(if_origin.line, 5);
+        assert!(if_origin.parent.is_some());
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1575,8 +2998,13 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
         let local = facts.local(CheckedLocalId(0));
         assert_eq!(local.name, "sample");
         assert_eq!(local.ty, Type::F64);
-        assert_eq!(local.owner, CheckedExprUseId(1));
-        assert_eq!(local.body_argument, 2);
+        assert_eq!(
+            local.owner,
+            CheckedLocalOwner::ExpressionBinding {
+                expression: CheckedExprUseId(1),
+                body_argument: 2,
+            }
+        );
 
         let projected = facts
             .values()
@@ -1885,7 +3313,7 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
         }
         for index in 0..facts.views().len() {
             assert_eq!(
-                facts.view(CheckedViewId(index as u32)).scope,
+                facts.view(ViewId(index as u32)).scope,
                 CheckedViewScope::App
             );
         }
@@ -1956,8 +3384,8 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o21
         assert_eq!(large.values, 4_001);
         assert_eq!(large.expression_uses, 4_001);
         assert_eq!(large.initializer_analysis_passes, 4_001);
-        assert_eq!(large.scope_env_builds, 1);
-        assert_eq!(large.scope_env_entries, 4_001);
+        assert_eq!(large.scope_env_builds, 2);
+        assert_eq!(large.scope_env_entries, 8_002);
         assert_eq!(large.locals, 4_000);
         assert_eq!(large.type_scope_env_full_clones, 0);
         assert_eq!(large.scope_env_full_clones, 0);
