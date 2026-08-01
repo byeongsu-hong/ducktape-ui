@@ -152,51 +152,6 @@ pub(in crate::codegen) fn generate_pane_types(
     Ok(())
 }
 
-pub(in crate::codegen) fn pane_reference_find_code(
-    reference: &PaneReference,
-    grid: &str,
-    state: &str,
-    dynamic: bool,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    let field = pane_field(grid);
-    if dynamic {
-        let value = pane_reference_value_code(reference, grid, true, env, document)?;
-        return Ok(format!(
-            "{{ let __value = {value}; {state}.{field}.iter().find_map(|(__pane, __pane_value)| (__pane_value == &__value).then_some(*__pane)) }}"
-        ));
-    }
-    Ok(match reference {
-        PaneReference::Static(name) => format!(
-            "{state}.{field}.iter().find_map(|(__pane, __name)| (*__name == {}).then_some(*__pane))",
-            rust_string(name)
-        ),
-        PaneReference::Dynamic { .. } => unreachable!("dynamic pane requires a template"),
-    })
-}
-
-pub(in crate::codegen) fn pane_reference_value_code(
-    reference: &PaneReference,
-    grid: &str,
-    dynamic: bool,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-) -> Result<String, Error> {
-    Ok(match reference {
-        PaneReference::Static(name) if dynamic => {
-            format!("{}::__Static({})", pane_type(grid), rust_string(name))
-        }
-        PaneReference::Static(name) => rust_string(name),
-        PaneReference::Dynamic { template, key } => format!(
-            "{}::{}({})",
-            pane_type(grid),
-            pane_template_variant(template),
-            expr_code(key, env, document, ValueMode::Owned)?
-        ),
-    })
-}
-
 pub(in crate::codegen) fn pane_split_slots(configuration: &PaneConfiguration) -> Vec<Option<&str>> {
     fn collect<'a>(configuration: &'a PaneConfiguration, output: &mut Vec<Option<&'a str>>) {
         if let PaneConfiguration::Split { name, a, b, .. } = configuration {

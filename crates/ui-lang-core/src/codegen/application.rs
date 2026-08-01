@@ -6,13 +6,13 @@ use super::*;
 // to a fresh owned value (component state reads) or is Copy — re-emitting one
 // of those costs nothing, while re-emitting a parameter is a use after move
 // that surfaces as an E0382 on the `include_app!` line with no usable span.
-fn handler_param_binding(param: &HandlerParam) -> Binding {
+fn handler_param_binding(param: &ResolvedHandlerParam) -> Binding {
     Binding {
         code: param.name.clone(),
         ty: param.ty.clone(),
         local: false,
         state: None,
-        owner: None,
+        owner: Some(BindingOwner::Local(param.local)),
     }
 }
 
@@ -214,7 +214,7 @@ pub(in crate::codegen) fn generate_boot(
     message: &str,
 ) -> Result<(), Error> {
     let document = program.document();
-    let accessibility_root = rust_string(&document.app);
+    let accessibility_root = rust_string(program.app_name());
     writeln!(out, "fn __state() -> Self {{").unwrap();
     for (node, test_only) in document_pane_grids(document) {
         let ViewNode::PaneGrid {
@@ -325,12 +325,11 @@ pub(in crate::codegen) fn generate_boot(
         }
     }
     writeln!(out, "}}\n}}").unwrap();
-    let mount = document
-        .handlers
-        .iter()
+    let mount = program
+        .app_handlers()
         .find(|handler| handler.name == "mount")
         .map_or(&[][..], |handler| handler.statements.as_slice());
-    generate_initial_task_method(out, document, message, "__boot_task", mount)?;
+    generate_initial_task_method(out, program, message, "__boot_task", mount)?;
     if document.daemon {
         writeln!(
             out,
@@ -349,19 +348,19 @@ pub(in crate::codegen) fn generate_boot(
 
 pub(in crate::codegen) fn generate_presets(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let accessibility_root = rust_string(&document.app);
-    for (index, preset) in document.presets.iter().enumerate() {
+    let accessibility_root = rust_string(program.app_name());
+    for (index, preset) in program.preset_handlers().enumerate() {
         let task_name = format!("__preset_task_{index}");
-        generate_initial_task_method(out, document, message, &task_name, &preset.statements)?;
+        generate_initial_task_method(out, program, message, &task_name, &preset.statements)?;
         writeln!(
             out,
             "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();"
         )
         .unwrap();
-        if document.daemon {
+        if program.is_daemon() {
             writeln!(out, "let task = state.{task_name}();\n(state, task)\n}}").unwrap();
         } else {
             writeln!(
@@ -372,13 +371,13 @@ pub(in crate::codegen) fn generate_presets(
             .unwrap();
         }
     }
-    if !document.daemon {
+    if !program.is_daemon() {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_initial_task(&mut self) -> ::iced::Task<{message}> {{\nmatch self.__ice_accessibility_initial.take() {{\n::std::option::Option::Some(0) => self.__boot_task(),"
         )
         .unwrap();
-        for index in 0..document.presets.len() {
+        for index in 0..program.preset_handlers().count() {
             writeln!(
                 out,
                 "::std::option::Option::Some({}) => self.__preset_task_{index}(),",
@@ -393,18 +392,18 @@ pub(in crate::codegen) fn generate_presets(
 
 fn generate_initial_task_method(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
     name: &str,
-    statements: &[Statement],
+    statements: &[ResolvedStatement],
 ) -> Result<(), Error> {
     writeln!(
         out,
         "fn {name}(&mut self) -> ::iced::Task<{message}> {{\nlet task = (|| {{"
     )
     .unwrap();
-    let env = state_env(document, "self");
-    let has_task = generate_statements(out, statements, document, message, &env, "self", false)?;
+    let env = checked_state_env(program, "self");
+    let has_task = generate_statements(out, statements, program, message, &env, "self", false)?;
     if !has_task {
         writeln!(out, "::iced::Task::none()").unwrap();
     }
@@ -419,9 +418,8 @@ pub(in crate::codegen) fn generate_update(
 ) -> Result<(), Error> {
     let document = program.document();
     let accessibility_root = rust_string(&document.app);
-    let has_fallthrough_arm = document
-        .handlers
-        .iter()
+    let has_fallthrough_arm = program
+        .app_handlers()
         .any(|handler| handler.name != "mount")
         || program.components().iter().any(|component| {
             !component.handlers.is_empty()
@@ -504,7 +502,8 @@ pub(in crate::codegen) fn generate_update(
         "{message}::__AccessibilityFocusNext => {{ return ::ui_lang_runtime::focus_next::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious => {{ return ::ui_lang_runtime::focus_previous::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},"
     )
     .unwrap();
-    for handler in &document.handlers {
+    let app_handler_env = checked_state_env(program, "self");
+    for handler in program.app_handlers() {
         if handler.name == "mount" {
             continue;
         }
@@ -528,14 +527,14 @@ pub(in crate::codegen) fn generate_update(
         for param in &handler.params {
             writeln!(out, "let _ = &{};", param.name).unwrap();
         }
-        let mut env = state_env(document, "self");
+        let mut env = ScopedBindingEnv::new(&app_handler_env);
         for param in &handler.params {
             env.insert(param.name.clone(), handler_param_binding(param));
         }
         let has_task = generate_statements(
             out,
             &handler.statements,
-            document,
+            program,
             message,
             &env,
             "self",
@@ -566,16 +565,34 @@ pub(in crate::codegen) fn generate_update(
             ),
             ComponentStorage::Stateless => unreachable!(),
         };
-        for line in component_generation_lines(&component.handlers) {
-            let generation = component_latest_field(line);
-            let variant = component_latest_variant(&component.name, line);
+        for (site, _) in component_run_sites(program, &component.handlers) {
+            let generation = component_latest_field(site.0 as usize);
+            let variant = component_latest_variant(&component.name, site.0 as usize);
             writeln!(
                 out,
                 "{message}::{variant}(__scope, __generation, __message) => {{ if {values}.get(&__scope).is_some_and(|__local| __local.{generation} == __generation) {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
             )
             .unwrap();
         }
-        for handler in &component.handlers {
+        let component_handler_env = component
+            .states
+            .iter()
+            .map(|state| {
+                (
+                    state.name.clone(),
+                    Binding {
+                        code: format!("__local.{}", state.name),
+                        ty: state.ty.clone(),
+                        local: false,
+                        state: None,
+                        owner: Some(BindingOwner::Value(CheckedValueRef::ComponentState(
+                            state.id,
+                        ))),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        for handler in component.handlers.iter().map(|id| program.handler(*id)) {
             let variant = component_handler_variant(&component.name, &handler.name);
             let mut bindings = vec!["__scope".to_owned()];
             bindings.extend(handler.params.iter().map(|param| param.name.clone()));
@@ -599,23 +616,11 @@ pub(in crate::codegen) fn generate_update(
             } else {
                 writeln!(out, "{}", entry("__scope.clone()")).unwrap();
             }
-            let mut env = HashMap::new();
-            for state in &component.states {
-                env.insert(
-                    state.name.clone(),
-                    Binding {
-                        code: format!("__local.{}", state.name),
-                        ty: state.ty.clone(),
-                        local: false,
-                        state: None,
-                        owner: None,
-                    },
-                );
-            }
+            let mut env = ScopedBindingEnv::new(&component_handler_env);
             for param in &handler.params {
                 env.insert(param.name.clone(), handler_param_binding(param));
             }
-            insert_component_context(
+            insert_scoped_component_context(
                 &mut env,
                 &component.name,
                 Binding {
@@ -633,27 +638,29 @@ pub(in crate::codegen) fn generate_update(
             let has_task = generate_statements(
                 out,
                 &handler.statements,
-                document,
+                program,
                 message,
                 &env,
                 "__local",
                 future.is_none(),
             )?;
-            if let Some((mode, line)) = future {
+            if let Some((mode, site)) = future {
                 debug_assert!(has_task);
                 writeln!(out, "}};").unwrap();
                 match mode {
                     FutureMode::Every => writeln!(out, "__task").unwrap(),
                     FutureMode::Latest | FutureMode::Replace => {
-                        let generation = component_latest_field(line);
-                        let future_variant = component_latest_variant(&component.name, line);
+                        let site = site.expect("latest and replace have stable run-site IDs");
+                        let generation = component_latest_field(site.0 as usize);
+                        let future_variant =
+                            component_latest_variant(&component.name, site.0 as usize);
                         match component.storage {
                             ComponentStorage::Retained => writeln!(out, "let __generation = {{ {} __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};", entry("__scope.clone()")).unwrap(),
                             ComponentStorage::Mounted => writeln!(out, "let __generation = self.{field}.next_generation(); {{ {} __local.{generation} = __generation; }}", entry("__scope.clone()")).unwrap(),
                             ComponentStorage::Stateless => unreachable!(),
                         }
                         if mode == FutureMode::Replace {
-                            let replace = component_replace_field(line);
+                            let replace = component_replace_field(site.0 as usize);
                             writeln!(out, "let (__task, __handle) = __task.abortable(); {{ {} if let ::std::option::Option::Some(__previous) = __local.{replace}.replace(__handle.abort_on_drop()) {{ __previous.abort(); }} }}", entry("__scope.clone()")).unwrap();
                         }
                         writeln!(out, "__task.map(move |__message| {message}::{future_variant}(__scope.clone(), __generation, ::std::boxed::Box::new(__message)))").unwrap();

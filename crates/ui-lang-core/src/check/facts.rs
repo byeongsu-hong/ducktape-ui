@@ -1,16 +1,27 @@
 use super::expr::{
-    BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, field_type, resolve_erased_type,
-    unify_type_evidence,
+    BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, analyze_expr_types, field_type,
+    resolve_erased_type, unify_type_evidence,
 };
 use super::*;
 use crate::hir::{
     AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId,
-    DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, OriginArena, OriginId, PaletteId,
-    StructFieldId, TestId, ViewId,
+    DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, HandlerId, OriginArena, OriginId,
+    PaletteId, RouteId, StatementId, StructFieldId, TaskId, TestId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct LookupCount(AtomicUsize);
+
+#[cfg(test)]
+impl Clone for LookupCount {
+    fn clone(&self) -> Self {
+        Self(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedExprId(u32);
@@ -67,6 +78,15 @@ pub(crate) enum CheckedLocalOwner {
     View {
         view: ViewId,
         role: CheckedViewLocalRole,
+    },
+    HandlerParam {
+        handler: HandlerId,
+        index: u32,
+    },
+    StatementLet(StatementId),
+    TaskTransform {
+        task: TaskId,
+        index: u32,
     },
 }
 
@@ -179,6 +199,18 @@ pub(crate) enum CheckedExprOwner {
     View {
         view: ViewId,
         role: CheckedViewExprRole,
+    },
+    HandlerStatement {
+        statement: StatementId,
+        operand: u32,
+    },
+    Task {
+        task: TaskId,
+        operand: u32,
+    },
+    Route {
+        route: RouteId,
+        argument: u32,
     },
 }
 
@@ -306,6 +338,22 @@ pub(crate) struct CheckedExpr {
     pub(crate) origin: OriginId,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedHandler {
+    pub(crate) id: HandlerId,
+    pub(crate) params: Vec<CheckedLocalId>,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedTask {
+    pub(crate) id: TaskId,
+    pub(crate) output: Option<Type>,
+    pub(crate) error: Option<Type>,
+    pub(crate) is_final: bool,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CheckedFactMetrics {
     pub(crate) values: usize,
@@ -318,6 +366,10 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) type_analysis_cache_hits: usize,
     pub(crate) initializer_analysis_passes: usize,
     pub(crate) view_analysis_passes: usize,
+    pub(crate) handler_analysis_passes: usize,
+    /// A handler expression is analyzed once and then moved into checked HIR.
+    /// Any non-zero value would mean a later phase asked the type checker again.
+    pub(crate) handler_type_rechecks: usize,
     pub(crate) type_scope_env_overlays: usize,
     pub(crate) type_scope_env_full_clones: usize,
     pub(crate) declaration_lookups: usize,
@@ -335,16 +387,19 @@ pub(crate) struct CheckedFacts {
     values: Vec<CheckedValue>,
     values_by_ref: HashMap<CheckedValueRef, CheckedValueId>,
     locals: Vec<CheckedLocal>,
+    locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
     component_argument_sources:
         HashMap<(ComponentCallId, ComponentParamId), CheckedComponentArgumentSource>,
     expressions: Vec<CheckedExpr>,
+    handlers: Vec<CheckedHandler>,
+    tasks: Vec<Option<CheckedTask>>,
     builtins: Vec<String>,
     metrics: CheckedFactMetrics,
     #[cfg(test)]
-    lookup_count: Cell<usize>,
+    lookup_count: LookupCount,
 }
 
 impl CheckedFacts {
@@ -383,6 +438,10 @@ impl CheckedFacts {
                 )
             })
             .map(|index| CheckedLocalId(index as u32))
+    }
+
+    pub(crate) fn local_by_owner(&self, owner: CheckedLocalOwner) -> Option<CheckedLocalId> {
+        self.locals_by_owner.get(&owner).copied()
     }
 
     pub(crate) fn views(&self) -> &[CheckedView] {
@@ -424,23 +483,35 @@ impl CheckedFacts {
         &self.builtins[id.0 as usize]
     }
 
+    pub(crate) fn handler(&self, id: HandlerId) -> &CheckedHandler {
+        self.record_lookup();
+        &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn task(&self, id: TaskId) -> &CheckedTask {
+        self.record_lookup();
+        self.tasks[id.0 as usize]
+            .as_ref()
+            .expect("checked task arena must be complete")
+    }
+
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
     }
 
     #[cfg(test)]
     pub(crate) fn lookup_count(&self) -> usize {
-        self.lookup_count.get()
+        self.lookup_count.0.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
     pub(crate) fn reset_lookup_count(&self) {
-        self.lookup_count.set(0);
+        self.lookup_count.0.store(0, Ordering::Relaxed);
     }
 
     #[cfg(test)]
     fn record_lookup(&self) {
-        self.lookup_count.set(self.lookup_count.get() + 1);
+        self.lookup_count.0.fetch_add(1, Ordering::Relaxed);
     }
 
     #[cfg(not(test))]
@@ -515,7 +586,7 @@ struct FactsBuilder<'a> {
     analyses: CheckedAnalyses,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct FactEnv {
     paths: HashMap<String, (CheckedPathRoot, Type)>,
     slots: HashMap<String, ComponentSlotId>,
@@ -535,7 +606,7 @@ impl FactEnv {
     }
 }
 
-trait FactEnvironment {
+trait FactEnvironment: ExprTypeEnv {
     fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)>;
     fn slot(&self, name: &str) -> Option<ComponentSlotId>;
 }
@@ -547,6 +618,24 @@ impl FactEnvironment for FactEnv {
 
     fn slot(&self, name: &str) -> Option<ComponentSlotId> {
         self.slots.get(name).copied()
+    }
+}
+
+impl ExprTypeEnv for FactEnv {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.paths.get(name).map(|(_, ty)| ty)
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        for (name, (_, ty)) in &self.paths {
+            visitor(name, ty);
+        }
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.paths
+            .iter()
+            .find_map(|(name, (_, ty))| name.starts_with(prefix).then_some(ty))
     }
 }
 
@@ -567,6 +656,77 @@ impl FactEnvironment for LayeredFactEnv<'_> {
 
     fn slot(&self, name: &str) -> Option<ComponentSlotId> {
         self.base.slot(name)
+    }
+}
+
+impl ExprTypeEnv for LayeredFactEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        if name == self.name {
+            Some(&self.value.1)
+        } else {
+            self.base.get(name).map(|(_, ty)| ty)
+        }
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.base.visit_types(visitor);
+        visitor(&self.name, &self.value.1);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.name
+            .starts_with(prefix)
+            .then_some(&self.value.1)
+            .or_else(|| self.base.type_with_prefix(prefix))
+    }
+}
+
+struct HandlerFactEnv<'a> {
+    base: &'a dyn FactEnvironment,
+    locals: FactEnv,
+}
+
+impl<'a> HandlerFactEnv<'a> {
+    fn new(base: &'a dyn FactEnvironment) -> Self {
+        Self {
+            base,
+            locals: FactEnv::default(),
+        }
+    }
+
+    fn insert(&mut self, name: String, root: CheckedPathRoot, ty: Type) {
+        self.locals.insert(name, root, ty);
+    }
+}
+
+impl ExprTypeEnv for HandlerFactEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.locals
+            .paths
+            .get(name)
+            .map(|(_, ty)| ty)
+            .or_else(|| self.base.get(name).map(|(_, ty)| ty))
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.base.visit_types(visitor);
+        self.locals.visit_types(visitor);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.locals
+            .type_with_prefix(prefix)
+            .or_else(|| self.base.type_with_prefix(prefix))
+    }
+}
+
+impl FactEnvironment for HandlerFactEnv<'_> {
+    fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
+        self.locals.paths.get(name).or_else(|| self.base.get(name))
+    }
+
+    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
+        self.locals.slot(name).or_else(|| self.base.slot(name))
     }
 }
 
@@ -604,6 +764,7 @@ impl<'a> FactsBuilder<'a> {
         self.lower_initializers()?;
         self.index_views()?;
         self.lower_view_expressions()?;
+        self.lower_handler_expressions()?;
         if !self.analyses.is_empty() {
             return Err(self.invariant(&Span::line(1), "checked analyses were not consumed"));
         }
@@ -805,6 +966,1174 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    fn lower_handler_expressions(&mut self) -> Result<(), Error> {
+        self.facts.tasks = vec![None; self.declarations.task_count()];
+        let mut handler_index = 0usize;
+        let app_env = (!self.document.handlers.is_empty() || !self.document.presets.is_empty())
+            .then(|| self.fact_env(ValueScope::App));
+
+        for index in 0..self.document.handlers.len() {
+            let handler = self.document.handlers[index].clone();
+            self.lower_handler(
+                handler_index,
+                &handler,
+                app_env.as_ref().expect("app handler environment exists"),
+            )?;
+            handler_index += 1;
+        }
+        for component_index in 0..self.document.components.len() {
+            let component = self.document.components[component_index].clone();
+            let component_id = self.declarations.component(component_index).id;
+            if component.handlers.is_empty() {
+                continue;
+            }
+            let mut component_env = FactEnv::default();
+            for state in &component.states {
+                let value = self.value_id(
+                    ValueScope::Component(component_id),
+                    &state.name,
+                    &state.span,
+                )?;
+                let value = &self.facts.values[value.0 as usize];
+                component_env.insert(
+                    state.name.clone(),
+                    CheckedPathRoot::Value(value.id),
+                    value.ty.clone(),
+                );
+            }
+            self.facts.metrics.scope_env_builds += 1;
+            self.facts.metrics.scope_env_entries += component_env.len();
+            for handler in &component.handlers {
+                self.lower_handler(handler_index, handler, &component_env)?;
+                handler_index += 1;
+            }
+        }
+        for preset_index in 0..self.document.presets.len() {
+            let preset = self.document.presets[preset_index].clone();
+            let handler = Handler {
+                name: format!("preset {}", preset.name),
+                params: Vec::new(),
+                statements: preset.statements,
+                span: preset.span,
+            };
+            self.lower_handler(
+                handler_index,
+                &handler,
+                app_env.as_ref().expect("preset handler environment exists"),
+            )?;
+            handler_index += 1;
+        }
+
+        if handler_index != self.declarations.handlers().len() {
+            return Err(self.invariant(
+                &Span::line(1),
+                "handler fact traversal did not consume the declaration arena",
+            ));
+        }
+        if let Some(task) = self.facts.tasks.iter().position(Option::is_none) {
+            return Err(self.invariant(
+                &Span::line(1),
+                format!("checked task arena retained an unconsumed task {task}"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn lower_handler(
+        &mut self,
+        handler_index: usize,
+        handler: &Handler,
+        base_env: &FactEnv,
+    ) -> Result<(), Error> {
+        let mut env = HandlerFactEnv::new(base_env);
+        let declaration = self
+            .declarations
+            .handlers()
+            .get(handler_index)
+            .ok_or_else(|| self.invariant(&handler.span, "handler has no declaration"))?
+            .clone();
+        if declaration.name != handler.name {
+            return Err(self.invariant(
+                &handler.span,
+                "handler declaration owner order does not match the checked document",
+            ));
+        }
+        let handler_id = declaration.declaration.id;
+        let mut params = Vec::with_capacity(handler.params.len());
+        for (index, param) in handler.params.iter().enumerate() {
+            let owner = CheckedLocalOwner::HandlerParam {
+                handler: handler_id,
+                index: index as u32,
+            };
+            let local = self.push_handler_local(
+                param.name.clone(),
+                param.ty.clone(),
+                owner,
+                &handler.span,
+                declaration.declaration.origin,
+            )?;
+            env.insert(
+                param.name.clone(),
+                CheckedPathRoot::Local(local),
+                param.ty.clone(),
+            );
+            params.push(local);
+        }
+        self.facts.handlers.push(CheckedHandler {
+            id: handler_id,
+            params,
+            origin: declaration.declaration.origin,
+        });
+        if declaration.statement_roots.len() != handler.statements.len() {
+            return Err(self.invariant(
+                &handler.span,
+                "handler statement declaration count changed after checking",
+            ));
+        }
+        for (statement, statement_id) in handler
+            .statements
+            .iter()
+            .zip(declaration.statement_roots.iter().copied())
+        {
+            self.lower_handler_statement(statement, statement_id, &mut env)?;
+        }
+        Ok(())
+    }
+
+    fn push_handler_local(
+        &mut self,
+        name: String,
+        ty: Type,
+        owner: CheckedLocalOwner,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedLocalId, Error> {
+        if self.facts.locals_by_owner.contains_key(&owner) {
+            return Err(self.invariant(span, "checked handler local owner was produced twice"));
+        }
+        let id = CheckedLocalId(self.facts.locals.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        self.facts.locals.push(CheckedLocal {
+            name,
+            ty,
+            owner,
+            origin,
+        });
+        self.facts.locals_by_owner.insert(owner, id);
+        Ok(id)
+    }
+
+    fn push_handler_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        expr: &Expr,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let analysis = analyze_expr_types(expr, env, self.document, span)?;
+        self.analyses.insert_expression(owner, analysis)?;
+        let analysis = self.analyses.remove(owner).ok_or_else(|| {
+            self.invariant(span, "missing authoritative handler expression analysis")
+        })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.handler_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let inferred = analysis
+            .type_of(expr)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained handler expression root type"))?;
+        let source = resolve_erased_type(&contextual_type(inferred, expected));
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "handler expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: expected.cloned().unwrap_or(source),
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked handler expression owner"));
+        }
+        Ok(id)
+    }
+
+    fn statement_operand(
+        &mut self,
+        statement: StatementId,
+        operand: &mut u32,
+        expr: &Expr,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::HandlerStatement {
+            statement,
+            operand: *operand,
+        };
+        *operand += 1;
+        let parent = self.declarations.statement(statement).declaration.origin;
+        self.push_handler_expression(owner, expr, expected, env, span, parent)
+    }
+
+    fn task_operand(
+        &mut self,
+        task: TaskId,
+        operand: &mut u32,
+        expr: &Expr,
+        expected: Option<&Type>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Task {
+            task,
+            operand: *operand,
+        };
+        *operand += 1;
+        let parent = self.declarations.task(task).declaration.origin;
+        self.push_handler_expression(owner, expr, expected, env, span, parent)
+    }
+
+    fn lower_route_expressions(
+        &mut self,
+        route: &Route,
+        route_id: RouteId,
+        env: &dyn FactEnvironment,
+    ) -> Result<(), Error> {
+        for (index, arg) in route.args.iter().enumerate() {
+            let RouteArg::Expr(expr) = arg else {
+                continue;
+            };
+            self.push_handler_expression(
+                CheckedExprOwner::Route {
+                    route: route_id,
+                    argument: index as u32,
+                },
+                expr,
+                None,
+                env,
+                &route.span,
+                self.declarations.route(route_id).declaration.origin,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn lower_handler_statement(
+        &mut self,
+        statement: &Statement,
+        statement_id: StatementId,
+        env: &mut HandlerFactEnv<'_>,
+    ) -> Result<(), Error> {
+        let declaration = self.declarations.statement(statement_id).clone();
+        let mut operand = 0u32;
+        let mut routes = declaration.routes.iter().copied();
+        match statement {
+            Statement::Let { name, value, span } => {
+                let expression =
+                    self.statement_operand(statement_id, &mut operand, value, None, env, span)?;
+                let ty = self.facts.expression_use(expression).source.clone();
+                let owner = CheckedLocalOwner::StatementLet(statement_id);
+                let local = self.push_handler_local(
+                    name.clone(),
+                    ty.clone(),
+                    owner,
+                    span,
+                    declaration.declaration.origin,
+                )?;
+                env.insert(name.clone(), CheckedPathRoot::Local(local), ty);
+            }
+            Statement::Assign {
+                target,
+                value,
+                at,
+                span,
+            } => {
+                let expected = env.get(target).map(|(_, ty)| ty.clone()).ok_or_else(|| {
+                    self.invariant(span, "assignment target has no checked value")
+                })?;
+                let value_expected = match &expected {
+                    Type::Combo(inner) => Type::List(inner.clone()),
+                    Type::Animation(inner) => (**inner).clone(),
+                    other => other.clone(),
+                };
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    value,
+                    Some(&value_expected),
+                    env,
+                    span,
+                )?;
+                if let Some(at) = at {
+                    self.statement_operand(
+                        statement_id,
+                        &mut operand,
+                        at,
+                        Some(&Type::Instant),
+                        env,
+                        span,
+                    )?;
+                }
+            }
+            Statement::MarkdownAppend { value, span, .. } => {
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    value,
+                    Some(&Type::Str),
+                    env,
+                    span,
+                )?;
+            }
+            Statement::ComboPush {
+                target,
+                value,
+                span,
+            } => {
+                let expected = env
+                    .get(target)
+                    .and_then(|(_, ty)| match ty {
+                        Type::Combo(inner) => Some((**inner).clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| self.invariant(span, "combo target has no checked item type"))?;
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    value,
+                    Some(&expected),
+                    env,
+                    span,
+                )?;
+            }
+            Statement::ReturnIf { condition, span } => {
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    condition,
+                    Some(&Type::Bool),
+                    env,
+                    span,
+                )?;
+            }
+            Statement::Exit { .. } => {
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    statement.span(),
+                )?;
+            }
+            Statement::Run {
+                kind,
+                function,
+                args,
+                success,
+                error,
+                span,
+                ..
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "run statement has no checked task declaration")
+                })?;
+                let (output, error_ty, expected) =
+                    self.effect_contract(*kind, function, args, span)?;
+                let mut task_operand = 0;
+                for (index, arg) in args.iter().enumerate() {
+                    self.task_operand(
+                        task,
+                        &mut task_operand,
+                        arg,
+                        expected.get(index),
+                        env,
+                        span,
+                    )?;
+                }
+                self.record_checked_task(
+                    Some(task),
+                    Some(output),
+                    error_ty,
+                    declaration.is_final,
+                    span,
+                )?;
+                let success_id = routes
+                    .next()
+                    .ok_or_else(|| self.invariant(span, "run success route has no declaration"))?;
+                self.lower_route_expressions(success, success_id, env)?;
+                if let Some(error) = error {
+                    let error_id = routes.next().ok_or_else(|| {
+                        self.invariant(span, "run error route has no declaration")
+                    })?;
+                    self.lower_route_expressions(error, error_id, env)?;
+                }
+            }
+            Statement::Sip {
+                function,
+                args,
+                progress,
+                success,
+                error,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "sip statement has no checked task declaration")
+                })?;
+                let action = self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "sip target has no extern declaration"))?
+                    .clone();
+                let mut task_operand = 0;
+                for (index, arg) in args.iter().enumerate() {
+                    self.task_operand(
+                        task,
+                        &mut task_operand,
+                        arg,
+                        action.params.get(index).map(|(_, ty)| ty),
+                        env,
+                        span,
+                    )?;
+                }
+                self.record_checked_task(
+                    Some(task),
+                    Some(action.output),
+                    action.error,
+                    declaration.is_final,
+                    span,
+                )?;
+                for route in std::iter::once(progress)
+                    .chain(std::iter::once(success))
+                    .chain(error.iter())
+                {
+                    let route_id = routes
+                        .next()
+                        .ok_or_else(|| self.invariant(span, "sip route has no declaration"))?;
+                    self.lower_route_expressions(route, route_id, env)?;
+                }
+            }
+            Statement::TaskFlow {
+                source,
+                transforms,
+                success,
+                error,
+                units,
+                span,
+            } => {
+                self.lower_task_flow(
+                    source,
+                    transforms,
+                    statement_id,
+                    declaration.task,
+                    declaration.is_final,
+                    env,
+                    span,
+                )?;
+                for route in success.iter().chain(error.iter()).chain(units.iter()) {
+                    let route_id = routes.next().ok_or_else(|| {
+                        self.invariant(span, "task flow route has no declaration")
+                    })?;
+                    self.lower_route_expressions(route, route_id, env)?;
+                }
+            }
+            Statement::TaskGroup {
+                statements, span, ..
+            } => {
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    span,
+                )?;
+                if statements.len() != declaration.children.len() {
+                    return Err(self.invariant(span, "task group child arena diverged"));
+                }
+                for (child, child_id) in statements.iter().zip(declaration.children.iter().copied())
+                {
+                    let mut child_env = HandlerFactEnv::new(env);
+                    self.lower_handler_statement(child, child_id, &mut child_env)?;
+                }
+            }
+            Statement::Abortable { task, span, .. } => {
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    span,
+                )?;
+                let [child] = declaration.children.as_slice() else {
+                    return Err(self.invariant(span, "abortable task child arena diverged"));
+                };
+                let mut child_env = HandlerFactEnv::new(env);
+                self.lower_handler_statement(task, *child, &mut child_env)?;
+            }
+            Statement::Abort { .. }
+            | Statement::DebugFinish { .. }
+            | Statement::PaneOperation {
+                operation:
+                    PaneOperation::Maximize { .. }
+                    | PaneOperation::Restore
+                    | PaneOperation::Swap { .. }
+                    | PaneOperation::Close { .. }
+                    | PaneOperation::Move { .. }
+                    | PaneOperation::Drop { .. },
+                ..
+            } => {
+                self.lower_statement_operation_expressions(
+                    statement,
+                    statement_id,
+                    &mut operand,
+                    env,
+                )?;
+            }
+            Statement::DebugStart { name, span, .. } => {
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    name,
+                    Some(&Type::Str),
+                    env,
+                    span,
+                )?;
+            }
+            Statement::ClipboardWrite { value, span, .. } => {
+                self.statement_operand(
+                    statement_id,
+                    &mut operand,
+                    value,
+                    Some(&Type::Str),
+                    env,
+                    span,
+                )?;
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    span,
+                )?;
+            }
+            Statement::WidgetOperation { route, span, .. }
+            | Statement::PaneOperation { route, span, .. }
+            | Statement::WindowOperation { route, span, .. } => {
+                self.lower_statement_operation_expressions(
+                    statement,
+                    statement_id,
+                    &mut operand,
+                    env,
+                )?;
+                if declaration.task.is_some() {
+                    self.record_checked_task(
+                        declaration.task,
+                        Some(Type::Unit),
+                        None,
+                        declaration.is_final,
+                        span,
+                    )?;
+                }
+                if let Some(route) = route {
+                    let route_id = routes.next().ok_or_else(|| {
+                        self.invariant(span, "operation route has no declaration")
+                    })?;
+                    self.lower_route_expressions(route, route_id, env)?;
+                }
+            }
+        }
+        if routes.next().is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "statement left a checked route declaration unconsumed",
+            ));
+        }
+        Ok(())
+    }
+
+    fn record_checked_task(
+        &mut self,
+        task: Option<TaskId>,
+        output: Option<Type>,
+        error: Option<Type>,
+        is_final: bool,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let Some(task) = task else {
+            return Ok(());
+        };
+        let declaration = self.declarations.task(task);
+        let slot = self
+            .facts
+            .tasks
+            .get_mut(task.0 as usize)
+            .ok_or_else(|| Error::new("E196", span, "checked task ID is outside its arena"))?;
+        if slot.is_some() {
+            return Err(Error::new(
+                "E196",
+                span,
+                "checked task declaration was consumed more than once",
+            ));
+        }
+        *slot = Some(CheckedTask {
+            id: task,
+            output,
+            error,
+            is_final,
+            origin: declaration.declaration.origin,
+        });
+        Ok(())
+    }
+
+    fn effect_contract(
+        &self,
+        kind: EffectKind,
+        function: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<(Type, Option<Type>, Vec<Type>), Error> {
+        if let Some((output, error)) =
+            super::handler::builtin_task_type(kind, function, args, span)?
+        {
+            let expected = match function {
+                "__ice_font_load" => vec![Type::Bytes],
+                "__ice_image_allocate" => vec![Type::Image],
+                _ => Vec::new(),
+            };
+            return Ok((output, error, expected));
+        }
+        let action = self
+            .declarations
+            .extern_decl_by_name(function)
+            .ok_or_else(|| self.invariant(span, "effect target has no extern declaration"))?;
+        if action.kind != ExternKind::from(kind) {
+            return Err(self.invariant(span, "effect target kind changed after checking"));
+        }
+        Ok((
+            action.output.clone(),
+            action.error.clone(),
+            action.params.iter().map(|(_, ty)| ty.clone()).collect(),
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_task_flow(
+        &mut self,
+        source: &TaskSource,
+        transforms: &[TaskTransform],
+        statement: StatementId,
+        root_task: Option<TaskId>,
+        is_final: bool,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let declaration = self.declarations.statement(statement).clone();
+        if declaration.source_tasks.len() != transforms.len() + 1 {
+            return Err(self.invariant(span, "task flow arena shape diverged after checking"));
+        }
+        let (mut output, mut error) =
+            self.lower_task_source(source, declaration.source_tasks[0], env)?;
+        for (index, (transform, task)) in transforms
+            .iter()
+            .zip(declaration.source_tasks.iter().copied().skip(1))
+            .enumerate()
+        {
+            match transform {
+                TaskTransform::Map {
+                    binding,
+                    value,
+                    span,
+                } => {
+                    let local = self.push_handler_local(
+                        binding.clone(),
+                        output.clone(),
+                        CheckedLocalOwner::TaskTransform {
+                            task,
+                            index: index as u32,
+                        },
+                        span,
+                        self.declarations.task(task).declaration.origin,
+                    )?;
+                    let mut transform_env = FactEnv::default();
+                    transform_env.insert(binding.clone(), CheckedPathRoot::Local(local), output);
+                    let mut operand = 0;
+                    let expression =
+                        self.task_operand(task, &mut operand, value, None, &transform_env, span)?;
+                    output = self.facts.expression_use(expression).source.clone();
+                    self.record_checked_task(
+                        Some(task),
+                        Some(output.clone()),
+                        error.clone(),
+                        false,
+                        span,
+                    )?;
+                }
+                TaskTransform::Then {
+                    binding,
+                    source,
+                    span,
+                } => {
+                    let local = self.push_handler_local(
+                        binding.clone(),
+                        output.clone(),
+                        CheckedLocalOwner::TaskTransform {
+                            task,
+                            index: index as u32,
+                        },
+                        span,
+                        self.declarations.task(task).declaration.origin,
+                    )?;
+                    let mut transform_env = FactEnv::default();
+                    transform_env.insert(binding.clone(), CheckedPathRoot::Local(local), output);
+                    (output, error) = self.lower_task_source(source, task, &transform_env)?;
+                }
+                TaskTransform::AndThen {
+                    binding,
+                    source,
+                    span,
+                } => {
+                    let binding_ty = if error.is_some() {
+                        output.clone()
+                    } else if let Type::Option(inner) = &output {
+                        (**inner).clone()
+                    } else {
+                        return Err(self.invariant(span, "checked try transform is not optional"));
+                    };
+                    let local = self.push_handler_local(
+                        binding.clone(),
+                        binding_ty.clone(),
+                        CheckedLocalOwner::TaskTransform {
+                            task,
+                            index: index as u32,
+                        },
+                        span,
+                        self.declarations.task(task).declaration.origin,
+                    )?;
+                    let mut transform_env = FactEnv::default();
+                    transform_env.insert(
+                        binding.clone(),
+                        CheckedPathRoot::Local(local),
+                        binding_ty,
+                    );
+                    (output, error) = self.lower_task_source(source, task, &transform_env)?;
+                }
+                TaskTransform::MapError {
+                    binding,
+                    value,
+                    span,
+                } => {
+                    let input = error.clone().ok_or_else(|| {
+                        self.invariant(span, "checked map-err has no error input")
+                    })?;
+                    let local = self.push_handler_local(
+                        binding.clone(),
+                        input.clone(),
+                        CheckedLocalOwner::TaskTransform {
+                            task,
+                            index: index as u32,
+                        },
+                        span,
+                        self.declarations.task(task).declaration.origin,
+                    )?;
+                    let mut transform_env = FactEnv::default();
+                    transform_env.insert(binding.clone(), CheckedPathRoot::Local(local), input);
+                    let mut operand = 0;
+                    let expression =
+                        self.task_operand(task, &mut operand, value, None, &transform_env, span)?;
+                    error = Some(self.facts.expression_use(expression).source.clone());
+                    self.record_checked_task(
+                        Some(task),
+                        Some(output.clone()),
+                        error.clone(),
+                        false,
+                        span,
+                    )?;
+                }
+                TaskTransform::Collect { span } => {
+                    let item = match error.take() {
+                        Some(error) => Type::Result(Box::new(output), Box::new(error)),
+                        None => output,
+                    };
+                    output = Type::List(Box::new(item));
+                    self.record_checked_task(Some(task), Some(output.clone()), None, false, span)?;
+                }
+                TaskTransform::Discard { span } => {
+                    self.record_checked_task(Some(task), None, None, false, span)?;
+                    self.record_checked_task(root_task, None, None, is_final, span)?;
+                    return Ok(());
+                }
+            }
+        }
+        self.record_checked_task(root_task, Some(output), error, is_final, span)
+    }
+
+    fn lower_task_source(
+        &mut self,
+        source: &TaskSource,
+        task: TaskId,
+        env: &dyn FactEnvironment,
+    ) -> Result<(Type, Option<Type>), Error> {
+        let (output, error) = match source {
+            TaskSource::Done { value, span } => {
+                let mut operand = 0;
+                let value = self.task_operand(task, &mut operand, value, None, env, span)?;
+                (self.facts.expression_use(value).source.clone(), None)
+            }
+            TaskSource::None { output, .. } => (output.clone(), None),
+            TaskSource::Effect {
+                kind,
+                function,
+                args,
+                span,
+            } => {
+                let (output, error, expected) =
+                    self.effect_contract(*kind, function, args, span)?;
+                let mut operand = 0;
+                for (index, arg) in args.iter().enumerate() {
+                    self.task_operand(task, &mut operand, arg, expected.get(index), env, span)?;
+                }
+                (output, error)
+            }
+        };
+        self.record_checked_task(
+            Some(task),
+            Some(output.clone()),
+            error.clone(),
+            false,
+            match source {
+                TaskSource::Effect { span, .. }
+                | TaskSource::Done { span, .. }
+                | TaskSource::None { span, .. } => span,
+            },
+        )?;
+        Ok((output, error))
+    }
+
+    fn lower_statement_operation_expressions(
+        &mut self,
+        statement: &Statement,
+        statement_id: StatementId,
+        operand: &mut u32,
+        env: &dyn FactEnvironment,
+    ) -> Result<(), Error> {
+        let span = statement.span();
+        match statement {
+            Statement::WidgetOperation { operation, .. } => match operation {
+                WidgetOperation::Focus { target }
+                | WidgetOperation::Focused { target }
+                | WidgetOperation::CursorFront { target }
+                | WidgetOperation::CursorEnd { target }
+                | WidgetOperation::SelectAll { target }
+                | WidgetOperation::SnapEnd { target } => {
+                    self.lower_widget_target(target, statement_id, operand, env, span)?;
+                }
+                WidgetOperation::Cursor { target, position } => {
+                    self.lower_widget_target(target, statement_id, operand, env, span)?;
+                    self.statement_operand(
+                        statement_id,
+                        operand,
+                        position,
+                        Some(&Type::I64),
+                        env,
+                        span,
+                    )?;
+                }
+                WidgetOperation::Select { target, start, end } => {
+                    self.lower_widget_target(target, statement_id, operand, env, span)?;
+                    for value in [start, end] {
+                        self.statement_operand(
+                            statement_id,
+                            operand,
+                            value,
+                            Some(&Type::I64),
+                            env,
+                            span,
+                        )?;
+                    }
+                }
+                WidgetOperation::Snap { target, x, y }
+                | WidgetOperation::ScrollTo { target, x, y }
+                | WidgetOperation::ScrollBy { target, x, y } => {
+                    self.lower_widget_target(target, statement_id, operand, env, span)?;
+                    for value in [x, y] {
+                        self.statement_operand(
+                            statement_id,
+                            operand,
+                            value,
+                            Some(&Type::F64),
+                            env,
+                            span,
+                        )?;
+                    }
+                }
+                WidgetOperation::Find { selector, .. } => {
+                    self.lower_widget_selector(selector, statement_id, operand, env, span)?;
+                }
+                WidgetOperation::FocusPrevious | WidgetOperation::FocusNext => {}
+            },
+            Statement::PaneOperation { operation, .. } => {
+                let mut pane = |this: &mut Self, pane: &PaneReference| {
+                    this.lower_pane_reference(pane, statement_id, operand, env, span)
+                };
+                match operation {
+                    PaneOperation::Maximize { pane: value }
+                    | PaneOperation::Close { pane: value }
+                    | PaneOperation::Move { pane: value, .. }
+                    | PaneOperation::Adjacent { pane: value, .. } => pane(self, value)?,
+                    PaneOperation::Swap { first, second } => {
+                        pane(self, first)?;
+                        pane(self, second)?;
+                    }
+                    PaneOperation::Resize { ratio, .. } => {
+                        self.statement_operand(
+                            statement_id,
+                            operand,
+                            ratio,
+                            Some(&Type::F64),
+                            env,
+                            span,
+                        )?;
+                    }
+                    PaneOperation::Drop {
+                        pane: value,
+                        target,
+                        ..
+                    } => {
+                        pane(self, value)?;
+                        pane(self, target)?;
+                    }
+                    PaneOperation::Split {
+                        target,
+                        pane: value,
+                        ratio,
+                        ..
+                    } => {
+                        pane(self, target)?;
+                        pane(self, value)?;
+                        self.statement_operand(
+                            statement_id,
+                            operand,
+                            ratio,
+                            Some(&Type::F64),
+                            env,
+                            span,
+                        )?;
+                    }
+                    PaneOperation::Restore | PaneOperation::Maximized => {}
+                }
+            }
+            Statement::WindowOperation {
+                operation, target, ..
+            } => {
+                if let Some(target) = target {
+                    self.statement_operand(
+                        statement_id,
+                        operand,
+                        target,
+                        Some(&Type::WindowId),
+                        env,
+                        span,
+                    )?;
+                }
+                self.lower_window_operation(operation, statement_id, operand, env, span)?;
+            }
+            Statement::Abort { .. }
+            | Statement::DebugFinish { .. }
+            | Statement::DebugStart { .. }
+            | Statement::Let { .. }
+            | Statement::Assign { .. }
+            | Statement::MarkdownAppend { .. }
+            | Statement::ComboPush { .. }
+            | Statement::ReturnIf { .. }
+            | Statement::Exit { .. }
+            | Statement::Run { .. }
+            | Statement::Sip { .. }
+            | Statement::TaskFlow { .. }
+            | Statement::TaskGroup { .. }
+            | Statement::Abortable { .. }
+            | Statement::ClipboardWrite { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn lower_widget_target(
+        &mut self,
+        target: &WidgetTarget,
+        statement: StatementId,
+        operand: &mut u32,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        for segment in &target.segments {
+            if let Some(key) = &segment.key {
+                self.statement_operand(statement, operand, key, None, env, span)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_widget_selector(
+        &mut self,
+        selector: &WidgetSelector,
+        statement: StatementId,
+        operand: &mut u32,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        match selector {
+            WidgetSelector::Id(target) => {
+                self.lower_widget_target(target, statement, operand, env, span)?;
+            }
+            WidgetSelector::Text(value) => {
+                self.statement_operand(statement, operand, value, Some(&Type::Str), env, span)?;
+            }
+            WidgetSelector::Point { x, y } => {
+                for value in [x, y] {
+                    self.statement_operand(statement, operand, value, Some(&Type::F64), env, span)?;
+                }
+            }
+            WidgetSelector::Extern { function, args } => {
+                let action = self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "widget selector extern is unresolved"))?
+                    .clone();
+                for (index, arg) in args.iter().enumerate() {
+                    self.statement_operand(
+                        statement,
+                        operand,
+                        arg,
+                        action.params.get(index).map(|(_, ty)| ty),
+                        env,
+                        span,
+                    )?;
+                }
+            }
+            WidgetSelector::Focused => {}
+        }
+        Ok(())
+    }
+
+    fn lower_pane_reference(
+        &mut self,
+        pane: &PaneReference,
+        statement: StatementId,
+        operand: &mut u32,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if let PaneReference::Dynamic { key, .. } = pane {
+            self.statement_operand(statement, operand, key, None, env, span)?;
+        }
+        Ok(())
+    }
+
+    fn lower_window_operation(
+        &mut self,
+        operation: &WindowOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let mut expression = |this: &mut Self, value: &Expr, expected: Option<&Type>| {
+            this.statement_operand(statement, operand, value, expected, env, span)
+                .map(|_| ())
+        };
+        match operation {
+            WindowOperation::Resize(width, height) | WindowOperation::Move(width, height) => {
+                expression(self, width, Some(&Type::F64))?;
+                expression(self, height, Some(&Type::F64))?;
+            }
+            WindowOperation::Resizable(value)
+            | WindowOperation::Maximize(value)
+            | WindowOperation::Minimize(value)
+            | WindowOperation::MousePassthrough(value)
+            | WindowOperation::AutomaticTabbing(value) => {
+                expression(self, value, Some(&Type::Bool))?;
+            }
+            WindowOperation::MinSize(value) | WindowOperation::MaxSize(value) => {
+                if let Some((width, height)) = value {
+                    expression(self, width, Some(&Type::F64))?;
+                    expression(self, height, Some(&Type::F64))?;
+                }
+            }
+            WindowOperation::ResizeIncrements(value) => {
+                if let Some((width, height)) = value {
+                    expression(self, width, Some(&Type::F64))?;
+                    expression(self, height, Some(&Type::F64))?;
+                }
+            }
+            WindowOperation::Icon {
+                pixels,
+                width,
+                height,
+            } => {
+                expression(self, pixels, Some(&Type::Bytes))?;
+                expression(self, width, Some(&Type::I64))?;
+                expression(self, height, Some(&Type::I64))?;
+            }
+            WindowOperation::Callback { function, args } => {
+                let action = self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "window callback extern is unresolved"))?
+                    .clone();
+                for (index, arg) in args.iter().enumerate() {
+                    expression(self, arg, action.params.get(index).map(|(_, ty)| ty))?;
+                }
+            }
+            WindowOperation::Open(_)
+            | WindowOperation::Oldest
+            | WindowOperation::Latest
+            | WindowOperation::Close
+            | WindowOperation::Drag
+            | WindowOperation::DragResize(_)
+            | WindowOperation::Size
+            | WindowOperation::IsMaximized
+            | WindowOperation::IsMinimized
+            | WindowOperation::Position
+            | WindowOperation::ScaleFactor
+            | WindowOperation::Mode
+            | WindowOperation::SetMode(_)
+            | WindowOperation::ToggleMaximize
+            | WindowOperation::ToggleDecorations
+            | WindowOperation::Attention(_)
+            | WindowOperation::Focus
+            | WindowOperation::SetLevel(_)
+            | WindowOperation::SystemMenu
+            | WindowOperation::RawId
+            | WindowOperation::Screenshot
+            | WindowOperation::MonitorSize => {}
+        }
+        Ok(())
+    }
+
     fn fact_env(&mut self, scope: ValueScope) -> FactEnv {
         let mut env = FactEnv::default();
         for (name, id) in self.values_by_scope.get(&scope).into_iter().flatten() {
@@ -901,12 +2230,14 @@ impl<'a> FactsBuilder<'a> {
     ) -> CheckedLocalId {
         let id = CheckedLocalId(self.facts.locals.len() as u32);
         let origin = self.origins.push(span, Some(parent));
+        let owner = CheckedLocalOwner::View { view, role };
         self.facts.locals.push(CheckedLocal {
             name: name.to_owned(),
             ty,
-            owner: CheckedLocalOwner::View { view, role },
+            owner,
             origin,
         });
+        self.facts.locals_by_owner.insert(owner, id);
         id
     }
 
@@ -1876,15 +3207,17 @@ impl<'a> FactsBuilder<'a> {
                         ));
                     };
                     let id = CheckedLocalId(self.facts.locals.len() as u32);
+                    let owner = CheckedLocalOwner::ExpressionBinding {
+                        expression: lowering.owner,
+                        body_argument: body,
+                    };
                     self.facts.locals.push(CheckedLocal {
                         name: name.clone(),
                         ty,
-                        owner: CheckedLocalOwner::ExpressionBinding {
-                            expression: lowering.owner,
-                            body_argument: body,
-                        },
+                        owner,
                         origin: lowering.origin,
                     });
+                    self.facts.locals_by_owner.insert(owner, id);
                     bindings.insert(index, (name.clone(), id));
                     arguments.push(CheckedCallArgument::Binding(id));
                 }
@@ -2271,6 +3604,8 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 type_analysis_cache_hits: 0,
                 initializer_analysis_passes: 7,
                 view_analysis_passes: 1,
+                handler_analysis_passes: 0,
+                handler_type_rechecks: 0,
                 type_scope_env_overlays: 0,
                 type_scope_env_full_clones: 0,
                 declaration_lookups: 18,
@@ -2452,6 +3787,60 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
     }
 
     #[test]
+    fn duplicate_and_mismatched_handler_analysis_owners_are_e196_invariants() {
+        let source =
+            format!("app HandlerOwners\n{THEME}on update\n  let value = 1\nview\n  text \"ok\"\n");
+        let document = crate::parse(&source).unwrap();
+        let mut origins = OriginArena::default();
+        let declarations = DeclarationIndex::build(&document, &mut origins);
+        let statement = declarations.handlers()[0].statement_roots[0];
+        let expression = Expr::I64(1);
+        let analysis = crate::check::expr::analyze_expr_types(
+            &expression,
+            &HashMap::new(),
+            &document,
+            &document.handlers[0].span,
+        )
+        .unwrap();
+        let mut duplicate = CheckedAnalyses::default();
+        duplicate
+            .insert_expression(
+                CheckedExprOwner::HandlerStatement {
+                    statement,
+                    operand: 0,
+                },
+                analysis,
+            )
+            .unwrap();
+        let error = build(&document, &declarations, &mut origins, duplicate).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("analyzed more than once"));
+
+        let mut origins = OriginArena::default();
+        let declarations = DeclarationIndex::build(&document, &mut origins);
+        let analysis = crate::check::expr::analyze_expr_types(
+            &expression,
+            &HashMap::new(),
+            &document,
+            &document.handlers[0].span,
+        )
+        .unwrap();
+        let mut mismatched = CheckedAnalyses::default();
+        mismatched
+            .insert_expression(
+                CheckedExprOwner::HandlerStatement {
+                    statement,
+                    operand: 99,
+                },
+                analysis,
+            )
+            .unwrap();
+        let error = build(&document, &declarations, &mut origins, mismatched).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked analyses were not consumed"));
+    }
+
+    #[test]
     fn missing_component_argument_source_is_an_e196_invariant() {
         let source = format!(
             "app MissingArg\n{THEME}state\n  count = 1\ncomponent Card(value:i64)\n  text value\nview\n  Card value=count\n"
@@ -2621,7 +4010,10 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
             .iter()
             .filter_map(|local| match local.owner {
                 CheckedLocalOwner::View { role, .. } => Some(role),
-                CheckedLocalOwner::ExpressionBinding { .. } => None,
+                CheckedLocalOwner::ExpressionBinding { .. }
+                | CheckedLocalOwner::HandlerParam { .. }
+                | CheckedLocalOwner::StatementLet(_)
+                | CheckedLocalOwner::TaskTransform { .. } => None,
             })
             .collect::<Vec<_>>();
         for role in [

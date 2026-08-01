@@ -92,6 +92,24 @@ pub(in crate::codegen) fn insert_component_context(
     env.insert(component_context_key(component), binding);
 }
 
+pub(in crate::codegen) fn insert_scoped_component_context(
+    env: &mut ScopedBindingEnv<'_>,
+    component: &str,
+    binding: Binding,
+) {
+    env.insert(
+        COMPONENT_CONTEXT_INDEX.into(),
+        Binding {
+            code: component.to_owned(),
+            ty: Type::Unit,
+            local: true,
+            state: None,
+            owner: None,
+        },
+    );
+    env.insert(component_context_key(component), binding);
+}
+
 pub(in crate::codegen) fn component_output_key(component: &str) -> String {
     format!("{COMPONENT_OUTPUT_PREFIX}{component}")
 }

@@ -1,5 +1,64 @@
 use super::*;
 
+pub(in crate::codegen) fn resolved_route_code(
+    route: &crate::lower::ResolvedRoute,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    let (variant, component) = match &route.target {
+        crate::lower::ResolvedRouteTarget::App { name, .. } => (handler_variant(name), None),
+        crate::lower::ResolvedRouteTarget::Component {
+            component, name, ..
+        } => (
+            component_handler_variant(&program.component(*component).name, name),
+            Some(*component),
+        ),
+    };
+    let mut args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            crate::lower::ResolvedRouteArg::Payload { index, .. } => payloads
+                .get(*index as usize)
+                .map(|payload| (*payload).to_owned())
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        &Span::line(1),
+                        "normalized route payload index is outside its payload contract",
+                    )
+                }),
+            crate::lower::ResolvedRouteArg::Expression(expression) => {
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(component) = component {
+        let (active, context) = env.component_context().ok_or_else(|| {
+            Error::new(
+                "E196",
+                &Span::line(1),
+                "normalized component route has no component emission scope",
+            )
+        })?;
+        if active != program.component(component).name {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "normalized component route owner does not match emission scope",
+            ));
+        }
+        args.insert(0, format!("({}).clone()", context.code));
+    }
+    if args.is_empty() {
+        Ok(format!("{message}::{variant}"))
+    } else {
+        Ok(format!("{message}::{variant}({})", args.join(", ")))
+    }
+}
+
 pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> {
     match field {
         "kind" => Some(Type::Str),

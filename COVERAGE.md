@@ -113,6 +113,19 @@ validates every manifest content digest and absence of transaction debris, then
 proves the dev process shuts down cleanly. This complements the deterministic
 same-directory lock tests with the actual Cargo command boundary.
 
+App, implicit mount, component, and preset handler bodies now cross a complete
+normalized HIR boundary before Rust emission. Stable typed arenas own handlers,
+preorder statements, immediate and flow tasks, body routes, checked locals, and
+latest/replace run sites. Route payloads retain ordered indices and concrete
+types; tasks retain output/error types and finality; every node retains a root
+or imported origin chain. Handler code generation has no statement-AST
+expression fallback, checker type query, extern name rediscovery, or source-line
+async identity. Snapshot, post-check mutation, invalid-state, imported-marker,
+and compiled fixtures guard those invariants. An ignored full-pipeline
+500/4,000-statement contract records exact zero handler type rechecks, checked
+scope full clones, and codegen full environment clones while enforcing linear
+output and wall-time growth.
+
 The runtime `RichTextEditor` uses caller-owned `ContentVersion` identity to
 skip full native-buffer materialization for caret and selection layouts.
 `EditorChange` optionally supplies an exact `from`/`to` content-version pair and

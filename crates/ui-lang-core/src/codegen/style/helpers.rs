@@ -303,24 +303,6 @@ pub(in crate::codegen) fn accessibility_code(
     Ok((label, description))
 }
 
-pub(in crate::codegen) fn widget_target_code(
-    target: &WidgetTarget,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let constructor = if component_context(env).is_none()
-        && target.segments.iter().all(|segment| segment.key.is_none())
-    {
-        "new"
-    } else {
-        "from"
-    };
-    Ok(format!(
-        "::iced::widget::Id::{constructor}({})",
-        widget_target_path_code(target, env, document)?
-    ))
-}
-
 pub(in crate::codegen) fn widget_target_path_code(
     target: &WidgetTarget,
     env: &dyn BindingEnvironment,
@@ -350,48 +332,4 @@ pub(in crate::codegen) fn widget_target_path_code(
         scope = id_code(segment, &scope, env, document)?;
     }
     Ok(scope)
-}
-
-pub(in crate::codegen) fn widget_selector_code(
-    selector: &WidgetSelector,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(String, Option<&'static str>), Error> {
-    match selector {
-        WidgetSelector::Id(target) => Ok((
-            format!(
-                "::iced::widget::selector::id({})",
-                widget_target_code(target, env, document)?
-            ),
-            Some("__ice_widget_target_from_target"),
-        )),
-        WidgetSelector::Text(value) => Ok((
-            expr_code(value, env, document, ValueMode::Owned)?,
-            Some("__ice_widget_target_from_text"),
-        )),
-        WidgetSelector::Point { x, y } => Ok((
-            format!(
-                "::iced::Point::new(({}) as f32, ({}) as f32)",
-                expr_code(x, env, document, ValueMode::Owned)?,
-                expr_code(y, env, document, ValueMode::Owned)?
-            ),
-            Some("__ice_widget_target_from_target"),
-        )),
-        WidgetSelector::Focused => Ok((
-            "::iced::widget::selector::is_focused()".into(),
-            Some("__ice_widget_target_from_target"),
-        )),
-        WidgetSelector::Extern { function, args } => {
-            let function = find_extern_function(document, function, ExternKind::Selector)
-                .expect("checker validates selectors");
-            Ok((
-                format!(
-                    "{}({})",
-                    function.rust_path,
-                    expr_list_code(args, env, document)?
-                ),
-                None,
-            ))
-        }
-    }
 }

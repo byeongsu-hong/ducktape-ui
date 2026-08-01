@@ -1,0 +1,4 @@
+let next = (self.value + 1)
+__ice_latest_0: u64
+crate::backend::fetch(__local.query)
+__HandlerBodyHirMessage::__SearchLatest0

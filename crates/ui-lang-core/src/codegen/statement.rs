@@ -1,10 +1,10 @@
 use super::*;
 
-fn route_result_code(route: &Route, binding: &str, expression: String) -> String {
+fn route_result_code(route: &ResolvedRoute, binding: &str, expression: String) -> String {
     if route
         .args
         .iter()
-        .any(|arg| matches!(arg, RouteArg::Payload))
+        .any(|arg| matches!(arg, ResolvedRouteArg::Payload { .. }))
     {
         expression
     } else {
@@ -12,85 +12,165 @@ fn route_result_code(route: &Route, binding: &str, expression: String) -> String
     }
 }
 
-fn references_binding(expr: &Expr, name: &str) -> bool {
-    match expr {
-        Expr::List(values) => values.iter().any(|value| references_binding(value, name)),
-        Expr::Path(path) => path.first().is_some_and(|segment| segment == name),
-        Expr::Call { args, .. } => args.iter().any(|arg| references_binding(arg, name)),
-        Expr::Unary { value, .. } => references_binding(value, name),
-        Expr::Binary { left, right, .. } => {
-            references_binding(left, name) || references_binding(right, name)
-        }
-        Expr::Bool(_)
-        | Expr::I64(_)
-        | Expr::F64(_)
-        | Expr::Str(_)
-        | Expr::Bytes(_)
-        | Expr::EmptyList
-        | Expr::None => false,
-    }
+fn editor_self_assignment_code(
+    target: &ResolvedWritableState,
+    value: CheckedExprUseId,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    state: &str,
+) -> Result<String, Error> {
+    let binding = Binding {
+        code: format!("::std::mem::take(&mut {state}.{})", target.name),
+        ty: target.ty.clone(),
+        local: true,
+        state: None,
+        owner: Some(BindingOwner::Value(target.value)),
+    };
+    let moved = LayeredBindingEnv::new(env, &target.name, binding);
+    checked_expr_use_code(program, value, &moved, ValueMode::Owned)
 }
 
-fn editor_self_assignment_code(
-    target: &str,
-    value: &Expr,
-    env: &HashMap<String, Binding>,
-    document: &Document,
-    state: &str,
-) -> Result<Option<String>, Error> {
-    if !env.get(target).is_some_and(|binding| {
-        matches!(
-            &binding.state,
-            Some(StateBinding::App(name)) if name == target
-        )
-    }) {
-        return Ok(None);
+fn resolved_widget_target_code(
+    target: &ResolvedWidgetTarget,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let mut scope = env
+        .component_context()
+        .map(|(_, binding)| binding.code.clone())
+        .unwrap_or_else(|| rust_string(program.app_name()));
+    for segment in &target.segments {
+        scope = if let Some(key) = segment.key {
+            let key = checked_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+            format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
+        } else {
+            format!("format!(\"{{}}/{}\", {scope})", segment.name)
+        };
     }
-    let Expr::Call { name, args } = value else {
-        return Ok(None);
-    };
-    let Some(function) = find_extern_function(document, name, ExternKind::Sync) else {
-        return Ok(None);
-    };
-    let Some(moved) = args
-        .iter()
-        .position(|arg| matches!(arg, Expr::Path(path) if path.as_slice() == [target]))
-    else {
-        return Ok(None);
-    };
-    if args
-        .iter()
-        .enumerate()
-        .any(|(index, arg)| index != moved && references_binding(arg, target))
+    let constructor = if env.component_context().is_none()
+        && target.segments.iter().all(|segment| segment.key.is_none())
     {
-        return Ok(None);
-    }
+        "new"
+    } else {
+        "from"
+    };
+    let path = if constructor == "new" {
+        rust_string(&format!(
+            "{}/{}",
+            program.app_name(),
+            target
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>()
+                .join("/")
+        ))
+    } else {
+        scope
+    };
+    Ok(format!("::iced::widget::Id::{constructor}({path})"))
+}
 
-    let args = args
-        .iter()
-        .enumerate()
-        .map(|(index, arg)| {
-            if index == moved {
-                Ok(format!("::std::mem::take(&mut {state}.{target})"))
-            } else {
-                expr_code(arg, env, document, ValueMode::Owned)
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", ");
-    Ok(Some(format!("{}({args})", function.rust_path)))
+fn resolved_widget_selector_code(
+    selector: &ResolvedWidgetSelector,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<(String, Option<&'static str>), Error> {
+    Ok(match selector {
+        ResolvedWidgetSelector::Id(target) => (
+            format!(
+                "::iced::widget::selector::id({})",
+                resolved_widget_target_code(target, env, program)?
+            ),
+            Some("__ice_widget_target_from_target"),
+        ),
+        ResolvedWidgetSelector::Text(value) => (
+            checked_expr_use_code(program, *value, env, ValueMode::Owned)?,
+            Some("__ice_widget_target_from_text"),
+        ),
+        ResolvedWidgetSelector::Point { x, y } => (
+            format!(
+                "::iced::Point::new(({}) as f32, ({}) as f32)",
+                checked_expr_use_code(program, *x, env, ValueMode::Owned)?,
+                checked_expr_use_code(program, *y, env, ValueMode::Owned)?
+            ),
+            Some("__ice_widget_target_from_target"),
+        ),
+        ResolvedWidgetSelector::Focused => (
+            "::iced::widget::selector::is_focused()".into(),
+            Some("__ice_widget_target_from_target"),
+        ),
+        ResolvedWidgetSelector::Extern { target, args } => {
+            let function = program.extern_function(*target);
+            let args = args
+                .iter()
+                .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ");
+            (format!("{}({args})", function.rust_path), None)
+        }
+    })
+}
+
+fn resolved_pane_value_code(
+    reference: &ResolvedPaneReference,
+    grid: &str,
+    dynamic: bool,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    Ok(match reference {
+        ResolvedPaneReference::Static(name) if dynamic => {
+            format!("{}::__Static({})", pane_type(grid), rust_string(name))
+        }
+        ResolvedPaneReference::Static(name) => rust_string(name),
+        ResolvedPaneReference::Dynamic { template, key } => format!(
+            "{}::{}({})",
+            pane_type(grid),
+            pane_template_variant(template),
+            checked_expr_use_code(program, *key, env, ValueMode::Owned)?
+        ),
+    })
+}
+
+fn resolved_pane_find_code(
+    reference: &ResolvedPaneReference,
+    grid: &str,
+    state: &str,
+    dynamic: bool,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let field = pane_field(grid);
+    if dynamic {
+        let value = resolved_pane_value_code(reference, grid, true, env, program)?;
+        return Ok(format!(
+            "{{ let __value = {value}; {state}.{field}.iter().find_map(|(__pane, __pane_value)| (__pane_value == &__value).then_some(*__pane)) }}"
+        ));
+    }
+    match reference {
+        ResolvedPaneReference::Static(name) => Ok(format!(
+            "{state}.{field}.iter().find_map(|(__pane, __name)| (*__name == {}).then_some(*__pane))",
+            rust_string(name)
+        )),
+        ResolvedPaneReference::Dynamic { .. } => Err(Error::new(
+            "E196",
+            &Span::line(1),
+            "normalized dynamic pane reference has no dynamic pane grid",
+        )),
+    }
 }
 
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
-    statements: &[Statement],
-    document: &Document,
+    statements: &[ResolvedStatement],
+    program: &LoweredProgram,
     message: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     state: &str,
     return_task: bool,
 ) -> Result<bool, Error> {
-    let mut local_env = env.clone();
+    let mut local_env = ScopedBindingEnv::new(env);
     let env = &mut local_env;
     let mut has_task = false;
     let (task_prefix, task_suffix) = if return_task {
@@ -99,13 +179,17 @@ pub(in crate::codegen) fn generate_statements(
         ("", "")
     };
     for statement in statements {
-        has_task |= statement.immediate_task().is_some();
-        writeln!(out, "{}", source_marker(statement.span())).unwrap();
-        match statement {
-            Statement::Let { name, value, .. } => {
-                let code = expr_code(value, env, document, ValueMode::Owned)?;
+        has_task |= statement.task.is_some();
+        writeln!(out, "{}", source_marker_origin(program, statement.origin)).unwrap();
+        match &statement.kind {
+            ResolvedStatementKind::Let { local, name, value } => {
+                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 writeln!(out, "let {name} = {code};").unwrap();
-                let ty = expr_type(value, &env_types(env), document, &Span::line(1))?;
+                let ty = program
+                    .checked_facts()
+                    .expression_use(*value)
+                    .destination
+                    .clone();
                 env.insert(
                     name.clone(),
                     Binding {
@@ -113,31 +197,29 @@ pub(in crate::codegen) fn generate_statements(
                         ty,
                         local: false,
                         state: None,
-                        owner: None,
+                        owner: Some(BindingOwner::Local(*local)),
                     },
                 );
             }
-            Statement::Assign {
-                target, value, at, ..
+            ResolvedStatementKind::Assign {
+                target,
+                value,
+                at,
+                move_self,
             } => {
-                let target_state = document.states.iter().find(|item| item.name == *target);
-                let code = if target_state.is_some_and(|item| item.ty == Type::Editor) {
-                    editor_self_assignment_code(target, value, env, document, state)?
-                        .map_or_else(|| expr_code(value, env, document, ValueMode::Owned), Ok)?
+                let code = if *move_self {
+                    editor_self_assignment_code(target, *value, env, program, state)?
                 } else {
-                    expr_code(value, env, document, ValueMode::Owned)?
+                    checked_expr_use_code(program, *value, env, ValueMode::Owned)?
                 };
-                if target_state.is_some_and(|item| matches!(item.ty, Type::Combo(_))) {
+                if matches!(target.ty, Type::Combo(_)) {
                     writeln!(
                         out,
-                        "{state}.{target} = ::iced::widget::combo_box::State::new({code});"
+                        "{state}.{} = ::iced::widget::combo_box::State::new({code});",
+                        target.name
                     )
                     .unwrap();
-                } else if let Some(State {
-                    ty: Type::Animation(inner),
-                    ..
-                }) = target_state
-                {
+                } else if let Type::Animation(inner) = &target.ty {
                     let code = if **inner == Type::F64 {
                         format!("({code}) as f32")
                     } else {
@@ -145,27 +227,27 @@ pub(in crate::codegen) fn generate_statements(
                     };
                     let at = at
                         .as_ref()
-                        .map(|at| expr_code(at, env, document, ValueMode::Owned))
+                        .map(|at| checked_expr_use_code(program, *at, env, ValueMode::Owned))
                         .transpose()?
                         .unwrap_or_else(|| "::iced::time::Instant::now()".into());
-                    writeln!(out, "{state}.{target}.go_mut({code}, {at});").unwrap();
+                    writeln!(out, "{state}.{}.go_mut({code}, {at});", target.name).unwrap();
                 } else {
-                    writeln!(out, "{state}.{target} = {code};").unwrap();
+                    writeln!(out, "{state}.{} = {code};", target.name).unwrap();
                 }
             }
-            Statement::MarkdownAppend { target, value, .. } => {
-                let code = expr_code(value, env, document, ValueMode::Owned)?;
-                writeln!(out, "{state}.{target}.push_str(&{code});").unwrap();
+            ResolvedStatementKind::MarkdownAppend { target, value } => {
+                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                writeln!(out, "{state}.{}.push_str(&{code});", target.name).unwrap();
             }
-            Statement::ComboPush { target, value, .. } => {
-                let code = expr_code(value, env, document, ValueMode::Owned)?;
-                writeln!(out, "{state}.{target}.push({code});").unwrap();
+            ResolvedStatementKind::ComboPush { target, value } => {
+                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                writeln!(out, "{state}.{}.push({code});", target.name).unwrap();
             }
-            Statement::ReturnIf { condition, .. } => {
-                let code = expr_code(condition, env, document, ValueMode::Owned)?;
+            ResolvedStatementKind::ReturnIf { condition } => {
+                let code = checked_expr_use_code(program, *condition, env, ValueMode::Owned)?;
                 writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
             }
-            Statement::Exit { .. } => {
+            ResolvedStatementKind::Exit => {
                 writeln!(
                     out,
                     "{}::iced::exit::<{message}>(){}",
@@ -173,38 +255,27 @@ pub(in crate::codegen) fn generate_statements(
                 )
                 .unwrap();
             }
-            Statement::Run {
-                kind,
-                function,
-                args,
-                success,
-                error,
-                span,
-                ..
-            } => {
-                let mapper = if component_context(env).is_some() {
+            ResolvedStatementKind::Run(run) => {
+                let ResolvedRun {
+                    kind,
+                    target,
+                    args,
+                    success,
+                    error,
+                    ..
+                } = run;
+                let mapper = if env.component_context().is_some() {
                     "move "
                 } else {
                     ""
                 };
-                if *kind == EffectKind::Task
-                    && matches!(
-                        function.as_str(),
-                        "__ice_system_info"
-                            | "__ice_system_theme"
-                            | "__ice_time_now"
-                            | "__ice_clipboard_read"
-                            | "__ice_clipboard_read_primary"
-                            | "__ice_font_load"
-                            | "__ice_image_allocate"
-                    )
-                {
+                if let ResolvedEffectTarget::Builtin(function) = target {
                     if function == "__ice_font_load" {
-                        let bytes = expr_code(&args[0], env, document, ValueMode::Owned)?;
+                        let bytes = checked_expr_use_code(program, args[0], env, ValueMode::Owned)?;
                         let success_message = route_result_code(
                             success,
                             "value",
-                            route_code(success, "value", env, document, message)?,
+                            resolved_route_code(success, &["value"], env, program, message)?,
                         );
                         writeln!(
                             out,
@@ -216,17 +287,18 @@ pub(in crate::codegen) fn generate_statements(
                         continue;
                     }
                     if function == "__ice_image_allocate" {
-                        let handle = expr_code(&args[0], env, document, ValueMode::Owned)?;
+                        let handle =
+                            checked_expr_use_code(program, args[0], env, ValueMode::Owned)?;
                         let success_message = route_result_code(
                             success,
                             "value",
-                            route_code(success, "value", env, document, message)?,
+                            resolved_route_code(success, &["value"], env, program, message)?,
                         );
-                        let error_message = route_code(
+                        let error_message = resolved_route_code(
                             error.as_ref().expect("checker requires image error route"),
-                            "error",
+                            &["error"],
                             env,
-                            document,
+                            program,
                             message,
                         )?;
                         let error_message = route_result_code(
@@ -243,7 +315,7 @@ pub(in crate::codegen) fn generate_statements(
                         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                         continue;
                     }
-                    let task = match function.as_str() {
+                    let task_code = match function.as_str() {
                         "__ice_system_info" => {
                             "::iced::system::information().map(__ice_system_info)"
                         }
@@ -256,37 +328,36 @@ pub(in crate::codegen) fn generate_statements(
                     let success_message = route_result_code(
                         success,
                         "value",
-                        route_code(success, "value", env, document, message)?,
+                        resolved_route_code(success, &["value"], env, program, message)?,
                     );
                     writeln!(
                         out,
-                        "{}{task}.map(move |value| {success_message}){}",
+                        "{}{task_code}.map(move |value| {success_message}){}",
                         task_prefix, task_suffix
                     )
                     .unwrap();
                     writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                     continue;
                 }
-                let extern_kind = match kind {
-                    EffectKind::Future => ExternKind::Future,
-                    EffectKind::Task => ExternKind::Task,
-                    EffectKind::Stream => ExternKind::Stream,
+                let ResolvedEffectTarget::Extern(action) = target else {
+                    unreachable!("built-in effects return above")
                 };
-                let action =
-                    find_extern_function(document, function, extern_kind).ok_or_else(|| {
-                        Error::new("E130", span, format!("unknown extern fn `{function}`"))
-                    })?;
-                let args = expr_list_code(args, env, document)?;
+                let action = program.extern_function(*action);
+                let args = args
+                    .iter()
+                    .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
                 let success_message = route_result_code(
                     success,
                     "value",
-                    route_code(success, "value", env, document, message)?,
+                    resolved_route_code(success, &["value"], env, program, message)?,
                 );
                 if let (Some(error_route), Some(_)) = (error, &action.error) {
                     let error_message = route_result_code(
                         error_route,
                         "error",
-                        route_code(error_route, "error", env, document, message)?,
+                        resolved_route_code(error_route, &["error"], env, program, message)?,
                     );
                     match kind {
                         EffectKind::Future => writeln!(out, "{task_prefix}::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
@@ -316,70 +387,58 @@ pub(in crate::codegen) fn generate_statements(
                     }
                 }
             }
-            Statement::Sip {
-                function,
-                args,
-                progress,
-                success,
-                error,
-                span,
-            } => {
-                let action =
-                    find_extern_function(document, function, ExternKind::Sip).ok_or_else(|| {
-                        Error::new("E130", span, format!("unknown extern sip `{function}`"))
-                    })?;
-                let args = expr_list_code(args, env, document)?;
+            ResolvedStatementKind::Sip(sip) => {
+                let ResolvedSip {
+                    target,
+                    args,
+                    progress,
+                    success,
+                    error,
+                } = sip;
+                let action = program.extern_function(*target);
+                let args = args
+                    .iter()
+                    .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
                 let progress_message = route_result_code(
                     progress,
                     "value",
-                    route_code(progress, "value", env, document, message)?,
+                    resolved_route_code(progress, &["value"], env, program, message)?,
                 );
                 let success_message = route_result_code(
                     success,
                     "value",
-                    route_code(success, "value", env, document, message)?,
+                    resolved_route_code(success, &["value"], env, program, message)?,
                 );
                 if let (Some(error_route), Some(_)) = (error, &action.error) {
                     let error_message = route_result_code(
                         error_route,
                         "error",
-                        route_code(error_route, "error", env, document, message)?,
+                        resolved_route_code(error_route, &["error"], env, program, message)?,
                     );
                     writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap();
                 } else {
                     writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |value| {success_message}){task_suffix}", action.rust_path).unwrap();
                 }
             }
-            Statement::TaskFlow {
-                source,
-                transforms,
-                success,
-                error,
-                units,
-                ..
-            } => {
-                let type_env = env
-                    .iter()
-                    .map(|(name, binding)| (name.clone(), binding.ty.clone()))
-                    .collect::<HashMap<_, _>>();
-                let (output, error_ty) =
-                    crate::check::task_flow_type(source, transforms, document, &type_env)?;
-                let task = task_flow_code(source, transforms, document, message, env)?;
-                let mapped = if output.is_none() {
+            ResolvedStatementKind::TaskFlow(flow) => {
+                let task = task_flow_code(flow, program, message, env)?;
+                let mapped = if flow.output.is_none() {
                     task
                 } else {
-                    let success = success.as_ref().expect("checked flow done route");
+                    let success = flow.success.as_ref().expect("checked flow done route");
                     let success_message = route_result_code(
                         success,
                         "value",
-                        route_code(success, "value", env, document, message)?,
+                        resolved_route_code(success, &["value"], env, program, message)?,
                     );
-                    if error_ty.is_some() {
-                        let error = error.as_ref().expect("checked flow error route");
+                    if flow.error_type.is_some() {
+                        let error = flow.error.as_ref().expect("checked flow error route");
                         let error_message = route_result_code(
                             error,
                             "error",
-                            route_code(error, "error", env, document, message)?,
+                            resolved_route_code(error, &["error"], env, program, message)?,
                         );
                         format!(
                             "({task}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
@@ -388,8 +447,9 @@ pub(in crate::codegen) fn generate_statements(
                         format!("({task}).map(|value| {success_message})")
                     }
                 };
-                let task = if let Some(units) = units {
-                    let units_message = route_code(units, "__units", env, document, message)?;
+                let task = if let Some(units) = &flow.units {
+                    let units_message =
+                        resolved_route_code(units, &["__units"], env, program, message)?;
                     format!(
                         "{{ let __task = {mapped}; let __units = i64::try_from(__task.units()).unwrap_or(i64::MAX); ::iced::Task::batch([__task, ::iced::Task::done({units_message})]) }}"
                     )
@@ -398,13 +458,9 @@ pub(in crate::codegen) fn generate_statements(
                 };
                 writeln!(out, "{}{task}{}", task_prefix, task_suffix).unwrap();
             }
-            Statement::TaskGroup {
+            ResolvedStatementKind::TaskGroup {
                 kind, statements, ..
             } => {
-                let mut task_env = env.clone();
-                for binding in task_env.values_mut() {
-                    binding.local = false;
-                }
                 if return_task {
                     write!(out, "return ").unwrap();
                 }
@@ -416,9 +472,9 @@ pub(in crate::codegen) fn generate_statements(
                             generate_statements(
                                 out,
                                 ::std::slice::from_ref(statement),
-                                document,
+                                program,
                                 message,
-                                &task_env,
+                                env,
                                 state,
                                 false,
                             )?;
@@ -433,9 +489,9 @@ pub(in crate::codegen) fn generate_statements(
                             generate_statements(
                                 out,
                                 ::std::slice::from_ref(statement),
-                                document,
+                                program,
                                 message,
-                                &task_env,
+                                env,
                                 state,
                                 false,
                             )?;
@@ -445,16 +501,12 @@ pub(in crate::codegen) fn generate_statements(
                 }
                 writeln!(out, "{task_suffix}").unwrap();
             }
-            Statement::Abortable {
+            ResolvedStatementKind::Abortable {
                 handle,
                 abort_on_drop,
                 task,
                 ..
             } => {
-                let mut task_env = env.clone();
-                for binding in task_env.values_mut() {
-                    binding.local = false;
-                }
                 if return_task {
                     write!(out, "return ").unwrap();
                 }
@@ -462,16 +514,17 @@ pub(in crate::codegen) fn generate_statements(
                 generate_statements(
                     out,
                     ::std::slice::from_ref(task),
-                    document,
+                    program,
                     message,
-                    &task_env,
+                    env,
                     state,
                     false,
                 )?;
                 writeln!(out, "}}).abortable();").unwrap();
                 writeln!(
                     out,
-                    "{state}.{handle} = ::std::option::Option::Some(__handle{}); __task }}{}",
+                    "{state}.{} = ::std::option::Option::Some(__handle{}); __task }}{}",
+                    handle.name,
                     if *abort_on_drop {
                         ".abort_on_drop()"
                     } else {
@@ -481,23 +534,24 @@ pub(in crate::codegen) fn generate_statements(
                 )
                 .unwrap();
             }
-            Statement::Abort { handle, .. } => {
-                writeln!(out, "if let ::std::option::Option::Some(__handle) = &{state}.{handle} {{ __handle.abort(); }}").unwrap();
+            ResolvedStatementKind::Abort { handle } => {
+                writeln!(out, "if let ::std::option::Option::Some(__handle) = &{state}.{} {{ __handle.abort(); }}", handle.name).unwrap();
             }
-            Statement::DebugStart { name, target, .. } => {
-                let name = expr_code(name, env, document, ValueMode::Owned)?;
-                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{target}.take() {{ __span.finish(); }}").unwrap();
+            ResolvedStatementKind::DebugStart { name, target } => {
+                let name = checked_expr_use_code(program, *name, env, ValueMode::Owned)?;
+                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
                 writeln!(
                     out,
-                    "{state}.{target} = ::std::option::Option::Some(::iced::debug::time({name}));"
+                    "{state}.{} = ::std::option::Option::Some(::iced::debug::time({name}));",
+                    target.name
                 )
                 .unwrap();
             }
-            Statement::DebugFinish { target, .. } => {
-                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{target}.take() {{ __span.finish(); }}").unwrap();
+            ResolvedStatementKind::DebugFinish { target } => {
+                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
             }
-            Statement::ClipboardWrite { primary, value, .. } => {
-                let value = expr_code(value, env, document, ValueMode::Owned)?;
+            ResolvedStatementKind::ClipboardWrite { primary, value } => {
+                let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 let function = if *primary { "write_primary" } else { "write" };
                 writeln!(
                     out,
@@ -506,12 +560,14 @@ pub(in crate::codegen) fn generate_statements(
                 )
                 .unwrap();
             }
-            Statement::WidgetOperation {
+            ResolvedStatementKind::WidgetOperation {
                 operation, route, ..
             } => {
-                let id = |target: &WidgetTarget| widget_target_code(target, env, document);
-                let value = |value: &Expr, cast: &str| {
-                    let code = expr_code(value, env, document, ValueMode::Owned)?;
+                let id = |target: &ResolvedWidgetTarget| {
+                    resolved_widget_target_code(target, env, program)
+                };
+                let value = |value: CheckedExprUseId, cast: &str| {
+                    let code = checked_expr_use_code(program, value, env, ValueMode::Owned)?;
                     Ok::<_, Error>(if cast == "usize" {
                         format!("usize::try_from({code}).unwrap_or(0)")
                     } else {
@@ -519,72 +575,76 @@ pub(in crate::codegen) fn generate_statements(
                     })
                 };
                 let task = match operation {
-                    WidgetOperation::FocusPrevious => {
+                    ResolvedWidgetOperation::FocusPrevious => {
                         format!("::iced::widget::operation::focus_previous::<{message}>()")
                     }
-                    WidgetOperation::FocusNext => {
+                    ResolvedWidgetOperation::FocusNext => {
                         format!("::iced::widget::operation::focus_next::<{message}>()")
                     }
-                    WidgetOperation::Focus { target } => format!(
+                    ResolvedWidgetOperation::Focus { target } => format!(
                         "::iced::widget::operation::focus::<{message}>({})",
                         id(target)?
                     ),
-                    WidgetOperation::Focused { target } => {
+                    ResolvedWidgetOperation::Focused { target } => {
                         let route = route.as_ref().expect("checker requires focused route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "::iced::widget::operation::is_focused({}).map(move |value| {message_code})",
                             id(target)?
                         )
                     }
-                    WidgetOperation::CursorFront { target } => format!(
+                    ResolvedWidgetOperation::CursorFront { target } => format!(
                         "::iced::widget::operation::move_cursor_to_front::<{message}>({})",
                         id(target)?
                     ),
-                    WidgetOperation::CursorEnd { target } => format!(
+                    ResolvedWidgetOperation::CursorEnd { target } => format!(
                         "::iced::widget::operation::move_cursor_to_end::<{message}>({})",
                         id(target)?
                     ),
-                    WidgetOperation::Cursor { target, position } => format!(
+                    ResolvedWidgetOperation::Cursor { target, position } => format!(
                         "::iced::widget::operation::move_cursor_to::<{message}>({}, {})",
                         id(target)?,
-                        value(position, "usize")?
+                        value(*position, "usize")?
                     ),
-                    WidgetOperation::SelectAll { target } => format!(
+                    ResolvedWidgetOperation::SelectAll { target } => format!(
                         "::iced::widget::operation::select_all::<{message}>({})",
                         id(target)?
                     ),
-                    WidgetOperation::Select { target, start, end } => format!(
+                    ResolvedWidgetOperation::Select { target, start, end } => format!(
                         "::iced::widget::operation::select_range::<{message}>({}, {}, {})",
                         id(target)?,
-                        value(start, "usize")?,
-                        value(end, "usize")?
+                        value(*start, "usize")?,
+                        value(*end, "usize")?
                     ),
-                    WidgetOperation::Snap { target, x, y } => format!(
-                        "::iced::widget::operation::snap_to::<{message}>({}, ::iced::widget::operation::RelativeOffset {{ x: {}, y: {} }})",
-                        id(target)?,
-                        clamped_f32_code(x, "0.0", "1.0", env, document)?,
-                        clamped_f32_code(y, "0.0", "1.0", env, document)?
-                    ),
-                    WidgetOperation::SnapEnd { target } => format!(
+                    ResolvedWidgetOperation::Snap { target, x, y } => {
+                        let x = checked_expr_use_code(program, *x, env, ValueMode::Owned)?;
+                        let y = checked_expr_use_code(program, *y, env, ValueMode::Owned)?;
+                        format!(
+                            "::iced::widget::operation::snap_to::<{message}>({}, ::iced::widget::operation::RelativeOffset {{ x: (({x}) as f32).max(0.0).min(1.0), y: (({y}) as f32).max(0.0).min(1.0) }})",
+                            id(target)?,
+                        )
+                    }
+                    ResolvedWidgetOperation::SnapEnd { target } => format!(
                         "::iced::widget::operation::snap_to_end::<{message}>({})",
                         id(target)?
                     ),
-                    WidgetOperation::ScrollTo { target, x, y } => format!(
+                    ResolvedWidgetOperation::ScrollTo { target, x, y } => format!(
                         "::iced::widget::operation::scroll_to::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
                         id(target)?,
-                        value(x, "f32")?,
-                        value(y, "f32")?
+                        value(*x, "f32")?,
+                        value(*y, "f32")?
                     ),
-                    WidgetOperation::ScrollBy { target, x, y } => format!(
+                    ResolvedWidgetOperation::ScrollBy { target, x, y } => format!(
                         "::iced::widget::operation::scroll_by::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
                         id(target)?,
-                        value(x, "f32")?,
-                        value(y, "f32")?
+                        value(*x, "f32")?,
+                        value(*y, "f32")?
                     ),
-                    WidgetOperation::Find { selector, all } => {
+                    ResolvedWidgetOperation::Find { selector, all } => {
                         let route = route.as_ref().expect("checker requires selector route");
-                        let (selector, conversion) = widget_selector_code(selector, env, document)?;
+                        let (selector, conversion) =
+                            resolved_widget_selector_code(selector, env, program)?;
                         let function = if *all { "find_all" } else { "find" };
                         let mut task = format!("::iced::widget::selector::{function}({selector})");
                         if let Some(conversion) = conversion {
@@ -594,24 +654,23 @@ pub(in crate::codegen) fn generate_statements(
                                 write!(task, ".map(|value| value.map({conversion}))").unwrap();
                             }
                         }
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!("{task}.map(move |value| {message_code})")
                     }
                 };
                 writeln!(out, "{}{task}{}", task_prefix, task_suffix).unwrap();
             }
-            Statement::PaneOperation {
+            ResolvedStatementKind::PaneOperation {
                 grid,
+                dynamic,
                 operation,
                 route,
                 ..
             } => {
                 let field = pane_field(grid);
-                let dynamic = document_pane_grids(document).into_iter().any(|(node, _)| {
-                    matches!(node, ViewNode::PaneGrid { name, templates, .. } if name == grid && !templates.is_empty())
-                });
-                let pane = |reference: &PaneReference| {
-                    pane_reference_find_code(reference, grid, state, dynamic, env, document)
+                let pane = |reference: &ResolvedPaneReference| {
+                    resolved_pane_find_code(reference, grid, state, *dynamic, env, program)
                 };
                 let edge = |edge: &PaneEdge| match edge {
                     PaneEdge::Top => "Top",
@@ -624,36 +683,36 @@ pub(in crate::codegen) fn generate_statements(
                     PaneAxis::Vertical => "Vertical",
                 };
                 match operation {
-                    PaneOperation::Maximize { pane: name } => writeln!(
+                    ResolvedPaneOperation::Maximize { pane: name } => writeln!(
                         out,
                         "{{ let __pane = {}; if let ::std::option::Option::Some(__pane) = __pane {{ {state}.{field}.maximize(__pane); }} }}",
                         pane(name)?
                     )
                     .unwrap(),
-                    PaneOperation::Restore => {
+                    ResolvedPaneOperation::Restore => {
                         writeln!(out, "{state}.{field}.restore();").unwrap()
                     }
-                    PaneOperation::Swap { first, second } => writeln!(
+                    ResolvedPaneOperation::Swap { first, second } => writeln!(
                         out,
                         "{{ let __first = {}; let __second = {}; if let (::std::option::Option::Some(__first), ::std::option::Option::Some(__second)) = (__first, __second) && __first != __second {{ {state}.{field}.swap(__first, __second); }} }}",
                         pane(first)?,
                         pane(second)?
                     )
                     .unwrap(),
-                    PaneOperation::Close { pane: name } => writeln!(
+                    ResolvedPaneOperation::Close { pane: name } => writeln!(
                         out,
                         "{{ let __pane = {}; if let ::std::option::Option::Some(__pane) = __pane {{ let _ = {state}.{field}.close(__pane); }} }}",
                         pane(name)?
                     )
                     .unwrap(),
-                    PaneOperation::Move { pane: name, edge: side } => writeln!(
+                    ResolvedPaneOperation::Move { pane: name, edge: side } => writeln!(
                         out,
                         "{{ let __pane = {}; if let ::std::option::Option::Some(__pane) = __pane {{ {state}.{field}.move_to_edge(__pane, ::iced::widget::pane_grid::Edge::{}); }} }}",
                         pane(name)?,
                         edge(side)
                     )
                     .unwrap(),
-                    PaneOperation::Resize { split, ratio } => {
+                    ResolvedPaneOperation::Resize { split, ratio } => {
                         let split = split.as_ref().map_or_else(
                             || format!("{state}.{field}.layout().splits().next().copied()"),
                             |name| {
@@ -667,11 +726,11 @@ pub(in crate::codegen) fn generate_statements(
                         writeln!(
                             out,
                             "{{ let __split = {split}; if let ::std::option::Option::Some(__split) = __split {{ {state}.{field}.resize(__split, (({}) as f32).max(0.0).min(1.0)); }} }}",
-                            expr_code(ratio, env, document, ValueMode::Owned)?
+                            checked_expr_use_code(program, *ratio, env, ValueMode::Owned)?
                         )
                         .unwrap();
                     }
-                    PaneOperation::Drop {
+                    ResolvedPaneOperation::Drop {
                         pane: name,
                         target,
                         edge: side,
@@ -693,18 +752,18 @@ pub(in crate::codegen) fn generate_statements(
                         )
                         .unwrap();
                     }
-                    PaneOperation::Split {
+                    ResolvedPaneOperation::Split {
                         target,
                         pane: name,
                         axis: direction,
                         ratio,
                     } => {
                         let target = pane(target)?;
-                        let value = pane_reference_value_code(
-                            name, grid, dynamic, env, document,
+                        let value = resolved_pane_value_code(
+                            name, grid, *dynamic, env, program,
                         )?;
-                        let ratio = expr_code(ratio, env, document, ValueMode::Owned)?;
-                        if dynamic {
+                        let ratio = checked_expr_use_code(program, *ratio, env, ValueMode::Owned)?;
+                        if *dynamic {
                             writeln!(
                                 out,
                                 "{{ let __target = {target}; let __pane_value = {value}; let __pane = {state}.{field}.iter().find_map(|(__pane, __value)| (__value == &__pane_value).then_some(*__pane)); if let (::std::option::Option::Some(__target), ::std::option::Option::None) = (__target, __pane) {{ if let ::std::option::Option::Some((_, __split)) = {state}.{field}.split(::iced::widget::pane_grid::Axis::{}, __target, __pane_value) {{ {state}.{field}.resize(__split, (({ratio}) as f32).max(0.0).min(1.0)); }} }} }}",
@@ -721,14 +780,14 @@ pub(in crate::codegen) fn generate_statements(
                             .unwrap();
                         }
                     }
-                    PaneOperation::Maximized | PaneOperation::Adjacent { .. } => {
+                    ResolvedPaneOperation::Maximized | ResolvedPaneOperation::Adjacent { .. } => {
                         let value = match operation {
-                            PaneOperation::Maximized => if dynamic {
+                            ResolvedPaneOperation::Maximized => if *dynamic {
                                 format!("{state}.{field}.maximized().and_then(|__pane| {state}.{field}.get(__pane)).map(|__pane| __pane.__name())")
                             } else {
                                 format!("{state}.{field}.maximized().and_then(|__pane| {state}.{field}.get(__pane)).map(|__name| (*__name).to_owned())")
                             },
-                            PaneOperation::Adjacent { pane: name, edge: side } => {
+                            ResolvedPaneOperation::Adjacent { pane: name, edge: side } => {
                                 let direction = match side {
                                     PaneEdge::Top => "Up",
                                     PaneEdge::Left => "Left",
@@ -736,7 +795,7 @@ pub(in crate::codegen) fn generate_statements(
                                     PaneEdge::Bottom => "Down",
                                 };
                                 let value = pane(name)?;
-                                if dynamic {
+                                if *dynamic {
                                     format!("{value}.and_then(|__pane| {state}.{field}.adjacent(__pane, ::iced::widget::pane_grid::Direction::{direction})).and_then(|__pane| {state}.{field}.get(__pane)).map(|__pane| __pane.__name())")
                                 } else {
                                     format!("{value}.and_then(|__pane| {state}.{field}.adjacent(__pane, ::iced::widget::pane_grid::Direction::{direction})).and_then(|__pane| {state}.{field}.get(__pane)).map(|__name| (*__name).to_owned())")
@@ -745,7 +804,7 @@ pub(in crate::codegen) fn generate_statements(
                             _ => unreachable!(),
                         };
                         let route = route.as_ref().expect("checker requires pane query route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code = resolved_route_code(route, &["value"], env, program, message)?;
                         let task = format!(
                             "{{ let value = {value}; ::iced::Task::done({message_code}) }}"
                         );
@@ -758,7 +817,7 @@ pub(in crate::codegen) fn generate_statements(
                     }
                 }
             }
-            Statement::WindowOperation {
+            ResolvedStatementKind::WindowOperation {
                 operation,
                 target,
                 route,
@@ -766,20 +825,20 @@ pub(in crate::codegen) fn generate_statements(
             } => {
                 let target = target
                     .as_ref()
-                    .map(|target| expr_code(target, env, document, ValueMode::Owned))
+                    .map(|target| checked_expr_use_code(program, *target, env, ValueMode::Owned))
                     .transpose()?;
                 let id = target.as_deref().unwrap_or("__window");
-                let value = |value: &Expr, cast: &str| {
+                let value = |value: CheckedExprUseId, cast: &str| {
                     Ok::<_, Error>(format!(
                         "({}) as {cast}",
-                        expr_code(value, env, document, ValueMode::Owned)?
+                        checked_expr_use_code(program, value, env, ValueMode::Owned)?
                     ))
                 };
-                let size = |width: &Expr, height: &Expr| {
+                let size = |width: CheckedExprUseId, height: CheckedExprUseId| {
                     let positive = |value| {
                         Ok::<_, Error>(format!(
                             "(({}) as f32).max(f32::EPSILON).min(f32::MAX)",
-                            expr_code(value, env, document, ValueMode::Owned)?
+                            checked_expr_use_code(program, value, env, ValueMode::Owned)?
                         ))
                     };
                     Ok::<_, Error>(format!(
@@ -788,52 +847,48 @@ pub(in crate::codegen) fn generate_statements(
                         positive(height)?
                     ))
                 };
-                let optional_size = |size_value: &Option<(Expr, Expr)>| {
+                let optional_size = |size_value: &Option<(CheckedExprUseId, CheckedExprUseId)>| {
                     Ok::<_, Error>(match size_value {
                         Some((width, height)) => {
-                            format!("::std::option::Option::Some({})", size(width, height)?)
+                            format!("::std::option::Option::Some({})", size(*width, *height)?)
                         }
                         None => "::std::option::Option::None".into(),
                     })
                 };
-                let bool_value = |value: &Expr| expr_code(value, env, document, ValueMode::Owned);
+                let bool_value = |value: CheckedExprUseId| {
+                    checked_expr_use_code(program, value, env, ValueMode::Owned)
+                };
                 let task = match operation {
-                    WindowOperation::Open(name) => {
-                        let settings = name.as_ref().map_or_else(
+                    ResolvedWindowOperation::Open(index) => {
+                        let settings = index.map_or_else(
                             || "::std::default::Default::default()".into(),
-                            |name| {
-                                let index = document
-                                    .settings
-                                    .windows
-                                    .iter()
-                                    .position(|window| window.name == *name)
-                                    .expect("checker validates named windows");
-                                format!("Self::__window_{index}()")
-                            },
+                            |index| format!("Self::__window_{index}()"),
                         );
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "{{ let (_, __task) = ::iced::window::open({settings}); __task.map(move |value| {message_code}) }}"
                         )
                     }
-                    WindowOperation::Oldest | WindowOperation::Latest => {
-                        let function = if matches!(operation, WindowOperation::Oldest) {
+                    ResolvedWindowOperation::Oldest | ResolvedWindowOperation::Latest => {
+                        let function = if matches!(operation, ResolvedWindowOperation::Oldest) {
                             "oldest"
                         } else {
                             "latest"
                         };
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!("::iced::window::{function}().map(move |value| {message_code})")
                     }
-                    WindowOperation::Close => {
+                    ResolvedWindowOperation::Close => {
                         format!("::iced::window::close::<{message}>({id})")
                     }
-                    WindowOperation::Drag => {
+                    ResolvedWindowOperation::Drag => {
                         format!("::iced::window::drag::<{message}>({id})")
                     }
-                    WindowOperation::DragResize(direction) => {
+                    ResolvedWindowOperation::DragResize(direction) => {
                         let direction = match direction {
                             WindowDirection::North => "North",
                             WindowDirection::South => "South",
@@ -848,88 +903,91 @@ pub(in crate::codegen) fn generate_statements(
                             "::iced::window::drag_resize::<{message}>({id}, ::iced::window::Direction::{direction})"
                         )
                     }
-                    WindowOperation::Resize(width, height) => format!(
+                    ResolvedWindowOperation::Resize(width, height) => format!(
                         "::iced::window::resize::<{message}>({id}, {})",
-                        size(width, height)?
+                        size(*width, *height)?
                     ),
-                    WindowOperation::Resizable(enabled) => format!(
+                    ResolvedWindowOperation::Resizable(enabled) => format!(
                         "::iced::window::set_resizable::<{message}>({id}, {})",
-                        bool_value(enabled)?
+                        bool_value(*enabled)?
                     ),
-                    WindowOperation::MinSize(size) => format!(
+                    ResolvedWindowOperation::MinSize(size) => format!(
                         "::iced::window::set_min_size::<{message}>({id}, {})",
                         optional_size(size)?
                     ),
-                    WindowOperation::MaxSize(size) => format!(
+                    ResolvedWindowOperation::MaxSize(size) => format!(
                         "::iced::window::set_max_size::<{message}>({id}, {})",
                         optional_size(size)?
                     ),
-                    WindowOperation::ResizeIncrements(size) => format!(
+                    ResolvedWindowOperation::ResizeIncrements(size) => format!(
                         "::iced::window::set_resize_increments::<{message}>({id}, {})",
                         optional_size(size)?
                     ),
-                    WindowOperation::Size => {
+                    ResolvedWindowOperation::Size => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = ordered_route_code(
+                        let message_code = resolved_route_code(
                             route,
                             &["value.width as f64", "value.height as f64"],
                             env,
-                            document,
+                            program,
                             message,
                         )?;
                         format!("::iced::window::size({id}).map(move |value| {message_code})")
                     }
-                    WindowOperation::IsMaximized => {
+                    ResolvedWindowOperation::IsMaximized => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "::iced::window::is_maximized({id}).map(move |value| {message_code})"
                         )
                     }
-                    WindowOperation::Maximize(enabled) => format!(
+                    ResolvedWindowOperation::Maximize(enabled) => format!(
                         "::iced::window::maximize::<{message}>({id}, {})",
-                        bool_value(enabled)?
+                        bool_value(*enabled)?
                     ),
-                    WindowOperation::IsMinimized => {
+                    ResolvedWindowOperation::IsMinimized => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "::iced::window::is_minimized({id}).map(move |value| {message_code})"
                         )
                     }
-                    WindowOperation::Minimize(enabled) => format!(
+                    ResolvedWindowOperation::Minimize(enabled) => format!(
                         "::iced::window::minimize::<{message}>({id}, {})",
-                        bool_value(enabled)?
+                        bool_value(*enabled)?
                     ),
-                    WindowOperation::Position => {
+                    ResolvedWindowOperation::Position => {
                         let route = route.as_ref().expect("checker requires window route");
                         let message_code =
-                            ordered_route_code(route, &["x", "y"], env, document, message)?;
+                            resolved_route_code(route, &["x", "y"], env, program, message)?;
                         format!(
                             "::iced::window::position({id}).map(move |value| {{ let (x, y) = value.map_or((::std::option::Option::None, ::std::option::Option::None), |value| (::std::option::Option::Some(value.x as f64), ::std::option::Option::Some(value.y as f64))); {message_code} }})"
                         )
                     }
-                    WindowOperation::ScaleFactor => {
+                    ResolvedWindowOperation::ScaleFactor => {
                         let route = route.as_ref().expect("checker requires window route");
                         let message_code =
-                            route_code(route, "value as f64", env, document, message)?;
+                            resolved_route_code(route, &["value as f64"], env, program, message)?;
                         format!(
                             "::iced::window::scale_factor({id}).map(move |value| {message_code})"
                         )
                     }
-                    WindowOperation::Move(x, y) => format!(
+                    ResolvedWindowOperation::Move(x, y) => format!(
                         "::iced::window::move_to::<{message}>({id}, ::iced::Point::new({}, {}))",
-                        value(x, "f32")?,
-                        value(y, "f32")?
+                        value(*x, "f32")?,
+                        value(*y, "f32")?
                     ),
-                    WindowOperation::Mode => {
+                    ResolvedWindowOperation::Mode => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "::iced::window::mode({id}).map(move |value| {{ let value = match value {{ ::iced::window::Mode::Windowed => \"windowed\", ::iced::window::Mode::Fullscreen => \"fullscreen\", ::iced::window::Mode::Hidden => \"hidden\" }}.to_owned(); {message_code} }})"
                         )
                     }
-                    WindowOperation::SetMode(mode) => {
+                    ResolvedWindowOperation::SetMode(mode) => {
                         let mode = match mode {
                             WindowMode::Windowed => "Windowed",
                             WindowMode::Fullscreen => "Fullscreen",
@@ -939,13 +997,13 @@ pub(in crate::codegen) fn generate_statements(
                             "::iced::window::set_mode::<{message}>({id}, ::iced::window::Mode::{mode})"
                         )
                     }
-                    WindowOperation::ToggleMaximize => {
+                    ResolvedWindowOperation::ToggleMaximize => {
                         format!("::iced::window::toggle_maximize::<{message}>({id})")
                     }
-                    WindowOperation::ToggleDecorations => {
+                    ResolvedWindowOperation::ToggleDecorations => {
                         format!("::iced::window::toggle_decorations::<{message}>({id})")
                     }
-                    WindowOperation::Attention(attention) => {
+                    ResolvedWindowOperation::Attention(attention) => {
                         let attention: String = match attention {
                             None => "::std::option::Option::None".into(),
                             Some(WindowAttention::Critical) => "::std::option::Option::Some(::iced::window::UserAttention::Critical)".into(),
@@ -955,10 +1013,10 @@ pub(in crate::codegen) fn generate_statements(
                             "::iced::window::request_user_attention::<{message}>({id}, {attention})"
                         )
                     }
-                    WindowOperation::Focus => {
+                    ResolvedWindowOperation::Focus => {
                         format!("::iced::window::gain_focus::<{message}>({id})")
                     }
-                    WindowOperation::SetLevel(level) => {
+                    ResolvedWindowOperation::SetLevel(level) => {
                         let level = match level {
                             WindowLevel::Normal => "Normal",
                             WindowLevel::AlwaysOnBottom => "AlwaysOnBottom",
@@ -968,63 +1026,80 @@ pub(in crate::codegen) fn generate_statements(
                             "::iced::window::set_level::<{message}>({id}, ::iced::window::Level::{level})"
                         )
                     }
-                    WindowOperation::SystemMenu => {
+                    ResolvedWindowOperation::SystemMenu => {
                         format!("::iced::window::show_system_menu::<{message}>({id})")
                     }
-                    WindowOperation::RawId => {
+                    ResolvedWindowOperation::RawId => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code =
-                            route_code(route, "value.to_string()", env, document, message)?;
+                        let message_code = resolved_route_code(
+                            route,
+                            &["value.to_string()"],
+                            env,
+                            program,
+                            message,
+                        )?;
                         format!(
                             "::iced::window::raw_id::<{message}>({id}).map(move |value| {message_code})"
                         )
                     }
-                    WindowOperation::Screenshot => {
+                    ResolvedWindowOperation::Screenshot => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!("::iced::window::screenshot({id}).map(move |value| {message_code})")
                     }
-                    WindowOperation::MousePassthrough(enabled) => {
-                        let enabled = bool_value(enabled)?;
+                    ResolvedWindowOperation::MousePassthrough(enabled) => {
+                        let enabled = bool_value(*enabled)?;
                         format!(
                             "if {enabled} {{ ::iced::window::enable_mouse_passthrough::<{message}>({id}) }} else {{ ::iced::window::disable_mouse_passthrough::<{message}>({id}) }}"
                         )
                     }
-                    WindowOperation::MonitorSize => {
+                    ResolvedWindowOperation::MonitorSize => {
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = ordered_route_code(
+                        let message_code = resolved_route_code(
                             route,
                             &["width", "height"],
                             env,
-                            document,
+                            program,
                             message,
                         )?;
                         format!(
                             "::iced::window::monitor_size({id}).map(move |value| {{ let (width, height) = value.map_or((::std::option::Option::None, ::std::option::Option::None), |value| (::std::option::Option::Some(value.width as f64), ::std::option::Option::Some(value.height as f64))); {message_code} }})"
                         )
                     }
-                    WindowOperation::AutomaticTabbing(enabled) => format!(
+                    ResolvedWindowOperation::AutomaticTabbing(enabled) => format!(
                         "::iced::window::allow_automatic_tabbing::<{message}>({})",
-                        bool_value(enabled)?
+                        bool_value(*enabled)?
                     ),
-                    WindowOperation::Icon {
+                    ResolvedWindowOperation::Icon {
                         pixels,
                         width,
                         height,
                     } => {
-                        let pixels = expr_code(pixels, env, document, ValueMode::Owned)?;
-                        let width = expr_code(width, env, document, ValueMode::Owned)?;
-                        let height = expr_code(height, env, document, ValueMode::Owned)?;
+                        let pixels =
+                            checked_expr_use_code(program, *pixels, env, ValueMode::Owned)?;
+                        let width = checked_expr_use_code(program, *width, env, ValueMode::Owned)?;
+                        let height =
+                            checked_expr_use_code(program, *height, env, ValueMode::Owned)?;
                         format!(
                             "{{ let __pixels = {pixels}; let __width = {width}; let __height = {height}; match (::std::primitive::u32::try_from(__width), ::std::primitive::u32::try_from(__height)) {{ (::std::result::Result::Ok(__width), ::std::result::Result::Ok(__height)) if __width > 0 && __height > 0 && __width.checked_mul(__height).is_some() => ::iced::window::icon::from_rgba(__pixels, __width, __height).map_or_else(|_| ::iced::Task::none(), |__icon| ::iced::window::set_icon::<{message}>({id}, __icon)), _ => ::iced::Task::none(), }} }}"
                         )
                     }
-                    WindowOperation::Callback { function, args } => {
-                        let callback = find_extern_function(document, function, ExternKind::Window)
-                            .expect("checker validates window callback");
-                        let args = expr_args_suffix_code(args, env, document)?;
+                    ResolvedWindowOperation::Callback {
+                        target: callback,
+                        args,
+                    } => {
+                        let callback = program.extern_function(*callback);
+                        let args = args
+                            .iter()
+                            .map(|arg| {
+                                checked_expr_use_code(program, *arg, env, ValueMode::Owned)
+                                    .map(|arg| format!(", {arg}"))
+                            })
+                            .collect::<Result<String, _>>()?;
                         let route = route.as_ref().expect("checker requires window route");
-                        let message_code = route_code(route, "value", env, document, message)?;
+                        let message_code =
+                            resolved_route_code(route, &["value"], env, program, message)?;
                         format!(
                             "::iced::window::run({id}, move |__window| {}(__window{args})).map(move |value| {message_code})",
                             callback.rust_path
@@ -1034,10 +1109,10 @@ pub(in crate::codegen) fn generate_statements(
                 let task = if target.is_some()
                     || matches!(
                         operation,
-                        WindowOperation::Open(_)
-                            | WindowOperation::Oldest
-                            | WindowOperation::Latest
-                            | WindowOperation::AutomaticTabbing(_)
+                        ResolvedWindowOperation::Open(_)
+                            | ResolvedWindowOperation::Oldest
+                            | ResolvedWindowOperation::Latest
+                            | ResolvedWindowOperation::AutomaticTabbing(_)
                     ) {
                     task
                 } else {

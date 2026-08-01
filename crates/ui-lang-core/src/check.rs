@@ -782,9 +782,10 @@ use expr::{check_length_value, contains_ui_enum};
 pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedComponentArgumentSource,
-    CheckedExprId, CheckedExprKind, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
-    CheckedLocalId, CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
-    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUseId, CheckedFacts,
+    CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern,
+    CheckedPathRoot, CheckedProjection, CheckedProjectionKind, CheckedUnaryOperator,
+    CheckedValueRef, CheckedView, CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 

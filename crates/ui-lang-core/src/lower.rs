@@ -5,7 +5,8 @@ use crate::check::{
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, ExternFnId, OriginArena, OriginId, PaletteId,
+    ComponentStateId, DeclarationIndex, ExternFnId, HandlerId, HandlerOwner, OriginArena, OriginId,
+    PaletteId, RouteId, RunSiteId, StatementId, TaskId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
@@ -99,6 +100,408 @@ pub(crate) struct ResolvedAnimation {
     pub(crate) auto_reverse: bool,
 }
 
+// These fields are the normalized compiler contract. Some are consumed only by
+// invariant tests today and remain available to later lowering slices.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedHandler {
+    pub(crate) id: HandlerId,
+    pub(crate) owner: HandlerOwner,
+    pub(crate) name: String,
+    pub(crate) params: Vec<ResolvedHandlerParam>,
+    pub(crate) statements: Vec<ResolvedStatement>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedHandlerParam {
+    pub(crate) local: crate::check::CheckedLocalId,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedStatement {
+    pub(crate) id: StatementId,
+    pub(crate) kind: ResolvedStatementKind,
+    pub(crate) task: Option<TaskId>,
+    pub(crate) is_final: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedStatementKind {
+    Let {
+        local: crate::check::CheckedLocalId,
+        name: String,
+        value: CheckedExprUseId,
+    },
+    Assign {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+        at: Option<CheckedExprUseId>,
+        move_self: bool,
+    },
+    MarkdownAppend {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+    },
+    ComboPush {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+    },
+    ReturnIf {
+        condition: CheckedExprUseId,
+    },
+    Exit,
+    Run(ResolvedRun),
+    Sip(ResolvedSip),
+    TaskFlow(ResolvedTaskFlow),
+    TaskGroup {
+        kind: TaskGroupKind,
+        statements: Vec<ResolvedStatement>,
+    },
+    Abortable {
+        handle: ResolvedWritableState,
+        abort_on_drop: bool,
+        task: Box<ResolvedStatement>,
+    },
+    Abort {
+        handle: ResolvedWritableState,
+    },
+    DebugStart {
+        name: CheckedExprUseId,
+        target: ResolvedWritableState,
+    },
+    DebugFinish {
+        target: ResolvedWritableState,
+    },
+    ClipboardWrite {
+        primary: bool,
+        value: CheckedExprUseId,
+    },
+    WidgetOperation {
+        operation: ResolvedWidgetOperation,
+        route: Option<ResolvedRoute>,
+    },
+    PaneOperation {
+        grid: String,
+        dynamic: bool,
+        operation: ResolvedPaneOperation,
+        route: Option<ResolvedRoute>,
+    },
+    WindowOperation {
+        operation: ResolvedWindowOperation,
+        target: Option<CheckedExprUseId>,
+        route: Option<ResolvedRoute>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWritableState {
+    pub(crate) value: CheckedValueRef,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedEffectTarget {
+    Builtin(String),
+    Extern(ExternFnId),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedRun {
+    pub(crate) kind: EffectKind,
+    pub(crate) mode: FutureMode,
+    pub(crate) site: Option<RunSiteId>,
+    pub(crate) target: ResolvedEffectTarget,
+    pub(crate) args: Vec<CheckedExprUseId>,
+    pub(crate) success: ResolvedRoute,
+    pub(crate) error: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedSip {
+    pub(crate) target: ExternFnId,
+    pub(crate) args: Vec<CheckedExprUseId>,
+    pub(crate) progress: ResolvedRoute,
+    pub(crate) success: ResolvedRoute,
+    pub(crate) error: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTaskFlow {
+    pub(crate) source: ResolvedTaskSource,
+    pub(crate) transforms: Vec<ResolvedTaskTransform>,
+    pub(crate) output: Option<Type>,
+    pub(crate) error_type: Option<Type>,
+    pub(crate) success: Option<ResolvedRoute>,
+    pub(crate) error: Option<ResolvedRoute>,
+    pub(crate) units: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTaskSource {
+    Effect {
+        task: TaskId,
+        kind: EffectKind,
+        target: ResolvedEffectTarget,
+        args: Vec<CheckedExprUseId>,
+    },
+    Done {
+        task: TaskId,
+        value: CheckedExprUseId,
+    },
+    None {
+        task: TaskId,
+        output: Type,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTaskTransform {
+    Map {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        value: CheckedExprUseId,
+    },
+    Then {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        source: ResolvedTaskSource,
+    },
+    AndThen {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        source: ResolvedTaskSource,
+    },
+    MapError {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        value: CheckedExprUseId,
+    },
+    Collect {
+        task: TaskId,
+    },
+    Discard {
+        task: TaskId,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedRoute {
+    pub(crate) id: RouteId,
+    pub(crate) target: ResolvedRouteTarget,
+    pub(crate) args: Vec<ResolvedRouteArg>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedRouteTarget {
+    App {
+        handler: HandlerId,
+        name: String,
+    },
+    Component {
+        component: ComponentId,
+        handler: HandlerId,
+        name: String,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedRouteArg {
+    Expression(CheckedExprUseId),
+    Payload { index: u32, ty: Type },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWidgetTarget {
+    pub(crate) segments: Vec<ResolvedWidgetTargetSegment>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWidgetTargetSegment {
+    pub(crate) name: String,
+    pub(crate) key: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWidgetSelector {
+    Id(ResolvedWidgetTarget),
+    Text(CheckedExprUseId),
+    Point {
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    Focused,
+    Extern {
+        target: ExternFnId,
+        args: Vec<CheckedExprUseId>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWidgetOperation {
+    FocusPrevious,
+    FocusNext,
+    Focus {
+        target: ResolvedWidgetTarget,
+    },
+    Focused {
+        target: ResolvedWidgetTarget,
+    },
+    CursorFront {
+        target: ResolvedWidgetTarget,
+    },
+    CursorEnd {
+        target: ResolvedWidgetTarget,
+    },
+    Cursor {
+        target: ResolvedWidgetTarget,
+        position: CheckedExprUseId,
+    },
+    SelectAll {
+        target: ResolvedWidgetTarget,
+    },
+    Select {
+        target: ResolvedWidgetTarget,
+        start: CheckedExprUseId,
+        end: CheckedExprUseId,
+    },
+    Snap {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    SnapEnd {
+        target: ResolvedWidgetTarget,
+    },
+    ScrollTo {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    ScrollBy {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    Find {
+        selector: ResolvedWidgetSelector,
+        all: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedPaneReference {
+    Static(String),
+    Dynamic {
+        template: String,
+        key: CheckedExprUseId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedPaneOperation {
+    Maximize {
+        pane: ResolvedPaneReference,
+    },
+    Restore,
+    Maximized,
+    Adjacent {
+        pane: ResolvedPaneReference,
+        edge: PaneEdge,
+    },
+    Swap {
+        first: ResolvedPaneReference,
+        second: ResolvedPaneReference,
+    },
+    Close {
+        pane: ResolvedPaneReference,
+    },
+    Move {
+        pane: ResolvedPaneReference,
+        edge: PaneEdge,
+    },
+    Resize {
+        split: Option<String>,
+        ratio: CheckedExprUseId,
+    },
+    Drop {
+        pane: ResolvedPaneReference,
+        target: ResolvedPaneReference,
+        edge: Option<PaneEdge>,
+    },
+    Split {
+        target: ResolvedPaneReference,
+        pane: ResolvedPaneReference,
+        axis: PaneAxis,
+        ratio: CheckedExprUseId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWindowOperation {
+    Open(Option<u32>),
+    Oldest,
+    Latest,
+    Close,
+    Drag,
+    DragResize(WindowDirection),
+    Resize(CheckedExprUseId, CheckedExprUseId),
+    Resizable(CheckedExprUseId),
+    MinSize(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    MaxSize(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    ResizeIncrements(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    Size,
+    IsMaximized,
+    Maximize(CheckedExprUseId),
+    IsMinimized,
+    Minimize(CheckedExprUseId),
+    Position,
+    ScaleFactor,
+    Move(CheckedExprUseId, CheckedExprUseId),
+    Mode,
+    SetMode(WindowMode),
+    ToggleMaximize,
+    ToggleDecorations,
+    Attention(Option<WindowAttention>),
+    Focus,
+    SetLevel(WindowLevel),
+    SystemMenu,
+    RawId,
+    Screenshot,
+    MousePassthrough(CheckedExprUseId),
+    MonitorSize,
+    AutomaticTabbing(CheckedExprUseId),
+    Icon {
+        pixels: CheckedExprUseId,
+        width: CheckedExprUseId,
+        height: CheckedExprUseId,
+    },
+    Callback {
+        target: ExternFnId,
+        args: Vec<CheckedExprUseId>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedAnimationEasing {
     Builtin(String),
@@ -122,7 +525,7 @@ pub(crate) struct ComponentContract {
     events: Vec<ComponentEventContract>,
     slots: Vec<ComponentSlotContract>,
     pub(crate) states: Vec<ComponentStateContract>,
-    pub(crate) handlers: Vec<Handler>,
+    pub(crate) handlers: Vec<HandlerId>,
     pub(crate) root: ViewNode,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
@@ -276,6 +679,9 @@ pub(crate) struct LoweredProgram {
     app_states: Vec<AppStateContract>,
     derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
+    handlers: Vec<ResolvedHandler>,
+    app_handlers: Vec<HandlerId>,
+    preset_handlers: Vec<HandlerId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgram,
@@ -285,6 +691,18 @@ pub(crate) struct LoweredProgram {
 impl LoweredProgram {
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    pub(crate) fn app_name(&self) -> &str {
+        &self.document.app
+    }
+
+    pub(crate) fn is_daemon(&self) -> bool {
+        self.document.daemon
+    }
+
+    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
+        &self.document.structs
     }
 
     #[allow(dead_code)]
@@ -310,6 +728,23 @@ impl LoweredProgram {
 
     pub(crate) fn component(&self, id: ComponentId) -> &ComponentContract {
         &self.components[id.0 as usize]
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
+        &self.handlers
+    }
+
+    pub(crate) fn handler(&self, id: HandlerId) -> &ResolvedHandler {
+        &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn app_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
+        self.app_handlers.iter().map(|id| self.handler(*id))
+    }
+
+    pub(crate) fn preset_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
+        self.preset_handlers.iter().map(|id| self.handler(*id))
     }
 
     pub(crate) fn component_slot_name(&self, id: ComponentSlotId) -> Result<&str, Error> {
@@ -438,7 +873,7 @@ pub(crate) fn lower(checked: CheckedDocument) -> Result<LoweredProgram, Error> {
     Lowerer::new(checked).lower()
 }
 
-struct Lowerer {
+pub(crate) struct Lowerer {
     document: Document,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
@@ -449,6 +884,9 @@ struct Lowerer {
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgramBuilder,
+    handlers: Vec<ResolvedHandler>,
+    app_handlers: Vec<HandlerId>,
+    preset_handlers: Vec<HandlerId>,
 }
 
 impl Lowerer {
@@ -472,6 +910,9 @@ impl Lowerer {
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
             styles: StyleProgramBuilder::default(),
+            handlers: Vec::new(),
+            app_handlers: Vec::new(),
+            preset_handlers: Vec::new(),
         }
     }
 
@@ -480,6 +921,7 @@ impl Lowerer {
         let app_states = self.lower_app_states()?;
         let derived = self.lower_derived()?;
         self.index_components()?;
+        self.lower_handlers()?;
         let component_roots = self
             .components
             .iter()
@@ -513,6 +955,9 @@ impl Lowerer {
             app_states,
             derived,
             components: self.components,
+            handlers: self.handlers,
+            app_handlers: self.app_handlers,
+            preset_handlers: self.preset_handlers,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
             styles,
@@ -714,7 +1159,7 @@ impl Lowerer {
                 events,
                 slots,
                 states,
-                handlers: component.handlers,
+                handlers: Vec::new(),
                 root: component.root,
                 storage,
                 origin,
@@ -726,6 +1171,1372 @@ impl Lowerer {
             });
         }
         Ok(())
+    }
+
+    fn lower_handlers(&mut self) -> Result<(), Error> {
+        let mut declaration_index = 0usize;
+        for index in 0..self.document.handlers.len() {
+            let handler = self.document.handlers[index].clone();
+            let id = self.lower_handler(declaration_index, &handler, HandlerOwner::App)?;
+            self.app_handlers.push(id);
+            declaration_index += 1;
+        }
+        for component_index in 0..self.document.components.len() {
+            let component = self.document.components[component_index].clone();
+            for handler in &component.handlers {
+                let id = self.lower_handler(
+                    declaration_index,
+                    handler,
+                    HandlerOwner::Component(ComponentId(component_index as u32)),
+                )?;
+                self.components[component_index].handlers.push(id);
+                declaration_index += 1;
+            }
+        }
+        for preset_index in 0..self.document.presets.len() {
+            let preset = self.document.presets[preset_index].clone();
+            let handler = Handler {
+                name: format!("preset {}", preset.name),
+                params: Vec::new(),
+                statements: preset.statements,
+                span: preset.span,
+            };
+            let id = self.lower_handler(
+                declaration_index,
+                &handler,
+                HandlerOwner::Preset(preset_index as u32),
+            )?;
+            self.preset_handlers.push(id);
+            declaration_index += 1;
+        }
+        if declaration_index != self.declarations.handlers().len()
+            || self.handlers.len() != declaration_index
+        {
+            return Err(self.invariant(
+                &Span::line(1),
+                "handler lowering did not consume the complete declaration arena",
+            ));
+        }
+        self.validate_handler_arena_consumption()?;
+        Ok(())
+    }
+
+    fn validate_handler_arena_consumption(&self) -> Result<(), Error> {
+        fn mark(seen: &mut [bool], index: u32) -> bool {
+            seen.get_mut(index as usize).is_some_and(|slot| {
+                *slot = true;
+                true
+            })
+        }
+        fn mark_route(route: &ResolvedRoute, routes: &mut [bool]) -> bool {
+            mark(routes, route.id.0)
+        }
+        fn mark_source(source: &ResolvedTaskSource, tasks: &mut [bool]) -> bool {
+            let task = match source {
+                ResolvedTaskSource::Effect { task, .. }
+                | ResolvedTaskSource::Done { task, .. }
+                | ResolvedTaskSource::None { task, .. } => *task,
+            };
+            mark(tasks, task.0)
+        }
+        fn visit(
+            statement: &ResolvedStatement,
+            statements: &mut [bool],
+            tasks: &mut [bool],
+            routes: &mut [bool],
+            run_sites: &mut [bool],
+        ) -> bool {
+            if !mark(statements, statement.id.0)
+                || statement.task.is_some_and(|task| !mark(tasks, task.0))
+            {
+                return false;
+            }
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => {
+                    mark_route(&run.success, routes)
+                        && run
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && run.site.is_none_or(|site| mark(run_sites, site.0))
+                }
+                ResolvedStatementKind::Sip(sip) => {
+                    mark_route(&sip.progress, routes)
+                        && mark_route(&sip.success, routes)
+                        && sip
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::TaskFlow(flow) => {
+                    mark_source(&flow.source, tasks)
+                        && flow.transforms.iter().all(|transform| {
+                            let task = match transform {
+                                ResolvedTaskTransform::Map { task, .. }
+                                | ResolvedTaskTransform::Then { task, .. }
+                                | ResolvedTaskTransform::AndThen { task, .. }
+                                | ResolvedTaskTransform::MapError { task, .. }
+                                | ResolvedTaskTransform::Collect { task }
+                                | ResolvedTaskTransform::Discard { task } => *task,
+                            };
+                            mark(tasks, task.0)
+                        })
+                        && flow
+                            .success
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && flow
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && flow
+                            .units
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::TaskGroup {
+                    statements: children,
+                    ..
+                } => children
+                    .iter()
+                    .all(|child| visit(child, statements, tasks, routes, run_sites)),
+                ResolvedStatementKind::Abortable { task, .. } => {
+                    visit(task, statements, tasks, routes, run_sites)
+                }
+                ResolvedStatementKind::WidgetOperation { route, .. }
+                | ResolvedStatementKind::PaneOperation { route, .. }
+                | ResolvedStatementKind::WindowOperation { route, .. } => {
+                    route.as_ref().is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::Let { .. }
+                | ResolvedStatementKind::Assign { .. }
+                | ResolvedStatementKind::MarkdownAppend { .. }
+                | ResolvedStatementKind::ComboPush { .. }
+                | ResolvedStatementKind::ReturnIf { .. }
+                | ResolvedStatementKind::Exit
+                | ResolvedStatementKind::Abort { .. }
+                | ResolvedStatementKind::DebugStart { .. }
+                | ResolvedStatementKind::DebugFinish { .. }
+                | ResolvedStatementKind::ClipboardWrite { .. } => true,
+            }
+        }
+
+        let mut statements = vec![false; self.declarations.statement_count()];
+        let mut tasks = vec![false; self.declarations.task_count()];
+        let mut routes = vec![false; self.declarations.route_count()];
+        let mut run_sites = vec![false; self.declarations.run_site_count()];
+        let valid = self
+            .handlers
+            .iter()
+            .flat_map(|handler| &handler.statements)
+            .all(|statement| {
+                visit(
+                    statement,
+                    &mut statements,
+                    &mut tasks,
+                    &mut routes,
+                    &mut run_sites,
+                )
+            });
+        if !valid
+            || statements.iter().any(|seen| !seen)
+            || tasks.iter().any(|seen| !seen)
+            || routes.iter().any(|seen| !seen)
+            || run_sites.iter().any(|seen| !seen)
+        {
+            return Err(self.invariant(
+                &Span::line(1),
+                "handler lowering did not consume every statement, task, route, and run-site ID",
+            ));
+        }
+        Ok(())
+    }
+
+    fn lower_handler(
+        &mut self,
+        declaration_index: usize,
+        handler: &Handler,
+        expected_owner: HandlerOwner,
+    ) -> Result<HandlerId, Error> {
+        let declaration = self
+            .declarations
+            .handlers()
+            .get(declaration_index)
+            .ok_or_else(|| self.invariant(&handler.span, "handler has no HIR declaration"))?
+            .clone();
+        if declaration.name != handler.name || declaration.owner != expected_owner {
+            return Err(self.invariant(
+                &handler.span,
+                "handler HIR declaration owner order changed after checking",
+            ));
+        }
+        let id = declaration.declaration.id;
+        if id.0 as usize != self.handlers.len() {
+            return Err(self.invariant(&handler.span, "handler HIR arena is not preorder stable"));
+        }
+        let expected_origin_parent = match expected_owner {
+            HandlerOwner::Component(component) => {
+                Some(self.declarations.component(component.0 as usize).origin)
+            }
+            HandlerOwner::App | HandlerOwner::Preset(_) => None,
+        };
+        if self.origins.get(declaration.declaration.origin).parent != expected_origin_parent {
+            return Err(self.invariant(
+                &handler.span,
+                "handler HIR origin chain diverged from its owner",
+            ));
+        }
+        let checked = self.facts.handler(id).clone();
+        if checked.id != id || checked.params.len() != handler.params.len() {
+            return Err(self.invariant(
+                &handler.span,
+                "checked handler facts do not belong to the lowered handler",
+            ));
+        }
+        let params = handler
+            .params
+            .iter()
+            .zip(checked.params)
+            .map(|(param, local)| ResolvedHandlerParam {
+                local,
+                name: param.name.clone(),
+                ty: param.ty.clone(),
+            })
+            .collect();
+        if handler.statements.len() != declaration.statement_roots.len() {
+            return Err(self.invariant(
+                &handler.span,
+                "handler statement HIR declaration count diverged",
+            ));
+        }
+        let statements = handler
+            .statements
+            .iter()
+            .zip(declaration.statement_roots.iter().copied())
+            .map(|(source, statement)| {
+                self.lower_handler_statement(source, statement, id, declaration.owner, None)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.handlers.push(ResolvedHandler {
+            id,
+            owner: declaration.owner,
+            name: handler.name.clone(),
+            params,
+            statements,
+            origin: declaration.declaration.origin,
+        });
+        Ok(id)
+    }
+
+    fn checked_statement_expression(
+        &self,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = crate::check::CheckedExprOwner::HandlerStatement {
+            statement,
+            operand: *operand,
+        };
+        *operand += 1;
+        self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+            self.invariant(span, "handler statement expression has no checked HIR fact")
+        })
+    }
+
+    fn checked_task_expression(
+        &self,
+        task: TaskId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = crate::check::CheckedExprOwner::Task {
+            task,
+            operand: *operand,
+        };
+        *operand += 1;
+        self.facts
+            .expression_use_by_owner(owner)
+            .ok_or_else(|| self.invariant(span, "task expression has no checked HIR fact"))
+    }
+
+    fn writable_state(
+        &self,
+        owner: HandlerOwner,
+        name: &str,
+        span: &Span,
+    ) -> Result<ResolvedWritableState, Error> {
+        let value = self
+            .facts
+            .values()
+            .iter()
+            .find(|value| {
+                value.name == name
+                    && match (owner, value.id) {
+                        (
+                            HandlerOwner::App | HandlerOwner::Preset(_),
+                            CheckedValueRef::AppState(_),
+                        ) => true,
+                        (
+                            HandlerOwner::Component(component),
+                            CheckedValueRef::ComponentState(id),
+                        ) => id.component == component,
+                        _ => false,
+                    }
+            })
+            .ok_or_else(|| self.invariant(span, "writable handler target has no checked state"))?;
+        Ok(ResolvedWritableState {
+            value: value.id,
+            name: value.name.clone(),
+            ty: value.ty.clone(),
+        })
+    }
+
+    fn effect_target(
+        &self,
+        function: &str,
+        kind: EffectKind,
+        span: &Span,
+    ) -> Result<ResolvedEffectTarget, Error> {
+        if let Some(extern_decl) = self.declarations.extern_decl_by_name(function)
+            && extern_decl.kind == ExternKind::from(kind)
+        {
+            return Ok(ResolvedEffectTarget::Extern(extern_decl.declaration.id));
+        }
+        if function.starts_with("__ice_") {
+            return Ok(ResolvedEffectTarget::Builtin(function.to_owned()));
+        }
+        Err(self.invariant(span, "checked effect target has no normalized declaration"))
+    }
+
+    pub(crate) fn lower_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+    ) -> Result<ResolvedRoute, Error> {
+        let declaration = self.declarations.route(id);
+        if declaration.declaration.id != id
+            || declaration.statement != statement
+            || declaration.task != task
+            || self.origins.get(declaration.declaration.origin).parent
+                != Some(self.declarations.statement(statement).declaration.origin)
+        {
+            return Err(self.invariant(
+                &route.span,
+                "route HIR owner or origin chain diverged from its statement",
+            ));
+        }
+        let (target, target_handler) = match owner {
+            HandlerOwner::Component(component) => {
+                let handler = self
+                    .declarations
+                    .handlers()
+                    .iter()
+                    .find(|candidate| {
+                        candidate.owner == HandlerOwner::Component(component)
+                            && candidate.name == route.handler
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "component route target has no handler ID")
+                    })?;
+                (
+                    ResolvedRouteTarget::Component {
+                        component,
+                        handler: handler.declaration.id,
+                        name: handler.name.clone(),
+                    },
+                    handler.declaration.id,
+                )
+            }
+            HandlerOwner::App | HandlerOwner::Preset(_) => {
+                let handler = self
+                    .declarations
+                    .handlers()
+                    .iter()
+                    .find(|candidate| {
+                        candidate.owner == HandlerOwner::App && candidate.name == route.handler
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "app route target has no handler ID")
+                    })?;
+                (
+                    ResolvedRouteTarget::App {
+                        handler: handler.declaration.id,
+                        name: handler.name.clone(),
+                    },
+                    handler.declaration.id,
+                )
+            }
+        };
+        let target_params = &self.facts.handler(target_handler).params;
+        let args = route
+            .args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| match arg {
+                RouteArg::Payload => target_params
+                    .get(index)
+                    .map(|local| ResolvedRouteArg::Payload {
+                        index: 0,
+                        ty: self.facts.local(*local).ty.clone(),
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &route.span,
+                            "route payload has no checked target parameter type",
+                        )
+                    }),
+                RouteArg::Expr(_) => self
+                    .facts
+                    .expression_use_by_owner(crate::check::CheckedExprOwner::Route {
+                        route: id,
+                        argument: index as u32,
+                    })
+                    .map(ResolvedRouteArg::Expression)
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "route argument has no checked expression fact")
+                    }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ResolvedRoute {
+            id,
+            target,
+            args,
+            origin: declaration.declaration.origin,
+        })
+    }
+
+    pub(crate) fn lower_ordered_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+    ) -> Result<ResolvedRoute, Error> {
+        let mut route = self.lower_route(route, id, owner, statement, task)?;
+        let mut payload = 0u32;
+        for arg in &mut route.args {
+            if let ResolvedRouteArg::Payload { index, .. } = arg {
+                *index = payload;
+                payload += 1;
+            }
+        }
+        Ok(route)
+    }
+
+    fn lower_handler_statement(
+        &self,
+        statement: &Statement,
+        id: StatementId,
+        handler: HandlerId,
+        owner: HandlerOwner,
+        parent: Option<StatementId>,
+    ) -> Result<ResolvedStatement, Error> {
+        let declaration = self.declarations.statement(id);
+        if declaration.declaration.id != id
+            || declaration.handler != handler
+            || declaration.parent != parent
+            || self.declarations.handler(declaration.handler).owner != owner
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR owner or preorder parent does not match its handler",
+            ));
+        }
+        let expected_origin_parent = parent.map_or_else(
+            || self.declarations.handler(handler).declaration.origin,
+            |parent| self.declarations.statement(parent).declaration.origin,
+        );
+        if self.origins.get(declaration.declaration.origin).parent != Some(expected_origin_parent) {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR origin chain diverged from its preorder parent",
+            ));
+        }
+        if statement.immediate_task().is_some() != declaration.task.is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "statement task declaration shape changed after checking",
+            ));
+        }
+        if let Some(task) = declaration.task {
+            let task_declaration = self.declarations.task(task);
+            if task_declaration.declaration.id != task
+                || task_declaration.statement != id
+                || task_declaration.parent.is_some()
+                || self.origins.get(task_declaration.declaration.origin).parent
+                    != Some(declaration.declaration.origin)
+            {
+                return Err(self.invariant(
+                    statement.span(),
+                    "statement task HIR owner or origin chain diverged",
+                ));
+            }
+        }
+        let mut operand = 0u32;
+        let mut routes = declaration.routes.iter().copied();
+        let kind = match statement {
+            Statement::Let {
+                name,
+                value: _,
+                span,
+            } => {
+                let value = self.checked_statement_expression(id, &mut operand, span)?;
+                let local = self
+                    .facts
+                    .local_by_owner(crate::check::CheckedLocalOwner::StatementLet(id))
+                    .ok_or_else(|| self.invariant(span, "let statement has no checked local"))?;
+                ResolvedStatementKind::Let {
+                    local,
+                    name: name.clone(),
+                    value,
+                }
+            }
+            Statement::Assign {
+                target,
+                value: _,
+                at,
+                span,
+            } => {
+                let target = self.writable_state(owner, target, span)?;
+                let value = self.checked_statement_expression(id, &mut operand, span)?;
+                let move_self =
+                    target.ty == Type::Editor && self.editor_self_move(value, target.value);
+                ResolvedStatementKind::Assign {
+                    target,
+                    value,
+                    at: at
+                        .as_ref()
+                        .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                        .transpose()?,
+                    move_self,
+                }
+            }
+            Statement::MarkdownAppend { target, span, .. } => {
+                ResolvedStatementKind::MarkdownAppend {
+                    target: self.writable_state(owner, target, span)?,
+                    value: self.checked_statement_expression(id, &mut operand, span)?,
+                }
+            }
+            Statement::ComboPush { target, span, .. } => ResolvedStatementKind::ComboPush {
+                target: self.writable_state(owner, target, span)?,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::ReturnIf { span, .. } => ResolvedStatementKind::ReturnIf {
+                condition: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::Exit { .. } => ResolvedStatementKind::Exit,
+            Statement::Run {
+                kind,
+                mode,
+                function,
+                args,
+                success,
+                error,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "run statement has no normalized task ID")
+                })?;
+                let mut task_operand = 0;
+                let args = args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut task_operand, span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let success_id = routes.next().ok_or_else(|| {
+                    self.invariant(span, "run success route has no normalized ID")
+                })?;
+                let success = self.lower_route(success, success_id, owner, id, declaration.task)?;
+                let error = error
+                    .as_ref()
+                    .map(|route| {
+                        let route_id = routes.next().ok_or_else(|| {
+                            self.invariant(span, "run error route has no normalized ID")
+                        })?;
+                        self.lower_route(route, route_id, owner, id, declaration.task)
+                    })
+                    .transpose()?;
+                let site = declaration.run_site;
+                if (*mode == FutureMode::Every) != site.is_none() {
+                    return Err(self.invariant(span, "run mode and stable run-site ID diverged"));
+                }
+                if let Some(site) = site {
+                    let run_site = self.declarations.run_site(site);
+                    if run_site.declaration.id != site
+                        || run_site.statement != id
+                        || run_site.mode != *mode
+                        || run_site.declaration.origin != declaration.declaration.origin
+                    {
+                        return Err(self.invariant(
+                            span,
+                            "stable run-site HIR owner, mode, or origin diverged",
+                        ));
+                    }
+                }
+                ResolvedStatementKind::Run(ResolvedRun {
+                    kind: *kind,
+                    mode: *mode,
+                    site,
+                    target: self.effect_target(function, *kind, span)?,
+                    args,
+                    success,
+                    error,
+                })
+            }
+            Statement::Sip {
+                function,
+                args,
+                progress,
+                success,
+                error,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "sip statement has no normalized task ID")
+                })?;
+                let mut task_operand = 0;
+                let args = args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut task_operand, span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut route = |source: &Route| -> Result<ResolvedRoute, Error> {
+                    let route_id = routes
+                        .next()
+                        .ok_or_else(|| self.invariant(span, "sip route has no normalized ID"))?;
+                    self.lower_route(source, route_id, owner, id, declaration.task)
+                };
+                ResolvedStatementKind::Sip(ResolvedSip {
+                    target: self
+                        .declarations
+                        .extern_decl_by_name(function)
+                        .ok_or_else(|| self.invariant(span, "sip extern target is unresolved"))?
+                        .declaration
+                        .id,
+                    args,
+                    progress: route(progress)?,
+                    success: route(success)?,
+                    error: error.as_ref().map(&mut route).transpose()?,
+                })
+            }
+            Statement::TaskFlow {
+                source,
+                transforms,
+                success,
+                error,
+                units,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "task flow has no normalized root task ID")
+                })?;
+                if declaration.source_tasks.len() != transforms.len() + 1 {
+                    return Err(self.invariant(span, "task flow task arena shape diverged"));
+                }
+                for source_task in &declaration.source_tasks {
+                    let task_declaration = self.declarations.task(*source_task);
+                    if task_declaration.declaration.id != *source_task
+                        || task_declaration.statement != id
+                        || task_declaration.parent != Some(task)
+                        || self.origins.get(task_declaration.declaration.origin).parent
+                            != Some(self.declarations.task(task).declaration.origin)
+                    {
+                        return Err(self.invariant(
+                            span,
+                            "task flow child HIR owner or origin chain diverged",
+                        ));
+                    }
+                }
+                let source = self.lower_task_source(source, declaration.source_tasks[0])?;
+                let transforms = transforms
+                    .iter()
+                    .enumerate()
+                    .map(|(index, transform)| {
+                        self.lower_task_transform(
+                            transform,
+                            declaration.source_tasks[index + 1],
+                            index,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut route = |source: &Route| -> Result<ResolvedRoute, Error> {
+                    let route_id = routes.next().ok_or_else(|| {
+                        self.invariant(span, "task flow route has no normalized ID")
+                    })?;
+                    self.lower_route(source, route_id, owner, id, declaration.task)
+                };
+                let checked = self.facts.task(task);
+                if checked.id != task {
+                    return Err(self.invariant(span, "task flow checked owner mismatch"));
+                }
+                ResolvedStatementKind::TaskFlow(ResolvedTaskFlow {
+                    source,
+                    transforms,
+                    output: checked.output.clone(),
+                    error_type: checked.error.clone(),
+                    success: success.as_ref().map(&mut route).transpose()?,
+                    error: error.as_ref().map(&mut route).transpose()?,
+                    units: units.as_ref().map(&mut route).transpose()?,
+                })
+            }
+            Statement::TaskGroup {
+                kind,
+                statements,
+                span,
+            } => {
+                if statements.len() != declaration.children.len() {
+                    return Err(self.invariant(span, "task group HIR child count diverged"));
+                }
+                ResolvedStatementKind::TaskGroup {
+                    kind: *kind,
+                    statements: statements
+                        .iter()
+                        .zip(declaration.children.iter().copied())
+                        .map(|(child, child_id)| {
+                            self.lower_handler_statement(child, child_id, handler, owner, Some(id))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                }
+            }
+            Statement::Abortable {
+                handle,
+                abort_on_drop,
+                task,
+                span,
+            } => {
+                let [child] = declaration.children.as_slice() else {
+                    return Err(self.invariant(span, "abortable HIR child count diverged"));
+                };
+                ResolvedStatementKind::Abortable {
+                    handle: self.writable_state(owner, handle, span)?,
+                    abort_on_drop: *abort_on_drop,
+                    task: Box::new(self.lower_handler_statement(
+                        task,
+                        *child,
+                        handler,
+                        owner,
+                        Some(id),
+                    )?),
+                }
+            }
+            Statement::Abort { handle, span } => ResolvedStatementKind::Abort {
+                handle: self.writable_state(owner, handle, span)?,
+            },
+            Statement::DebugStart { target, span, .. } => ResolvedStatementKind::DebugStart {
+                name: self.checked_statement_expression(id, &mut operand, span)?,
+                target: self.writable_state(owner, target, span)?,
+            },
+            Statement::DebugFinish { target, span } => ResolvedStatementKind::DebugFinish {
+                target: self.writable_state(owner, target, span)?,
+            },
+            Statement::ClipboardWrite {
+                primary,
+                value: _,
+                span,
+            } => ResolvedStatementKind::ClipboardWrite {
+                primary: *primary,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::WidgetOperation {
+                operation,
+                route,
+                span,
+            } => ResolvedStatementKind::WidgetOperation {
+                operation: self.lower_widget_operation(operation, id, &mut operand, span)?,
+                route: route
+                    .as_ref()
+                    .map(|route| {
+                        self.lower_route(
+                            route,
+                            routes.next().ok_or_else(|| {
+                                self.invariant(span, "widget route has no normalized ID")
+                            })?,
+                            owner,
+                            id,
+                            declaration.task,
+                        )
+                    })
+                    .transpose()?,
+            },
+            Statement::PaneOperation {
+                grid,
+                operation,
+                route,
+                span,
+            } => ResolvedStatementKind::PaneOperation {
+                grid: grid.clone(),
+                dynamic: self.pane_grid_is_dynamic(grid),
+                operation: self.lower_pane_operation(operation, id, &mut operand, span)?,
+                route: route
+                    .as_ref()
+                    .map(|route| {
+                        self.lower_route(
+                            route,
+                            routes.next().ok_or_else(|| {
+                                self.invariant(span, "pane route has no normalized ID")
+                            })?,
+                            owner,
+                            id,
+                            declaration.task,
+                        )
+                    })
+                    .transpose()?,
+            },
+            Statement::WindowOperation {
+                operation,
+                target,
+                route,
+                span,
+            } => {
+                let target = target
+                    .as_ref()
+                    .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                    .transpose()?;
+                ResolvedStatementKind::WindowOperation {
+                    operation: self.lower_window_operation(operation, id, &mut operand, span)?,
+                    target,
+                    route: route
+                        .as_ref()
+                        .map(|route| {
+                            let route_id = routes.next().ok_or_else(|| {
+                                self.invariant(span, "window route has no normalized ID")
+                            })?;
+                            if matches!(
+                                operation,
+                                WindowOperation::Size
+                                    | WindowOperation::Position
+                                    | WindowOperation::MonitorSize
+                            ) {
+                                self.lower_ordered_route(
+                                    route,
+                                    route_id,
+                                    owner,
+                                    id,
+                                    declaration.task,
+                                )
+                            } else {
+                                self.lower_route(route, route_id, owner, id, declaration.task)
+                            }
+                        })
+                        .transpose()?,
+                }
+            }
+        };
+        if routes.next().is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR left a route declaration unconsumed",
+            ));
+        }
+        if let Some(task) = declaration.task {
+            let checked = self.facts.task(task);
+            if checked.id != task || checked.is_final != declaration.is_final {
+                return Err(self.invariant(
+                    statement.span(),
+                    "statement task finality or owner changed after checking",
+                ));
+            }
+        }
+        Ok(ResolvedStatement {
+            id,
+            kind,
+            task: declaration.task,
+            is_final: declaration.is_final,
+            origin: declaration.declaration.origin,
+        })
+    }
+
+    fn editor_self_move(&self, expression: CheckedExprUseId, target: CheckedValueRef) -> bool {
+        fn count(
+            facts: &CheckedFacts,
+            expression: crate::check::CheckedExprId,
+            target: CheckedValueRef,
+        ) -> usize {
+            match &facts.expression(expression).kind {
+                crate::check::CheckedExprKind::Path { root, .. } => {
+                    usize::from(*root == crate::check::CheckedPathRoot::Value(target))
+                }
+                crate::check::CheckedExprKind::List(values) => values
+                    .iter()
+                    .map(|value| count(facts, *value, target))
+                    .sum(),
+                crate::check::CheckedExprKind::Call { arguments, .. } => arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        crate::check::CheckedCallArgument::Value(value) => {
+                            count(facts, *value, target)
+                        }
+                        crate::check::CheckedCallArgument::Binding(_) => 0,
+                    })
+                    .sum(),
+                crate::check::CheckedExprKind::Unary { value, .. } => count(facts, *value, target),
+                crate::check::CheckedExprKind::Binary { left, right, .. } => {
+                    count(facts, *left, target) + count(facts, *right, target)
+                }
+                crate::check::CheckedExprKind::Bool(_)
+                | crate::check::CheckedExprKind::I64(_)
+                | crate::check::CheckedExprKind::F64(_)
+                | crate::check::CheckedExprKind::Str(_)
+                | crate::check::CheckedExprKind::Bytes(_)
+                | crate::check::CheckedExprKind::None
+                | crate::check::CheckedExprKind::SlotProvided(_) => 0,
+            }
+        }
+
+        let use_fact = self.facts.expression_use(expression);
+        let root = self.facts.expression(use_fact.root);
+        let crate::check::CheckedExprKind::Call {
+            target: crate::check::CheckedCallTarget::Extern(function),
+            ..
+        } = root.kind
+        else {
+            return false;
+        };
+        self.declarations.extern_decl(function).kind == ExternKind::Sync
+            && count(&self.facts, use_fact.root, target) == 1
+    }
+
+    fn lower_task_source(
+        &self,
+        source: &TaskSource,
+        task: TaskId,
+    ) -> Result<ResolvedTaskSource, Error> {
+        if self.facts.task(task).id != task {
+            return Err(self.invariant(
+                match source {
+                    TaskSource::Effect { span, .. }
+                    | TaskSource::Done { span, .. }
+                    | TaskSource::None { span, .. } => span,
+                },
+                "task source checked owner mismatch",
+            ));
+        }
+        Ok(match source {
+            TaskSource::Effect {
+                kind,
+                function,
+                args,
+                span,
+            } => {
+                let mut operand = 0;
+                ResolvedTaskSource::Effect {
+                    task,
+                    kind: *kind,
+                    target: self.effect_target(function, *kind, span)?,
+                    args: args
+                        .iter()
+                        .map(|_| self.checked_task_expression(task, &mut operand, span))
+                        .collect::<Result<Vec<_>, _>>()?,
+                }
+            }
+            TaskSource::Done { span, .. } => ResolvedTaskSource::Done {
+                task,
+                value: self.checked_task_expression(task, &mut 0, span)?,
+            },
+            TaskSource::None { output, .. } => ResolvedTaskSource::None {
+                task,
+                output: output.clone(),
+            },
+        })
+    }
+
+    fn lower_task_transform(
+        &self,
+        transform: &TaskTransform,
+        task: TaskId,
+        index: usize,
+    ) -> Result<ResolvedTaskTransform, Error> {
+        let local = |span: &Span| {
+            self.facts
+                .local_by_owner(crate::check::CheckedLocalOwner::TaskTransform {
+                    task,
+                    index: index as u32,
+                })
+                .ok_or_else(|| self.invariant(span, "task transform has no checked local"))
+        };
+        Ok(match transform {
+            TaskTransform::Map {
+                binding,
+                value: _,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::Map {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self.facts.local(local).ty.clone(),
+                    value: self.checked_task_expression(task, &mut 0, span)?,
+                }
+            }
+            TaskTransform::Then {
+                binding,
+                source,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::Then {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self.facts.local(local).ty.clone(),
+                    source: self.lower_task_source(source, task)?,
+                }
+            }
+            TaskTransform::AndThen {
+                binding,
+                source,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::AndThen {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self.facts.local(local).ty.clone(),
+                    source: self.lower_task_source(source, task)?,
+                }
+            }
+            TaskTransform::MapError {
+                binding,
+                value: _,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::MapError {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self.facts.local(local).ty.clone(),
+                    value: self.checked_task_expression(task, &mut 0, span)?,
+                }
+            }
+            TaskTransform::Collect { .. } => ResolvedTaskTransform::Collect { task },
+            TaskTransform::Discard { .. } => ResolvedTaskTransform::Discard { task },
+        })
+    }
+
+    fn lower_widget_target(
+        &self,
+        target: &WidgetTarget,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetTarget, Error> {
+        Ok(ResolvedWidgetTarget {
+            segments: target
+                .segments
+                .iter()
+                .map(|segment| {
+                    Ok(ResolvedWidgetTargetSegment {
+                        name: segment.name.clone(),
+                        key: segment
+                            .key
+                            .as_ref()
+                            .map(|_| self.checked_statement_expression(statement, operand, span))
+                            .transpose()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        })
+    }
+
+    fn lower_widget_selector(
+        &self,
+        selector: &WidgetSelector,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetSelector, Error> {
+        Ok(match selector {
+            WidgetSelector::Id(target) => ResolvedWidgetSelector::Id(
+                self.lower_widget_target(target, statement, operand, span)?,
+            ),
+            WidgetSelector::Text(_) => ResolvedWidgetSelector::Text(
+                self.checked_statement_expression(statement, operand, span)?,
+            ),
+            WidgetSelector::Point { .. } => ResolvedWidgetSelector::Point {
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetSelector::Focused => ResolvedWidgetSelector::Focused,
+            WidgetSelector::Extern { function, args } => ResolvedWidgetSelector::Extern {
+                target: self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "widget selector extern is unresolved"))?
+                    .declaration
+                    .id,
+                args: args
+                    .iter()
+                    .map(|_| self.checked_statement_expression(statement, operand, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        })
+    }
+
+    fn lower_widget_operation(
+        &self,
+        operation: &WidgetOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetOperation, Error> {
+        let target = |target: &WidgetTarget, operand: &mut u32| {
+            self.lower_widget_target(target, statement, operand, span)
+        };
+        Ok(match operation {
+            WidgetOperation::FocusPrevious => ResolvedWidgetOperation::FocusPrevious,
+            WidgetOperation::FocusNext => ResolvedWidgetOperation::FocusNext,
+            WidgetOperation::Focus { target: value } => ResolvedWidgetOperation::Focus {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Focused { target: value } => ResolvedWidgetOperation::Focused {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::CursorFront { target: value } => {
+                ResolvedWidgetOperation::CursorFront {
+                    target: target(value, operand)?,
+                }
+            }
+            WidgetOperation::CursorEnd { target: value } => ResolvedWidgetOperation::CursorEnd {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Cursor { target: value, .. } => ResolvedWidgetOperation::Cursor {
+                target: target(value, operand)?,
+                position: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::SelectAll { target: value } => ResolvedWidgetOperation::SelectAll {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Select { target: value, .. } => ResolvedWidgetOperation::Select {
+                target: target(value, operand)?,
+                start: self.checked_statement_expression(statement, operand, span)?,
+                end: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::Snap { target: value, .. } => ResolvedWidgetOperation::Snap {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::SnapEnd { target: value } => ResolvedWidgetOperation::SnapEnd {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::ScrollTo { target: value, .. } => ResolvedWidgetOperation::ScrollTo {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::ScrollBy { target: value, .. } => ResolvedWidgetOperation::ScrollBy {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::Find { selector, all } => ResolvedWidgetOperation::Find {
+                selector: self.lower_widget_selector(selector, statement, operand, span)?,
+                all: *all,
+            },
+        })
+    }
+
+    fn lower_pane_reference(
+        &self,
+        pane: &PaneReference,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedPaneReference, Error> {
+        Ok(match pane {
+            PaneReference::Static(name) => ResolvedPaneReference::Static(name.clone()),
+            PaneReference::Dynamic { template, .. } => ResolvedPaneReference::Dynamic {
+                template: template.clone(),
+                key: self.checked_statement_expression(statement, operand, span)?,
+            },
+        })
+    }
+
+    fn pane_grid_is_dynamic(&self, name: &str) -> bool {
+        fn find(node: &ViewNode, name: &str) -> bool {
+            matches!(
+                node,
+                ViewNode::PaneGrid {
+                    name: candidate,
+                    templates,
+                    ..
+                } if candidate == name && !templates.is_empty()
+            ) || crate::hir::view_children(node)
+                .into_iter()
+                .any(|child| find(child, name))
+        }
+
+        find(&self.document.view, name)
+            || self
+                .document
+                .tests
+                .iter()
+                .filter_map(|test| test.mount.as_ref())
+                .any(|root| find(root, name))
+    }
+
+    fn lower_pane_operation(
+        &self,
+        operation: &PaneOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedPaneOperation, Error> {
+        let pane = |value: &PaneReference, operand: &mut u32| {
+            self.lower_pane_reference(value, statement, operand, span)
+        };
+        Ok(match operation {
+            PaneOperation::Maximize { pane: value } => ResolvedPaneOperation::Maximize {
+                pane: pane(value, operand)?,
+            },
+            PaneOperation::Restore => ResolvedPaneOperation::Restore,
+            PaneOperation::Maximized => ResolvedPaneOperation::Maximized,
+            PaneOperation::Adjacent { pane: value, edge } => ResolvedPaneOperation::Adjacent {
+                pane: pane(value, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Swap { first, second } => ResolvedPaneOperation::Swap {
+                first: pane(first, operand)?,
+                second: pane(second, operand)?,
+            },
+            PaneOperation::Close { pane: value } => ResolvedPaneOperation::Close {
+                pane: pane(value, operand)?,
+            },
+            PaneOperation::Move { pane: value, edge } => ResolvedPaneOperation::Move {
+                pane: pane(value, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Resize { split, .. } => ResolvedPaneOperation::Resize {
+                split: split.clone(),
+                ratio: self.checked_statement_expression(statement, operand, span)?,
+            },
+            PaneOperation::Drop {
+                pane: value,
+                target,
+                edge,
+            } => ResolvedPaneOperation::Drop {
+                pane: pane(value, operand)?,
+                target: pane(target, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Split {
+                target,
+                pane: value,
+                axis,
+                ..
+            } => ResolvedPaneOperation::Split {
+                target: pane(target, operand)?,
+                pane: pane(value, operand)?,
+                axis: *axis,
+                ratio: self.checked_statement_expression(statement, operand, span)?,
+            },
+        })
+    }
+
+    fn lower_window_operation(
+        &self,
+        operation: &WindowOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWindowOperation, Error> {
+        let expression =
+            |operand: &mut u32| self.checked_statement_expression(statement, operand, span);
+        let pair = |operand: &mut u32| -> Result<_, Error> {
+            Ok((expression(operand)?, expression(operand)?))
+        };
+        Ok(match operation {
+            WindowOperation::Open(window) => ResolvedWindowOperation::Open(
+                window
+                    .as_ref()
+                    .map(|name| {
+                        self.document
+                            .settings
+                            .windows
+                            .iter()
+                            .position(|window| window.name == *name)
+                            .map(|index| index as u32)
+                            .ok_or_else(|| {
+                                self.invariant(span, "named window operation target is unresolved")
+                            })
+                    })
+                    .transpose()?,
+            ),
+            WindowOperation::Oldest => ResolvedWindowOperation::Oldest,
+            WindowOperation::Latest => ResolvedWindowOperation::Latest,
+            WindowOperation::Close => ResolvedWindowOperation::Close,
+            WindowOperation::Drag => ResolvedWindowOperation::Drag,
+            WindowOperation::DragResize(direction) => {
+                ResolvedWindowOperation::DragResize(*direction)
+            }
+            WindowOperation::Resize(_, _) => {
+                let (width, height) = pair(operand)?;
+                ResolvedWindowOperation::Resize(width, height)
+            }
+            WindowOperation::Resizable(_) => {
+                ResolvedWindowOperation::Resizable(expression(operand)?)
+            }
+            WindowOperation::MinSize(value) => {
+                ResolvedWindowOperation::MinSize(value.as_ref().map(|_| pair(operand)).transpose()?)
+            }
+            WindowOperation::MaxSize(value) => {
+                ResolvedWindowOperation::MaxSize(value.as_ref().map(|_| pair(operand)).transpose()?)
+            }
+            WindowOperation::ResizeIncrements(value) => ResolvedWindowOperation::ResizeIncrements(
+                value.as_ref().map(|_| pair(operand)).transpose()?,
+            ),
+            WindowOperation::Size => ResolvedWindowOperation::Size,
+            WindowOperation::IsMaximized => ResolvedWindowOperation::IsMaximized,
+            WindowOperation::Maximize(_) => ResolvedWindowOperation::Maximize(expression(operand)?),
+            WindowOperation::IsMinimized => ResolvedWindowOperation::IsMinimized,
+            WindowOperation::Minimize(_) => ResolvedWindowOperation::Minimize(expression(operand)?),
+            WindowOperation::Position => ResolvedWindowOperation::Position,
+            WindowOperation::ScaleFactor => ResolvedWindowOperation::ScaleFactor,
+            WindowOperation::Move(_, _) => {
+                let (x, y) = pair(operand)?;
+                ResolvedWindowOperation::Move(x, y)
+            }
+            WindowOperation::Mode => ResolvedWindowOperation::Mode,
+            WindowOperation::SetMode(mode) => ResolvedWindowOperation::SetMode(*mode),
+            WindowOperation::ToggleMaximize => ResolvedWindowOperation::ToggleMaximize,
+            WindowOperation::ToggleDecorations => ResolvedWindowOperation::ToggleDecorations,
+            WindowOperation::Attention(attention) => ResolvedWindowOperation::Attention(*attention),
+            WindowOperation::Focus => ResolvedWindowOperation::Focus,
+            WindowOperation::SetLevel(level) => ResolvedWindowOperation::SetLevel(*level),
+            WindowOperation::SystemMenu => ResolvedWindowOperation::SystemMenu,
+            WindowOperation::RawId => ResolvedWindowOperation::RawId,
+            WindowOperation::Screenshot => ResolvedWindowOperation::Screenshot,
+            WindowOperation::MousePassthrough(_) => {
+                ResolvedWindowOperation::MousePassthrough(expression(operand)?)
+            }
+            WindowOperation::MonitorSize => ResolvedWindowOperation::MonitorSize,
+            WindowOperation::AutomaticTabbing(_) => {
+                ResolvedWindowOperation::AutomaticTabbing(expression(operand)?)
+            }
+            WindowOperation::Icon { .. } => ResolvedWindowOperation::Icon {
+                pixels: expression(operand)?,
+                width: expression(operand)?,
+                height: expression(operand)?,
+            },
+            WindowOperation::Callback { function, args } => ResolvedWindowOperation::Callback {
+                target: self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "window callback extern is unresolved"))?
+                    .declaration
+                    .id,
+                args: args
+                    .iter()
+                    .map(|_| expression(operand))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        })
     }
 
     fn lower_view(
@@ -1216,6 +3027,505 @@ mod tests {
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+
+    fn route_snapshot(program: &LoweredProgram, route: &ResolvedRoute) -> String {
+        let target = match &route.target {
+            ResolvedRouteTarget::App { handler, name } => {
+                format!("app h{} {name}", handler.0)
+            }
+            ResolvedRouteTarget::Component {
+                component,
+                handler,
+                name,
+            } => format!("component c{} h{} {name}", component.0, handler.0),
+        };
+        let args = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                ResolvedRouteArg::Expression(expression) => format!("expr {expression:?}"),
+                ResolvedRouteArg::Payload { index, ty } => {
+                    format!("payload {index}:{}", ty.display())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let origin = program.origin(route.origin);
+        format!(
+            "r{} -> {target} ({args}) @{}:{}",
+            route.id.0, origin.line, origin.column
+        )
+    }
+
+    fn task_source_snapshot(source: &ResolvedTaskSource) -> String {
+        match source {
+            ResolvedTaskSource::Effect {
+                task,
+                kind,
+                target,
+                args,
+            } => {
+                format!("t{} {kind:?} {target:?} args={args:?}", task.0)
+            }
+            ResolvedTaskSource::Done { task, value } => {
+                format!("t{} done {value:?}", task.0)
+            }
+            ResolvedTaskSource::None { task, output } => {
+                format!("t{} none {}", task.0, output.display())
+            }
+        }
+    }
+
+    fn task_transform_snapshot(transform: &ResolvedTaskTransform) -> String {
+        match transform {
+            ResolvedTaskTransform::Map {
+                task,
+                local,
+                binding,
+                input,
+                value,
+            } => format!(
+                "t{} map {binding}:{}/local={local:?} -> {value:?}",
+                task.0,
+                input.display()
+            ),
+            ResolvedTaskTransform::Then {
+                task,
+                local,
+                binding,
+                input,
+                source,
+            } => format!(
+                "t{} then {binding}:{}/local={local:?} -> {}",
+                task.0,
+                input.display(),
+                task_source_snapshot(source)
+            ),
+            ResolvedTaskTransform::AndThen {
+                task,
+                local,
+                binding,
+                input,
+                source,
+            } => format!(
+                "t{} try {binding}:{}/local={local:?} -> {}",
+                task.0,
+                input.display(),
+                task_source_snapshot(source)
+            ),
+            ResolvedTaskTransform::MapError {
+                task,
+                local,
+                binding,
+                input,
+                value,
+            } => format!(
+                "t{} map-error {binding}:{}/local={local:?} -> {value:?}",
+                task.0,
+                input.display()
+            ),
+            ResolvedTaskTransform::Collect { task } => format!("t{} collect", task.0),
+            ResolvedTaskTransform::Discard { task } => format!("t{} discard", task.0),
+        }
+    }
+
+    fn statement_snapshot(
+        program: &LoweredProgram,
+        statement: &ResolvedStatement,
+        indent: usize,
+        output: &mut String,
+    ) {
+        let padding = " ".repeat(indent);
+        let origin = program.origin(statement.origin);
+        let kind = match &statement.kind {
+            ResolvedStatementKind::Let { local, name, value } => {
+                format!("let {name} {local:?} = {value:?}")
+            }
+            ResolvedStatementKind::Assign {
+                target,
+                value,
+                at,
+                move_self,
+            } => format!(
+                "assign {}:{}, value={value:?}, at={at:?}, move={move_self}",
+                target.name,
+                target.ty.display()
+            ),
+            ResolvedStatementKind::MarkdownAppend { .. } => "markdown-append".into(),
+            ResolvedStatementKind::ComboPush { .. } => "combo-push".into(),
+            ResolvedStatementKind::ReturnIf { condition } => {
+                format!("return-if {condition:?}")
+            }
+            ResolvedStatementKind::Exit => "exit".into(),
+            ResolvedStatementKind::Run(run) => format!(
+                "run {:?} site={:?} {} error={}",
+                run.mode,
+                run.site,
+                route_snapshot(program, &run.success),
+                run.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::Sip(sip) => format!(
+                "sip {} | {} | {}",
+                route_snapshot(program, &sip.progress),
+                route_snapshot(program, &sip.success),
+                sip.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::TaskFlow(flow) => format!(
+                "flow source=[{}] output={} error={} transforms=[{}] success={} error-route={} units={}",
+                task_source_snapshot(&flow.source),
+                flow.output
+                    .as_ref()
+                    .map_or_else(|| "none".into(), Type::display),
+                flow.error_type
+                    .as_ref()
+                    .map_or_else(|| "none".into(), Type::display),
+                flow.transforms
+                    .iter()
+                    .map(task_transform_snapshot)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                flow.success
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+                flow.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+                flow.units
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+            ),
+            ResolvedStatementKind::TaskGroup { kind, statements } => {
+                let label = format!("group {kind:?}");
+                writeln!(
+                    output,
+                    "{padding}s{} task={:?} final={} {label} @{}:{}",
+                    statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+                )
+                .unwrap();
+                for child in statements {
+                    statement_snapshot(program, child, indent + 2, output);
+                }
+                return;
+            }
+            ResolvedStatementKind::Abortable { task, .. } => {
+                let label = "abortable";
+                writeln!(
+                    output,
+                    "{padding}s{} task={:?} final={} {label} @{}:{}",
+                    statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+                )
+                .unwrap();
+                statement_snapshot(program, task, indent + 2, output);
+                return;
+            }
+            ResolvedStatementKind::Abort { .. } => "abort".into(),
+            ResolvedStatementKind::DebugStart { .. } => "debug-start".into(),
+            ResolvedStatementKind::DebugFinish { .. } => "debug-finish".into(),
+            ResolvedStatementKind::ClipboardWrite { .. } => "clipboard-write".into(),
+            ResolvedStatementKind::WidgetOperation { route, .. } => format!(
+                "widget-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::PaneOperation { route, .. } => format!(
+                "pane-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::WindowOperation { route, .. } => format!(
+                "window-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+        };
+        writeln!(
+            output,
+            "{padding}s{} task={:?} final={} {kind} @{}:{}",
+            statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+        )
+        .unwrap();
+    }
+
+    fn handler_snapshot(program: &LoweredProgram) -> String {
+        let mut output = String::new();
+        for handler in program.handlers() {
+            let origin = program.origin(handler.origin);
+            writeln!(
+                output,
+                "h{} {:?} {} params={:?} @{}:{}",
+                handler.id.0,
+                handler.owner,
+                handler.name,
+                handler
+                    .params
+                    .iter()
+                    .map(|param| format!("{}:{}:{:?}", param.name, param.ty.display(), param.local))
+                    .collect::<Vec<_>>(),
+                origin.line,
+                origin.column
+            )
+            .unwrap();
+            for statement in &handler.statements {
+                statement_snapshot(program, statement, 2, &mut output);
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn snapshots_app_mount_component_and_preset_handler_hir_with_stable_ids() {
+        let source = format!(
+            r#"app HandlerHir
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 0
+preset seeded
+  state
+    value = 7
+on mount
+  let request = value + 1
+  run fetch(request) -> loaded _
+on loaded(next)
+  value = next
+component Card()
+  state
+    local = 0
+  on start
+    run replace fetch(local) -> done _
+  on done(next)
+    local = next
+  button "Start" -> start
+view
+  Card
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        assert_eq!(
+            handler_snapshot(&program),
+            r#"h0 App mount params=[] @19:1
+  s0 task=None final=false let request CheckedLocalId(0) = CheckedExprUseId(2) @20:1
+  s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
+h1 App loaded params=["next:i64:CheckedLocalId(1)"] @22:1
+  s2 task=None final=true assign value:i64, value=CheckedExprUseId(4), at=None, move=false @23:1
+h2 Component(ComponentId(0)) start params=[] @27:1
+  s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
+h3 Component(ComponentId(0)) done params=["next:i64:CheckedLocalId(2)"] @29:1
+  s4 task=None final=true assign local:i64, value=CheckedExprUseId(6), at=None, move=false @30:1
+h4 Preset(0) preset seeded params=[] @16:1
+  s5 task=None final=true assign value:i64, value=CheckedExprUseId(7), at=None, move=false @18:1
+"#
+        );
+    }
+
+    #[test]
+    fn snapshots_nested_tasks_flows_and_body_routes_in_preorder() {
+        let source = format!(
+            r#"app TaskHir
+extern crate::backend
+  AppError(message:str)
+  sip transfer(size:i64) progress=f64 -> bytes
+  stream numbers(limit:i64) -> i64
+  task double(value:i64) -> i64
+{THEME}state
+  request:task-handle? = none
+on start
+  parallel
+    sip transfer(3)
+      progress -> progressed _
+      done -> downloaded _
+    flow
+      from stream numbers(3)
+      map value -> value + 1
+      then value -> task double(value)
+      collect
+      done -> collected _
+      units -> planned _
+    abortable request abort-on-drop
+      task system theme -> themed _
+on progressed(value)
+on downloaded(value)
+on collected(values)
+on planned(units)
+on themed(theme)
+view
+  text "Tasks"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let snapshot = handler_snapshot(&program);
+        for expected in [
+            "h0 App start params=[]",
+            "s0 task=Some(TaskId(0)) final=true group Parallel",
+            "s1 task=Some(TaskId(1)) final=true sip r0 -> app h1 progressed (payload 0:f64)",
+            "r1 -> app h2 downloaded (payload 0:bytes)",
+            "s2 task=Some(TaskId(2)) final=true flow source=[t3 Stream Extern(ExternFnId(1))",
+            "t4 map value:i64/local=CheckedLocalId(0)",
+            "t5 then value:i64/local=CheckedLocalId(1) -> t5 Task Extern(ExternFnId(2))",
+            "t6 collect",
+            "r2 -> app h3 collected (payload 0:[i64])",
+            "r3 -> app h4 planned (payload 0:i64)",
+            "s3 task=Some(TaskId(7)) final=true abortable",
+            "s4 task=Some(TaskId(8)) final=true run Every site=None r4 -> app h5 themed (payload 0:str)",
+        ] {
+            assert!(
+                snapshot.contains(expected),
+                "missing `{expected}` in handler HIR snapshot:\n{snapshot}"
+            );
+        }
+    }
+
+    #[test]
+    fn handler_codegen_uses_checked_expressions_and_stable_run_sites_after_ast_mutation() {
+        let source = format!(
+            r#"app Mutation
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 1
+on changed
+  let original = value + 1
+  value = original
+component Search()
+  state
+    query = 2
+  on search
+    run latest fetch(query) -> loaded _
+  on loaded(next)
+    query = next
+  button "Search" -> search
+view
+  Search
+"#
+        );
+        let mut checked = analyze(&source).unwrap();
+        let Statement::Let { value, span, .. } = &mut checked.document.handlers[0].statements[0]
+        else {
+            panic!("fixture must start with a let statement");
+        };
+        *value = Expr::Str("unchecked-poison".into());
+        span.line = 900;
+        let Statement::Run { args, span, .. } =
+            &mut checked.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("component fixture must contain a latest run");
+        };
+        args[0] = Expr::Str("unchecked-run-poison".into());
+        span.line = 999;
+
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "mutation.ice").unwrap();
+        assert!(generated.contains("let original = (self.value + 1);"));
+        assert!(generated.contains("crate::backend::fetch(__local.query)"));
+        assert!(generated.contains("__ice_latest_0"));
+        assert!(!generated.contains("Latest999"));
+        assert!(!generated.contains("unchecked-poison"));
+        assert!(!generated.contains("unchecked-run-poison"));
+        assert!(!generated.contains("// __ICE_SOURCE 900 1"));
+        assert!(!generated.contains("// __ICE_SOURCE 999 1"));
+    }
+
+    #[test]
+    fn rejects_mutated_handler_route_run_site_and_statement_shapes_as_hir_invariants() {
+        let source = format!(
+            r#"app InvalidHir
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}component Search()
+  state
+    query = 1
+  on search
+    run latest fetch(query) -> loaded _
+  on loaded(next)
+    query = next
+  button "Search" -> search
+view
+  Search
+"#
+        );
+
+        let mut changed_mode = analyze(&source).unwrap();
+        let Statement::Run { mode, .. } =
+            &mut changed_mode.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("fixture must contain a run");
+        };
+        *mode = FutureMode::Replace;
+        let error = lower(changed_mode).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("stable run-site"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let Statement::Run { success, .. } =
+            &mut changed_route.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("fixture must contain a run");
+        };
+        success.args[0] = RouteArg::Expr(Expr::I64(7));
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked expression fact"));
+
+        let mut missing_statement = analyze(&source).unwrap();
+        missing_statement.document.components[0].handlers[0]
+            .statements
+            .clear();
+        let error = lower(missing_statement).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("statement HIR declaration count"));
+    }
+
+    #[test]
+    fn imported_handler_origins_reach_lowered_hir_and_generated_source_markers() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-handler-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedHandler\nuse \"card.ice\"\n{THEME}view\n  ImportedCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedCard()\n  state\n    selected = false\n  on select\n    selected = true\n  button \"Select\" -> select\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let handler = program
+            .handlers()
+            .iter()
+            .find(|handler| handler.name == "select")
+            .unwrap();
+        let handler_origin = program.origin(handler.origin);
+        assert_eq!(handler_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(handler_origin.line, 4);
+        let statement_origin = program.origin(handler.statements[0].origin);
+        assert_eq!(statement_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(statement_origin.line, 5);
+        assert_eq!(statement_origin.parent, Some(handler.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 5 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn lowers_component_calls_into_ordered_complete_contracts() {

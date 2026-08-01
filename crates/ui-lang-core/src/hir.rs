@@ -20,6 +20,11 @@ arena_id!(ExternFnId);
 arena_id!(OriginId);
 arena_id!(ViewId);
 arena_id!(ComponentCallId);
+arena_id!(HandlerId);
+arena_id!(StatementId);
+arena_id!(TaskId);
+arena_id!(RouteId);
+arena_id!(RunSiteId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -210,6 +215,60 @@ pub(crate) struct DeclarationIndex {
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
+    handlers: Vec<HandlerDeclaration>,
+    statements: Vec<StatementDeclaration>,
+    tasks: Vec<TaskDeclaration>,
+    routes: Vec<RouteDeclaration>,
+    run_sites: Vec<RunSiteDeclaration>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum HandlerOwner {
+    App,
+    Component(ComponentId),
+    Preset(u32),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HandlerDeclaration {
+    pub(crate) declaration: Declaration<HandlerId>,
+    pub(crate) owner: HandlerOwner,
+    pub(crate) name: String,
+    pub(crate) statement_roots: Vec<StatementId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StatementDeclaration {
+    pub(crate) declaration: Declaration<StatementId>,
+    pub(crate) handler: HandlerId,
+    pub(crate) parent: Option<StatementId>,
+    pub(crate) task: Option<TaskId>,
+    pub(crate) source_tasks: Vec<TaskId>,
+    pub(crate) routes: Vec<RouteId>,
+    pub(crate) run_site: Option<RunSiteId>,
+    pub(crate) children: Vec<StatementId>,
+    pub(crate) is_final: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TaskDeclaration {
+    pub(crate) declaration: Declaration<TaskId>,
+    pub(crate) statement: StatementId,
+    pub(crate) parent: Option<TaskId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RouteDeclaration {
+    pub(crate) declaration: Declaration<RouteId>,
+    pub(crate) statement: StatementId,
+    pub(crate) task: Option<TaskId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RunSiteDeclaration {
+    pub(crate) declaration: Declaration<RunSiteId>,
+    pub(crate) statement: StatementId,
+    pub(crate) mode: FutureMode,
 }
 
 impl DeclarationIndex {
@@ -462,6 +521,61 @@ impl DeclarationIndex {
             );
         }
 
+        let mut handlers = Vec::new();
+        let mut statements = Vec::new();
+        let mut tasks = Vec::new();
+        let mut routes = Vec::new();
+        let mut run_sites = Vec::new();
+        for handler in &document.handlers {
+            index_handler_declaration(
+                handler,
+                HandlerOwner::App,
+                None,
+                origins,
+                &mut handlers,
+                &mut statements,
+                &mut tasks,
+                &mut routes,
+                &mut run_sites,
+            );
+        }
+        for (component_index, component) in document.components.iter().enumerate() {
+            let component_id = components[component_index].declaration.id;
+            let parent = Some(components[component_index].declaration.origin);
+            for handler in &component.handlers {
+                index_handler_declaration(
+                    handler,
+                    HandlerOwner::Component(component_id),
+                    parent,
+                    origins,
+                    &mut handlers,
+                    &mut statements,
+                    &mut tasks,
+                    &mut routes,
+                    &mut run_sites,
+                );
+            }
+        }
+        for (preset_index, preset) in document.presets.iter().enumerate() {
+            let handler = Handler {
+                name: format!("preset {}", preset.name),
+                params: Vec::new(),
+                statements: preset.statements.clone(),
+                span: preset.span.clone(),
+            };
+            index_handler_declaration(
+                &handler,
+                HandlerOwner::Preset(preset_index as u32),
+                None,
+                origins,
+                &mut handlers,
+                &mut statements,
+                &mut tasks,
+                &mut routes,
+                &mut run_sites,
+            );
+        }
+
         Self {
             app_states,
             derived,
@@ -481,6 +595,11 @@ impl DeclarationIndex {
             views,
             views_by_site,
             component_calls_by_view,
+            handlers,
+            statements,
+            tasks,
+            routes,
+            run_sites,
         }
     }
 
@@ -625,6 +744,274 @@ impl DeclarationIndex {
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
     }
+
+    pub(crate) fn handlers(&self) -> &[HandlerDeclaration] {
+        &self.handlers
+    }
+
+    pub(crate) fn handler(&self, id: HandlerId) -> &HandlerDeclaration {
+        &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn statement(&self, id: StatementId) -> &StatementDeclaration {
+        &self.statements[id.0 as usize]
+    }
+
+    pub(crate) fn task(&self, id: TaskId) -> &TaskDeclaration {
+        &self.tasks[id.0 as usize]
+    }
+
+    pub(crate) fn route(&self, id: RouteId) -> &RouteDeclaration {
+        &self.routes[id.0 as usize]
+    }
+
+    pub(crate) fn run_site(&self, id: RunSiteId) -> &RunSiteDeclaration {
+        &self.run_sites[id.0 as usize]
+    }
+
+    pub(crate) fn statement_count(&self) -> usize {
+        self.statements.len()
+    }
+
+    pub(crate) fn task_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    pub(crate) fn route_count(&self) -> usize {
+        self.routes.len()
+    }
+
+    pub(crate) fn run_site_count(&self) -> usize {
+        self.run_sites.len()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_handler_declaration(
+    handler: &Handler,
+    owner: HandlerOwner,
+    parent: Option<OriginId>,
+    origins: &mut OriginArena,
+    handlers: &mut Vec<HandlerDeclaration>,
+    statements: &mut Vec<StatementDeclaration>,
+    tasks: &mut Vec<TaskDeclaration>,
+    routes: &mut Vec<RouteDeclaration>,
+    run_sites: &mut Vec<RunSiteDeclaration>,
+) {
+    let id = HandlerId(handlers.len() as u32);
+    let origin = origins.push(&handler.span, parent);
+    let statement_roots = handler
+        .statements
+        .iter()
+        .enumerate()
+        .map(|(index, statement)| {
+            index_statement_declaration(
+                statement,
+                id,
+                None,
+                index + 1 == handler.statements.len(),
+                origin,
+                origins,
+                statements,
+                tasks,
+                routes,
+                run_sites,
+            )
+        })
+        .collect();
+    handlers.push(HandlerDeclaration {
+        declaration: Declaration { id, origin },
+        owner,
+        name: handler.name.clone(),
+        statement_roots,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_statement_declaration(
+    statement: &Statement,
+    handler: HandlerId,
+    parent: Option<StatementId>,
+    is_final: bool,
+    parent_origin: OriginId,
+    origins: &mut OriginArena,
+    statements: &mut Vec<StatementDeclaration>,
+    tasks: &mut Vec<TaskDeclaration>,
+    routes: &mut Vec<RouteDeclaration>,
+    run_sites: &mut Vec<RunSiteDeclaration>,
+) -> StatementId {
+    let id = StatementId(statements.len() as u32);
+    let origin = origins.push(statement.span(), Some(parent_origin));
+    statements.push(StatementDeclaration {
+        declaration: Declaration { id, origin },
+        handler,
+        parent,
+        task: None,
+        source_tasks: Vec::new(),
+        routes: Vec::new(),
+        run_site: None,
+        children: Vec::new(),
+        is_final,
+    });
+
+    let task = statement.immediate_task().map(|_| {
+        let task = TaskId(tasks.len() as u32);
+        let task_origin = origins.push(statement.span(), Some(origin));
+        tasks.push(TaskDeclaration {
+            declaration: Declaration {
+                id: task,
+                origin: task_origin,
+            },
+            statement: id,
+            parent: None,
+        });
+        task
+    });
+    statements[id.0 as usize].task = task;
+
+    if let Statement::TaskFlow {
+        source, transforms, ..
+    } = statement
+    {
+        let parent_task = task;
+        let source_task = index_task_source(source, id, parent_task, origins, tasks);
+        statements[id.0 as usize].source_tasks.push(source_task);
+        for transform in transforms {
+            let transform_task = index_task_transform(transform, id, parent_task, origins, tasks);
+            statements[id.0 as usize].source_tasks.push(transform_task);
+        }
+    }
+
+    let route_values: Vec<&Route> = match statement {
+        Statement::Run { success, error, .. } => {
+            std::iter::once(success).chain(error.iter()).collect()
+        }
+        Statement::Sip {
+            progress,
+            success,
+            error,
+            ..
+        } => std::iter::once(progress)
+            .chain(std::iter::once(success))
+            .chain(error.iter())
+            .collect(),
+        Statement::TaskFlow {
+            success,
+            error,
+            units,
+            ..
+        } => success
+            .iter()
+            .chain(error.iter())
+            .chain(units.iter())
+            .collect(),
+        Statement::WidgetOperation { route, .. }
+        | Statement::PaneOperation { route, .. }
+        | Statement::WindowOperation { route, .. } => route.iter().collect(),
+        _ => Vec::new(),
+    };
+    for route in route_values {
+        let route_id = RouteId(routes.len() as u32);
+        let route_origin = origins.push(&route.span, Some(origin));
+        routes.push(RouteDeclaration {
+            declaration: Declaration {
+                id: route_id,
+                origin: route_origin,
+            },
+            statement: id,
+            task,
+        });
+        statements[id.0 as usize].routes.push(route_id);
+    }
+
+    if let Statement::Run { mode, .. } = statement
+        && *mode != FutureMode::Every
+    {
+        let run_site = RunSiteId(run_sites.len() as u32);
+        run_sites.push(RunSiteDeclaration {
+            declaration: Declaration {
+                id: run_site,
+                origin,
+            },
+            statement: id,
+            mode: *mode,
+        });
+        statements[id.0 as usize].run_site = Some(run_site);
+    }
+
+    let children: Vec<&Statement> = match statement {
+        Statement::TaskGroup { statements, .. } => statements.iter().collect(),
+        Statement::Abortable { task, .. } => vec![task.as_ref()],
+        _ => Vec::new(),
+    };
+    let child_ids = children
+        .into_iter()
+        .map(|child| {
+            index_statement_declaration(
+                child,
+                handler,
+                Some(id),
+                true,
+                origin,
+                origins,
+                statements,
+                tasks,
+                routes,
+                run_sites,
+            )
+        })
+        .collect();
+    statements[id.0 as usize].children = child_ids;
+    id
+}
+
+fn index_task_source(
+    source: &TaskSource,
+    statement: StatementId,
+    parent: Option<TaskId>,
+    origins: &mut OriginArena,
+    tasks: &mut Vec<TaskDeclaration>,
+) -> TaskId {
+    let span = match source {
+        TaskSource::Effect { span, .. }
+        | TaskSource::Done { span, .. }
+        | TaskSource::None { span, .. } => span,
+    };
+    let id = TaskId(tasks.len() as u32);
+    let parent_origin = parent.map(|parent| tasks[parent.0 as usize].declaration.origin);
+    let origin = origins.push(span, parent_origin);
+    tasks.push(TaskDeclaration {
+        declaration: Declaration { id, origin },
+        statement,
+        parent,
+    });
+    id
+}
+
+fn index_task_transform(
+    transform: &TaskTransform,
+    statement: StatementId,
+    parent: Option<TaskId>,
+    origins: &mut OriginArena,
+    tasks: &mut Vec<TaskDeclaration>,
+) -> TaskId {
+    let span = match transform {
+        TaskTransform::Map { span, .. }
+        | TaskTransform::Then { span, .. }
+        | TaskTransform::AndThen { span, .. }
+        | TaskTransform::MapError { span, .. }
+        | TaskTransform::Collect { span }
+        | TaskTransform::Discard { span } => span,
+    };
+    let id = TaskId(tasks.len() as u32);
+    let parent_origin = parent.map(|parent| tasks[parent.0 as usize].declaration.origin);
+    let origin = origins.push(span, parent_origin);
+    tasks.push(TaskDeclaration {
+        declaration: Declaration { id, origin },
+        statement,
+        parent,
+    });
+    id
 }
 
 fn declared_slots(node: &ViewNode) -> Vec<&Span> {
