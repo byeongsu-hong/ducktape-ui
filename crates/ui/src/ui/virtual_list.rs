@@ -14,7 +14,8 @@ pub use ui_lang_runtime::{
 /// Builds a fixed-height list with Ducktape row colors and geometry.
 ///
 /// The caller retains the strongly typed items, keys, state, and messages. Only
-/// visible and overscan rows invoke `view`.
+/// visible and overscan rows invoke `view`. Mount the result in a bounded-height
+/// parent that does not scroll it vertically; the list owns vertical scrolling.
 #[allow(clippy::too_many_arguments)]
 pub fn virtual_list<'a, T, Key, Message>(
     state: &VirtualListState<Key>,

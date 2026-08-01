@@ -404,8 +404,9 @@ checks every Ice app graph before running `cargo test --workspace`.
 The showcase also renders 100,000 logical rows through the fixed-height
 [`VirtualList`](crates/ui/docs/virtual-list.md). Only visible plus overscan rows
 are materialized; the Ice view owns a typed extern state/event route and uses
-the shared `VirtualList.Frame` composition. No `virtual-for` or other Core
-syntax is involved.
+the shared `VirtualList.Frame` composition. The list sits in a bounded fixed
+region and owns its vertical scrolling; the catalog below it has a separate
+vertical scrollable. No `virtual-for` or other Core syntax is involved.
 
 ```ice
 test counter_contract

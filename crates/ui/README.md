@@ -60,8 +60,9 @@ Large fixed-row collections use the feature-gated
 [`VirtualList`](docs/virtual-list.md). Its state/event API lives in
 `ui-lang-runtime`, `ducktape-ui` applies semantic theme tokens, and
 `VirtualList.Frame` provides the reusable Ice composition around an
-application-owned typed extern. This is intentionally a runtime widget, not
-new Core syntax.
+application-owned typed extern. Give the extern slot a bounded height outside
+any vertical scrollable ancestor; the retained list owns vertical scrolling.
+This is intentionally a runtime widget, not new Core syntax.
 
 ## Rust library quick start
 

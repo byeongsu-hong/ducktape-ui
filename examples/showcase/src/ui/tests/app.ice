@@ -345,7 +345,7 @@ test catalog_full_scroll_visuals
   capture modal_and_data_table
   scroll-to scroller 0.0 4400.0
   capture messages_and_edge_panels
-  scroll-to scroller 0.0 5320.0
+  scroll-to scroller 0.0 5000.0
   click navigation_trigger
   idle
   expect navigation_menu_is_open(navigation_menu)

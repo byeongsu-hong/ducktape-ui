@@ -335,6 +335,13 @@ unchanged build/diff/layout/draw frames, constant-time `update_snapshot` plus
 wall-time and instrumented allocation budgets. The reducer path requires zero
 allocations and bytes for scalar keys; rendering retains the visible+overscan row
 callback and exact mounted child-slot budgets.
+These interaction contracts use a bounded-height mount with no vertical
+scrolling ancestor: the list owns the tested native scroll offset and viewport.
+Arbitrary standard Iced scrolling ancestors are explicitly outside v1 because
+Iced 0.14 does not pass descendants enough information to map raw touch events
+through an unavailable or unrelated cursor. The runnable showcase keeps the
+list in a fixed non-scrolling region and gives only the catalog below it an
+independent vertical scrollable.
 The extracted-crate downstream consumer compiles and executes the public
 runtime and `ducktape-ui` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
@@ -344,7 +351,8 @@ native X11 and wasm, and the extracted runtime package repeats the direct native
 platform selection to the caller. The
 Windows native WGPU job requires a renderer primitive from a measured mounted
 row subtree before accepting the first frame. V1 explicitly excludes
-variable-height measurement and new Ice syntax.
+variable-height measurement, scrolling-ancestor touch transforms, and new Ice
+syntax.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component

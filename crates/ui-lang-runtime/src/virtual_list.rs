@@ -4,6 +4,15 @@
 //! visible range plus overscan is converted into Iced elements. This keeps
 //! layout, diff, and draw work proportional to mounted rows instead of the
 //! logical collection size.
+//!
+//! The widget owns its vertical scrolling. Mount it under a bounded-height,
+//! non-vertically-scrolling parent. An arbitrary standard Iced vertical
+//! `Scrollable` ancestor is outside the v1 interaction contract: Iced 0.14
+//! keeps touch event positions in window coordinates while translating only
+//! the cursor and replacement viewport, without exposing the lost ancestor
+//! transform to descendants. Ordinary non-scrolling layout parents are
+//! supported. Scrolling ancestors that translate or clip the list on either
+//! hit-test axis require a future explicit scroll-context contract.
 
 use crate::{StableId, accessible};
 use iced::advanced::text;
@@ -597,6 +606,10 @@ fn navigation_index(
 /// It is never called for offscreen items outside overscan.
 /// `collection_label` supplies the accessible name for the list.
 /// `label` supplies the AccessKit name for each mounted item.
+///
+/// The parent must provide a bounded height and must not scroll the list
+/// vertically. This widget's pointer and touch guarantees cover its owned
+/// native scrollable and viewport, not an arbitrary scrolling ancestor.
 #[allow(clippy::too_many_arguments)]
 pub fn virtual_list<'a, T, Key, Message, Theme, Renderer>(
     state: &VirtualListState<Key>,

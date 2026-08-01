@@ -2047,6 +2047,14 @@ revisioned private operations synchronize programmatic state to the native
 scrollable on first layout, remount, and absolute offset zero without a
 caller-owned Iced task. Public keys require `Clone + Eq + Hash`, so owned domain
 identifiers do not require interning. An
+application mounts the widget in a bounded-height parent that does not scroll it
+vertically; `VirtualList` owns its native vertical scrolling. Arbitrary standard
+Iced scrolling ancestors are outside the v1 pointer contract when they translate
+or clip the list on a hit-test axis. Iced 0.14 retains raw window-coordinate
+touch positions while translating only cursor and replacement viewport data, and
+does not expose the lost ancestor transform to the descendant. Ordinary
+non-scrolling layout parents remain supported; nested scrolling requires a
+future explicit coordinate-context contract rather than inferred geometry. An
 explicit `VirtualListId` combines a readable logical name with a runtime-unique
 namespace; identity and retained state are not clonable, while explicit `fork`
 requires a new logical name and copies retained data into a new namespace
@@ -2067,14 +2075,15 @@ per-key semantic allocations remain distinct even when
 different keys produce the same hash. Only mounted visible-plus-overscan rows
 become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
 behavior take precedence over row selection. Touch ownership uses the pressed
-and lifted event positions translated into native scroll-content coordinates,
-clipped to the viewport, plus descendant capture before and after dispatch,
-independently of the current mouse cursor. Trees for
+and lifted event positions translated through the list's owned native scroll
+offset, clipped to its owned viewport, plus descendant capture before and after
+dispatch, independently of the current mouse cursor. Trees for
 keys in consecutive mounted-window intersections
 remain retained. The focused AccessKit list exposes its selected mounted item as
 the active descendant. `VirtualList.Frame`
 is an Ice composition around an app-owned extern component; there is deliberately
-no `virtual-for` syntax or variable-height measurement in v1. Accessibility v1
+no `virtual-for` syntax, variable-height measurement, or nested vertical-scroll
+contract in v1. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or
 per-item accessibility actions.
 

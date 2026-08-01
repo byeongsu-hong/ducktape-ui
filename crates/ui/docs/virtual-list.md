@@ -69,11 +69,26 @@ list name cannot collide with a row selector even if it contains `/`, `%`, or
 text that resembles an item path. Selector strings are a runtime contract;
 callers should not reconstruct them from `logical()`.
 
+`VirtualList` owns vertical scrolling. Its parent must give it a bounded height
+and must not scroll it vertically. Ordinary non-scrolling layout parents are
+supported. A scrolling ancestor that translates or clips the list on a
+hit-test axis is outside the v1 pointer contract; in particular, do not nest the
+list in a standard Iced vertical `Scrollable`.
+
+This boundary is required by Iced 0.14's widget event contract. An ancestor
+scrollable leaves `FingerPressed` and `FingerLifted` positions in window
+coordinates while translating the cursor and replacement viewport, then omits
+the ancestor transform passed to descendants. When the cursor is unavailable
+or belongs to another pointer, the child cannot reconstruct that transform or
+the effective ancestor clip. A future explicit scroll-context API can revisit
+nested scrolling without guessing from ambiguous geometry.
+
 Mouse clicks and touch taps focus the named list without stealing input or
 cursor semantics from interactive row content or its native scrollbar. Touch
-ownership translates `FingerPressed` and `FingerLifted` positions into native
-scroll-content coordinates, clips them to the viewport, and observes descendant
-capture, even when the mouse cursor is unavailable or elsewhere. The
+ownership translates `FingerPressed` and `FingerLifted` positions through the
+list's owned native scroll offset, clips them to its owned viewport, and
+observes descendant capture, even when the mouse cursor is unavailable or
+elsewhere. The
 focused list supports Up, Down, Home, End, PageUp, and PageDown.
 `scroll_to_item` and `scroll_to_key` update retained state; a private revisioned
 operation synchronizes the native scrollable on the next layout, including
@@ -95,10 +110,11 @@ until virtual accessibility child requests have a native Iced contract.
 V1 intentionally requires a finite positive fixed row height. It does not
 measure variable-height content, retain controls after their key leaves the
 mounted overscan window, support multiple selection, reorder items by drag, or
-add Ice syntax. Interactive state for keys shared by consecutive mounted
-windows is retained exactly. TreeView and DataGrid can build on this runtime
-contract; variable-height virtualization needs separate measurement and
-anchoring evidence before admission.
+add Ice syntax or support an ancestor that scrolls the list vertically.
+Interactive state for keys shared by consecutive mounted windows is retained
+exactly. TreeView and DataGrid can build on this runtime contract;
+variable-height virtualization and nested vertical scrolling need separate
+measurement, anchoring, and coordinate-context evidence before admission.
 
 The `ducktape-ui` feature enables only the renderer-side
 `ui-lang-runtime/virtual-list` boundary and therefore compiles for
