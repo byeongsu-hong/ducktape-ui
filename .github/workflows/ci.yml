@@ -224,7 +224,7 @@ jobs:
       - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
-          cargo test --locked -p markdown-example
+          cargo test --locked -p markdown-example ${{ matrix.runner == 'macos-latest' && '-- --test-threads=1' || '' }}
       - name: Run baseline-free selected review smoke
         shell: bash
         run: |
