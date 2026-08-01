@@ -302,6 +302,14 @@ forms. Lowering freezes dimension topology, validates expression scope and
 types, and publishes `ResolvedPin`. Rust generation does not reread Pin
 positions, dimensions, or source expressions.
 
+Responsive is a completed structural-wrapper HIR slice. Breakpoint and fixed
+outer-dimension operands have stable checked expression IDs, and size callbacks
+bind two typed checked locals. Lowering freezes breakpoint/size mode, binding
+names, and dimension topology, then publishes `ResolvedResponsive` with
+numeric-fixed and native-length-fixed dimensions separated. Rust generation
+does not reread breakpoint or dimension expressions, binding spellings, or
+checked-flow internals.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

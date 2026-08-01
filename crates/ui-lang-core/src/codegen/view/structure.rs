@@ -59,30 +59,16 @@ pub(in crate::codegen) fn render_structure(
             let sensor = program.resolved_sensor_for(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
-        ViewNode::Responsive {
-            content,
-            width,
-            height,
-            span,
-            ..
-        } => {
-            let builder = match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    let CheckedViewFlow::ResponsiveBreakpoint { breakpoint } =
-                        &document.program().checked_view(span)?.flow
-                    else {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "responsive breakpoint has no checked flow",
-                        ));
-                    };
-                    let breakpoint = checked_expr_use_code(
-                        document.program(),
-                        *breakpoint,
-                        env,
-                        ValueMode::Owned,
-                    )?;
+        ViewNode::Responsive { content, .. } => {
+            let program = document.hir();
+            let responsive = program.resolved_responsive_for(node)?;
+            let builder = match (&responsive.kind, content) {
+                (
+                    ResolvedResponsiveKind::Breakpoint { breakpoint },
+                    ResponsiveContent::Breakpoint { narrow, wide, .. },
+                ) => {
+                    let breakpoint =
+                        checked_expr_use_code(program, *breakpoint, env, ValueMode::Owned)?;
                     let breakpoint =
                         format!("(({breakpoint}) as f32).max(f32::EPSILON).min(f32::MAX)");
                     let narrow = render_node(narrow, document, message, env, &child_scope, slot)?;
@@ -91,43 +77,25 @@ pub(in crate::codegen) fn render_structure(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }}"
                     )
                 }
-                ResponsiveContent::Size { content, .. } => {
-                    let CheckedViewFlow::ResponsiveSize { width, height } =
-                        &document.program().checked_view(span)?.flow
-                    else {
-                        return Err(Error::new(
-                            "E196",
-                            span,
-                            "responsive size has no checked flow",
-                        ));
-                    };
-                    let width_name = document
-                        .program()
-                        .checked_facts()
-                        .local(*width)
-                        .name
-                        .clone();
-                    let height_name = document
-                        .program()
-                        .checked_facts()
-                        .local(*height)
-                        .name
-                        .clone();
+                (
+                    ResolvedResponsiveKind::Size { width, height },
+                    ResponsiveContent::Size { content, .. },
+                ) => {
                     let mut child_env = ScopedBindingEnv::new(env);
                     child_env.insert(
-                        width_name,
+                        width.name.clone(),
                         checked_local_binding(
-                            document.program(),
-                            *width,
+                            program,
+                            width.local,
                             "(__size.width as f64)".into(),
                             true,
                         ),
                     );
                     child_env.insert(
-                        height_name,
+                        height.name.clone(),
                         checked_local_binding(
-                            document.program(),
-                            *height,
+                            program,
+                            height.local,
                             "(__size.height as f64)".into(),
                             true,
                         ),
@@ -138,9 +106,25 @@ pub(in crate::codegen) fn render_structure(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }}"
                     )
                 }
+                _ => {
+                    return Err(Error::new(
+                        "E196",
+                        node.span(),
+                        "responsive source tree diverged from normalized HIR",
+                    ));
+                }
             };
             let mut code = format!("::iced::widget::responsive({builder})");
-            append_dimensions(&mut code, [width, height], env, document)?;
+            for (method, length) in [("width", &responsive.width), ("height", &responsive.height)] {
+                if let Some(length) = length {
+                    write!(
+                        code,
+                        ".{method}({})",
+                        resolved_responsive_length_code(length, program, env)?
+                    )
+                    .unwrap();
+                }
+            }
             Ok(format!("{code}.into()"))
         }
         ViewNode::KeyedColumn {
@@ -308,6 +292,27 @@ fn resolved_pin_length_code(
             checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedPinLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
+fn resolved_responsive_length_code(
+    length: &ResolvedResponsiveLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedResponsiveLength::Fill => "::iced::Fill".into(),
+        ResolvedResponsiveLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedResponsiveLength::Shrink => "::iced::Shrink".into(),
+        ResolvedResponsiveLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedResponsiveLength::FixedLength(expression) => {
             checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })

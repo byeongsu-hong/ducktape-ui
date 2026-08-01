@@ -830,10 +830,10 @@ pub(crate) use facts::{
     CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
     CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedInteraction,
     CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedMedia,
-    CheckedPathRoot, CheckedProjection, CheckedProjectionKind, CheckedRouteArgKind,
-    CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
-    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
-    CheckedViewLocalRole, CheckedViewScope,
+    CheckedPathRoot, CheckedProjection, CheckedProjectionKind, CheckedResponsiveLength,
+    CheckedRouteArgKind, CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole,
+    CheckedSubscriptionSource, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedView,
+    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 

@@ -5,11 +5,12 @@ use crate::check::{
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
     CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMedia,
     CheckedPathRoot, CheckedProjectionKind, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
-    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
-    CheckedExprUseId, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedResponsiveLength, CheckedSubscription, CheckedSubscriptionExprRole,
+    CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -30,6 +31,7 @@ mod float;
 mod interaction;
 mod media;
 mod pin;
+mod responsive;
 mod style;
 mod testing;
 mod tooltip;
@@ -39,6 +41,7 @@ pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use media::*;
 pub(crate) use pin::*;
+pub(crate) use responsive::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
@@ -1443,6 +1446,7 @@ pub(crate) struct LoweredProgram {
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
+    responsives: HashMap<ViewId, ResolvedResponsive>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -3002,6 +3006,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn responsive(&self, id: ViewId) -> Option<&ResolvedResponsive> {
+        self.responsives.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3174,6 +3183,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "pin reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_responsive_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedResponsive, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "responsive reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "responsive reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.responsives.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "responsive reached code generation without normalized HIR",
             )
         })
     }
@@ -3437,6 +3475,7 @@ pub(crate) struct Lowerer {
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
+    responsives: HashMap<ViewId, ResolvedResponsive>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -4152,6 +4191,7 @@ impl Lowerer {
             tooltips: HashMap::new(),
             floats: HashMap::new(),
             pins: HashMap::new(),
+            responsives: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4230,6 +4270,7 @@ impl Lowerer {
             tooltips: self.tooltips,
             floats: self.floats,
             pins: self.pins,
+            responsives: self.responsives,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -8027,6 +8068,24 @@ impl Lowerer {
                 self.lower_pin(width, height, x, y, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
+            ViewNode::Responsive {
+                content,
+                width,
+                height,
+                span,
+                ..
+            } => {
+                self.lower_responsive(content, width, height, span, outer_component)?;
+                match content {
+                    ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                        self.lower_view(narrow, outer_component)?;
+                        self.lower_view(wide, outer_component)?;
+                    }
+                    ResponsiveContent::Size { content, .. } => {
+                        self.lower_view(content, outer_component)?;
+                    }
+                }
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -8103,15 +8162,6 @@ impl Lowerer {
                     self.lower_view(&column.cell, outer_component)?;
                 }
             }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    self.lower_view(narrow, outer_component)?;
-                    self.lower_view(wide, outer_component)?;
-                }
-                ResponsiveContent::Size { content, .. } => {
-                    self.lower_view(content, outer_component)?;
-                }
-            },
             _ => {}
         }
         Ok(())
@@ -10084,6 +10134,35 @@ view
     }
 
     #[test]
+    fn malformed_checked_responsive_expression_and_local_ids_do_not_panic() {
+        let breakpoint_source = format!(
+            "app InvalidResponsiveFacts\n{THEME}view\n  responsive at=600.0 w=fill h=40.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&breakpoint_source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ResponsiveBreakpoint,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let size_source = format!(
+            "app InvalidResponsiveLocal\n{THEME}view\n  responsive size=(available_width, available_height)\n    text available_width\n"
+        );
+        let mut checked = analyze(&size_source).unwrap();
+        checked
+            .facts
+            .corrupt_responsive_size_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -10651,6 +10730,124 @@ view
     }
 
     #[test]
+    fn normalizes_responsive_modes_dimensions_and_size_locals() {
+        let breakpoint_source = format!(
+            "app BreakpointHir\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\n  native_width:length = length.fill()\nview\n  responsive at=breakpoint w=native_width h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let breakpoint_program = lower(analyze(&breakpoint_source).unwrap()).unwrap();
+        let responsive = breakpoint_program.responsive(ViewId(0)).unwrap();
+        assert_eq!(responsive.id, ViewId(0));
+        assert!(matches!(
+            responsive.width,
+            Some(ResolvedResponsiveLength::FixedLength(_))
+        ));
+        assert!(matches!(
+            responsive.height,
+            Some(ResolvedResponsiveLength::FixedF64(_))
+        ));
+        let ResolvedResponsiveKind::Breakpoint { breakpoint } = responsive.kind else {
+            panic!("root must be breakpoint responsive");
+        };
+        assert_eq!(
+            breakpoint_program
+                .checked_facts()
+                .expression_use(breakpoint)
+                .source,
+            Type::F64
+        );
+
+        let size_source = format!(
+            "app SizeHir\n{THEME}view\n  responsive size=(available_width, available_height) w=fill h=fill\n    text available_width\n"
+        );
+        let size_program = lower(analyze(&size_source).unwrap()).unwrap();
+        let responsive = size_program.responsive(ViewId(0)).unwrap();
+        let ResolvedResponsiveKind::Size { width, height } = &responsive.kind else {
+            panic!("root must be size responsive");
+        };
+        assert_eq!(width.name, "available_width");
+        assert_eq!(height.name, "available_height");
+        assert_eq!(
+            size_program.checked_facts().local(width.local).ty,
+            Type::F64
+        );
+        assert_eq!(
+            size_program.checked_facts().local(height.local).ty,
+            Type::F64
+        );
+    }
+
+    #[test]
+    fn responsive_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedResponsive\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\nview\n  responsive at=breakpoint w=fill h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-responsive.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Responsive {
+            content, height, ..
+        } = &mut changed_expressions.document.view
+        else {
+            panic!("fixture root must be responsive");
+        };
+        let ResponsiveContent::Breakpoint { breakpoint, .. } = content else {
+            panic!("fixture must use a breakpoint");
+        };
+        *breakpoint = Expr::F64(99.0);
+        let Some(LengthValue::Fixed(height)) = height else {
+            panic!("fixture height must be fixed");
+        };
+        *height = Expr::F64(99.0);
+        let actual = crate::codegen::generate(
+            &lower(changed_expressions).unwrap(),
+            "checked-responsive.ice",
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Responsive { width, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be responsive");
+        };
+        *width = Some(LengthValue::Shrink);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn responsive_codegen_ignores_raw_options_after_lowering() {
+        let source = format!(
+            "app LoweredResponsive\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\nview\n  responsive at=breakpoint w=fill h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-responsive.ice").unwrap();
+
+        let ViewNode::Responsive {
+            content,
+            width,
+            height,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be responsive");
+        };
+        let ResponsiveContent::Breakpoint { breakpoint, .. } = content else {
+            panic!("fixture must use a breakpoint");
+        };
+        *breakpoint = Expr::F64(99.0);
+        *width = Some(LengthValue::Shrink);
+        *height = None;
+
+        let actual = crate::codegen::generate(&program, "lowered-responsive.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -10878,6 +11075,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized pins lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized responsive lowering and emission performance contract"]
+    fn performance_contract_four_thousand_responsives_lower_and_emit_under_two_seconds() {
+        const RESPONSIVES: usize = 4_000;
+        let mut source = format!("app ResponsiveScale\n{THEME}view\n  col\n");
+        for index in 0..RESPONSIVES {
+            writeln!(
+                source,
+                "    responsive at=600.0 w=fill h=40.0\n      text \"Narrow {index}\"\n      text \"Wide {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "responsive-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.responsives.len(), RESPONSIVES);
+        assert_eq!(
+            generated.matches("::iced::widget::responsive(").count(),
+            RESPONSIVES
+        );
+        eprintln!("4k normalized responsives lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized responsives lowered and emitted in {elapsed:?}"
         );
     }
 

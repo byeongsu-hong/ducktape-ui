@@ -251,11 +251,15 @@ pub(crate) enum CheckedViewFlow {
         templates: Vec<CheckedPaneTemplate>,
     },
     ResponsiveBreakpoint {
+        semantic_key: String,
         breakpoint: CheckedExprUseId,
+        dimensions: [CheckedResponsiveLength; 2],
     },
     ResponsiveSize {
+        semantic_key: String,
         width: CheckedLocalId,
         height: CheckedLocalId,
+        dimensions: [CheckedResponsiveLength; 2],
     },
     Float {
         semantic_key: String,
@@ -273,6 +277,18 @@ pub(crate) struct CheckedPaneTemplate {
     pub(crate) key: CheckedExprUseId,
     pub(crate) item: CheckedLocalId,
     pub(crate) maximized: Option<CheckedLocalId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedResponsiveLength {
+    None,
+    Fill,
+    FillPortion(u16),
+    Shrink,
+    Fixed {
+        expression: CheckedExprUseId,
+        source: Type,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -362,6 +378,8 @@ pub(crate) enum CheckedViewExprRole {
     TableRows,
     PaneTemplateKey(u32),
     ResponsiveBreakpoint,
+    ResponsiveWidthDimension,
+    ResponsiveHeightDimension,
 }
 
 #[derive(Clone, Debug)]
@@ -766,6 +784,15 @@ impl CheckedFacts {
             panic!("test view must be a float");
         };
         geometry[index] = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_size_local(&mut self, view: ViewId, raw: u32) {
+        let CheckedViewFlow::ResponsiveSize { width, .. } = &mut self.views[view.0 as usize].flow
+        else {
+            panic!("test view must be a size responsive");
+        };
+        *width = CheckedLocalId(raw);
     }
 
     #[cfg(test)]
@@ -5537,6 +5564,44 @@ impl<'a> FactsBuilder<'a> {
         Ok(id)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_responsive_length(
+        &mut self,
+        view: ViewId,
+        value: &Option<LengthValue>,
+        role: CheckedViewExprRole,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedResponsiveLength, Error> {
+        Ok(match value {
+            None => CheckedResponsiveLength::None,
+            Some(LengthValue::Fill) => CheckedResponsiveLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => {
+                CheckedResponsiveLength::FillPortion(*portion)
+            }
+            Some(LengthValue::Shrink) => CheckedResponsiveLength::Shrink,
+            Some(LengthValue::Fixed(expression)) => {
+                let expression = self.push_view_expression(
+                    CheckedExprOwner::View { view, role },
+                    expression,
+                    None,
+                    env,
+                    span,
+                    parent,
+                )?;
+                let source = self.facts.expression_use(expression).source.clone();
+                if !matches!(source, Type::F64 | Type::Length) {
+                    return Err(self.invariant(
+                        span,
+                        "responsive dimension type diverged after semantic checking",
+                    ));
+                }
+                CheckedResponsiveLength::Fixed { expression, source }
+            }
+        })
+    }
+
     fn push_retained_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -6014,64 +6079,97 @@ impl<'a> FactsBuilder<'a> {
                     templates: checked_templates,
                 }
             }
-            ViewNode::Responsive { content, span, .. } => match content {
-                ResponsiveContent::Breakpoint {
-                    breakpoint,
-                    narrow,
-                    wide,
-                } => {
-                    let breakpoint = self.push_view_expression(
-                        CheckedExprOwner::View {
-                            view,
-                            role: CheckedViewExprRole::ResponsiveBreakpoint,
-                        },
-                        breakpoint,
-                        Some(&Type::F64),
+            ViewNode::Responsive {
+                content,
+                width,
+                height,
+                span,
+                ..
+            } => {
+                let semantic_key = crate::ast::responsive_semantic_key(content, width, height);
+                let dimensions = [
+                    self.lower_responsive_length(
+                        view,
+                        width,
+                        CheckedViewExprRole::ResponsiveWidthDimension,
                         env,
                         span,
                         origin,
-                    )?;
-                    self.lower_view_expression_tree(narrow, env)?;
-                    self.lower_view_expression_tree(wide, env)?;
-                    CheckedViewFlow::ResponsiveBreakpoint { breakpoint }
-                }
-                ResponsiveContent::Size {
-                    width,
-                    height,
-                    content,
-                } => {
-                    let width_local = self.push_view_local(
-                        width,
-                        Type::F64,
+                    )?,
+                    self.lower_responsive_length(
                         view,
-                        CheckedViewLocalRole::ResponsiveWidth,
-                        span,
-                    );
-                    let width_scoped = LayeredFactEnv {
-                        base: env,
-                        name: width.clone(),
-                        value: (CheckedPathRoot::Local(width_local), Type::F64),
-                    };
-                    let height_local = self.push_view_local(
                         height,
-                        Type::F64,
-                        view,
-                        CheckedViewLocalRole::ResponsiveHeight,
+                        CheckedViewExprRole::ResponsiveHeightDimension,
+                        env,
                         span,
-                    );
-                    let scoped = LayeredFactEnv {
-                        base: &width_scoped,
-                        name: height.clone(),
-                        value: (CheckedPathRoot::Local(height_local), Type::F64),
-                    };
-                    self.facts.metrics.scope_env_overlays += 2;
-                    self.lower_view_expression_tree(content, &scoped)?;
-                    CheckedViewFlow::ResponsiveSize {
-                        width: width_local,
-                        height: height_local,
+                        origin,
+                    )?,
+                ];
+                match content {
+                    ResponsiveContent::Breakpoint {
+                        breakpoint,
+                        narrow,
+                        wide,
+                    } => {
+                        let breakpoint = self.push_view_expression(
+                            CheckedExprOwner::View {
+                                view,
+                                role: CheckedViewExprRole::ResponsiveBreakpoint,
+                            },
+                            breakpoint,
+                            Some(&Type::F64),
+                            env,
+                            span,
+                            origin,
+                        )?;
+                        self.lower_view_expression_tree(narrow, env)?;
+                        self.lower_view_expression_tree(wide, env)?;
+                        CheckedViewFlow::ResponsiveBreakpoint {
+                            semantic_key,
+                            breakpoint,
+                            dimensions,
+                        }
+                    }
+                    ResponsiveContent::Size {
+                        width,
+                        height,
+                        content,
+                    } => {
+                        let width_local = self.push_view_local(
+                            width,
+                            Type::F64,
+                            view,
+                            CheckedViewLocalRole::ResponsiveWidth,
+                            span,
+                        );
+                        let width_scoped = LayeredFactEnv {
+                            base: env,
+                            name: width.clone(),
+                            value: (CheckedPathRoot::Local(width_local), Type::F64),
+                        };
+                        let height_local = self.push_view_local(
+                            height,
+                            Type::F64,
+                            view,
+                            CheckedViewLocalRole::ResponsiveHeight,
+                            span,
+                        );
+                        let scoped = LayeredFactEnv {
+                            base: &width_scoped,
+                            name: height.clone(),
+                            value: (CheckedPathRoot::Local(height_local), Type::F64),
+                        };
+                        self.facts.metrics.scope_env_overlays += 2;
+                        self.lower_view_expression_tree(content, &scoped)?;
+                        CheckedViewFlow::ResponsiveSize {
+                            semantic_key,
+                            width: width_local,
+                            height: height_local,
+                            dimensions,
+                        }
                     }
                 }
-            },
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -9005,6 +9103,89 @@ view
             panic!("root must be a pin");
         };
         assert_eq!(semantic_key, &crate::ast::pin_semantic_key(width, height));
+    }
+
+    #[test]
+    fn responsive_facts_retain_breakpoint_dimensions_and_size_locals() {
+        let breakpoint_source = r#"app ResponsiveFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  breakpoint = 600.0
+  height = 40.0
+view
+  responsive at=breakpoint w=fill h=height
+    text "Narrow"
+    text "Wide"
+"#;
+        let program = lower::lower(analyze(breakpoint_source).unwrap()).unwrap();
+        let checked = program.checked_facts().view(ViewId(0));
+        let CheckedViewFlow::ResponsiveBreakpoint {
+            breakpoint,
+            dimensions,
+            ..
+        } = &checked.flow
+        else {
+            panic!("root must retain responsive breakpoint facts");
+        };
+        assert_eq!(dimensions[0], CheckedResponsiveLength::Fill);
+        assert!(matches!(
+            dimensions[1],
+            CheckedResponsiveLength::Fixed {
+                source: Type::F64,
+                ..
+            }
+        ));
+        assert_eq!(
+            program.checked_facts().expression_use(*breakpoint).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ResponsiveBreakpoint,
+            }
+        );
+
+        let size_source = r#"app ResponsiveSizeFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  responsive size=(available_width, available_height) w=fill h=fill
+    text available_width
+"#;
+        let program = lower::lower(analyze(size_source).unwrap()).unwrap();
+        let checked = program.checked_facts().view(ViewId(0));
+        let CheckedViewFlow::ResponsiveSize { width, height, .. } = &checked.flow else {
+            panic!("root must retain responsive size facts");
+        };
+        for (local, role) in [
+            (*width, CheckedViewLocalRole::ResponsiveWidth),
+            (*height, CheckedViewLocalRole::ResponsiveHeight),
+        ] {
+            let local = program.checked_facts().local(local);
+            assert_eq!(local.ty, Type::F64);
+            assert_eq!(
+                local.owner,
+                CheckedLocalOwner::View {
+                    view: ViewId(0),
+                    role,
+                }
+            );
+        }
     }
 
     #[test]

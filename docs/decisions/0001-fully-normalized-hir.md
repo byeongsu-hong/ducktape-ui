@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, and Pin therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, and Responsive therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -328,6 +328,16 @@ scope, types, and complete arena consumption, then publishes `ResolvedPin`.
 Rust emission consumes only that record and checked IDs. Expression/static
 mutation, post-lowering AST poisoning, malformed IDs, and an ignored 4,000-node
 lower+emit budget provide the executable evidence.
+
+Responsive is a completed structural-wrapper slice. Stable expression IDs own
+the breakpoint and fixed outer dimensions, while typed locals model size-mode
+width and height bindings. The checked flow freezes mode, binding names, and
+dimension topology. Lowering revalidates expression DAGs, scope, exact local
+roles, types, and dimension contracts before publishing `ResolvedResponsive`.
+Rust emission consumes that record and checked IDs; source nodes provide only
+the branch children. Expression/static mutation, post-lowering AST poisoning,
+malformed expression/local IDs, and an ignored 4,000-node lower+emit budget
+provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

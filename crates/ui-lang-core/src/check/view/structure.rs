@@ -151,9 +151,20 @@ pub(in crate::check) fn infer_structure_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            for length in [width, height].into_iter().flatten() {
-                check_length_value(length, env, document, span, "responsive size")?;
-            }
+            check_responsive_length(
+                width,
+                CheckedViewExprRole::ResponsiveWidthDimension,
+                env,
+                document,
+                span,
+            )?;
+            check_responsive_length(
+                height,
+                CheckedViewExprRole::ResponsiveHeightDimension,
+                env,
+                document,
+                span,
+            )?;
             match content {
                 ResponsiveContent::Breakpoint {
                     breakpoint,
@@ -196,4 +207,31 @@ pub(in crate::check) fn infer_structure_group(
         _ => return Ok(false),
     };
     Ok(true)
+}
+
+fn check_responsive_length(
+    length: &Option<LengthValue>,
+    role: CheckedViewExprRole,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+) -> Result<(), Error> {
+    let Some(LengthValue::Fixed(value)) = length else {
+        return Ok(());
+    };
+    let actual = retained_view_expr_type(value, env, document, span, role)?;
+    if actual == Type::Length {
+        return Ok(());
+    }
+    if actual != Type::F64 {
+        return Err(Error::new(
+            "E101",
+            span,
+            format!(
+                "expected `f64` or `length`, got `{}` for responsive size",
+                actual.display()
+            ),
+        ));
+    }
+    require_f32_literal_range(value, 0.0, None, "responsive size", span)
 }

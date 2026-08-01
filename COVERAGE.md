@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, and Pin families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, Pin, and Responsive families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +493,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, and Pin remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, and Responsive remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -576,6 +576,17 @@ values. Lowering validates scope, expression DAGs, exact position and length
 types, and complete arena consumption before publishing `ResolvedPin`; fixed
 numeric and native-length operands become distinct HIR variants. Production
 emission reads only that record and checked IDs. Structural, malformed-ID,
+post-check expression/static mutation, post-lowering AST poisoning, and an
+ignored 4,000-node lower+emit contract cover the boundary.
+
+Responsive has a complete private HIR boundary. Breakpoint and fixed-dimension
+operands use stable checked expression IDs; size callbacks use typed width and
+height locals with exact owner roles. The checked flow freezes breakpoint/size
+mode, binding names, and absent/fill/fill-portion/shrink/fixed dimension
+topology. Lowering revalidates expression DAGs, scope, local ownership, types,
+and complete dimension contracts before publishing `ResolvedResponsive`.
+Production emission reads only that record and checked IDs, while source view
+nodes supply branch children. Structural, malformed expression/local ID,
 post-check expression/static mutation, post-lowering AST poisoning, and an
 ignored 4,000-node lower+emit contract cover the boundary.
 

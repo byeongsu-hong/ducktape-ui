@@ -73,21 +73,37 @@ pub(crate) fn pin_semantic_key(
     width: &Option<LengthValue>,
     height: &Option<LengthValue>,
 ) -> String {
-    fn length_key(length: &Option<LengthValue>) -> String {
-        match length {
-            None => "none".into(),
-            Some(LengthValue::Fill) => "fill".into(),
-            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
-            Some(LengthValue::Shrink) => "shrink".into(),
-            Some(LengthValue::Fixed(_)) => "fixed".into(),
-        }
-    }
-
     format!(
         "pin|width={}|height={}",
-        length_key(width),
-        length_key(height)
+        length_semantic_key(width),
+        length_semantic_key(height)
     )
+}
+
+pub(crate) fn responsive_semantic_key(
+    content: &ResponsiveContent,
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+) -> String {
+    let kind = match content {
+        ResponsiveContent::Breakpoint { .. } => "breakpoint".into(),
+        ResponsiveContent::Size { width, height, .. } => format!("size:{width}:{height}"),
+    };
+    format!(
+        "responsive|kind={kind}|width={}|height={}",
+        length_semantic_key(width),
+        length_semantic_key(height)
+    )
+}
+
+fn length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
 }
 
 #[derive(Clone, Debug, Default)]
