@@ -416,6 +416,11 @@ binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Handlers, tasks, canvas
 locals, settings, tests, and expression-bearing widget options remain outside
 this slice.
+The `hir_boundary` integration ratchet records every remaining code-generation
+use of the checked-document escape hatch, checker/type/extern re-analysis, raw
+expression fallback, and source-AST semantic inputs. Its exact ledger may only
+shrink as later HIR slices delete their superseded paths; any new or restored
+entry fails the test. Full HIR still requires the ledger to reach zero.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
