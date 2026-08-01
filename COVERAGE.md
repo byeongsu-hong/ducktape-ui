@@ -65,6 +65,13 @@ that a later compile error publishes none of an earlier root, corrupt manifests
 and interrupted output replacement cause full cache regeneration, stale
 transaction artifacts are removed, concurrent publishers retain both roots,
 and an unchanged pass preserves output and manifest mtimes.
+The Linux native job additionally starts real, separate `cargo ice dev` and
+`cargo check` processes against the same `iced-app` target while the dev build
+fingerprint forces generation. It requires both commands to complete their
+overlap, requires the distinct dev-fingerprint and normal-check output caches,
+validates every manifest content digest and absence of transaction debris, then
+proves the dev process shuts down cleanly. This complements the deterministic
+same-directory lock tests with the actual Cargo command boundary.
 
 The runtime `RichTextEditor` uses caller-owned `ContentVersion` identity to
 skip full native-buffer materialization for caret and selection layouts.
