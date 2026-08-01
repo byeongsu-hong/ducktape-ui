@@ -121,17 +121,26 @@ The checker now also preserves the first expression-family facts in a private,
 owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
 connect initializer expression trees to concrete types and to resolved value,
 enum, palette, extern, builtin, field-projection, and operator facts. The arena
-uses direct typed-ID indexing and carries imported physical origins; it does not
-recover facts from AST locations during lowering. This slice covers app state,
-derived-value, component-default, and component-state initializers, while
-indexing view owners for later expression attachment. It deliberately does not
-migrate view expressions, handlers, matches, or expression code generation, so
-those emitters remain AST-backed and the full-HIR completion criteria are still
-open.
+uses direct typed-ID indexing and does not recover facts from AST locations
+during lowering. Declaration references use the same `AppStateId`, `DerivedId`,
+`ComponentParamId`, `ComponentStateId`, `PaletteId`, `ExternFnId`, struct, and
+enum identities as the rest of HIR. Checked facts, component lowering, and style
+lowering also allocate from one shared origin arena. Imported physical locations
+and parent links therefore survive across expression and declaration slices
+without a parallel origin table. This slice covers app state, derived-value,
+component-default, and component-state initializers, while indexing view owners
+for later expression attachment. It deliberately does not migrate view
+expressions, handlers, matches, or expression code generation, so those emitters
+remain AST-backed and the full-HIR completion criteria are still open.
 
 Initializer typing and fact lowering are linear in the expression tree. A
 single post-order analysis records each concrete expression type, and fact
 lowering consumes that table instead of restarting subtree type checks.
+Composite list, optional, and result evidence is unified recursively before an
+otherwise unconstrained type variable is canonically erased to `unit`; parent
+and child facts consequently retain one exact concrete type. Initializer uses
+record their source type, destination type, and explicit state-construction
+coercion separately, including list-to-combo and value-to-animation conversion.
 Context-sensitive builtins share one signature/context model between checking
 and fact construction. That model distinguishes ordinary values, binding-name
 arguments, and expressions evaluated under a binding. Consequently,
@@ -139,7 +148,11 @@ arguments, and expressions evaluated under a binding. Consequently,
 expression use and body-argument scope; reads in the projection body resolve to
 that local rather than to an unresolved source path. Exact query, analyzed-node,
 cache-hit, local, and lowered-expression counters make the linearity and scope
-contracts testable.
+contracts testable. Each lexical scope constructs its path and type views once
+and shares them across all initializer analyses; the large derived-value
+contract verifies that the scope environment is not recopied per expression.
+The thread-local collection context is guarded across both ordinary errors and
+panic unwinding.
 
 The migration is complete when:
 
