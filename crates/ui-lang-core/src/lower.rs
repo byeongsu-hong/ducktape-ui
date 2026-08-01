@@ -3,7 +3,7 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner,
+    CheckedInteraction, CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner,
     CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
     CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
     CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
@@ -37,6 +37,7 @@ mod float;
 mod interaction;
 mod iteration;
 mod keyed_column;
+mod layout;
 mod lazy;
 mod match_view;
 mod media;
@@ -56,6 +57,7 @@ pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use iteration::*;
 pub(crate) use keyed_column::*;
+pub(crate) use layout::*;
 pub(crate) use lazy::*;
 pub(crate) use match_view::*;
 pub(crate) use media::*;
@@ -1465,6 +1467,7 @@ pub(crate) struct LoweredProgram {
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     containers: HashMap<ViewId, ResolvedContainer>,
+    layouts: HashMap<ViewId, ResolvedLayout>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3022,6 +3025,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn layout(&self, id: ViewId) -> Option<&ResolvedLayout> {
+        self.layouts.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3148,6 +3156,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "container reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_layout_for(&self, node: &ViewNode) -> Result<&ResolvedLayout, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "layout reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "layout reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.layouts.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "layout reached code generation without normalized HIR",
             )
         })
     }
@@ -3803,6 +3837,7 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     containers: HashMap<ViewId, ResolvedContainer>,
+    layouts: HashMap<ViewId, ResolvedLayout>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4533,6 +4568,7 @@ impl Lowerer {
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
             containers: HashMap::new(),
+            layouts: HashMap::new(),
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4621,6 +4657,7 @@ impl Lowerer {
             tests,
             canvases: self.canvases,
             containers: self.containers,
+            layouts: self.layouts,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -8525,7 +8562,14 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Layout { children, .. } => {
+            ViewNode::Layout {
+                kind,
+                options,
+                children,
+                span,
+                ..
+            } => {
+                self.lower_layout(*kind, options, span, outer_component)?;
                 for child in children {
                     self.lower_view(child, outer_component)?;
                 }
@@ -11337,6 +11381,212 @@ view
     }
 
     #[test]
+    fn normalizes_linear_grid_stack_flex_and_scroll_layouts() {
+        let source = format!(
+            "app LayoutHir\nextern crate::backend\n  scroll-style dynamic_scroll(active:bool)\n{THEME}state\n  active = true\non scrolled(ax, ay, rx, ry)\nview\n  col gap=4.0 p=8.0 w=fill max-w=800.0 align=center clip=true\n    row gap=2.0 wrap wrap-gap=3.0 wrap-align=end\n      text \"Linear\"\n    grid cols=2 w=640.0 gap=12.0 h=aspect(16.0,9.0)\n      text \"Grid\"\n    grid min-cell=240.0 gap=12.0\n      text \"Fluid\"\n    stack under=1 w=fill h=80.0 clip=true\n      text \"Under\"\n      text \"Over\"\n    flex direction=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around row-gap=6.0 col-gap=7.0 p=9.0 w=fill h=100.0 max-w=900.0 max-h=200.0 clip=true\n      text \"Flex\"\n    scroll dir=both w=fill h=200.0 bar=hidden bar-w=8.0 bar-m=2.0 scroller-w=6.0 bar-gap=4.0 anchor-x=end anchor-y=start auto=true scroll=scrolled style=dynamic_scroll(active)\n      text \"Scroll\"\n      active x-disabled=false y-disabled=false\n        box bg=bg text=fg border=primary border-w=1.0 r=4.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=3.0 px-snap=true\n        x-rail bg=bg\n        x-scroller bg=primary\n        y-rail bg=bg\n        y-scroller bg=primary\n        gap bg=bg\n        auto bg=bg icon=fg\n"
+        );
+        let source = source.replace(
+            "direction=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around row-gap=6.0 col-gap=7.0",
+            "dir=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around gap-y=6.0 gap-x=7.0",
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let root = program.layout(ViewId(0)).unwrap();
+        assert!(matches!(
+            root.mode,
+            ResolvedLayoutMode::Linear(ResolvedLinearLayout {
+                axis: ResolvedLinearAxis::Column,
+                align: Some(ResolvedContainerAlignment::Center),
+                ..
+            })
+        ));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Grid(ResolvedGridLayout {
+                height: Some(ResolvedGridHeight::AspectRatio { .. }),
+                ..
+            })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Stack(ResolvedStackLayout { under: 1, .. })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Flex(ResolvedFlexLayout {
+                direction: ResolvedFlexDirection::Row,
+                wrap: ResolvedFlexWrap::Wrap,
+                min_cell: Some(_),
+                ..
+            })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Flex(ResolvedFlexLayout {
+                direction: ResolvedFlexDirection::RowReverse,
+                wrap: ResolvedFlexWrap::WrapReverse,
+                justify_content: Some(ResolvedFlexContentAlignment::SpaceBetween),
+                align_items: Some(ResolvedContainerFlexAlignment::FlexEnd),
+                align_content: Some(ResolvedFlexContentAlignment::SpaceAround),
+                ..
+            })
+        )));
+        let scroll = program
+            .layouts
+            .values()
+            .find_map(|layout| match &layout.mode {
+                ResolvedLayoutMode::Scroll(scroll) => Some(scroll.as_ref()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(scroll.direction, ResolvedScrollDirection::Both);
+        assert!(scroll.hidden_bar);
+        assert_eq!(scroll.anchor_x, ResolvedScrollAnchor::End);
+        assert_eq!(scroll.anchor_y, ResolvedScrollAnchor::Start);
+        assert!(scroll.route.is_some());
+        assert_eq!(scroll.styles.len(), 1);
+        assert!(scroll.custom_style.is_some());
+        assert!(scroll.styles[0].container.background.is_some());
+        assert!(scroll.styles[0].auto_scroll_icon.is_some());
+
+        for layout in program.layouts.values() {
+            let checked = program.checked_facts().interaction(layout.id).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: layout.id,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn layout_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedLayout\n{THEME}state\n  size = 8.0\nview\n  row gap=size p=4.0 w=fill align=center clip=true\n    text \"Checked\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-layout.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_layout_expressions(&mut checked.document.view);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-layout.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let options = raw_layout_options(&mut changed_static.document.view);
+        options.align = Some(FlexAlignment::End);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn layout_codegen_ignores_raw_options_after_lowering() {
+        let source = format!(
+            "app LoweredLayout\n{THEME}state\n  size = 8.0\nview\n  row gap=size p=4.0 w=fill align=center clip=true\n    text \"Lowered\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-layout.ice").unwrap();
+
+        poison_raw_layout_expressions(&mut program.document.view);
+        let options = raw_layout_options(&mut program.document.view);
+        options.align = Some(FlexAlignment::End);
+        options.wrap = true;
+        options.under = u16::MAX;
+
+        let actual = crate::codegen::generate(&program, "lowered-layout.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("999.0"));
+    }
+
+    fn raw_layout_options(node: &mut ViewNode) -> &mut LayoutOptions {
+        let ViewNode::Layout { options, .. } = node else {
+            panic!("fixture root must be a layout");
+        };
+        options
+    }
+
+    fn poison_raw_layout_expressions(node: &mut ViewNode) {
+        let options = raw_layout_options(node);
+        options.spacing = Some(Expr::F64(999.0));
+        options.padding.all = Some(Expr::F64(999.0));
+        options.clip = Some(Expr::Bool(false));
+    }
+
+    #[test]
+    fn malformed_checked_layout_expression_id_does_not_panic() {
+        let source =
+            format!("app InvalidLayoutFacts\n{THEME}view\n  row p=8.0\n    text \"Invalid\"\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_layout_keeps_physical_origins_and_generated_source_marker() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-layout-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("layout.ice");
+        fs::write(
+            &root,
+            format!("app ImportedLayoutApp\nuse \"layout.ice\"\n{THEME}view\n  ImportedLayout\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedLayout()\n  scroll h=120.0\n    text \"Imported\"\n    active\n      box bg=bg border=primary border-w=1.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let layout = program.layouts.values().next().unwrap();
+        let origin = program.origin(layout.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+        let ResolvedLayoutMode::Scroll(scroll) = &layout.mode else {
+            panic!("imported layout must be scroll HIR");
+        };
+        let style_origin = program.origin(scroll.styles[0].origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.parent, Some(layout.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
@@ -12691,6 +12941,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized containers lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized layout lowering and emission performance contract"]
+    fn performance_contract_four_thousand_layouts_lower_and_emit_under_two_seconds() {
+        const LAYOUTS: usize = 4_000;
+        let mut source = format!("app LayoutScale\n{THEME}view\n  col\n");
+        for index in 0..LAYOUTS {
+            writeln!(
+                source,
+                "    row gap=4.0 p=2.0 w=fill align=center clip=false\n      text \"Item {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "layout-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.layouts.len(), LAYOUTS + 1);
+        assert_eq!(
+            generated.matches("::iced::widget::row(__children)").count(),
+            LAYOUTS
+        );
+        eprintln!("4k normalized layouts lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized layouts lowered and emitted in {elapsed:?}"
         );
     }
 

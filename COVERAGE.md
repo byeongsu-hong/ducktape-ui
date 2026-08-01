@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -688,6 +688,19 @@ subtree and shared widget ID. Structural HIR assertions, malformed expression
 IDs, pre-lowering expression and static-topology mutation, post-lowering box and
 flex-option poisoning, imported source markers, existing complete styled/flex
 codegen, and an ignored 4,000-container lower+emit contract cover the boundary.
+
+Layout has a complete private HIR boundary. A shared checked interaction record
+freezes the stable identity, expression partition, scroll routes, static
+topology, exact custom scroll-style extern, and parented status-style origins
+for Column, Row, Grid, Stack, Flexbox, and Scroll. Lowering resolves lengths,
+padding precedence, grid sizing, minimum-cell Grid sugar, flex flow,
+scrollbar geometry, anchors, status selectors, every typed surface and theme
+color, utility style, and route payload into `ResolvedLayout`. Production
+emission consumes that record and reads the source layout only for child
+subtrees and the shared widget ID. Structural assertions, malformed expression
+IDs, pre- and post-lowering AST poisoning, imported layout/status origins,
+complete native layout and scroll-style codegen, the lexical HIR-boundary
+ratchet, and an ignored 4,000-layout lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

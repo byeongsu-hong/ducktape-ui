@@ -386,6 +386,18 @@ node supplies only its content subtree and the still-shared widget ID surface.
 Generation does not reread Container options, surface colors, custom style,
 border dash, flex basis/alignment/margins, or utility lookup state.
 
+Layout is a completed structural HIR slice. Column, Row, Grid, Stack, CSS
+Flexbox, and Scroll share one checked interaction record that owns their stable
+view identity, canonical static topology, expression partition, scroll routes,
+resolved custom style identity, and parented scroll-status origins. Lowering
+folds padding precedence and minimum-cell Grid sugar, resolves native lengths,
+grid sizing, flex flow and alignment, scrollbar geometry and anchors, typed
+status surfaces, theme colors, utility style, and payload routes, then publishes
+one `ResolvedLayout` mode. Generation reads that record and uses source nodes
+only for child subtrees and the still-shared widget ID surface; it does not
+reread layout/scroll options, route syntax, status selectors, surface colors,
+style extern names, or utility lookup state.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

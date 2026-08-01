@@ -17,6 +17,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let layout_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(columns) = &options.columns {
                 require_type(&expr_type(columns, env, document, span)?, &Type::I64, span)?;
                 if matches!(columns, Expr::I64(value) if *value <= 0) {
@@ -149,6 +150,7 @@ pub(in crate::check) fn infer_layout_group(
                 check_scroll_styles(&scroll.styles, env, document)?;
             }
             check_styles(styles, document, span, StyleTarget::Layout(*kind, options))?;
+            retain_layout_analyses(span, layout_analysis_guard.finish())?;
             for child in children {
                 infer_view(child, env, document, signatures, ids)?;
             }

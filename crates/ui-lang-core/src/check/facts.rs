@@ -872,6 +872,13 @@ pub(crate) struct CheckedContainer {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedLayout {
+    pub(crate) id: ViewId,
+    pub(crate) scroll_style: Option<ExternFnId>,
+    pub(crate) style_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -881,6 +888,7 @@ pub(crate) struct CheckedTooltip {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedInteractionKind {
+    Layout,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -963,6 +971,7 @@ pub(crate) struct CheckedFacts {
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
     containers: HashMap<ViewId, CheckedContainer>,
+    layouts: HashMap<ViewId, CheckedLayout>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1244,6 +1253,10 @@ impl CheckedFacts {
         self.containers
             .get(&id)
             .filter(|container| container.id == id)
+    }
+
+    pub(crate) fn layout(&self, id: ViewId) -> Option<&CheckedLayout> {
+        self.layouts.get(&id).filter(|layout| layout.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3099,6 +3112,65 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "container facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_layout_facts(
+        &mut self,
+        layout: ViewId,
+        kind: Layout,
+        options: &LayoutOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let option_expressions = crate::ast::layout_expression_roots(options)
+            .into_iter()
+            .map(|expression| (expression, None))
+            .collect();
+        self.lower_interaction_facts(
+            layout,
+            CheckedInteractionKind::Layout,
+            crate::ast::layout_semantic_key(kind, options),
+            option_expressions,
+            crate::ast::layout_routes(options),
+            env,
+            span,
+        )?;
+        let scroll_style = options
+            .scroll
+            .as_ref()
+            .and_then(|scroll| scroll.custom_style.as_ref())
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ScrollStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "scroll style extern disappeared"))
+            })
+            .transpose()?;
+        let parent = self.declarations.view(layout).origin;
+        let style_origins = options.scroll.as_ref().map_or_else(Vec::new, |scroll| {
+            scroll
+                .styles
+                .iter()
+                .map(|style| self.origins.push(&style.span, Some(parent)))
+                .collect()
+        });
+        if self
+            .facts
+            .layouts
+            .insert(
+                layout,
+                CheckedLayout {
+                    id: layout,
+                    scroll_style,
+                    style_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "layout facts were produced more than once"));
         }
         Ok(())
     }
@@ -7501,6 +7573,19 @@ impl<'a> FactsBuilder<'a> {
                     }
                 }
             }
+            ViewNode::Layout {
+                kind,
+                options,
+                children,
+                span,
+                ..
+            } => {
+                self.lower_layout_facts(view, *kind, options, env, span)?;
+                for child in children {
+                    self.lower_view_expression_tree(child, env)?;
+                }
+                CheckedViewFlow::None
+            }
             ViewNode::Container {
                 options,
                 content,
@@ -10266,7 +10351,11 @@ view
 "#;
         let program = lower::lower(analyze(source).unwrap()).unwrap();
         let facts = program.checked_facts();
-        assert_eq!(facts.interactions.len(), 3);
+        assert_eq!(facts.interactions.len(), 4);
+        let layout = facts.interaction(ViewId(0)).expect("checked root layout");
+        assert_eq!(layout.kind, CheckedInteractionKind::Layout);
+        assert_eq!(layout.expression_count, 0);
+        assert!(layout.routes.is_empty());
 
         let mouse = facts.interaction(ViewId(1)).expect("checked mouse area");
         assert_eq!(mouse.kind, CheckedInteractionKind::MouseArea);

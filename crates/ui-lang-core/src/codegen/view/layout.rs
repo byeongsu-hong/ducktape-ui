@@ -1,174 +1,57 @@
 use super::*;
 
+type LayoutRenderDocument<'a> = RenderDocument<'a>;
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_layout(
-    kind: Layout,
-    options: &LayoutOptions,
+    layout: &ResolvedLayout,
     id: &Option<Id>,
     children: &[ViewNode],
-    span: &Span,
-    document: &RenderDocument<'_>,
+    document: &LayoutRenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let style = &document.program().style_use(span)?.style;
-    if kind == Layout::Grid && options.min_cell.is_some() {
-        let mut flex_options = options.clone();
-        flex_options.width.get_or_insert(LengthValue::Fill);
-        flex_options.flexbox = Some(FlexboxOptions {
-            direction: FlexDirectionValue::Row,
-            wrap: FlexWrapValue::Wrap,
-            ..FlexboxOptions::default()
-        });
-        return render_flexbox(
-            &flex_options,
+    match &layout.mode {
+        ResolvedLayoutMode::Scroll(scroll) => render_resolved_scroll(
+            layout,
+            scroll,
             id,
-            children,
-            span,
+            &children[0],
             document,
             message,
             env,
             scope,
             slot,
-        );
+        ),
+        ResolvedLayoutMode::Flex(flex) => render_resolved_flexbox(
+            layout, flex, id, children, document, message, env, scope, slot,
+        ),
+        ResolvedLayoutMode::Linear(_)
+        | ResolvedLayoutMode::Grid(_)
+        | ResolvedLayoutMode::Stack(_) => render_resolved_regular_layout(
+            layout, id, children, document, message, env, scope, slot,
+        ),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_resolved_regular_layout(
+    layout: &ResolvedLayout,
+    id: &Option<Id>,
+    children: &[ViewNode],
+    document: &LayoutRenderDocument<'_>,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+    slot: Option<&SlotContext>,
+) -> Result<String, Error> {
+    let program = document.hir();
+    let style = &layout.utility_style;
+    let span = Span::line(layout.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "layout", span, scope, env, document)?;
-    if kind == Layout::Scroll {
-        let child_scope = id.as_ref().map_or_else(
-            || Ok(scope.to_owned()),
-            |id| id_code(id, scope, env, document),
-        )?;
-        let child = render_node(&children[0], document, message, env, &child_scope, slot)?;
-        let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
-        let scroll = options.scroll.as_ref().expect("scroll options");
-        let bar = scroll_bar_code(scroll, env, document)?;
-        let direction = match scroll.direction {
-            ScrollDirection::Vertical => {
-                format!("::iced::widget::scrollable::Direction::Vertical({bar})")
-            }
-            ScrollDirection::Horizontal => {
-                format!("::iced::widget::scrollable::Direction::Horizontal({bar})")
-            }
-            ScrollDirection::Both => format!(
-                "::iced::widget::scrollable::Direction::Both {{ vertical: {bar}, horizontal: {bar} }}"
-            ),
-        };
-        write!(code, ".direction({direction})").unwrap();
-        if let Some(id) = id {
-            write!(
-                code,
-                ".id(::iced::widget::Id::from({}))",
-                id_code(id, scope, env, document)?
-            )
-            .unwrap();
-        }
-        let anchor = |anchor| match anchor {
-            ScrollAnchor::Start => "Start",
-            ScrollAnchor::End => "End",
-        };
-        write!(
-            code,
-            ".anchor_x(::iced::widget::scrollable::Anchor::{})",
-            anchor(scroll.anchor_x)
-        )
-        .unwrap();
-        write!(
-            code,
-            ".anchor_y(::iced::widget::scrollable::Anchor::{})",
-            anchor(scroll.anchor_y)
-        )
-        .unwrap();
-        if let Some(auto_scroll) = &scroll.auto_scroll {
-            write!(
-                code,
-                ".auto_scroll({})",
-                expr_code(auto_scroll, env, document, ValueMode::Owned)?
-            )
-            .unwrap();
-        }
-        if let Some(route) = &scroll.route {
-            let callback = route_callback_with_code(
-                route,
-                "__viewport",
-                env,
-                document,
-                |callback_env| {
-                    let message_code = ordered_route_code(
-                        route,
-                        &[
-                            "__absolute.x as f64",
-                            "__absolute.y as f64",
-                            "__relative.x as f64",
-                            "__relative.y as f64",
-                        ],
-                        callback_env,
-                        document,
-                        message,
-                    )?;
-                    Ok(format!(
-                        "{{ let __absolute = __viewport.absolute_offset(); let __relative = __viewport.relative_offset(); {message_code} }}"
-                    ))
-                },
-            )?;
-            write!(code, ".on_scroll({callback})").unwrap();
-        } else if let Some(route) = &scroll.viewport_route {
-            let callback = route_callback_with_code(
-                route,
-                "__viewport",
-                env,
-                document,
-                |callback_env| {
-                    let message_code = ordered_route_code(
-                        route,
-                        &[
-                            "__absolute.x as f64",
-                            "__absolute.y as f64",
-                            "__reversed.x as f64",
-                            "__reversed.y as f64",
-                            "__relative.x as f64",
-                            "__relative.y as f64",
-                            "__bounds.x as f64",
-                            "__bounds.y as f64",
-                            "__bounds.width as f64",
-                            "__bounds.height as f64",
-                            "__content_bounds.x as f64",
-                            "__content_bounds.y as f64",
-                            "__content_bounds.width as f64",
-                            "__content_bounds.height as f64",
-                        ],
-                        callback_env,
-                        document,
-                        message,
-                    )?;
-                    Ok(format!(
-                        "{{ let __absolute = __viewport.absolute_offset(); let __reversed = __viewport.absolute_offset_reversed(); let __relative = __viewport.relative_offset(); let __bounds = __viewport.bounds(); let __content_bounds = __viewport.content_bounds(); {message_code} }}"
-                    ))
-                },
-            )?;
-            write!(code, ".on_scroll({callback})").unwrap();
-        }
-        code.push_str(&scroll_style_code(
-            &scroll.styles,
-            scroll.custom_style.as_ref(),
-            env,
-            document,
-        )?);
-        append_size(&mut code, style);
-        append_dimensions(&mut code, [&scroll.width, &scroll.height], env, document)?;
-        return Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
-        ));
-    }
-
-    if options.flexbox.is_some() {
-        return render_flexbox(
-            options, id, children, span, document, message, env, scope, slot,
-        );
-    }
-
+        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
     let mut body = String::from("{ let mut __children: ::std::vec::Vec<__IceElement<'_, ");
     write!(body, "{message}>> = ::std::vec::Vec::new();").unwrap();
     let child_scope = id.as_ref().map_or_else(
@@ -184,175 +67,146 @@ pub(in crate::codegen) fn render_layout(
         &child_scope,
         slot,
     )?;
-    let needs_child_count = matches!(kind, Layout::Column | Layout::Row)
-        && (!options.wrap || options.spacing.is_some() || options.wrap_spacing.is_some())
-        || kind == Layout::Grid && options.spacing.is_some();
+
+    let needs_child_count = match &layout.mode {
+        ResolvedLayoutMode::Linear(linear) => {
+            !linear.wrap || linear.spacing.is_some() || linear.wrap_spacing.is_some()
+        }
+        ResolvedLayoutMode::Grid(grid) => grid.spacing.is_some(),
+        ResolvedLayoutMode::Stack(_) => false,
+        ResolvedLayoutMode::Flex(_) | ResolvedLayoutMode::Scroll(_) => unreachable!(),
+    };
     if needs_child_count {
         body.push_str(" let __child_count = __children.len();");
     }
-    if kind == Layout::Grid
-        && let Some(columns) = &options.columns
+    if let ResolvedLayoutMode::Grid(grid) = &layout.mode
+        && let Some(columns) = grid.columns
     {
         write!(
             body,
             " let __grid_columns = usize::try_from({}).unwrap_or(0).max(1);",
-            expr_code(columns, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, columns, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if matches!(kind, Layout::Column | Layout::Row) && !options.wrap {
-        let horizontal = kind == Layout::Row;
+    if let ResolvedLayoutMode::Linear(linear) = &layout.mode
+        && !linear.wrap
+    {
+        let horizontal = linear.axis == ResolvedLinearAxis::Row;
         write!(
             body,
             " let __children = __children.into_iter().map(|__child| ::ui_lang_runtime::bounded_fill_element(__child, __child_count, {horizontal})).collect::<::std::vec::Vec<_>>();"
         )
         .unwrap();
     }
-    let constructor = match kind {
-        Layout::Column => "column",
-        Layout::Row => "row",
-        Layout::Grid => "grid",
-        Layout::Stack => "stack",
-        Layout::Scroll => unreachable!("scroll returned above"),
-    };
-    if kind == Layout::Stack && options.under > 0 {
-        write!(
-            body,
-            " let __under = ({} as usize).min(__children.len()); let __above = __children.split_off(__under); let __layout = __above.into_iter().fold(::iced::widget::Stack::new(), |__stack, __child| __stack.push(__child)); let __layout = __children.into_iter().rev().fold(__layout, |__stack, __child| __stack.push_under(__child))",
-            options.under
-        )
-        .unwrap();
-    } else if kind == Layout::Stack {
-        // A z-stack sizes to the bounding box of every layer (see
-        // `ui_lang_runtime::zstack`); iced's native `Stack` would let the first
-        // layer alone dictate the size and collapse a small-first-layer popover.
-        body.push_str(" let __layout = ::ui_lang_runtime::zstack(__children)");
-    } else {
-        write!(
-            body,
-            " let __layout = ::iced::widget::{constructor}(__children)"
-        )
-        .unwrap();
+
+    match &layout.mode {
+        ResolvedLayoutMode::Stack(stack) if stack.under > 0 => {
+            write!(
+                body,
+                " let __under = ({} as usize).min(__children.len()); let __above = __children.split_off(__under); let __layout = __above.into_iter().fold(::iced::widget::Stack::new(), |__stack, __child| __stack.push(__child)); let __layout = __children.into_iter().rev().fold(__layout, |__stack, __child| __stack.push_under(__child))",
+                stack.under
+            )
+            .unwrap();
+        }
+        ResolvedLayoutMode::Stack(_) => {
+            body.push_str(" let __layout = ::ui_lang_runtime::zstack(__children)");
+        }
+        ResolvedLayoutMode::Linear(linear) => {
+            let constructor = if linear.axis == ResolvedLinearAxis::Column {
+                "column"
+            } else {
+                "row"
+            };
+            write!(
+                body,
+                " let __layout = ::iced::widget::{constructor}(__children)"
+            )
+            .unwrap();
+        }
+        ResolvedLayoutMode::Grid(_) => {
+            body.push_str(" let __layout = ::iced::widget::grid(__children)");
+        }
+        ResolvedLayoutMode::Flex(_) | ResolvedLayoutMode::Scroll(_) => unreachable!(),
     }
+
     if let Some(gap) = style.gap {
         write!(body, ".spacing({gap})").unwrap();
     }
-    if matches!(kind, Layout::Column | Layout::Row)
-        && let Some(padding) = style.padding_code()
-    {
-        write!(body, ".padding({padding})").unwrap();
-    }
-    if style.items_center {
-        if kind == Layout::Column {
-            body.push_str(".align_x(::iced::Center)");
-        } else {
-            body.push_str(".align_y(::iced::Center)");
-        }
-    }
-    if kind == Layout::Grid {
-        if let Some(spacing) = &options.spacing {
-            let entries = if options.columns.is_some() {
-                "__child_count.max(__grid_columns)"
-            } else {
-                "__child_count"
-            };
-            write!(
-                body,
-                ".spacing(::ui_lang_runtime::bounded_spacing({}, {entries}))",
-                expr_code(spacing, env, document, ValueMode::Owned)?,
-            )
-            .unwrap();
-        }
-        if let Some(width) = &options.width {
-            let LengthValue::Fixed(width) = width else {
-                unreachable!("grid widths are always fixed")
-            };
-            write!(
-                body,
-                ".width({})",
-                clamped_f32_code(width, "0.0", "f32::MAX", env, document)?
-            )
-            .unwrap();
-        }
-        if let Some(height) = &options.grid_height {
-            match height {
-                GridSizing::AspectRatio { width, height } => {
-                    let width = expr_code(width, env, document, ValueMode::Owned)?;
-                    let height = expr_code(height, env, document, ValueMode::Owned)?;
-                    write!(
-                        body,
-                        ".height(::iced::widget::grid::Sizing::AspectRatio(((({width}) / ({height})) as f32).max(f32::EPSILON).min(f32::MAX)))"
-                    )
-                    .unwrap();
-                }
-                GridSizing::EvenlyDistribute(length) => {
-                    write!(body, ".height({})", length_code(length, env, document)?).unwrap();
-                }
-            }
-        }
-        if let Some(max_cell) = &options.max_cell {
-            write!(
-                body,
-                ".fluid({})",
-                clamped_f32_code(max_cell, "f32::EPSILON", "f32::MAX", env, document)?
-            )
-            .unwrap();
-        } else if options.columns.is_some() {
-            body.push_str(".columns(__grid_columns)");
-        }
-    }
-    if matches!(kind, Layout::Column | Layout::Row) {
-        if let Some(spacing) = &options.spacing {
-            write!(
-                body,
-                ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                expr_code(spacing, env, document, ValueMode::Owned)?
-            )
-            .unwrap();
-        }
-        if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
+    if let ResolvedLayoutMode::Linear(linear) = &layout.mode {
+        if let Some(padding) = style.padding_code() {
             write!(body, ".padding({padding})").unwrap();
         }
-        append_dimensions(&mut body, [&options.width, &options.height], env, document)?;
-        if let Some(max_width) = &options.max_width {
-            write!(
-                body,
-                ".max_width({} as f32)",
-                expr_code(max_width, env, document, ValueMode::Owned)?
-            )
-            .unwrap();
-        }
-        if let Some(align) = options.align {
-            let alignment = match (kind, align) {
-                (Layout::Column, FlexAlignment::Start) => "::iced::alignment::Horizontal::Left",
-                (Layout::Column, FlexAlignment::Center) => "::iced::alignment::Horizontal::Center",
-                (Layout::Column, FlexAlignment::End) => "::iced::alignment::Horizontal::Right",
-                (Layout::Row, FlexAlignment::Start) => "::iced::alignment::Vertical::Top",
-                (Layout::Row, FlexAlignment::Center) => "::iced::alignment::Vertical::Center",
-                (Layout::Row, FlexAlignment::End) => "::iced::alignment::Vertical::Bottom",
-                _ => unreachable!("only row and column reach flex alignment"),
-            };
-            let method = if kind == Layout::Column {
+        if style.items_center {
+            let method = if linear.axis == ResolvedLinearAxis::Column {
                 "align_x"
             } else {
                 "align_y"
             };
+            write!(body, ".{method}(::iced::Center)").unwrap();
+        }
+        if let Some(spacing) = linear.spacing {
+            write!(
+                body,
+                ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
+                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+        if let Some(padding) = resolved_layout_padding_code(&linear.padding, program, env)? {
+            write!(body, ".padding({padding})").unwrap();
+        }
+        append_resolved_layout_dimensions(
+            &mut body,
+            [&linear.width, &linear.height],
+            program,
+            env,
+        )?;
+        if let Some(max_width) = linear.max_width {
+            write!(
+                body,
+                ".max_width({} as f32)",
+                checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+        if let Some(align) = linear.align {
+            let (method, alignment) = match (linear.axis, align) {
+                (ResolvedLinearAxis::Column, ResolvedContainerAlignment::Start) => {
+                    ("align_x", "::iced::alignment::Horizontal::Left")
+                }
+                (ResolvedLinearAxis::Column, ResolvedContainerAlignment::Center) => {
+                    ("align_x", "::iced::alignment::Horizontal::Center")
+                }
+                (ResolvedLinearAxis::Column, ResolvedContainerAlignment::End) => {
+                    ("align_x", "::iced::alignment::Horizontal::Right")
+                }
+                (ResolvedLinearAxis::Row, ResolvedContainerAlignment::Start) => {
+                    ("align_y", "::iced::alignment::Vertical::Top")
+                }
+                (ResolvedLinearAxis::Row, ResolvedContainerAlignment::Center) => {
+                    ("align_y", "::iced::alignment::Vertical::Center")
+                }
+                (ResolvedLinearAxis::Row, ResolvedContainerAlignment::End) => {
+                    ("align_y", "::iced::alignment::Vertical::Bottom")
+                }
+            };
             write!(body, ".{method}({alignment})").unwrap();
         }
-        if let Some(clip) = &options.clip {
+        if let Some(clip) = linear.clip {
             write!(
                 body,
                 ".clip({})",
-                expr_code(clip, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
             body.push_str(".clip(true)");
         }
-        if options.wrap {
+        if linear.wrap {
             body.push_str(".wrap()");
-            if let Some(spacing) = &options.wrap_spacing {
-                let method = if kind == Layout::Column {
+            if let Some(spacing) = linear.wrap_spacing {
+                let method = if linear.axis == ResolvedLinearAxis::Column {
                     "horizontal_spacing"
                 } else {
                     "vertical_spacing"
@@ -360,47 +214,115 @@ pub(in crate::codegen) fn render_layout(
                 write!(
                     body,
                     ".{method}(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                    expr_code(spacing, env, document, ValueMode::Owned)?
+                    checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
                 )
                 .unwrap();
             }
-            if let Some(align) = options.wrap_align {
-                let alignment = match (kind, align) {
-                    (Layout::Column, FlexAlignment::Start) => "::iced::alignment::Vertical::Top",
-                    (Layout::Column, FlexAlignment::Center) => {
+            if let Some(align) = linear.wrap_align {
+                let alignment = match (linear.axis, align) {
+                    (ResolvedLinearAxis::Column, ResolvedContainerAlignment::Start) => {
+                        "::iced::alignment::Vertical::Top"
+                    }
+                    (ResolvedLinearAxis::Column, ResolvedContainerAlignment::Center) => {
                         "::iced::alignment::Vertical::Center"
                     }
-                    (Layout::Column, FlexAlignment::End) => "::iced::alignment::Vertical::Bottom",
-                    (Layout::Row, FlexAlignment::Start) => "::iced::alignment::Horizontal::Left",
-                    (Layout::Row, FlexAlignment::Center) => "::iced::alignment::Horizontal::Center",
-                    (Layout::Row, FlexAlignment::End) => "::iced::alignment::Horizontal::Right",
-                    _ => unreachable!("only row and column can wrap"),
+                    (ResolvedLinearAxis::Column, ResolvedContainerAlignment::End) => {
+                        "::iced::alignment::Vertical::Bottom"
+                    }
+                    (ResolvedLinearAxis::Row, ResolvedContainerAlignment::Start) => {
+                        "::iced::alignment::Horizontal::Left"
+                    }
+                    (ResolvedLinearAxis::Row, ResolvedContainerAlignment::Center) => {
+                        "::iced::alignment::Horizontal::Center"
+                    }
+                    (ResolvedLinearAxis::Row, ResolvedContainerAlignment::End) => {
+                        "::iced::alignment::Horizontal::Right"
+                    }
                 };
                 write!(body, ".align_x({alignment})").unwrap();
             }
         }
     }
-    if kind == Layout::Stack {
-        if let Some(clip) = &options.clip {
+
+    if let ResolvedLayoutMode::Grid(grid) = &layout.mode {
+        if let Some(spacing) = grid.spacing {
+            let entries = if grid.columns.is_some() {
+                "__child_count.max(__grid_columns)"
+            } else {
+                "__child_count"
+            };
+            write!(
+                body,
+                ".spacing(::ui_lang_runtime::bounded_spacing({}, {entries}))",
+                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+        if let Some(width) = grid.width {
+            write!(
+                body,
+                ".width({})",
+                resolved_layout_clamped_f32(width, "0.0", "f32::MAX", program, env)?
+            )
+            .unwrap();
+        }
+        if let Some(height) = &grid.height {
+            match height {
+                ResolvedGridHeight::AspectRatio { width, height } => {
+                    let width = checked_expr_use_code(program, *width, env, ValueMode::Owned)?;
+                    let height = checked_expr_use_code(program, *height, env, ValueMode::Owned)?;
+                    write!(
+                        body,
+                        ".height(::iced::widget::grid::Sizing::AspectRatio(((({width}) / ({height})) as f32).max(f32::EPSILON).min(f32::MAX)))"
+                    )
+                    .unwrap();
+                }
+                ResolvedGridHeight::EvenlyDistribute(length) => {
+                    write!(
+                        body,
+                        ".height({})",
+                        resolved_layout_length_code(length, program, env)?
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        if let Some(max_cell) = grid.max_cell {
+            write!(
+                body,
+                ".fluid({})",
+                resolved_layout_clamped_f32(max_cell, "f32::EPSILON", "f32::MAX", program, env,)?
+            )
+            .unwrap();
+        } else if grid.columns.is_some() {
+            body.push_str(".columns(__grid_columns)");
+        }
+    }
+
+    if let ResolvedLayoutMode::Stack(stack) = &layout.mode {
+        if let Some(clip) = stack.clip {
             write!(
                 body,
                 ".clip({})",
-                expr_code(clip, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
             body.push_str(".clip(true)");
         }
-        append_dimensions(&mut body, [&options.width, &options.height], env, document)?;
+        append_resolved_layout_dimensions(&mut body, [&stack.width, &stack.height], program, env)?;
         append_size(&mut body, style);
     }
+
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
-    if kind == Layout::Grid && style.clip {
+    if matches!(layout.mode, ResolvedLayoutMode::Grid(_)) && style.clip {
         body.push_str(".clip(true)");
     }
-    if matches!(kind, Layout::Grid | Layout::Stack)
-        && let Some(padding) = style.padding_code()
+    if matches!(
+        layout.mode,
+        ResolvedLayoutMode::Grid(_) | ResolvedLayoutMode::Stack(_)
+    ) && let Some(padding) = style.padding_code()
     {
         write!(body, ".padding({padding})").unwrap();
     }
@@ -411,7 +333,11 @@ pub(in crate::codegen) fn render_layout(
     body.push_str(&container_style_code(style));
     body.push(';');
     if style.self_center {
-        write!(body, " let __layout_content: __IceElement<'_, {message}> = ::iced::widget::container(__content).width(::iced::Fill).center_x(::iced::Fill).into();").unwrap();
+        write!(
+            body,
+            " let __layout_content: __IceElement<'_, {message}> = ::iced::widget::container(__content).width(::iced::Fill).center_x(::iced::Fill).into();"
+        )
+        .unwrap();
     } else {
         write!(
             body,
@@ -419,26 +345,31 @@ pub(in crate::codegen) fn render_layout(
         )
         .unwrap();
     }
-    write!(body, " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}").unwrap();
+    write!(
+        body,
+        " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+    )
+    .unwrap();
     Ok(body)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_flexbox(
-    options: &LayoutOptions,
+fn render_resolved_flexbox(
+    layout: &ResolvedLayout,
+    flex: &ResolvedFlexLayout,
     id: &Option<Id>,
     children: &[ViewNode],
-    span: &Span,
-    document: &RenderDocument<'_>,
+    document: &LayoutRenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let flexbox = options.flexbox.as_ref().expect("flexbox options");
-    let style = &document.program().style_use(span)?.style;
+    let program = document.hir();
+    let style = &layout.utility_style;
+    let span = Span::line(layout.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "layout", span, scope, env, document)?;
+        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
     let child_scope = id.as_ref().map_or_else(
         || Ok(scope.to_owned()),
         |id| id_code(id, scope, env, document),
@@ -452,84 +383,81 @@ fn render_flexbox(
         env,
         &child_scope,
         slot,
-        options.min_cell.as_ref(),
+        flex.min_cell,
     )?;
     write!(
         body,
         " let __layout = ::ui_lang_runtime::flex(__items).direction(::ui_lang_runtime::FlexDirection::{})",
-        flex_direction_name(flexbox.direction)
+        resolved_flex_direction_name(flex.direction)
     )
     .unwrap();
-    if flexbox.wrap != FlexWrapValue::NoWrap {
+    if flex.wrap != ResolvedFlexWrap::NoWrap {
         write!(
             body,
             ".wrap(::ui_lang_runtime::FlexWrap::{})",
-            match flexbox.wrap {
-                FlexWrapValue::NoWrap => unreachable!(),
-                FlexWrapValue::Wrap => "Wrap",
-                FlexWrapValue::WrapReverse => "WrapReverse",
+            match flex.wrap {
+                ResolvedFlexWrap::NoWrap => unreachable!(),
+                ResolvedFlexWrap::Wrap => "Wrap",
+                ResolvedFlexWrap::WrapReverse => "WrapReverse",
             }
         )
         .unwrap();
     }
-    if let Some(justify) = flexbox.justify_content {
+    if let Some(justify) = flex.justify_content {
         write!(
             body,
             ".justify_content(::ui_lang_runtime::JustifyContent::{})",
-            flex_content_alignment_name(justify)
+            resolved_flex_content_alignment_name(justify)
         )
         .unwrap();
     }
-    if let Some(align) = flexbox.align_items {
+    if let Some(align) = flex.align_items {
         write!(
             body,
             ".align_items(::ui_lang_runtime::AlignItems::{})",
-            flex_item_alignment_name(align)
+            resolved_flex_item_alignment_name(align)
         )
         .unwrap();
     } else if style.items_center {
         body.push_str(".align_items(::ui_lang_runtime::AlignItems::Center)");
     }
-    if let Some(align) = flexbox.align_content {
+    if let Some(align) = flex.align_content {
         write!(
             body,
             ".align_content(::ui_lang_runtime::AlignContent::{})",
-            flex_content_alignment_name(align)
+            resolved_flex_content_alignment_name(align)
         )
         .unwrap();
     }
     if let Some(gap) = style.gap {
         write!(body, ".gap({gap}.0)").unwrap();
     }
-    if let Some(gap) = &options.spacing {
+    if let Some(gap) = flex.spacing {
         write!(
             body,
             ".gap({} as f32)",
-            expr_code(gap, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(gap) = &options.wrap_spacing {
-        let method = match flexbox.direction {
-            FlexDirectionValue::Row | FlexDirectionValue::RowReverse => "row_gap",
-            FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse => "column_gap",
+    if let Some(gap) = flex.wrap_spacing {
+        let method = match flex.direction {
+            ResolvedFlexDirection::Row | ResolvedFlexDirection::RowReverse => "row_gap",
+            ResolvedFlexDirection::Column | ResolvedFlexDirection::ColumnReverse => "column_gap",
         };
         write!(
             body,
             ".{method}({} as f32)",
-            expr_code(gap, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    for (gap, method) in [
-        (&flexbox.row_gap, "row_gap"),
-        (&flexbox.column_gap, "column_gap"),
-    ] {
+    for (gap, method) in [(flex.row_gap, "row_gap"), (flex.column_gap, "column_gap")] {
         if let Some(gap) = gap {
             write!(
                 body,
                 ".{method}({} as f32)",
-                expr_code(gap, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, gap, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -537,39 +465,34 @@ fn render_flexbox(
     if let Some(padding) = style.padding_code() {
         write!(body, ".padding({padding})").unwrap();
     }
-    if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
+    if let Some(padding) = resolved_layout_padding_code(&flex.padding, program, env)? {
         write!(body, ".padding({padding})").unwrap();
     }
-    if style.width_fill {
-        body.push_str(".width(::iced::Fill)");
-    }
-    if style.height_fill {
-        body.push_str(".height(::iced::Fill)");
-    }
-    append_dimensions(&mut body, [&options.width, &options.height], env, document)?;
-    if let Some(max_width) = &options.max_width {
+    append_size(&mut body, style);
+    append_resolved_layout_dimensions(&mut body, [&flex.width, &flex.height], program, env)?;
+    if let Some(max_width) = flex.max_width {
         write!(
             body,
             ".max_width({} as f32)",
-            expr_code(max_width, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width}.0)").unwrap();
     }
-    if let Some(max_height) = &options.max_height {
+    if let Some(max_height) = flex.max_height {
         write!(
             body,
             ".max_height({} as f32)",
-            expr_code(max_height, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, max_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(clip) = &options.clip {
+    if let Some(clip) = flex.clip {
         write!(
             body,
             ".clip({})",
-            expr_code(clip, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if style.clip {
@@ -582,22 +505,160 @@ fn render_flexbox(
         write!(body, ".max_width({max_width})").unwrap();
     }
     body.push_str(&container_style_code(style));
-    body.push_str("; let __layout_content: __IceElement<'_, ");
-    write!(body, "{message}> = __content.into();").unwrap();
-    write!(body, " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}").unwrap();
+    write!(
+        body,
+        "; let __layout_content: __IceElement<'_, {message}> = __content.into(); let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+    )
+    .unwrap();
     Ok(body)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_resolved_scroll(
+    layout: &ResolvedLayout,
+    scroll: &ResolvedScrollLayout,
+    id: &Option<Id>,
+    child: &ViewNode,
+    document: &LayoutRenderDocument<'_>,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+    slot: Option<&SlotContext>,
+) -> Result<String, Error> {
+    let program = document.hir();
+    let span = Span::line(layout.source_line);
+    let accessibility_key =
+        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
+    let child_scope = id.as_ref().map_or_else(
+        || Ok(scope.to_owned()),
+        |id| id_code(id, scope, env, document),
+    )?;
+    let child = render_node(child, document, message, env, &child_scope, slot)?;
+    let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
+    let bar = resolved_scroll_bar_code(scroll, program, env)?;
+    let direction = match scroll.direction {
+        ResolvedScrollDirection::Vertical => {
+            format!("::iced::widget::scrollable::Direction::Vertical({bar})")
+        }
+        ResolvedScrollDirection::Horizontal => {
+            format!("::iced::widget::scrollable::Direction::Horizontal({bar})")
+        }
+        ResolvedScrollDirection::Both => format!(
+            "::iced::widget::scrollable::Direction::Both {{ vertical: {bar}, horizontal: {bar} }}"
+        ),
+    };
+    write!(code, ".direction({direction})").unwrap();
+    if let Some(id) = id {
+        write!(
+            code,
+            ".id(::iced::widget::Id::from({}))",
+            id_code(id, scope, env, document)?
+        )
+        .unwrap();
+    }
+    let anchor = |anchor| match anchor {
+        ResolvedScrollAnchor::Start => "Start",
+        ResolvedScrollAnchor::End => "End",
+    };
+    write!(
+        code,
+        ".anchor_x(::iced::widget::scrollable::Anchor::{})",
+        anchor(scroll.anchor_x)
+    )
+    .unwrap();
+    write!(
+        code,
+        ".anchor_y(::iced::widget::scrollable::Anchor::{})",
+        anchor(scroll.anchor_y)
+    )
+    .unwrap();
+    if let Some(auto_scroll) = scroll.auto_scroll {
+        write!(
+            code,
+            ".auto_scroll({})",
+            checked_expr_use_code(program, auto_scroll, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(route) = &scroll.route {
+        let callback = resolved_interaction_route_callback_with_code(
+            route,
+            "__viewport",
+            env,
+            program,
+            |callback_env| {
+                let message_code = resolved_interaction_route_code(
+                    route,
+                    &[
+                        "__absolute.x as f64",
+                        "__absolute.y as f64",
+                        "__relative.x as f64",
+                        "__relative.y as f64",
+                    ],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                Ok(format!(
+                    "{{ let __absolute = __viewport.absolute_offset(); let __relative = __viewport.relative_offset(); {message_code} }}"
+                ))
+            },
+        )?;
+        write!(code, ".on_scroll({callback})").unwrap();
+    } else if let Some(route) = &scroll.viewport_route {
+        let callback = resolved_interaction_route_callback_with_code(
+            route,
+            "__viewport",
+            env,
+            program,
+            |callback_env| {
+                let message_code = resolved_interaction_route_code(
+                    route,
+                    &[
+                        "__absolute.x as f64",
+                        "__absolute.y as f64",
+                        "__reversed.x as f64",
+                        "__reversed.y as f64",
+                        "__relative.x as f64",
+                        "__relative.y as f64",
+                        "__bounds.x as f64",
+                        "__bounds.y as f64",
+                        "__bounds.width as f64",
+                        "__bounds.height as f64",
+                        "__content_bounds.x as f64",
+                        "__content_bounds.y as f64",
+                        "__content_bounds.width as f64",
+                        "__content_bounds.height as f64",
+                    ],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                Ok(format!(
+                    "{{ let __absolute = __viewport.absolute_offset(); let __reversed = __viewport.absolute_offset_reversed(); let __relative = __viewport.relative_offset(); let __bounds = __viewport.bounds(); let __content_bounds = __viewport.content_bounds(); {message_code} }}"
+                ))
+            },
+        )?;
+        write!(code, ".on_scroll({callback})").unwrap();
+    }
+    code.push_str(&resolved_scroll_style_code(scroll, program, env)?);
+    append_size(&mut code, &layout.utility_style);
+    append_resolved_layout_dimensions(&mut code, [&scroll.width, &scroll.height], program, env)?;
+    Ok(format!(
+        "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_flex_children(
     out: &mut String,
     children: &[ViewNode],
-    document: &RenderDocument<'_>,
+    document: &LayoutRenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
-    min_cell: Option<&Expr>,
+    min_cell: Option<ResolvedExpressionId>,
 ) -> Result<(), Error> {
     for child in children {
         match child {
@@ -697,16 +758,22 @@ fn render_flex_children(
                 let item = if let Some(min_cell) = min_cell {
                     format!(
                         "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
-                        clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", env, document,)?
+                        resolved_layout_clamped_f32(
+                            min_cell,
+                            "f32::EPSILON",
+                            "f32::MAX",
+                            document.hir(),
+                            env,
+                        )?
                     )
                 } else {
                     let options = match child {
                         ViewNode::Container { .. } => {
-                            Some(&document.program().resolved_container_for(child)?.flex_item)
+                            Some(&document.hir().resolved_container_for(child)?.flex_item)
                         }
                         _ => None,
                     };
-                    resolved_flex_item_code("__flex_child", options, document.program(), env)?
+                    resolved_flex_item_code("__flex_child", options, document.hir(), env)?
                 };
                 write!(
                     out,
@@ -817,59 +884,129 @@ fn resolved_flex_item_alignment_name(align: ResolvedContainerFlexAlignment) -> &
     }
 }
 
-fn flex_direction_name(direction: FlexDirectionValue) -> &'static str {
+fn resolved_flex_direction_name(direction: ResolvedFlexDirection) -> &'static str {
     match direction {
-        FlexDirectionValue::Row => "Row",
-        FlexDirectionValue::RowReverse => "RowReverse",
-        FlexDirectionValue::Column => "Column",
-        FlexDirectionValue::ColumnReverse => "ColumnReverse",
+        ResolvedFlexDirection::Row => "Row",
+        ResolvedFlexDirection::RowReverse => "RowReverse",
+        ResolvedFlexDirection::Column => "Column",
+        ResolvedFlexDirection::ColumnReverse => "ColumnReverse",
     }
 }
 
-fn flex_item_alignment_name(align: FlexItemAlignment) -> &'static str {
+fn resolved_flex_content_alignment_name(align: ResolvedFlexContentAlignment) -> &'static str {
     match align {
-        FlexItemAlignment::Start => "Start",
-        FlexItemAlignment::End => "End",
-        FlexItemAlignment::FlexStart => "FlexStart",
-        FlexItemAlignment::FlexEnd => "FlexEnd",
-        FlexItemAlignment::Center => "Center",
-        FlexItemAlignment::Baseline => "Baseline",
-        FlexItemAlignment::Stretch => "Stretch",
+        ResolvedFlexContentAlignment::Start => "Start",
+        ResolvedFlexContentAlignment::End => "End",
+        ResolvedFlexContentAlignment::FlexStart => "FlexStart",
+        ResolvedFlexContentAlignment::FlexEnd => "FlexEnd",
+        ResolvedFlexContentAlignment::Center => "Center",
+        ResolvedFlexContentAlignment::Stretch => "Stretch",
+        ResolvedFlexContentAlignment::SpaceBetween => "SpaceBetween",
+        ResolvedFlexContentAlignment::SpaceAround => "SpaceAround",
+        ResolvedFlexContentAlignment::SpaceEvenly => "SpaceEvenly",
     }
 }
 
-fn flex_content_alignment_name(align: FlexContentAlignment) -> &'static str {
-    match align {
-        FlexContentAlignment::Start => "Start",
-        FlexContentAlignment::End => "End",
-        FlexContentAlignment::FlexStart => "FlexStart",
-        FlexContentAlignment::FlexEnd => "FlexEnd",
-        FlexContentAlignment::Center => "Center",
-        FlexContentAlignment::Stretch => "Stretch",
-        FlexContentAlignment::SpaceBetween => "SpaceBetween",
-        FlexContentAlignment::SpaceAround => "SpaceAround",
-        FlexContentAlignment::SpaceEvenly => "SpaceEvenly",
-    }
-}
-
-pub(in crate::codegen) fn scroll_bar_code(
-    scroll: &ScrollOptions,
+fn resolved_layout_padding_code(
+    padding: &ResolvedContainerPadding,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
+) -> Result<Option<String>, Error> {
+    if padding.all.is_none()
+        && padding.x.is_none()
+        && padding.y.is_none()
+        && padding.top.is_none()
+        && padding.right.is_none()
+        && padding.bottom.is_none()
+        && padding.left.is_none()
+    {
+        return Ok(None);
+    }
+    let value = |expression: Option<ResolvedExpressionId>| {
+        expression
+            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .transpose()
+    };
+    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
+    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
+    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
+    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
+    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
+    let bottom = value(padding.bottom)?.unwrap_or(y);
+    let left = value(padding.left)?.unwrap_or(x);
+    Ok(Some(format!(
+        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
+    )))
+}
+
+fn append_resolved_layout_dimensions(
+    code: &mut String,
+    dimensions: [&Option<ResolvedContainerLength>; 2],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<(), Error> {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        let Some(length) = length else { continue };
+        write!(
+            code,
+            ".{method}({})",
+            resolved_layout_length_code(length, program, env)?
+        )
+        .unwrap();
+    }
+    Ok(())
+}
+
+fn resolved_layout_length_code(
+    length: &ResolvedContainerLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedContainerLength::Fill => "::iced::Fill".into(),
+        ResolvedContainerLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
+        ResolvedContainerLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedContainerLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
+fn resolved_layout_clamped_f32(
+    expression: ResolvedExpressionId,
+    minimum: &str,
+    maximum: &str,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
+}
+
+fn resolved_scroll_bar_code(
+    scroll: &ResolvedScrollLayout,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let constructor = if scroll.hidden_bar { "hidden" } else { "new" };
     let mut code = format!("::iced::widget::scrollable::Scrollbar::{constructor}()");
     for (value, method) in [
-        (&scroll.bar_width, "width"),
-        (&scroll.bar_margin, "margin"),
-        (&scroll.scroller_width, "scroller_width"),
-        (&scroll.bar_spacing, "spacing"),
+        (scroll.bar_width, "width"),
+        (scroll.bar_margin, "margin"),
+        (scroll.scroller_width, "scroller_width"),
+        (scroll.bar_spacing, "spacing"),
     ] {
         if let Some(value) = value {
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, 2))",
-                expr_code(value, env, document, ValueMode::Owned)?
+                checked_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -877,54 +1014,56 @@ pub(in crate::codegen) fn scroll_bar_code(
     Ok(code)
 }
 
-pub(in crate::codegen) fn scroll_style_code(
-    styles: &[ScrollStatusStyle],
-    custom: Option<&ExternCall>,
+fn resolved_scroll_style_code(
+    scroll: &ResolvedScrollLayout,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<String, Error> {
-    let custom = custom
-        .map(|style| {
-            custom_style_call_code(
-                style,
-                ExternKind::ScrollStyle,
-                "__theme, __status",
-                env,
-                document,
-            )
-        })
+    let custom = scroll
+        .custom_style
+        .as_ref()
+        .map(|style| resolved_scroll_custom_style_code(style, program, env))
         .transpose()?;
-    if styles.is_empty() {
+    if scroll.styles.is_empty() {
         return Ok(custom
             .map(|custom| format!(".style(move |__theme, __status| {custom})"))
             .unwrap_or_default());
     }
-    let base = custom
-        .unwrap_or_else(|| "::iced::widget::scrollable::default(__theme, __status)".to_owned());
+    let base =
+        custom.unwrap_or_else(|| "::iced::widget::scrollable::default(__theme, __status)".into());
     let mut code =
         format!(".style(move |__theme, __status| {{ let mut __style = {base}; match __status {{");
     for (status, pattern) in [
         (
-            ScrollStatus::Active,
+            ResolvedScrollStatus::Active,
             "Active { is_horizontal_scrollbar_disabled: __horizontal_disabled, is_vertical_scrollbar_disabled: __vertical_disabled }",
         ),
         (
-            ScrollStatus::Hovered,
+            ResolvedScrollStatus::Hovered,
             "Hovered { is_horizontal_scrollbar_hovered: __horizontal_interaction, is_vertical_scrollbar_hovered: __vertical_interaction, is_horizontal_scrollbar_disabled: __horizontal_disabled, is_vertical_scrollbar_disabled: __vertical_disabled }",
         ),
         (
-            ScrollStatus::Dragged,
+            ResolvedScrollStatus::Dragged,
             "Dragged { is_horizontal_scrollbar_dragged: __horizontal_interaction, is_vertical_scrollbar_dragged: __vertical_interaction, is_horizontal_scrollbar_disabled: __horizontal_disabled, is_vertical_scrollbar_disabled: __vertical_disabled }",
         ),
     ] {
         write!(code, " ::iced::widget::scrollable::Status::{pattern} => {{").unwrap();
-        for style in styles
+        for style in scroll
+            .styles
             .iter()
-            .filter(|style| status != ScrollStatus::Active && style.status == ScrollStatus::Active)
-            .chain(styles.iter().filter(|style| style.status == status))
+            .filter(|style| {
+                status != ResolvedScrollStatus::Active
+                    && style.status == ResolvedScrollStatus::Active
+            })
+            .chain(scroll.styles.iter().filter(|style| style.status == status))
         {
-            write!(code, " if {} {{", scroll_selector_code(style)).unwrap();
-            append_scroll_status_style(&mut code, style, env, document)?;
+            write!(
+                code,
+                " if {} {{",
+                resolved_scroll_selector_code(&style.selector)
+            )
+            .unwrap();
+            append_resolved_scroll_status_style(&mut code, style, program, env)?;
             code.push_str(" }");
         }
         code.push_str(" }");
@@ -933,13 +1072,33 @@ pub(in crate::codegen) fn scroll_style_code(
     Ok(code)
 }
 
-pub(in crate::codegen) fn scroll_selector_code(style: &ScrollStatusStyle) -> String {
+fn resolved_scroll_custom_style_code(
+    style: &ResolvedScrollCustomStyle,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let arguments = style
+        .arguments
+        .iter()
+        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?;
+    let suffix = arguments
+        .into_iter()
+        .map(|argument| format!(", {argument}"))
+        .collect::<String>();
+    Ok(format!(
+        "{}(__theme, __status{suffix})",
+        program.extern_function(style.function).rust_path
+    ))
+}
+
+fn resolved_scroll_selector_code(selector: &ResolvedScrollSelector) -> String {
     let mut conditions = Vec::new();
     for (value, binding) in [
-        (style.horizontal_disabled, "__horizontal_disabled"),
-        (style.vertical_disabled, "__vertical_disabled"),
-        (style.horizontal_interaction, "__horizontal_interaction"),
-        (style.vertical_interaction, "__vertical_interaction"),
+        (selector.horizontal_disabled, "__horizontal_disabled"),
+        (selector.vertical_disabled, "__vertical_disabled"),
+        (selector.horizontal_interaction, "__horizontal_interaction"),
+        (selector.vertical_interaction, "__vertical_interaction"),
     ] {
         if let Some(value) = value {
             conditions.push(format!("{binding} == {value}"));
@@ -952,58 +1111,66 @@ pub(in crate::codegen) fn scroll_selector_code(style: &ScrollStatusStyle) -> Str
     }
 }
 
-pub(in crate::codegen) fn append_scroll_status_style(
+fn append_resolved_scroll_status_style(
     code: &mut String,
-    style: &ScrollStatusStyle,
+    style: &ResolvedScrollStatusStyle,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<(), Error> {
-    append_scroll_surface_style(
+    append_resolved_scroll_surface(
         code,
         &style.container,
         "__style.container",
         true,
         true,
+        program,
         env,
-        document,
     )?;
-    for (rail, target) in [
-        (&style.horizontal_rail, "__style.horizontal_rail"),
-        (&style.vertical_rail, "__style.vertical_rail"),
+    for (rail, scroller, target) in [
+        (
+            &style.horizontal_rail,
+            &style.horizontal_scroller,
+            "__style.horizontal_rail",
+        ),
+        (
+            &style.vertical_rail,
+            &style.vertical_scroller,
+            "__style.vertical_rail",
+        ),
     ] {
-        append_scroll_surface_style(code, &rail.rail, target, true, false, env, document)?;
-        append_scroll_surface_style(
+        append_resolved_scroll_surface(code, rail, target, true, false, program, env)?;
+        append_resolved_scroll_surface(
             code,
-            &rail.scroller,
+            scroller,
             &format!("{target}.scroller"),
             false,
             false,
+            program,
             env,
-            document,
         )?;
     }
     if let Some(gap) = &style.gap {
         write!(
             code,
             " __style.gap = ::std::option::Option::Some({});",
-            background_code(gap, env, document)?
+            resolved_layout_background_code(gap, program, env)?
         )
         .unwrap();
     }
-    append_scroll_surface_style(
+    append_resolved_scroll_surface(
         code,
         &style.auto_scroll,
         "__style.auto_scroll",
         false,
         false,
+        program,
         env,
-        document,
     )?;
     if let Some(color) = &style.auto_scroll_icon {
         write!(
             code,
             " __style.auto_scroll.icon = {};",
-            theme_color(document, color)
+            resolved_theme_color(color)
         )
         .unwrap();
     }
@@ -1011,34 +1178,150 @@ pub(in crate::codegen) fn append_scroll_status_style(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::codegen) fn append_scroll_surface_style(
+fn append_resolved_scroll_surface(
     code: &mut String,
-    options: &ContainerStyleOptions,
+    surface: &ResolvedContainerSurface,
     target: &str,
     optional_background: bool,
     text: bool,
+    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
-    document: &Document,
 ) -> Result<(), Error> {
-    let mut options = options.clone();
-    if !optional_background && let Some(background) = options.background.take() {
+    if !optional_background && let Some(background) = &surface.background {
         write!(
             code,
             " {target}.background = {};",
-            background_code(&background, env, document)?
+            resolved_layout_background_code(background, program, env)?
         )
         .unwrap();
     }
     write!(code, " {{ let __style = &mut {target};").unwrap();
-    append_surface_style_overrides(code, &options, env, document)?;
-    if text && let Some(color) = &options.text_color {
+    if optional_background && let Some(background) = &surface.background {
+        write!(
+            code,
+            " __style.background = ::std::option::Option::Some({});",
+            resolved_layout_background_code(background, program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(color) = &surface.border_color {
+        write!(
+            code,
+            " __style.border.color = {};",
+            resolved_theme_color(color)
+        )
+        .unwrap();
+    }
+    if let Some(width) = surface.border_width {
+        write!(
+            code,
+            " __style.border.width = {} as f32;",
+            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(radius) = resolved_layout_radius_code(&surface.radius, program, env)? {
+        write!(code, " __style.border.radius = {radius};").unwrap();
+    }
+    if let Some(color) = &surface.shadow_color {
+        write!(
+            code,
+            " __style.shadow.color = {};",
+            resolved_theme_color(color)
+        )
+        .unwrap();
+    }
+    for (expression, field) in [
+        (surface.shadow_x, "offset.x"),
+        (surface.shadow_y, "offset.y"),
+        (surface.shadow_blur, "blur_radius"),
+    ] {
+        if let Some(expression) = expression {
+            write!(
+                code,
+                " __style.shadow.{field} = {} as f32;",
+                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(snap) = surface.pixel_snap {
+        write!(
+            code,
+            " __style.snap = {};",
+            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if text && let Some(color) = &surface.text_color {
         write!(
             code,
             " __style.text_color = ::std::option::Option::Some({});",
-            theme_color(document, color)
+            resolved_theme_color(color)
         )
         .unwrap();
     }
     code.push_str(" }");
     Ok(())
+}
+
+fn resolved_layout_background_code(
+    background: &ResolvedContainerBackground,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match background {
+        ResolvedContainerBackground::Color(color) => {
+            format!("::iced::Background::Color({})", resolved_theme_color(color))
+        }
+        ResolvedContainerBackground::Linear { angle, stops } => {
+            let mut code = format!(
+                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
+                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+            );
+            for stop in stops {
+                write!(
+                    code,
+                    ".add_stop({} as f32, {})",
+                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_theme_color(&stop.color)
+                )
+                .unwrap();
+            }
+            code.push(')');
+            code
+        }
+    })
+}
+
+fn resolved_layout_radius_code(
+    radius: &ResolvedContainerRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let base = radius
+        .all
+        .map(|value| resolved_layout_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corner = |value: Option<ResolvedExpressionId>| {
+        value
+            .map(|value| resolved_layout_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
+    let top_right = corner(radius.top_right)?.unwrap_or_else(|| base.clone());
+    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| base.clone());
+    let bottom_left = corner(radius.bottom_left)?.unwrap_or(base);
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
+    )))
 }

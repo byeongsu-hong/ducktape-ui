@@ -9,15 +9,15 @@ pub(in crate::codegen) fn render_foundation(
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
     let rendered = match node {
-        ViewNode::Layout {
-            kind,
-            options,
+        ViewNode::Layout { id, children, .. } => render_layout(
+            document.hir().resolved_layout_for(node)?,
             id,
             children,
-            span,
-            ..
-        } => render_layout(
-            *kind, options, id, children, span, document, message, env, scope, slot,
+            document,
+            message,
+            env,
+            scope,
+            slot,
         ),
         ViewNode::Container { id, content, .. } => render_container(
             document.program().resolved_container_for(node)?,

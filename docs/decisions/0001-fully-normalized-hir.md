@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -419,6 +419,18 @@ that record while the source node supplies only its child subtree and shared
 widget ID. Structural assertions, malformed facts, pre- and post-lowering AST
 poisoning, imported source markers, full style/flex codegen, and an ignored
 4,000-container lower+emit budget provide the executable evidence.
+
+Layout is a completed structural slice. The shared interaction arena freezes
+the identity, expression and route partitions, static topology, custom
+scroll-style identity, and parented status origins for Column, Row, Grid, Stack,
+Flexbox, and Scroll. Lowering validates complete arena consumption and resolves
+lengths, padding, grid sizing and minimum-cell sugar, flex flow, scroll geometry,
+anchors, status selectors and surfaces, theme colors, utilities, and payload
+routes into `ResolvedLayout`. Production emission consumes that record while
+source nodes provide only child subtrees and the shared widget ID. Structural
+assertions, malformed facts, pre-/post-lowering AST poisoning, imported origins,
+complete native codegen, and an ignored 4,000-layout lower+emit budget provide
+the executable evidence.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
