@@ -18,10 +18,10 @@ ICE_TEST_ARTIFACT_DIR=target/starter-evidence \
   cargo test -p ice-starter __ice_tests::starter_flow -- --exact --nocapture
 ```
 
-The capture is written below
-`examples/starter/target/starter-evidence/starter_flow/` as `ready.png` and
-`ready.json`. The JSON includes the capture source, resolved theme, geometry,
-paint output, and accessibility snapshot used by the test.
+When run from the workspace root, the capture is written below
+`target/starter-evidence/starter_flow/` as `ready.png` and `ready.json`. The
+JSON includes the capture source, resolved theme, geometry, paint output, and
+accessibility snapshot used by the test.
 
 Copy the package when starting another application inside this repository and
 keep its workspace dependencies. After the first crates.io release, an external
