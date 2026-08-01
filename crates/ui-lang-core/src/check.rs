@@ -829,7 +829,7 @@ pub(crate) use facts::{
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
     CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
-    CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
+    CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
     CheckedRouteArgKind, CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole,
     CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
     CheckedViewLocalRole, CheckedViewScope,

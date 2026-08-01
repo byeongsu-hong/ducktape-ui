@@ -7,8 +7,8 @@ use crate::hir::{
     AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
     CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
     ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, HandlerId, OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId,
-    SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
+    ExternRef, HandlerId, MediaExpressionId, OriginArena, OriginId, PaletteId, RouteId,
+    StatementId, StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -311,6 +311,7 @@ pub(crate) enum CheckedExprOwner {
         operand: u32,
     },
     Canvas(CanvasExpressionId),
+    Media(MediaExpressionId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -584,6 +585,14 @@ pub(crate) struct CheckedCanvas {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedMedia {
+    pub(crate) id: ViewId,
+    pub(crate) expression_count: u32,
+    pub(crate) semantic_key: String,
+    pub(crate) style: Option<ExternFnId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTask {
     pub(crate) id: TaskId,
     pub(crate) output: Option<Type>,
@@ -637,6 +646,7 @@ pub(crate) struct CheckedFacts {
     locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
     canvases: HashMap<ViewId, CheckedCanvas>,
+    media: HashMap<ViewId, CheckedMedia>,
     subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
@@ -803,6 +813,10 @@ impl CheckedFacts {
 
     pub(crate) fn canvas(&self, id: ViewId) -> Option<&CheckedCanvas> {
         self.canvases.get(&id).filter(|canvas| canvas.id == id)
+    }
+
+    pub(crate) fn media(&self, id: ViewId) -> Option<&CheckedMedia> {
+        self.media.get(&id).filter(|media| media.id == id)
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -1284,6 +1298,7 @@ pub(super) struct CheckedAnalyses {
     test_entries: HashMap<usize, ExprTypeAnalysis>,
     canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
+    media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
 }
 
 impl CheckedAnalyses {
@@ -1323,6 +1338,7 @@ impl CheckedAnalyses {
             && self.test_entries.is_empty()
             && self.canvas_entries.is_empty()
             && self.canvas_route_inputs.is_empty()
+            && self.media_entries.is_empty()
     }
 
     pub(super) fn insert_subscription(
@@ -1408,6 +1424,15 @@ impl CheckedAnalyses {
                 ));
             }
         }
+        for (key, analysis) in other.media_entries {
+            if self.media_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "media expression was captured more than once",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1439,6 +1464,30 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "canvas route contract was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_media(
+        &mut self,
+        media: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "media expression capture unexpectedly retained routes",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self.media_entries.insert((media, key), analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "media expression was captured more than once",
                 ));
             }
         }
@@ -1697,12 +1746,13 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
                     self.analyses.canvas_entries.len(),
                     self.analyses.canvas_route_inputs.len(),
+                    self.analyses.media_entries.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -2319,6 +2369,113 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(span, "duplicate checked test expression owner"));
         }
         Ok(id)
+    }
+
+    fn lower_media_facts(
+        &mut self,
+        media: ViewId,
+        kind: MediaKind,
+        source: &Expr,
+        options: &MediaOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(media).origin;
+        let roots = crate::ast::media_expression_roots(source, options);
+        for (index, expression) in roots.iter().enumerate() {
+            let owner = CheckedExprOwner::Media(MediaExpressionId {
+                media,
+                index: index as u32,
+            });
+            let analysis = self
+                .analyses
+                .media_entries
+                .remove(&(media, super::expr::expr_key(expression)))
+                .ok_or_else(|| {
+                    self.invariant(span, "missing authoritative media expression analysis")
+                })?;
+            let metrics = analysis.metrics();
+            self.facts.metrics.view_analysis_passes += 1;
+            self.facts.metrics.type_analysis_queries += metrics.queries;
+            self.facts.metrics.type_analysis_nodes += metrics.nodes;
+            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
+                self.invariant(span, "missing retained media expression root type")
+            })?;
+            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+            let origin = self.origins.push(span, Some(parent));
+            let lowering = ExpressionLowering {
+                analysis: &analysis,
+                owner: id,
+                origin,
+                span,
+            };
+            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+            if self.facts.expression(root).ty != source {
+                return Err(self.invariant(
+                    span,
+                    "media expression source type does not match its checked root",
+                ));
+            }
+            self.facts.expression_uses.push(CheckedExprUse {
+                owner,
+                root,
+                source: source.clone(),
+                destination: source,
+                coercion: CheckedInitializerCoercion::None,
+                origin,
+            });
+            if self
+                .facts
+                .expression_uses_by_owner
+                .insert(owner, id)
+                .is_some()
+            {
+                return Err(self.invariant(span, "duplicate checked media expression owner"));
+            }
+        }
+        let remaining = self
+            .analyses
+            .media_entries
+            .keys()
+            .filter(|(owner, _)| *owner == media)
+            .count();
+        if remaining != 0 {
+            return Err(self.invariant(
+                span,
+                format!("media left {remaining} expression analyses unconsumed"),
+            ));
+        }
+        let style = options
+            .svg_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::SvgStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "media style extern disappeared"))
+            })
+            .transpose()?;
+        if self
+            .facts
+            .media
+            .insert(
+                media,
+                CheckedMedia {
+                    id: media,
+                    expression_count: roots.len() as u32,
+                    semantic_key: crate::ast::media_semantic_key(kind, options),
+                    style,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "media facts were produced more than once"));
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5011,6 +5168,16 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_canvas_facts(view, options, locals, commands, events, env, span)?;
                 CheckedViewFlow::None
             }
+            ViewNode::Media {
+                kind,
+                source,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_media_facts(view, *kind, source, options, env, span)?;
+                CheckedViewFlow::None
+            }
             ViewNode::Component {
                 name,
                 args,
@@ -7485,6 +7652,61 @@ view
         ));
         assert!(canvas.routes[0].source_payloads.is_empty());
         assert!(!canvas.routes[0].ordered_payloads);
+    }
+
+    #[test]
+    fn media_facts_retain_stable_expression_owners_and_static_contract() {
+        let source = r#"app MediaFacts
+extern crate::backend
+  svg-style dynamic_svg(active:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+view
+  svg "icon.svg" w=48.0 h=shrink fit=scale-down rotate=rotation.solid(radians(0.1)) opacity=0.9 color=fg hover=primary style=dynamic_svg(active) label="Icon" description="Status icon"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked = program.checked_facts().media(ViewId(0)).unwrap();
+        let ViewNode::Media {
+            kind,
+            source,
+            options,
+            ..
+        } = &program.document().view
+        else {
+            panic!("fixture root must be media");
+        };
+        assert_eq!(checked.id, ViewId(0));
+        assert_eq!(
+            checked.expression_count as usize,
+            crate::ast::media_expression_roots(source, options).len()
+        );
+        assert_eq!(checked.style, Some(ExternFnId(0)));
+        assert_eq!(
+            checked.semantic_key,
+            crate::ast::media_semantic_key(*kind, options)
+        );
+        for index in 0..checked.expression_count {
+            assert!(
+                program
+                    .checked_facts()
+                    .expression_use_by_owner(CheckedExprOwner::Media(MediaExpressionId {
+                        media: checked.id,
+                        index,
+                    }))
+                    .is_some(),
+                "missing media expression {index}"
+            );
+        }
     }
 
     #[test]

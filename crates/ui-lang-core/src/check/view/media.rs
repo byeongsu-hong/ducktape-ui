@@ -15,6 +15,7 @@ pub(in crate::check) fn infer_media_group(
             options,
             span,
         } => {
+            let media_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             check_accessibility_options(&options.accessibility, env, document, span)?;
             if options.accessibility.label.is_none() && options.accessibility.description.is_some()
@@ -146,6 +147,7 @@ pub(in crate::check) fn infer_media_group(
                     extern_function(document, &style.function, ExternKind::SvgStyle, span)?;
                 check_call_args(function, &style.args, env, document, span)?;
             }
+            retain_media_analyses(span, media_analysis_guard.finish())?;
         }
         ViewNode::Tooltip {
             id,

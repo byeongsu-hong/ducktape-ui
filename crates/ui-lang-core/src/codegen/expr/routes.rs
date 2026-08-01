@@ -89,17 +89,6 @@ pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> 
     }
 }
 
-pub(in crate::codegen) fn u32_code(
-    expr: &Expr,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    Ok(format!(
-        "({}).clamp(0, u32::MAX as i64) as u32",
-        expr_code(expr, env, document, ValueMode::Owned)?
-    ))
-}
-
 pub(in crate::codegen) fn route_code(
     route: &Route,
     payload: &str,

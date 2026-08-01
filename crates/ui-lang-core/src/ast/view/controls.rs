@@ -344,3 +344,101 @@ pub struct ResizeHandleOptions {
     /// Cursor shown while hovering or dragging the handle.
     pub interaction: Option<MouseInteraction>,
 }
+
+pub(crate) fn media_expression_roots<'a>(
+    source: &'a Expr,
+    options: &'a MediaOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![source];
+    roots.extend(options.accessibility.label.iter());
+    roots.extend(options.accessibility.description.iter());
+    for length in [&options.width, &options.height].into_iter().flatten() {
+        if let LengthValue::Fixed(value) = length {
+            roots.push(value);
+        }
+    }
+    roots.extend(options.fit.iter());
+    roots.extend(options.rotation.iter());
+    roots.extend(options.opacity.iter());
+    if let Some(style) = &options.svg_style {
+        roots.extend(&style.args);
+    }
+    roots.extend(options.scale.iter());
+    roots.extend(options.expand.iter());
+    for value in [
+        &options.radius,
+        &options.radius_top_left,
+        &options.radius_top_right,
+        &options.radius_bottom_right,
+        &options.radius_bottom_left,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.push(value);
+    }
+    if let Some(crop) = &options.crop {
+        roots.extend(crop);
+    }
+    for value in [
+        &options.padding,
+        &options.min_scale,
+        &options.max_scale,
+        &options.scale_step,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.push(value);
+    }
+    roots
+}
+
+pub(crate) fn media_semantic_key(kind: MediaKind, options: &MediaOptions) -> String {
+    fn length(value: &Option<LengthValue>) -> String {
+        match value {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(value)) => format!("fill:{value}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed:_".into(),
+        }
+    }
+
+    let hover = match &options.svg_hover_color {
+        None => "inherit".into(),
+        Some(None) => "none".into(),
+        Some(Some(color)) => format!("color:{color}"),
+    };
+    let style = options.svg_style.as_ref().map_or_else(
+        || "none".into(),
+        |style| format!("{}:{}", style.function, style.args.len()),
+    );
+    let flag = |value: bool| if value { '1' } else { '0' };
+    let present = |value: bool| flag(value);
+    format!(
+        "{kind:?}|a={}{}|w={}|h={}|fit={}|rotation={}|opacity={}|memory={}|color={:?}|hover={hover}|style={style}|filter={:?}|scale={}|expand={}|radius={}{}{}{}{}|crop={}|padding={}|min={}|max={}|step={}",
+        present(options.accessibility.label.is_some()),
+        present(options.accessibility.description.is_some()),
+        length(&options.width),
+        length(&options.height),
+        present(options.fit.is_some()),
+        present(options.rotation.is_some()),
+        present(options.opacity.is_some()),
+        flag(options.svg_memory),
+        options.svg_color,
+        options.filter,
+        present(options.scale.is_some()),
+        present(options.expand.is_some()),
+        present(options.radius.is_some()),
+        present(options.radius_top_left.is_some()),
+        present(options.radius_top_right.is_some()),
+        present(options.radius_bottom_right.is_some()),
+        present(options.radius_bottom_left.is_some()),
+        present(options.crop.is_some()),
+        present(options.padding.is_some()),
+        present(options.min_scale.is_some()),
+        present(options.max_scale.is_some()),
+        present(options.scale_step.is_some()),
+    )
+}
