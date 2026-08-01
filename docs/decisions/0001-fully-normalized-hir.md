@@ -117,8 +117,9 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, and ResizeHandle therefore remain open implementation
-slices; this status does not satisfy the migration-complete criteria below.
+Media, Tooltip, MouseArea, ResizeHandle, and Sensor therefore remain open
+implementation slices; this status does not satisfy the migration-complete
+criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
 directly for imported and root source markers.
 
@@ -295,6 +296,17 @@ arena consumption before publishing `ResolvedMouseArea` and
 `ResolvedResizeHandle`. Their emitters no longer inspect raw options, routes,
 route expressions, or handler names. App and component route generation,
 post-check/static mutation, malformed IDs, post-lowering poisoning, and a
+4,000-node lower+emit budget provide the executable evidence.
+
+Sensor is a completed interaction-wrapper slice. Its checked contract freezes
+the distinct show, resize, and hide route positions plus key, anticipation, and
+delay presence. The shared interaction route arena retains app/component
+targets, ordered size payloads, argument expressions, and origins, while
+canonical option-expression IDs retain the key and timing values. Lowering
+revalidates scope, types, expression DAGs, route topology, and complete arena
+consumption before publishing `ResolvedSensor`. Its emitter consumes only that
+record and checked expression IDs. Post-check expression mutation, static
+drift, post-lowering option/route poisoning, component routes, and an ignored
 4,000-node lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and

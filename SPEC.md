@@ -275,14 +275,16 @@ container-style extern and all theme colors, and emits a private
 expression IDs; it does not reread Tooltip options, expressions, style names,
 or source theme-token order.
 
-MouseArea and ResizeHandle are completed interaction-wrapper HIR slices. Each
-view owns stable interaction-expression and route IDs. Checked route facts fix
-the handler, component output or named event target, argument kinds, ordered
-payload source types, and origin. Lowering resolves every target and payload
-index, validates component scope and expression graphs, and publishes
-`ResolvedMouseArea` or `ResolvedResizeHandle`. Rust generation consumes those
-records exclusively and does not reread raw routes, route expressions, handler
-names, cursor options, or payload topology.
+MouseArea, ResizeHandle, and Sensor are completed interaction-wrapper HIR
+slices. Each view owns stable interaction-expression and route IDs. Checked
+route facts fix the handler, component output or named event target, argument
+kinds, ordered payload source types, and origin. Lowering resolves every target
+and payload index, validates component scope and expression graphs, and publishes
+`ResolvedMouseArea`, `ResolvedResizeHandle`, or `ResolvedSensor`. Sensor also
+freezes the distinct show/resize/hide route positions and canonical key,
+anticipation, and delay expression IDs. Rust generation consumes those records
+exclusively and does not reread raw routes, route expressions, handler names,
+cursor or Sensor options, or payload topology.
 
 The Rust adapter is one manifest-relative include:
 

@@ -3098,6 +3098,18 @@ impl LoweredProgram {
         Ok(handle)
     }
 
+    pub(crate) fn resolved_sensor_for(&self, node: &ViewNode) -> Result<&ResolvedSensor, Error> {
+        let interaction = self.resolved_interaction_for(node, "sensor")?;
+        let ResolvedInteractionWidget::Sensor(sensor) = interaction else {
+            return Err(Error::new(
+                "E196",
+                node.span(),
+                "sensor reached code generation with the wrong normalized kind",
+            ));
+        };
+        Ok(sensor)
+    }
+
     fn resolved_interaction_for(
         &self,
         node: &ViewNode,
@@ -7907,6 +7919,15 @@ impl Lowerer {
                 self.lower_resize_handle(options, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
+            ViewNode::Sensor {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_sensor(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -7960,7 +7981,6 @@ impl Lowerer {
             | ViewNode::Theme { content, .. }
             | ViewNode::Float { content, .. }
             | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
             | ViewNode::KeyedColumn { child: content, .. }
             | ViewNode::Lazy { child: content, .. } => {
                 self.lower_view(content, outer_component)?;
@@ -10205,6 +10225,98 @@ view
     }
 
     #[test]
+    fn normalizes_sensor_options_routes_payloads_and_origins() {
+        let source = format!(
+            "app SensorHir\n{THEME}state\n  active = true\non shown(width, height)\non resized(width, height)\non hidden\nview\n  sensor show=shown resize=resized hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let Some(ResolvedInteractionWidget::Sensor(sensor)) = program.interaction_widget(ViewId(0))
+        else {
+            panic!("interaction must be a sensor");
+        };
+
+        assert_eq!(sensor.id, ViewId(0));
+        let show = sensor.show.as_ref().unwrap();
+        assert_eq!(show.source_payloads, [Type::F64, Type::F64]);
+        assert!(show.ordered_payloads);
+        assert!(matches!(
+            show.args.as_slice(),
+            [
+                ResolvedInteractionRouteArg::Payload { index: 0, .. },
+                ResolvedInteractionRouteArg::Payload { index: 1, .. }
+            ]
+        ));
+        assert_eq!(sensor.resize.as_ref().unwrap().source_payloads.len(), 2);
+        assert!(sensor.hide.as_ref().unwrap().source_payloads.is_empty());
+        for (expression, expected) in [
+            (sensor.key.unwrap(), Type::Bool),
+            (sensor.anticipate.unwrap(), Type::F64),
+            (sensor.delay_ms.unwrap(), Type::I64),
+        ] {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, expected);
+            assert_eq!(expression.destination, expected);
+        }
+        let origin = program.origin(sensor.origin);
+        assert_eq!(origin.line, 18);
+    }
+
+    #[test]
+    fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-sensor.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Sensor { options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be a sensor");
+        };
+        options.key = Some(Expr::Bool(false));
+        options.anticipate = Some(Expr::F64(999.0));
+        options.delay_ms = Some(Expr::I64(999));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-sensor.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Sensor { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a sensor");
+        };
+        options.hide = None;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn sensor_codegen_ignores_raw_options_and_routes_after_lowering() {
+        let source = format!(
+            "app LoweredSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-sensor.ice").unwrap();
+
+        let ViewNode::Sensor { options, .. } = &mut program.document.view else {
+            panic!("fixture root must be a sensor");
+        };
+        options.key = Some(Expr::Bool(false));
+        options.anticipate = Some(Expr::F64(999.0));
+        options.delay_ms = Some(Expr::I64(999));
+        options.show.as_mut().unwrap().handler = "poisoned".into();
+        options.hide.as_mut().unwrap().handler = "poisoned".into();
+
+        let actual = crate::codegen::generate(&program, "lowered-sensor.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("Poisoned"));
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -10350,6 +10462,36 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized interaction widgets lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized sensor lowering and emission performance contract"]
+    fn performance_contract_four_thousand_sensors_lower_and_emit_under_two_seconds() {
+        const SENSORS: usize = 4_000;
+        let mut source =
+            format!("app SensorScale\n{THEME}on shown(width, height)\non hidden\nview\n  col\n");
+        for index in 0..SENSORS {
+            writeln!(
+                source,
+                "    sensor show=shown hide=hidden key={index} anticipate=24.0 delay=50\n      text \"Observed {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "sensor-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.interaction_widgets.len(), SENSORS);
+        assert_eq!(
+            generated.matches("::iced::widget::sensor(").count(),
+            SENSORS
+        );
+        eprintln!("4k normalized sensors lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized sensors lowered and emitted in {elapsed:?}"
         );
     }
 

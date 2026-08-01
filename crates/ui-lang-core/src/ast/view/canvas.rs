@@ -831,15 +831,25 @@ pub(crate) fn sensor_semantic_key(options: &SensorOptions) -> String {
         format!("{}({arguments})", route.handler)
     };
     format!(
-        "sensor|key={}|anticipate={}|delay={}|routes={}",
+        "sensor|key={}|anticipate={}|delay={}|show={}|resize={}|hide={}",
         options.key.is_some(),
         options.anticipate.is_some(),
         options.delay_ms.is_some(),
-        sensor_routes(options)
-            .into_iter()
+        options
+            .show
+            .as_ref()
+            .map(&route)
+            .unwrap_or_else(|| "none".into()),
+        options
+            .resize
+            .as_ref()
+            .map(&route)
+            .unwrap_or_else(|| "none".into()),
+        options
+            .hide
+            .as_ref()
             .map(route)
-            .collect::<Vec<_>>()
-            .join("|")
+            .unwrap_or_else(|| "none".into()),
     )
 }
 
