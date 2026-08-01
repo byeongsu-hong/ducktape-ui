@@ -20,6 +20,7 @@ toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 ui-lang-core.workspace = true
 
 [dev-dependencies]
+dhat = "0.3"
 tempfile = "3.27"
 
 [lints]
