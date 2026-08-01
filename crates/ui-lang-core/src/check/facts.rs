@@ -858,6 +858,14 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_for_item_local(&mut self, view: ViewId, raw: u32) {
+        let CheckedViewFlow::For { item, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be for");
+        };
+        *item = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_expression_use_root(&mut self, owner: CheckedExprOwner, raw: u32) {
         let id = self.expression_uses_by_owner[&owner];
         self.expression_uses[id.0 as usize].root = CheckedExprId(raw);

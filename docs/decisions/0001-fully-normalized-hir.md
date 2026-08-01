@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, and If therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -364,6 +364,15 @@ emission consume that record, while source nodes provide only child subtrees.
 Malformed expression IDs, post-check and post-lowering condition poisoning,
 existing layout codegen, and an ignored 4,000-node lower+emit budget provide the
 executable evidence.
+
+For is a completed control-flow slice. Its checked flow owns a stable list
+expression and typed item local, and lowering resolves the reconciliation site
+identity. Lowering revalidates owner mapping, DAG, scope, list/item types, local
+ID, and local owner role before publishing `ResolvedIteration`. Normal-layout
+and flex-layout emission consume that record; source nodes provide only child
+subtrees. Malformed IDs, post-check list/binding mutation, post-lowering flow
+poisoning, existing reconciliation codegen, and an ignored 4,000-node lower+emit
+budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

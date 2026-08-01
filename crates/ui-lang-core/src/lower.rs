@@ -30,6 +30,7 @@ mod canvas;
 mod conditional;
 mod float;
 mod interaction;
+mod iteration;
 mod keyed_column;
 mod lazy;
 mod media;
@@ -43,6 +44,7 @@ pub(crate) use canvas::*;
 pub(crate) use conditional::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
+pub(crate) use iteration::*;
 pub(crate) use keyed_column::*;
 pub(crate) use lazy::*;
 pub(crate) use media::*;
@@ -1455,6 +1457,7 @@ pub(crate) struct LoweredProgram {
     responsives: HashMap<ViewId, ResolvedResponsive>,
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     conditionals: HashMap<ViewId, ResolvedConditional>,
+    iterations: HashMap<ViewId, ResolvedIteration>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
@@ -3030,6 +3033,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn iteration(&self, id: ViewId) -> Option<&ResolvedIteration> {
+        self.iterations.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
         self.lazy_views.get(&id)
     }
@@ -3324,6 +3332,35 @@ impl LoweredProgram {
         })
     }
 
+    pub(crate) fn resolved_iteration_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedIteration, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "for view reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "for view reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.iterations.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "for view reached code generation without normalized HIR",
+            )
+        })
+    }
+
     fn resolved_interaction_for(
         &self,
         node: &ViewNode,
@@ -3586,6 +3623,7 @@ pub(crate) struct Lowerer {
     responsives: HashMap<ViewId, ResolvedResponsive>,
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     conditionals: HashMap<ViewId, ResolvedConditional>,
+    iterations: HashMap<ViewId, ResolvedIteration>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
@@ -4305,6 +4343,7 @@ impl Lowerer {
             responsives: HashMap::new(),
             keyed_columns: HashMap::new(),
             conditionals: HashMap::new(),
+            iterations: HashMap::new(),
             lazy_views: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
@@ -4387,6 +4426,7 @@ impl Lowerer {
             responsives: self.responsives,
             keyed_columns: self.keyed_columns,
             conditionals: self.conditionals,
+            iterations: self.iterations,
             lazy_views: self.lazy_views,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
@@ -8268,7 +8308,18 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Layout { children, .. } | ViewNode::For { children, .. } => {
+            ViewNode::For {
+                item,
+                items,
+                children,
+                span,
+            } => {
+                self.lower_iteration(item, items, span, outer_component)?;
+                for child in children {
+                    self.lower_view(child, outer_component)?;
+                }
+            }
+            ViewNode::Layout { children, .. } => {
                 for child in children {
                     self.lower_view(child, outer_component)?;
                 }
@@ -11287,6 +11338,115 @@ view
     }
 
     #[test]
+    fn normalizes_for_items_binding_and_reconciliation_identity() {
+        let source = format!(
+            "app ForHir\n{THEME}state\n  items:[str] = []\nview\n  for item in items\n    text item\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let iteration = program.iteration(ViewId(0)).unwrap();
+        assert_eq!(iteration.id, ViewId(0));
+        assert_eq!(iteration.item.name, "item");
+        assert_eq!(iteration.item.ty, Type::Str);
+        assert_eq!(iteration.reconciliation_line, 15);
+        assert_eq!(
+            program.checked_facts().local(iteration.item.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::ForItem,
+            }
+        );
+        assert_eq!(
+            program
+                .checked_facts()
+                .expression_use(iteration.items)
+                .owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ForItems,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_for_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidForFacts\n{THEME}state\n  items:[str] = []\nview\n  for item in items\n    text item\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ForItems,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_for_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn for_lowering_uses_checked_items_and_binding() {
+        let source = format!(
+            "app CheckedFor\n{THEME}state\n  items:[str] = []\nview\n  col\n    for item in items\n      text item\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-for.ice",
+        )
+        .unwrap();
+
+        let mut changed_items = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_items.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { items, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *items = Expr::Str("Poisoned".into());
+        let actual =
+            crate::codegen::generate(&lower(changed_items).unwrap(), "checked-for.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_binding = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_binding.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { item, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *item = "poisoned".into();
+        let actual =
+            crate::codegen::generate(&lower(changed_binding).unwrap(), "checked-for.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn for_codegen_ignores_raw_flow_after_lowering() {
+        let source = format!(
+            "app LoweredFor\n{THEME}state\n  items:[str] = []\nview\n  col\n    for item in items\n      text item\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-for.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { item, items, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *item = "poisoned".into();
+        *items = Expr::Str("Poisoned".into());
+        let actual = crate::codegen::generate(&program, "lowered-for.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -11625,6 +11785,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized if views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized for-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_for_views_lower_and_emit_under_two_seconds() {
+        const FOR_VIEWS: usize = 4_000;
+        let mut source = format!("app ForScale\n{THEME}state\n  items:[str] = []\nview\n  col\n");
+        for index in 0..FOR_VIEWS {
+            writeln!(
+                source,
+                "    for item_{index} in items\n      text item_{index}"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "for-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.iterations.len(), FOR_VIEWS);
+        assert_eq!(
+            generated.matches("for (__ice_index, item_").count(),
+            FOR_VIEWS
+        );
+        eprintln!("4k normalized for views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized for views lowered and emitted in {elapsed:?}"
         );
     }
 

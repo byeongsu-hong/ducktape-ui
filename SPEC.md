@@ -330,6 +330,13 @@ validated before `ResolvedConditional` is published. Normal and flex layout
 generation consume that record and do not reread the source condition, checked
 flow, or checked facts.
 
+For is a completed control-flow HIR slice. Its list expression, typed item
+local, and reconciliation site identity are resolved into `ResolvedIteration`.
+Lowering validates expression ownership, scope, list/item types, local
+ownership, and the expression DAG. Normal and flex layout generation consume
+that record and do not reread the list expression, binding spelling, source-line
+identity, checked flow, or checked local facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

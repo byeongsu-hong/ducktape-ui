@@ -27,27 +27,23 @@ pub(in crate::codegen) fn render_children(
                 render_children(out, children, document, message, env, scope, slot)?;
                 out.push_str(" }");
             }
-            ViewNode::For { children, span, .. } => {
-                let CheckedViewFlow::For { items, item } =
-                    &document.program().checked_view(span)?.flow
-                else {
-                    return Err(Error::new("E196", span, "for view has no checked flow"));
-                };
-                let local = document.program().checked_facts().local(*item);
-                let item_name = &local.name;
+            ViewNode::For { children, .. } => {
+                let program = document.hir();
+                let iteration = program.resolved_iteration_for(child)?;
+                let item_name = &iteration.item.name;
                 let items =
-                    checked_expr_use_code(document.program(), *items, env, ValueMode::Borrowed)?;
+                    checked_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
                     " for (__ice_index, {item_name}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
-                    span.line
+                    iteration.reconciliation_line
                 )
                 .unwrap();
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
-                    checked_local_binding(document.program(), *item, item_name.clone(), false),
+                    checked_local_binding(program, iteration.item.local, item_name.clone(), false),
                 );
                 child_env.insert(
                     RECONCILIATION_SCOPE_BINDING.into(),

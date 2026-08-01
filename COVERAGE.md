@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, and If families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +493,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, and If remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -616,6 +616,16 @@ scope, source/destination type, and coercion before publishing
 record while source nodes supply only child subtrees. Malformed expression IDs,
 post-check and post-lowering condition poisoning, existing layout codegen, and
 an ignored 4,000-node lower+emit contract cover the boundary.
+
+For has a complete private HIR boundary. Its checked flow owns the stable list
+expression and typed item local, while lowering resolves the reconciliation
+site identity. Lowering revalidates expression owner mapping, DAG, scope and
+list/item types plus the local ID and owner role before publishing
+`ResolvedIteration`. Normal-layout and flex-layout emission consume that record;
+source nodes supply only child subtrees. Malformed expression/local IDs,
+post-check list and binding mutation, post-lowering flow poisoning, existing
+reconciliation codegen, and an ignored 4,000-node lower+emit contract cover the
+boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
