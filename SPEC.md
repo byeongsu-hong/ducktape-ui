@@ -2049,14 +2049,22 @@ caller-owned Iced task. Public keys require `Clone + Eq + Hash`, so owned domain
 identifiers do not require interning. An
 explicit `VirtualListId` combines a readable logical name with a runtime-unique
 namespace; identity and retained state are not clonable, while explicit `fork`
-copies data into a new namespace instead of aliasing it. `update_snapshot`
-preserves identity only for value-oriented reducer replacement and its old
-snapshot may not remain mounted. Retained
+requires a new logical name and copies retained data into a new namespace
+instead of aliasing it. Logical names must be unique among concurrently mounted
+lists so headless selectors are exact. Separate `VirtualListId::new` calls with
+duplicate logical names violate that selector contract, but their runtime-unique
+namespaces still prevent native widget and AccessKit identity collisions.
+`update_snapshot` preserves identity only for value-oriented reducer replacement
+and its old snapshot may not remain mounted. Its immutable per-key semantic map
+is shared in constant time; only successful explicit reconciliation publishes a
+new complete map. Retained
 per-key semantic allocations remain distinct even when
 different keys produce the same hash. Only mounted visible-plus-overscan rows
 become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
-behavior take precedence over row selection using actual event capture rather
-than cursor shape. Trees for keys in consecutive mounted-window intersections
+behavior take precedence over row selection. Touch ownership uses the pressed
+and lifted event positions against mounted-row bounds plus descendant capture
+before and after dispatch, independently of the current mouse cursor. Trees for
+keys in consecutive mounted-window intersections
 remain retained. The focused AccessKit list exposes its selected mounted item as
 the active descendant. `VirtualList.Frame`
 is an Ice composition around an app-owned extern component; there is deliberately

@@ -7,6 +7,7 @@ use iced_test::runtime::user_interface;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use std::alloc::System;
 use std::cell::Cell;
+use std::sync::Arc;
 use ui_lang_runtime::{
     VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
 };
@@ -17,6 +18,21 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 #[derive(Debug, Clone)]
 enum Message {
     List,
+}
+
+#[derive(Debug)]
+struct ShowcaseReducerState {
+    list: VirtualListState<u64>,
+    items: Arc<[u64]>,
+}
+
+impl Clone for ShowcaseReducerState {
+    fn clone(&self) -> Self {
+        Self {
+            list: self.list.update_snapshot(),
+            items: Arc::clone(&self.items),
+        }
+    }
 }
 
 fn config() -> VirtualListConfig {
@@ -192,5 +208,73 @@ fn performance_contract_100k_reconcile() {
     );
     eprintln!(
         "100k reconcile: p50={p50}us p95={p95}us allocations(p95)={p95_allocations} bytes(p95)={p95_bytes}"
+    );
+}
+
+#[test]
+#[ignore = "100k-item release performance contract run explicitly in CI"]
+fn performance_contract_100k_update_snapshot_scrolled_reducer() {
+    const WARMUP_SAMPLES: usize = 32;
+    const SAMPLES: usize = 200;
+    const P50_BUDGET_US: u128 = 25;
+    const P95_BUDGET_US: u128 = 75;
+
+    let items: Arc<[u64]> = (0..100_000).collect::<Vec<_>>().into();
+    let mut state = ShowcaseReducerState {
+        list: prepared_state(&items),
+        items,
+    };
+    let reducer_step = |sample: usize, state: &ShowcaseReducerState| {
+        let mut next = state.clone();
+        next.list.apply(
+            VirtualListEvent::Scrolled {
+                offset_y: if sample.is_multiple_of(2) {
+                    1_000_000.0
+                } else {
+                    1_000_020.0
+                },
+            },
+            &next.items,
+            |key| *key,
+            config(),
+        );
+        next
+    };
+
+    for sample in 0..WARMUP_SAMPLES {
+        state = reducer_step(sample, &state);
+    }
+
+    let mut elapsed_us = Vec::with_capacity(SAMPLES);
+    let mut allocations = Vec::with_capacity(SAMPLES);
+    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+    for sample in 0..SAMPLES {
+        let region = Region::new(GLOBAL);
+        let started = std::time::Instant::now();
+        let next = reducer_step(sample, &state);
+        std::hint::black_box(&next);
+        elapsed_us.push(started.elapsed().as_micros());
+        let stats = region.change();
+        allocations.push(stats.allocations);
+        allocated_bytes.push(stats.bytes_allocated);
+        state = next;
+    }
+
+    let p50 = percentile(&elapsed_us, 50);
+    let p95 = percentile(&elapsed_us, 95);
+    let p95_allocations = percentile_usize(&allocations, 95);
+    let p95_bytes = percentile_usize(&allocated_bytes, 95);
+    assert!(p50 <= P50_BUDGET_US, "snapshot reducer p50 {p50}us");
+    assert!(p95 <= P95_BUDGET_US, "snapshot reducer p95 {p95}us");
+    assert_eq!(
+        p95_allocations, 0,
+        "snapshot reducer must allocate independently of collection size"
+    );
+    assert_eq!(
+        p95_bytes, 0,
+        "snapshot reducer must allocate zero bytes for a scalar-key snapshot"
+    );
+    eprintln!(
+        "100k update_snapshot/Scrolled reducer: p50={p50}us p95={p95}us allocations(p95)={p95_allocations} bytes(p95)={p95_bytes}"
     );
 }

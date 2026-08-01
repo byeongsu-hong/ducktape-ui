@@ -19,6 +19,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_VIRTUAL_LIST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
@@ -30,11 +31,17 @@ static NEXT_VIRTUAL_LIST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
 /// native widget or accessibility identity.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct VirtualListId {
-    logical: String,
+    logical: Arc<str>,
     namespace: u32,
 }
 
 impl VirtualListId {
+    /// Creates a list identity with a caller-owned logical name.
+    ///
+    /// The logical name must be unique among concurrently mounted lists so
+    /// headless and driver selectors resolve exactly one list. The runtime
+    /// namespace still keeps native widget and accessibility identity safe if
+    /// separate calls accidentally use the same logical name.
     pub fn new(logical: impl Into<String>) -> Self {
         let namespace = NEXT_VIRTUAL_LIST_NAMESPACE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -42,7 +49,7 @@ impl VirtualListId {
             })
             .expect("virtual-list identity namespace exhausted");
         Self {
-            logical: logical.into(),
+            logical: Arc::from(logical.into()),
             namespace,
         }
     }
@@ -196,7 +203,7 @@ pub struct VirtualListState<Key> {
     scroll_offset: f32,
     viewport_height: f32,
     scroll_revision: u64,
-    semantic_ids: HashMap<Key, u32>,
+    semantic_ids: Arc<HashMap<Key, u32>>,
     next_semantic_id: u32,
 }
 
@@ -211,7 +218,7 @@ where
     pub fn update_snapshot(&self) -> Self {
         Self {
             id: VirtualListId {
-                logical: self.id.logical.clone(),
+                logical: Arc::clone(&self.id.logical),
                 namespace: self.id.namespace,
             },
             selected: self.selected.clone(),
@@ -219,15 +226,19 @@ where
             scroll_offset: self.scroll_offset,
             viewport_height: self.viewport_height,
             scroll_revision: self.scroll_revision,
-            semantic_ids: self.semantic_ids.clone(),
+            semantic_ids: Arc::clone(&self.semantic_ids),
             next_semantic_id: self.next_semantic_id,
         }
     }
 
     /// Forks retained data into an independently mountable list identity.
-    pub fn fork(&self) -> Self {
+    ///
+    /// `new_logical_name` must be unique among concurrently mounted lists.
+    /// Requiring it here prevents the fork from aliasing the original list in
+    /// headless and driver selectors.
+    pub fn fork(&self, new_logical_name: impl Into<String>) -> Self {
         let mut fork = self.update_snapshot();
-        fork.id = VirtualListId::new(self.id.logical.clone());
+        fork.id = VirtualListId::new(new_logical_name);
         fork
     }
 }
@@ -250,7 +261,7 @@ where
             scroll_offset: 0.0,
             viewport_height: 0.0,
             scroll_revision: 0,
-            semantic_ids: HashMap::new(),
+            semantic_ids: Arc::new(HashMap::new()),
             next_semantic_id: 2,
         }
     }
@@ -340,7 +351,7 @@ where
                 });
             semantic_ids.insert(item_key, semantic_id);
         }
-        self.semantic_ids = semantic_ids;
+        self.semantic_ids = Arc::new(semantic_ids);
         self.next_semantic_id = next_semantic_id;
         self.selected_index = selected_index;
         if self.selected_index.is_none() {
@@ -807,12 +818,13 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let observes_touch = matches!(
-            event,
+        let observes_touch = match event {
             Event::Touch(
-                iced::touch::Event::FingerPressed { .. } | iced::touch::Event::FingerLifted { .. }
-            )
-        ) && cursor.is_over(layout.bounds());
+                iced::touch::Event::FingerPressed { position, .. }
+                | iced::touch::Event::FingerLifted { position, .. },
+            ) => layout.bounds().contains(*position),
+            _ => false,
+        };
         let captured_before = shell.is_event_captured();
         for ((child, tree), layout) in self
             .children
@@ -825,12 +837,12 @@ where
             );
         }
         if observes_touch {
-            self.touch_claim
-                .set(if !captured_before && shell.is_event_captured() {
-                    TouchClaim::Child
-                } else {
-                    TouchClaim::Row
-                });
+            let captured_after = shell.is_event_captured();
+            self.touch_claim.set(if !captured_before && captured_after {
+                TouchClaim::Child
+            } else {
+                TouchClaim::Row
+            });
         }
     }
 
@@ -1318,6 +1330,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Config as DriverConfig, Driver, Location};
     use crate::{ROOT_ID, SnapshotOperation};
     use accesskit::{NodeId, TreeId};
     use iced::advanced::widget::Tree as WidgetTree;
@@ -1422,6 +1435,77 @@ mod tests {
     struct CaptureWithoutCursor;
 
     struct CursorOnly;
+
+    #[derive(Debug)]
+    struct ForkMountState {
+        original: VirtualListState<u64>,
+        fork: VirtualListState<u64>,
+        items: Vec<u64>,
+    }
+
+    #[derive(Debug, Clone)]
+    enum ForkMountMessage {
+        Original(VirtualListEvent<u64>),
+        Fork(VirtualListEvent<u64>),
+    }
+
+    fn fork_mount_boot() -> ForkMountState {
+        let items = vec![10, 20];
+        let mut original = VirtualListState::new(VirtualListId::new("driver/original"));
+        original.reconcile(&items, |item| *item, config()).unwrap();
+        original.apply(
+            VirtualListEvent::ViewportChanged { height: 80.0 },
+            &items,
+            |item| *item,
+            config(),
+        );
+        let fork = original.fork("driver/fork");
+        ForkMountState {
+            original,
+            fork,
+            items,
+        }
+    }
+
+    fn fork_mount_update(
+        state: &mut ForkMountState,
+        message: ForkMountMessage,
+    ) -> iced::Task<ForkMountMessage> {
+        let (list, event) = match message {
+            ForkMountMessage::Original(event) => (&mut state.original, event),
+            ForkMountMessage::Fork(event) => (&mut state.fork, event),
+        };
+        list.apply(event, &state.items, |item| *item, config());
+        iced::Task::none()
+    }
+
+    fn fork_mount_view(state: &ForkMountState) -> Element<'_, ForkMountMessage> {
+        let original = virtual_list(
+            &state.original,
+            &state.items,
+            config(),
+            "Original",
+            |item| *item,
+            |item| format!("Original {item}"),
+            |_, item, _| iced::widget::text(*item).into(),
+            ForkMountMessage::Original,
+        );
+        let fork = virtual_list(
+            &state.fork,
+            &state.items,
+            config(),
+            "Fork",
+            |item| *item,
+            |item| format!("Fork {item}"),
+            |_, item, _| iced::widget::text(*item).into(),
+            ForkMountMessage::Fork,
+        );
+        iced::widget::column![
+            container(original).height(Length::Fixed(80.0)),
+            container(fork).height(Length::Fixed(80.0)),
+        ]
+        .into()
+    }
 
     impl Widget<Message, Theme, iced_test::renderer::Renderer> for RowIdentity {
         fn tag(&self) -> tree::Tag {
@@ -1947,6 +2031,8 @@ mod tests {
         assert_ne!(before_reorder, first.semantic_id(&30));
         let mut second = prepared_state("list");
         second.reconcile(&[20_u64], |key| *key, config()).unwrap();
+        assert_ne!(first.widget_id(), second.widget_id());
+        assert_ne!(first.scroll_id(), second.scroll_id());
         assert_ne!(before_reorder, second.semantic_id(&20));
     }
 
@@ -1956,8 +2042,9 @@ mod tests {
         original
             .reconcile(&["first".to_owned()], Clone::clone, config())
             .unwrap();
-        let fork = original.fork();
-        assert_eq!(original.id().logical(), fork.id().logical());
+        let fork = original.fork("forked-list-copy");
+        assert_eq!(fork.id().logical(), "forked-list-copy");
+        assert_ne!(original.id().logical(), fork.id().logical());
         assert_ne!(original.id().namespace, fork.id().namespace);
         assert_ne!(original.widget_id(), fork.widget_id());
         assert_ne!(original.scroll_id(), fork.scroll_id());
@@ -1968,10 +2055,48 @@ mod tests {
 
         let update = original.update_snapshot();
         assert_eq!(original.id(), update.id());
+        assert!(Arc::ptr_eq(&original.semantic_ids, &update.semantic_ids));
         assert_eq!(
             original.semantic_id(&"first".to_owned()),
             update.semantic_id(&"first".to_owned())
         );
+
+        assert!(Arc::ptr_eq(&original.semantic_ids, &fork.semantic_ids));
+        let mut reconciled_fork = fork;
+        reconciled_fork
+            .reconcile(&["first".to_owned()], Clone::clone, config())
+            .unwrap();
+        assert!(!Arc::ptr_eq(
+            &original.semantic_ids,
+            &reconciled_fork.semantic_ids
+        ));
+    }
+
+    #[test]
+    fn concurrently_mounted_fork_has_exact_driver_list_and_row_selectors() {
+        const SOURCE: Location = Location::new(
+            "virtual-list-driver.ice",
+            1,
+            1,
+            "find each forked list and row",
+        );
+        let mut driver = Driver::new(
+            iced::application::<ForkMountState, ForkMountMessage, Theme, iced::Renderer>(
+                fork_mount_boot,
+                fork_mount_update,
+                fork_mount_view,
+            ),
+            DriverConfig::new("forked_virtual_list_selectors").viewport(240.0, 160.0),
+        );
+
+        for logical_id in [
+            "driver/original",
+            "driver/original/item/2",
+            "driver/fork",
+            "driver/fork/item/2",
+        ] {
+            assert!(driver.target(logical_id, SOURCE).visible());
+        }
     }
 
     #[test]
@@ -2715,7 +2840,7 @@ mod tests {
                     position: point,
                 }),
             ],
-            mouse::Cursor::Available(point),
+            mouse::Cursor::Unavailable,
             &mut renderer,
             &mut iced::advanced::clipboard::Null,
             &mut messages,
@@ -2741,25 +2866,36 @@ mod tests {
             &mut renderer,
         );
         messages.clear();
-        let _ = ui.update(
-            &[
-                Event::Touch(iced::touch::Event::FingerPressed {
-                    id: finger,
-                    position: point,
-                }),
-                Event::Touch(iced::touch::Event::FingerLifted {
-                    id: finger,
-                    position: point,
-                }),
-            ],
-            mouse::Cursor::Available(point),
-            &mut renderer,
-            &mut iced::advanced::clipboard::Null,
-            &mut messages,
-        );
+        for (finger, cursor) in [
+            (finger, mouse::Cursor::Unavailable),
+            (
+                iced::touch::Finger(14),
+                mouse::Cursor::Available(Point::new(500.0, 500.0)),
+            ),
+        ] {
+            let _ = ui.update(
+                &[
+                    Event::Touch(iced::touch::Event::FingerPressed {
+                        id: finger,
+                        position: point,
+                    }),
+                    Event::Touch(iced::touch::Event::FingerLifted {
+                        id: finger,
+                        position: point,
+                    }),
+                ],
+                cursor,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+        }
         assert_eq!(
             messages,
-            vec![Message::List(VirtualListEvent::Select { index: 0, key: 0 })]
+            vec![
+                Message::List(VirtualListEvent::Select { index: 0, key: 0 }),
+                Message::List(VirtualListEvent::Select { index: 0, key: 0 }),
+            ]
         );
     }
 
@@ -2834,7 +2970,7 @@ mod tests {
                     position: tap,
                 }),
             ],
-            mouse::Cursor::Available(tap),
+            mouse::Cursor::Unavailable,
             &mut renderer,
             &mut iced::advanced::clipboard::Null,
             &mut messages,

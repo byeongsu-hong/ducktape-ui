@@ -26,8 +26,9 @@ mod tests {
         state
             .reconcile(&items, Clone::clone, config)
             .expect("packaged keys are unique");
-        let fork = state.fork();
+        let fork = state.fork("packaged-virtual-list-copy");
         assert_ne!(state.id(), fork.id());
+        assert_ne!(state.id().logical(), fork.id().logical());
         state.apply(
             VirtualListEvent::ViewportChanged { height: 100.0 },
             &items,

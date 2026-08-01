@@ -49,14 +49,23 @@ widget measures its native layout and emits `ViewportChanged`; the reducer
 applies that event like any other typed list event. `VirtualListId` is explicit
 and has no default: its readable logical name is paired with a runtime-unique
 namespace so independently mounted lists cannot alias focus, scrolling, or
-AccessKit nodes. Neither identity nor retained state implements `Clone`;
-`VirtualListState::fork` explicitly copies data and selection into a fresh
-native and semantic namespace. Value-oriented adapters that must pass state
-through an update reducer use `update_snapshot` to replace that same mount; the
-old snapshot must not remain mounted beside the replacement.
+AccessKit nodes. The caller must keep logical names unique among concurrently
+mounted lists so driver and headless selectors resolve exactly one target.
+Separate `VirtualListId::new` calls with a duplicate logical name remain safe at
+the native and accessibility layers, but violate that selector contract. Neither
+identity nor retained state implements `Clone`; `VirtualListState::fork` requires
+a new logical name and copies data and selection into a fresh native and semantic
+namespace. Value-oriented adapters that must pass state through an update
+reducer use `update_snapshot` to replace that same mount; the old snapshot must
+not remain mounted beside the replacement. Snapshots and forks share the
+immutable per-key semantic map in constant time. A successful `reconcile` is the
+only operation that atomically publishes a newly allocated complete map.
 
 Mouse clicks and touch taps focus the named list without stealing input or
-cursor semantics from interactive row content or its native scrollbar. The
+cursor semantics from interactive row content or its native scrollbar. Touch
+ownership follows `FingerPressed` and `FingerLifted` positions within mounted-row
+bounds and descendant capture, even when the mouse cursor is unavailable or
+elsewhere. The
 focused list supports Up, Down, Home, End, PageUp, and PageDown.
 `scroll_to_item` and `scroll_to_key` update retained state; a private revisioned
 operation synchronizes the native scrollable on the next layout, including
@@ -87,5 +96,8 @@ The `ducktape-ui` feature enables only the renderer-side
 `ui-lang-runtime/virtual-list` boundary and therefore compiles for
 `wasm32-unknown-unknown`. The full native Ice headless driver remains the
 runtime crate's default `test-runtime` feature. Release CI measures unchanged
-100,000-row frames separately from explicit 100,000-key reconciliation, with
-p50/p95 time and allocation budgets for each path.
+100,000-row frames, a showcase-equivalent `update_snapshot` plus `Scrolled`
+reducer step, and explicit 100,000-key reconciliation separately, with p50/p95
+time and allocation budgets for each path. The scalar-key reducer step has a
+strict zero-allocation, zero-byte contract, proving its cost does not scale with
+collection size.

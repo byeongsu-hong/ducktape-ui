@@ -323,10 +323,16 @@ position/size/selected state. Retained typed-key semantic identity stays stable
 across reorder and remains distinct under adversarial key-hash collisions and
 duplicate logical list names; mounted widget state follows the same keys across
 reorder and one-row mounted-window slides. Explicitly forked retained state
-receives a new native and semantic namespace. Release 100,000-item CI contracts
-separately measure unchanged build/diff/layout/draw frames and explicit full
-reconciliation with p50/p95 wall-time and instrumented allocation budgets, at
-most visible+overscan row callbacks, and an exact mounted child-slot budget.
+requires a distinct logical name and receives a new native and semantic
+namespace; a concurrent headless-driver test proves each list and row selector
+has exactly one match. Separate constructors with duplicate logical names retain
+native and accessibility namespace safety under the documented caller-unique
+selector contract. Release 100,000-item CI contracts separately measure
+unchanged build/diff/layout/draw frames, constant-time `update_snapshot` plus
+`Scrolled` reducer replacement, and explicit full reconciliation with p50/p95
+wall-time and instrumented allocation budgets. The reducer path requires zero
+allocations and bytes for scalar keys; rendering retains the visible+overscan row
+callback and exact mounted child-slot budgets.
 The extracted-crate downstream consumer compiles and executes the public
 runtime and `ducktape-ui` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
