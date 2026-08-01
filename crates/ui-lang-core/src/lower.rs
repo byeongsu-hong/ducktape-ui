@@ -1,14 +1,12 @@
 use crate::ast::*;
-use crate::check::{
-    CheckedComponentArgumentSource, CheckedExprUseId, CheckedFacts, CheckedValueRef,
-};
+use crate::check::{CheckedComponentArgumentSource, CheckedFacts, CheckedValueRef};
 pub(crate) use crate::check::{
-    CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, ExternFnId, OriginArena, OriginId, PaletteId,
+    ComponentStateId, DeclarationIndex, ExternFnId, ExternRef, OriginArena, OriginId, PaletteId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
@@ -274,6 +272,7 @@ struct CallSite {
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
+    daemon: bool,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     app_states: Vec<AppStateContract>,
@@ -288,6 +287,10 @@ pub(crate) struct LoweredProgram {
 impl LoweredProgram {
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    pub(crate) fn daemon(&self) -> bool {
+        self.daemon
     }
 
     #[allow(dead_code)]
@@ -513,8 +516,10 @@ impl Lowerer {
                 "style lowering completed without a normalized theme program",
             )
         })?;
+        let daemon = self.document.daemon;
         Ok(LoweredProgram {
             document: self.document,
+            daemon,
             facts: self.facts,
             declarations: self.declarations,
             app_states,

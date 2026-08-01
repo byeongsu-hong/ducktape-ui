@@ -25,6 +25,12 @@ arena_id!(ComponentCallId);
 arena_id!(HandlerId);
 arena_id!(SubscriptionId);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExternRef {
+    pub(crate) id: ExternFnId,
+    pub(crate) name: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
     pub(crate) component: ComponentId,
@@ -211,7 +217,7 @@ pub(crate) struct DeclarationIndex {
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
-    handlers: Vec<NamedDeclaration<HandlerId>>,
+    handlers: Vec<HandlerDeclaration>,
     handlers_by_name: HashMap<String, HandlerId>,
     subscriptions: Vec<Declaration<SubscriptionId>>,
     views: Vec<Declaration<ViewId>>,
@@ -222,9 +228,10 @@ pub(crate) struct DeclarationIndex {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct NamedDeclaration<T> {
-    pub(crate) declaration: Declaration<T>,
+pub(crate) struct HandlerDeclaration {
+    pub(crate) declaration: Declaration<HandlerId>,
     pub(crate) name: String,
+    pub(crate) payloads: Vec<Type>,
 }
 
 impl DeclarationIndex {
@@ -449,12 +456,17 @@ impl DeclarationIndex {
             .handlers
             .iter()
             .enumerate()
-            .map(|(index, handler)| NamedDeclaration {
+            .map(|(index, handler)| HandlerDeclaration {
                 declaration: Declaration {
                     id: HandlerId(index as u32),
                     origin: origins.push(&handler.span, None),
                 },
                 name: handler.name.clone(),
+                payloads: handler
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
             })
             .collect::<Vec<_>>();
         let handlers_by_name = handlers
@@ -574,6 +586,17 @@ impl DeclarationIndex {
         self.components[component.0 as usize].slots[index]
     }
 
+    pub(crate) fn try_component_slot(
+        &self,
+        id: ComponentSlotId,
+    ) -> Option<Declaration<ComponentSlotId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .slots
+            .get(id.index as usize)
+            .copied()
+    }
+
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
         self.views[id.0 as usize]
     }
@@ -594,6 +617,20 @@ impl DeclarationIndex {
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
         let id = self.structs_by_name.get(name)?;
         self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {
+        self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn try_struct_field_decl(
+        &self,
+        id: StructFieldId,
+    ) -> Option<&StructFieldDeclaration> {
+        self.structs
+            .get(id.owner.0 as usize)?
+            .fields
+            .get(id.index as usize)
     }
 
     pub(crate) fn rust_type(&self, ty: &Type, span: &Span) -> Result<String, crate::Error> {
@@ -745,7 +782,7 @@ impl DeclarationIndex {
         &self,
         id: HandlerId,
         span: &Span,
-    ) -> Result<&NamedDeclaration<HandlerId>, crate::Error> {
+    ) -> Result<&HandlerDeclaration, crate::Error> {
         self.handlers.get(id.0 as usize).ok_or_else(|| {
             crate::Error::new(
                 "E196",
@@ -757,6 +794,34 @@ impl DeclarationIndex {
 
     pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
         self.subscriptions[index]
+    }
+
+    pub(crate) fn finalize_checked_handlers(
+        &mut self,
+        document: &Document,
+    ) -> Result<(), crate::Error> {
+        if self.handlers.len() != document.handlers.len() {
+            return Err(crate::Error::new(
+                "E196",
+                &Span::line(1),
+                "checked handler declarations changed during semantic analysis",
+            ));
+        }
+        for (declaration, handler) in self.handlers.iter_mut().zip(&document.handlers) {
+            if declaration.name != handler.name {
+                return Err(crate::Error::new(
+                    "E196",
+                    &handler.span,
+                    "checked handler identity changed during semantic analysis",
+                ));
+            }
+            declaration.payloads = handler
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect();
+        }
+        Ok(())
     }
 }
 

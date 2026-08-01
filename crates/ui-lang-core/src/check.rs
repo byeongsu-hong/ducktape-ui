@@ -7,13 +7,14 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     let mut origins = crate::hir::OriginArena::default();
-    let declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
+    let mut declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
     let initializer_analyses = check(
         &mut document,
         &reachable,
         &reachable_handlers,
         &declarations,
     )?;
+    declarations.finalize_checked_handlers(&document)?;
     let facts = without_usage(|| {
         facts::build(&document, &declarations, &mut origins, initializer_analyses)
     })?;
