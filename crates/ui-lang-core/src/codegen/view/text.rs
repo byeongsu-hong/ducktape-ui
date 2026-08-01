@@ -1,0 +1,589 @@
+use super::*;
+
+type TextRenderDocument<'a> = RenderDocument<'a>;
+
+pub(in crate::codegen) fn render_text(
+    text: &ResolvedText,
+    id: &Option<Id>,
+    document: &TextRenderDocument<'_>,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let program = document.hir();
+    match &text.content {
+        ResolvedTextContent::Plain { value } => {
+            let value = checked_expr_use_code(program, *value, env, ValueMode::Borrowed)?;
+            let source_span = Span::line(text.source_line);
+            let accessibility_key =
+                accessibility_key_code(id.as_ref(), "text", &source_span, scope, env, document)?;
+            let code = resolved_plain_text_code(text, message, env, program)?;
+            let selection = text
+                .options
+                .tracking
+                .filter(|tracking| *tracking > 0.0)
+                .map_or(
+                    "let __text = ::ui_lang_runtime::selectable_text(__text);",
+                    |_| "",
+                );
+            Ok(format!(
+                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
+            ))
+        }
+        ResolvedTextContent::Rich {
+            color,
+            spans,
+            route,
+        } => render_resolved_rich_text(
+            text,
+            id,
+            color.as_ref(),
+            spans,
+            route.as_ref(),
+            document,
+            message,
+            env,
+            scope,
+        ),
+    }
+}
+
+fn resolved_plain_text_code(
+    text: &ResolvedText,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let options = &text.options;
+    let style = &text.utility_style;
+    let mut glyph = String::new();
+    let Some(tracking) = options.tracking.filter(|tracking| *tracking > 0.0) else {
+        glyph.push_str("::iced::widget::text(__text_value.clone())");
+        append_resolved_glyph_options(&mut glyph, options, style, env, program)?;
+        return Ok(glyph);
+    };
+    let mut run = options.clone();
+    run.width = None;
+    run.height = None;
+    run.align_x = None;
+    run.align_y = None;
+    glyph.push_str("::iced::widget::text(__grapheme.to_owned())");
+    append_resolved_glyph_options(&mut glyph, &run, style, env, program)?;
+    let mut code = format!(
+        "{{ let mut __tracked: ::std::vec::Vec<__IceElement<'_, {message}>> = ::std::vec::Vec::new(); for __grapheme in ::ui_lang_runtime::graphemes(&__text_value) {{ __tracked.push({glyph}.into()); }} let __spacing = ::ui_lang_runtime::bounded_spacing({}, __tracked.len()); let __run = ::iced::widget::row(__tracked).spacing(__spacing);",
+        rust_f64(tracking)
+    );
+    let bounded = options.width.is_some()
+        || options.height.is_some()
+        || options.align_x.is_some()
+        || options.align_y.is_some();
+    if !bounded {
+        code.push_str(" __run }");
+        return Ok(code);
+    }
+    let mut wrapper = String::from("::iced::widget::container(__run)");
+    append_resolved_text_dimensions(
+        &mut wrapper,
+        [&options.width, &options.height],
+        program,
+        env,
+    )?;
+    if let Some(alignment) = options.align_x {
+        let alignment = match alignment {
+            ResolvedTextAlignment::Default | ResolvedTextAlignment::Left => "Left",
+            ResolvedTextAlignment::Center => "Center",
+            ResolvedTextAlignment::Right => "Right",
+            ResolvedTextAlignment::Justified => {
+                return Err(program.invariant_at_origin(
+                    text.origin,
+                    "tracked text retained a justified alignment",
+                ));
+            }
+        };
+        write!(
+            wrapper,
+            ".align_x(::iced::alignment::Horizontal::{alignment})"
+        )
+        .unwrap();
+    }
+    if let Some(alignment) = options.align_y {
+        let alignment = resolved_text_vertical_alignment_code(alignment);
+        write!(
+            wrapper,
+            ".align_y(::iced::alignment::Vertical::{alignment})"
+        )
+        .unwrap();
+    }
+    write!(code, " {wrapper} }}").unwrap();
+    Ok(code)
+}
+
+fn append_resolved_glyph_options(
+    code: &mut String,
+    options: &ResolvedTextOptions,
+    style: &ResolvedStyle,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<(), Error> {
+    append_resolved_text_options(code, options, style, env, program)?;
+    if let Some(color) = &style.text_color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_resolved_rich_text(
+    text: &ResolvedText,
+    id: &Option<Id>,
+    color: Option<&ResolvedThemeColor>,
+    spans: &[ResolvedRichSpan],
+    route: Option<&ResolvedInteractionRoute>,
+    document: &TextRenderDocument<'_>,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let program = document.hir();
+    let spans = spans
+        .iter()
+        .map(|rich_span| render_resolved_rich_span(rich_span, program, env))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let mut code = String::from("::iced::widget::rich_text(__rich_spans)");
+    append_resolved_text_options(&mut code, &text.options, &text.utility_style, env, program)?;
+    if let Some(color) = color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    } else if let Some(color) = &text.utility_style.text_color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    }
+    if let Some(route) = route {
+        let callback = resolved_interaction_route_callback_code(
+            route,
+            "__link",
+            &["__link"],
+            env,
+            program,
+            message,
+        )?;
+        write!(code, ".on_link_click({callback})").unwrap();
+    }
+    let rendered = format!(
+        "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{spans}]; {code}.into() }}"
+    );
+    let Some(id) = id else {
+        return Ok(rendered);
+    };
+    let id = id_code(id, scope, env, document)?;
+    Ok(format!(
+        "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).into() }}"
+    ))
+}
+
+fn render_resolved_rich_span(
+    rich_span: &ResolvedRichSpan,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let value = checked_expr_use_code(program, rich_span.value, env, ValueMode::Owned)?;
+    let mut code = format!("::iced::widget::span({value})");
+    if let Some(size) = rich_span.size {
+        write!(
+            code,
+            ".size({})",
+            resolved_text_clamped_f32(size, "f32::EPSILON", "f32::MAX", program, env)?
+        )
+        .unwrap();
+    } else if let Some(size) = rich_span.utility_style.text_size {
+        write!(code, ".size({size})").unwrap();
+    }
+    if let Some(line_height) = &rich_span.line_height {
+        write!(
+            code,
+            ".line_height({})",
+            resolved_text_line_height_code(line_height, program, env)?
+        )
+        .unwrap();
+    } else if let Some(line_height) = rich_span.utility_style.text_line_height {
+        write!(
+            code,
+            ".line_height(::iced::widget::text::LineHeight::Relative({line_height}))"
+        )
+        .unwrap();
+    }
+    if let Some(font) =
+        resolved_styled_text_font_code(rich_span.font.as_ref(), &rich_span.utility_style)
+    {
+        write!(code, ".font({font})").unwrap();
+    }
+    if let Some(color) = &rich_span.color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    } else if let Some(color) = &rich_span.utility_style.text_color {
+        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    }
+    if let Some(link) = rich_span.link {
+        write!(
+            code,
+            ".link({})",
+            checked_expr_use_code(program, link, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(background) = &rich_span.background {
+        write!(
+            code,
+            ".background({})",
+            resolved_text_background_code(background, program, env)?
+        )
+        .unwrap();
+    }
+    let has_border = rich_span.border_color.is_some()
+        || rich_span.border_width.is_some()
+        || rich_span.radius.all.is_some()
+        || rich_span.radius.top_left.is_some()
+        || rich_span.radius.top_right.is_some()
+        || rich_span.radius.bottom_right.is_some()
+        || rich_span.radius.bottom_left.is_some();
+    if has_border {
+        let color = rich_span
+            .border_color
+            .as_ref()
+            .map(resolved_theme_color)
+            .unwrap_or_else(|| "::iced::Color::TRANSPARENT".into());
+        let width = rich_span.border_width.map_or_else(
+            || Ok("0.0".to_owned()),
+            |width| checked_expr_use_code(program, width, env, ValueMode::Owned),
+        )?;
+        let radius = resolved_text_radius_code(&rich_span.radius, program, env)?
+            .unwrap_or_else(|| "::iced::border::Radius::default()".into());
+        write!(
+            code,
+            ".border(::iced::Border {{ color: {color}, width: {width} as f32, radius: {radius} }})"
+        )
+        .unwrap();
+    }
+    if let Some(padding) = resolved_text_padding_code(&rich_span.padding, program, env)? {
+        write!(code, ".padding({padding})").unwrap();
+    }
+    if let Some(underline) = rich_span.underline {
+        write!(
+            code,
+            ".underline({})",
+            checked_expr_use_code(program, underline, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(strikethrough) = rich_span.strikethrough {
+        write!(
+            code,
+            ".strikethrough({})",
+            checked_expr_use_code(program, strikethrough, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    Ok(code)
+}
+
+fn append_resolved_text_options(
+    code: &mut String,
+    options: &ResolvedTextOptions,
+    style: &ResolvedStyle,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<(), Error> {
+    if let Some(size) = options.size {
+        write!(
+            code,
+            ".size({})",
+            resolved_text_clamped_f32(size, "f32::EPSILON", "f32::MAX", program, env)?
+        )
+        .unwrap();
+    } else if let Some(size) = style.text_size {
+        write!(code, ".size({size})").unwrap();
+    }
+    append_resolved_text_dimensions(code, [&options.width, &options.height], program, env)?;
+    if let Some(line_height) = &options.line_height {
+        write!(
+            code,
+            ".line_height({})",
+            resolved_text_line_height_code(line_height, program, env)?
+        )
+        .unwrap();
+    } else if let Some(line_height) = style.text_line_height {
+        write!(
+            code,
+            ".line_height(::iced::widget::text::LineHeight::Relative({line_height}))"
+        )
+        .unwrap();
+    }
+    if let Some(alignment) = options.align_x {
+        write!(
+            code,
+            ".align_x(::iced::widget::text::Alignment::{})",
+            resolved_text_alignment_code(alignment)
+        )
+        .unwrap();
+    }
+    if let Some(alignment) = options.align_y {
+        write!(
+            code,
+            ".align_y(::iced::alignment::Vertical::{})",
+            resolved_text_vertical_alignment_code(alignment)
+        )
+        .unwrap();
+    }
+    if let Some(shaping) = options.shaping {
+        write!(
+            code,
+            ".shaping(::iced::widget::text::Shaping::{})",
+            resolved_text_shaping_code(shaping)
+        )
+        .unwrap();
+    }
+    if let Some(wrapping) = options.wrapping {
+        write!(
+            code,
+            ".wrapping(::iced::widget::text::Wrapping::{})",
+            resolved_text_wrapping_code(wrapping)
+        )
+        .unwrap();
+    }
+    if let Some(font) = resolved_styled_text_font_code(options.font.as_ref(), style) {
+        write!(code, ".font({font})").unwrap();
+    }
+    if let Some(custom) = &options.custom_style {
+        let arguments = custom
+            .arguments
+            .iter()
+            .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+            .collect::<Result<Vec<_>, _>>()?;
+        let suffix = arguments
+            .into_iter()
+            .map(|argument| format!(", {argument}"))
+            .collect::<String>();
+        write!(
+            code,
+            ".style(move |__theme| {}(__theme{suffix}))",
+            program.extern_function(custom.function).rust_path
+        )
+        .unwrap();
+    }
+    Ok(())
+}
+
+fn resolved_styled_text_font_code(
+    font: Option<&ResolvedTextFont>,
+    style: &ResolvedStyle,
+) -> Option<String> {
+    let base = match font {
+        Some(ResolvedTextFont::Default) => Some("::iced::Font::DEFAULT".into()),
+        Some(ResolvedTextFont::Monospace) => Some("::iced::Font::MONOSPACE".into()),
+        Some(ResolvedTextFont::Named(font)) => Some(resolved_default_font_code(font)),
+        None if style.font_monospace => Some("::iced::Font::MONOSPACE".into()),
+        None if style.font_weight.is_some() => Some("Self::default_font()".into()),
+        None => None,
+    };
+    base.map(|font| match style.font_weight {
+        Some(weight) => format!(
+            "::iced::Font {{ weight: ::iced::font::Weight::{}, ..{font} }}",
+            weight.code()
+        ),
+        None => font,
+    })
+}
+
+fn append_resolved_text_dimensions(
+    code: &mut String,
+    dimensions: [&Option<ResolvedContainerLength>; 2],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<(), Error> {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        if let Some(length) = length {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_text_length_code(length, program, env)?
+            )
+            .unwrap();
+        }
+    }
+    Ok(())
+}
+
+fn resolved_text_length_code(
+    length: &ResolvedContainerLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedContainerLength::Fill => "::iced::Fill".into(),
+        ResolvedContainerLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
+        ResolvedContainerLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedContainerLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
+fn resolved_text_line_height_code(
+    line_height: &ResolvedTextLineHeight,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    match line_height {
+        ResolvedTextLineHeight::Relative(expression) => Ok(format!(
+            "::iced::widget::text::LineHeight::Relative({})",
+            resolved_text_clamped_f32(*expression, "f32::EPSILON", "f32::MAX", program, env)?
+        )),
+        ResolvedTextLineHeight::Absolute(expression) => Ok(format!(
+            "::iced::widget::text::LineHeight::Absolute({}.into())",
+            resolved_text_clamped_f32(*expression, "f32::EPSILON", "f32::MAX", program, env)?
+        )),
+    }
+}
+
+fn resolved_text_clamped_f32(
+    expression: ResolvedExpressionId,
+    minimum: &str,
+    maximum: &str,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
+}
+
+fn resolved_text_background_code(
+    background: &ResolvedContainerBackground,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match background {
+        ResolvedContainerBackground::Color(color) => {
+            format!("::iced::Background::Color({})", resolved_theme_color(color))
+        }
+        ResolvedContainerBackground::Linear { angle, stops } => {
+            let mut code = format!(
+                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
+                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+            );
+            for stop in stops {
+                write!(
+                    code,
+                    ".add_stop({} as f32, {})",
+                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_theme_color(&stop.color)
+                )
+                .unwrap();
+            }
+            code.push(')');
+            code
+        }
+    })
+}
+
+fn resolved_text_padding_code(
+    padding: &ResolvedContainerPadding,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if padding.all.is_none()
+        && padding.x.is_none()
+        && padding.y.is_none()
+        && padding.top.is_none()
+        && padding.right.is_none()
+        && padding.bottom.is_none()
+        && padding.left.is_none()
+    {
+        return Ok(None);
+    }
+    let value = |expression: Option<ResolvedExpressionId>| {
+        expression
+            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .transpose()
+    };
+    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
+    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
+    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
+    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
+    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
+    let bottom = value(padding.bottom)?.unwrap_or(y);
+    let left = value(padding.left)?.unwrap_or(x);
+    Ok(Some(format!(
+        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
+    )))
+}
+
+fn resolved_text_radius_code(
+    radius: &ResolvedContainerRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let base = radius
+        .all
+        .map(|value| resolved_text_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corner = |value: Option<ResolvedExpressionId>| {
+        value
+            .map(|value| resolved_text_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
+    let top_right = corner(radius.top_right)?.unwrap_or_else(|| base.clone());
+    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| base.clone());
+    let bottom_left = corner(radius.bottom_left)?.unwrap_or(base);
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
+    )))
+}
+
+fn resolved_text_alignment_code(alignment: ResolvedTextAlignment) -> &'static str {
+    match alignment {
+        ResolvedTextAlignment::Default => "Default",
+        ResolvedTextAlignment::Left => "Left",
+        ResolvedTextAlignment::Center => "Center",
+        ResolvedTextAlignment::Right => "Right",
+        ResolvedTextAlignment::Justified => "Justified",
+    }
+}
+
+fn resolved_text_vertical_alignment_code(alignment: ResolvedTextVerticalAlignment) -> &'static str {
+    match alignment {
+        ResolvedTextVerticalAlignment::Top => "Top",
+        ResolvedTextVerticalAlignment::Center => "Center",
+        ResolvedTextVerticalAlignment::Bottom => "Bottom",
+    }
+}
+
+fn resolved_text_shaping_code(shaping: ResolvedTextShaping) -> &'static str {
+    match shaping {
+        ResolvedTextShaping::Auto => "Auto",
+        ResolvedTextShaping::Basic => "Basic",
+        ResolvedTextShaping::Advanced => "Advanced",
+    }
+}
+
+fn resolved_text_wrapping_code(wrapping: ResolvedTextWrapping) -> &'static str {
+    match wrapping {
+        ResolvedTextWrapping::None => "None",
+        ResolvedTextWrapping::Word => "Word",
+        ResolvedTextWrapping::Glyph => "Glyph",
+        ResolvedTextWrapping::WordOrGlyph => "WordOrGlyph",
+    }
+}

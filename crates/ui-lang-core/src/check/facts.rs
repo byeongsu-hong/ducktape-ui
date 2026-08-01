@@ -879,6 +879,13 @@ pub(crate) struct CheckedLayout {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedText {
+    pub(crate) id: ViewId,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) span_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -889,6 +896,8 @@ pub(crate) struct CheckedTooltip {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedInteractionKind {
     Layout,
+    Text,
+    RichText,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -972,6 +981,7 @@ pub(crate) struct CheckedFacts {
     media: HashMap<ViewId, CheckedMedia>,
     containers: HashMap<ViewId, CheckedContainer>,
     layouts: HashMap<ViewId, CheckedLayout>,
+    texts: HashMap<ViewId, CheckedText>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1257,6 +1267,10 @@ impl CheckedFacts {
 
     pub(crate) fn layout(&self, id: ViewId) -> Option<&CheckedLayout> {
         self.layouts.get(&id).filter(|layout| layout.id == id)
+    }
+
+    pub(crate) fn text(&self, id: ViewId) -> Option<&CheckedText> {
+        self.texts.get(&id).filter(|text| text.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3171,6 +3185,65 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "layout facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_text_facts(
+        &mut self,
+        text: ViewId,
+        kind: CheckedInteractionKind,
+        semantic_key: String,
+        expressions: Vec<&Expr>,
+        routes: Vec<&Route>,
+        options: &TextOptions,
+        span_origins: &[Span],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            text,
+            kind,
+            semantic_key,
+            expressions
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            routes,
+            env,
+            span,
+        )?;
+        let style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::TextStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "text style extern disappeared"))
+            })
+            .transpose()?;
+        let parent = self.declarations.view(text).origin;
+        let span_origins = span_origins
+            .iter()
+            .map(|span| self.origins.push(span, Some(parent)))
+            .collect();
+        if self
+            .facts
+            .texts
+            .insert(
+                text,
+                CheckedText {
+                    id: text,
+                    style,
+                    span_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "text facts were produced more than once"));
         }
         Ok(())
     }
@@ -7573,6 +7646,50 @@ impl<'a> FactsBuilder<'a> {
                     }
                 }
             }
+            ViewNode::Text {
+                value,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_text_facts(
+                    view,
+                    CheckedInteractionKind::Text,
+                    crate::ast::text_semantic_key(options),
+                    crate::ast::text_expression_roots(value, options),
+                    Vec::new(),
+                    options,
+                    &[],
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::RichText {
+                options,
+                color,
+                spans,
+                route,
+                span,
+                ..
+            } => {
+                let span_origins = spans
+                    .iter()
+                    .map(|span| span.span.clone())
+                    .collect::<Vec<_>>();
+                self.lower_text_facts(
+                    view,
+                    CheckedInteractionKind::RichText,
+                    crate::ast::rich_text_semantic_key(options, color, spans, route),
+                    crate::ast::rich_text_expression_roots(options, spans),
+                    route.iter().collect(),
+                    options,
+                    &span_origins,
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
             ViewNode::Layout {
                 kind,
                 options,
@@ -8673,7 +8790,10 @@ use u3 Value(Derived(DerivedId(0))) root=e7 source=Str destination=Str coercion=
 use u4 Value(Derived(DerivedId(1))) root=e14 source=Bool destination=Bool coercion=None origin=o4
 use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 })) root=e15 source=Str destination=Str coercion=None origin=o6
 use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
-use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o23
+use u7 Interaction(InteractionExpressionId { widget: ViewId(6), index: 0 }) root=e17 source=Str destination=Str coercion=None origin=o23
+use u8 Interaction(InteractionExpressionId { widget: ViewId(1), index: 0 }) root=e18 source=Str destination=Str coercion=None origin=o24
+use u9 View { view: ViewId(2), role: IfCondition } root=e19 source=Bool destination=Bool coercion=None origin=o25
+use u10 Interaction(InteractionExpressionId { widget: ViewId(3), index: 0 }) root=e20 source=Str destination=Str coercion=None origin=o26
 expr e0 i64 1 : I64 origin=o0
 expr e1 call Extern(ExternRef { id: ExternFnId(0), name: "load_user" }) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
@@ -8691,10 +8811,13 @@ expr e13 binary Equality { op: NotEq, operand: Str } e11 e12 : Bool origin=o4
 expr e14 binary Boolean(And) e10 e13 : Bool origin=o4
 expr e15 str "Card" : Str origin=o6
 expr e16 bool false : Bool origin=o7
-expr e17 path Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) [] : Bool origin=o23
+expr e17 path Value(Derived(DerivedId(0))) [] : Str origin=o23
+expr e18 path Value(ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 })) [] : Str origin=o24
+expr e19 path Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) [] : Bool origin=o25
+expr e20 str "Open" : Str origin=o26
 view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
 view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
-view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(7) } origin=o17
+view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(9) } origin=o17
 view w3 text Component(ComponentId(0)) parent=Some(ViewId(2)) children=[] flow=None origin=o18
 view w4 layout App parent=None children=[ViewId(5), ViewId(6)] flow=None origin=o19
 view w5 component App parent=Some(ViewId(4)) children=[] flow=None origin=o20
@@ -8707,10 +8830,10 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 values: 7,
                 locals: 0,
                 views: 7,
-                expression_uses: 8,
-                expressions: 18,
-                type_analysis_queries: 18,
-                type_analysis_nodes: 18,
+                expression_uses: 11,
+                expressions: 21,
+                type_analysis_queries: 21,
+                type_analysis_nodes: 21,
                 type_analysis_cache_hits: 0,
                 initializer_analysis_passes: 7,
                 app_setting_analysis_passes: 0,
@@ -8720,7 +8843,7 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 subscription_analysis_passes: 0,
                 type_scope_env_overlays: 0,
                 type_scope_env_full_clones: 0,
-                declaration_lookups: 18,
+                declaration_lookups: 20,
                 builtin_intern_lookups: 1,
                 scope_env_builds: 3,
                 scope_env_entries: 12,
@@ -9732,7 +9855,7 @@ view
                 .contains("missing authoritative view expression analysis")
         );
 
-        let extra_source = format!("app Extra\n{THEME}view\n  text \"ok\"\n");
+        let extra_source = format!("app Extra\n{THEME}view\n  space\n");
         let extra_document = crate::parse(&extra_source).unwrap();
         let mut extra_origins = OriginArena::default();
         let extra_declarations = DeclarationIndex::build(&extra_document, &mut extra_origins);
@@ -9775,7 +9898,7 @@ view
     #[test]
     fn duplicate_and_mismatched_handler_analysis_owners_are_e196_invariants() {
         let source =
-            format!("app HandlerOwners\n{THEME}on update\n  let value = 1\nview\n  text \"ok\"\n");
+            format!("app HandlerOwners\n{THEME}on update\n  let value = 1\nview\n  space\n");
         let document = crate::parse(&source).unwrap();
         let mut origins = OriginArena::default();
         let declarations = DeclarationIndex::build(&document, &mut origins);
@@ -9831,7 +9954,7 @@ view
     #[test]
     fn missing_and_leftover_subscription_analyses_are_e196_invariants() {
         let missing_source = format!(
-            "app MissingSubscription\n{THEME}on tick(now)\nsubscribe\n  every 10ms when true -> tick _\nview\n  text \"ok\"\n"
+            "app MissingSubscription\n{THEME}on tick(now)\nsubscribe\n  every 10ms when true -> tick _\nview\n  space\n"
         );
         let missing_document = crate::parse(&missing_source).unwrap();
         let mut missing_origins = OriginArena::default();
@@ -9868,8 +9991,7 @@ view
                 .contains("missing authoritative subscription expression analysis")
         );
 
-        let extra_source =
-            format!("app ExtraSubscription\n{THEME}on tick(now)\nview\n  text \"ok\"\n");
+        let extra_source = format!("app ExtraSubscription\n{THEME}on tick(now)\nview\n  space\n");
         let extra_document = crate::parse(&extra_source).unwrap();
         let mut extra_origins = OriginArena::default();
         let extra_declarations = DeclarationIndex::build(&extra_document, &mut extra_origins);
@@ -10351,7 +10473,7 @@ view
 "#;
         let program = lower::lower(analyze(source).unwrap()).unwrap();
         let facts = program.checked_facts();
-        assert_eq!(facts.interactions.len(), 4);
+        assert_eq!(facts.interactions.len(), 7);
         let layout = facts.interaction(ViewId(0)).expect("checked root layout");
         assert_eq!(layout.kind, CheckedInteractionKind::Layout);
         assert_eq!(layout.expression_count, 0);
@@ -10430,6 +10552,12 @@ view
                 _ => panic!("first child must be a mouse area"),
             })
         );
+        for id in [ViewId(2), ViewId(4), ViewId(6)] {
+            assert_eq!(
+                facts.interaction(id).expect("checked child text").kind,
+                CheckedInteractionKind::Text
+            );
+        }
     }
 
     #[test]
@@ -11128,8 +11256,8 @@ view
             }
         ));
         assert_eq!(facts.metrics().locals, 1);
-        assert_eq!(facts.metrics().type_analysis_nodes, 6);
-        assert_eq!(facts.metrics().expressions, 6);
+        assert_eq!(facts.metrics().type_analysis_nodes, 7);
+        assert_eq!(facts.metrics().expressions, 7);
     }
 
     #[test]
@@ -11391,9 +11519,11 @@ view
         let elapsed = started.elapsed();
         let facts = program.checked_facts();
         assert_eq!(facts.metrics().values, VALUES);
-        assert_eq!(facts.metrics().expressions, VALUES);
-        assert_eq!(facts.metrics().type_analysis_queries, VALUES);
-        assert_eq!(facts.metrics().type_analysis_nodes, VALUES);
+        // The normalized Text view retains its literal as one checked expression in
+        // addition to the value initializers measured by this contract.
+        assert_eq!(facts.metrics().expressions, VALUES + 1);
+        assert_eq!(facts.metrics().type_analysis_queries, VALUES + 1);
+        assert_eq!(facts.metrics().type_analysis_nodes, VALUES + 1);
         assert_eq!(facts.metrics().type_analysis_cache_hits, 0);
         assert_eq!(facts.metrics().declaration_lookups, VALUES);
         facts.reset_lookup_count();
@@ -11438,10 +11568,12 @@ view
 
         let nodes = TERMS * 2 - 1;
         assert_eq!(metrics.values, 1);
-        assert_eq!(metrics.expression_uses, 1);
-        assert_eq!(metrics.expressions, nodes);
-        assert_eq!(metrics.type_analysis_queries, nodes);
-        assert_eq!(metrics.type_analysis_nodes, nodes);
+        // The state initializer and the normalized Text value are distinct uses;
+        // Text contributes one path node without changing the deep-expression slope.
+        assert_eq!(metrics.expression_uses, 2);
+        assert_eq!(metrics.expressions, nodes + 1);
+        assert_eq!(metrics.type_analysis_queries, nodes + 1);
+        assert_eq!(metrics.type_analysis_nodes, nodes + 1);
         assert_eq!(metrics.type_analysis_cache_hits, 0);
         assert!(
             elapsed.as_secs_f64() < 8.0,
@@ -11473,7 +11605,7 @@ view
         let (small, small_elapsed) = measure(500);
         let (large, large_elapsed) = measure(4_000);
         assert_eq!(large.values, 4_001);
-        assert_eq!(large.expression_uses, 4_001);
+        assert_eq!(large.expression_uses, 4_002);
         assert_eq!(large.initializer_analysis_passes, 4_001);
         assert_eq!(large.scope_env_builds, 2);
         assert_eq!(large.scope_env_entries, 8_002);
@@ -11482,10 +11614,12 @@ view
         assert_eq!(large.scope_env_full_clones, 0);
         assert_eq!(large.scope_env_overlays, 4_000);
         assert_eq!(large.type_scope_env_overlays, 8_000);
-        assert_eq!(large.expressions - 1, (small.expressions - 1) * 8);
+        // Remove the fixed state initializer and normalized Text expression before
+        // comparing the per-projection work.
+        assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
         assert_eq!(
-            large.type_analysis_nodes - 1,
-            (small.type_analysis_nodes - 1) * 8
+            large.type_analysis_nodes - 2,
+            (small.type_analysis_nodes - 2) * 8
         );
         assert_eq!(large.scope_env_overlays, small.scope_env_overlays * 8);
         eprintln!("500 projections in {small_elapsed:?}; 4k projections in {large_elapsed:?}");
@@ -11543,11 +11677,12 @@ view
         assert_eq!(small_generated, 500);
         assert_eq!(large_generated, 4_000);
         assert!(large_rust_bytes > small_rust_bytes * 6);
-        assert_eq!(large.expression_uses - 2, (small.expression_uses - 2) * 8);
-        assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
+        // enabled, tag, and the normalized Text literal are fixed expressions.
+        assert_eq!(large.expression_uses - 3, (small.expression_uses - 3) * 8);
+        assert_eq!(large.expressions - 3, (small.expressions - 3) * 8);
         assert_eq!(
-            large.type_analysis_nodes - 2,
-            (small.type_analysis_nodes - 2) * 8
+            large.type_analysis_nodes - 3,
+            (small.type_analysis_nodes - 3) * 8
         );
         assert_eq!(large.type_scope_env_full_clones, 0);
         assert_eq!(large.scope_env_full_clones, 0);

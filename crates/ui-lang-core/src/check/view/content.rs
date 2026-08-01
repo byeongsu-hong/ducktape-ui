@@ -16,6 +16,7 @@ pub(in crate::check) fn infer_content_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let text_analysis_guard = expr::HandlerAnalysisGuard::start();
             let ty = expr_type(value, env, document, span)?;
             if !matches!(ty, Type::Str | Type::I64 | Type::F64) {
                 return Err(type_error(span, &Type::Str, &ty).hint("text accepts str, i64, or f64"));
@@ -23,6 +24,7 @@ pub(in crate::check) fn infer_content_group(
             check_text_options(options, env, document, span)?;
             check_text_tracking(options, value, span)?;
             check_styles(styles, document, span, StyleTarget::Text(options))?;
+            retain_text_analyses(span, text_analysis_guard.finish())?;
         }
         ViewNode::RichText {
             id,
@@ -34,6 +36,7 @@ pub(in crate::check) fn infer_content_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let text_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_text_options(options, env, document, span)?;
             check_styles(
                 styles,
@@ -164,6 +167,7 @@ pub(in crate::check) fn infer_content_group(
                 }
                 (false, None) => {}
             }
+            retain_text_analyses(span, text_analysis_guard.finish())?;
         }
         ViewNode::Input {
             id,

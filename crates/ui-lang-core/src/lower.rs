@@ -8,9 +8,9 @@ use crate::check::{
     CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
     CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
     CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedProjectionKind,
-    CheckedTableLength, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole,
-    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
-    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -48,6 +48,7 @@ mod responsive;
 mod style;
 mod table;
 mod testing;
+mod text;
 mod tooltip;
 
 pub(crate) use canvas::*;
@@ -66,6 +67,7 @@ pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
 pub(crate) use table::*;
+pub(crate) use text::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
@@ -1468,6 +1470,7 @@ pub(crate) struct LoweredProgram {
     canvases: HashMap<ViewId, ResolvedCanvas>,
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
+    texts: HashMap<ViewId, ResolvedText>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3030,6 +3033,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn text(&self, id: ViewId) -> Option<&ResolvedText> {
+        self.texts.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3182,6 +3190,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "layout reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_text_for(&self, node: &ViewNode) -> Result<&ResolvedText, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "text reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "text reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.texts.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "text reached code generation without normalized HIR",
             )
         })
     }
@@ -3838,6 +3872,7 @@ pub(crate) struct Lowerer {
     canvases: HashMap<ViewId, ResolvedCanvas>,
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
+    texts: HashMap<ViewId, ResolvedText>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3980,7 +4015,16 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
             };
         let allowed = match checked.owner {
             CheckedLocalOwner::ExpressionBinding { expression, .. } => expression == self.use_id,
-            CheckedLocalOwner::View { view, .. } => {
+            CheckedLocalOwner::View { view, role } => {
+                if view == self.view
+                    && role == CheckedViewLocalRole::DaemonWindow
+                    && self.lowerer.document.daemon
+                    && self.lowerer.facts.daemon_window_local() == Some(local)
+                    && checked.name == "window"
+                    && checked.ty == Type::WindowId
+                {
+                    return Ok(checked.ty.clone());
+                }
                 let mut current = Some(self.view);
                 let mut found = false;
                 while let Some(id) = current {
@@ -4569,6 +4613,7 @@ impl Lowerer {
             canvases: HashMap::new(),
             containers: HashMap::new(),
             layouts: HashMap::new(),
+            texts: HashMap::new(),
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4658,6 +4703,7 @@ impl Lowerer {
             canvases: self.canvases,
             containers: self.containers,
             layouts: self.layouts,
+            texts: self.texts,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -8562,6 +8608,9 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
+            ViewNode::Text { span, .. } | ViewNode::RichText { span, .. } => {
+                self.lower_text(node, span, outer_component)?;
+            }
             ViewNode::Layout {
                 kind,
                 options,
@@ -11587,6 +11636,253 @@ view
     }
 
     #[test]
+    fn normalizes_complete_plain_and_rich_text_contracts() {
+        let source = format!(
+            r#"app TextHir
+extern crate::backend
+  text-style dynamic_text(active:bool)
+font ui family=sans weight=medium stretch=normal style=normal
+{THEME}state
+  active = true
+  label = "SECTION"
+on link(url)
+view
+  col
+    text label w=fill h=40.0 size=16.0 line-h-px=20.0 font=ui align-x=center align-y=bottom shape=advanced style=dynamic_text(active) @font-bold text-primary
+    rich-text #story w=fill h=48.0 size=16.0 line-h=1.2 font=ui align-x=justified align-y=center wrap=word color=fg style=dynamic_text(active) @font-bold -> link _
+      span "Ice " size=18.0 line-h-px=22.0 font=ui color=primary bg=linear(1.57, bg@0.0, primary@1.0) border=fg border-w=1.0 r=4.0 r-tl=2.0 r-tr=3.0 r-br=5.0 r-bl=6.0 p=2.0 pl=4.0 underline strike=false
+      span "language" link="https://example.com" bg=bg size=18.0 @font-bold text-primary
+    text "TRACKED" size=12.0 tracking=1.2
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let plain = program.text(ViewId(1)).unwrap();
+        assert!(matches!(plain.content, ResolvedTextContent::Plain { .. }));
+        assert!(matches!(
+            plain.options.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            plain.options.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            plain.options.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert_eq!(plain.options.align_x, Some(ResolvedTextAlignment::Center));
+        assert_eq!(
+            plain.options.align_y,
+            Some(ResolvedTextVerticalAlignment::Bottom)
+        );
+        assert_eq!(plain.options.shaping, Some(ResolvedTextShaping::Advanced));
+        assert_eq!(plain.options.wrapping, None);
+        assert_eq!(plain.options.tracking, None);
+        let plain_style = plain.options.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(plain_style.function).name,
+            "dynamic_text"
+        );
+        assert_eq!(plain_style.arguments.len(), 1);
+
+        let rich = program.text(ViewId(2)).unwrap();
+        assert_eq!(rich.options.align_x, Some(ResolvedTextAlignment::Justified));
+        let ResolvedTextContent::Rich {
+            color,
+            spans,
+            route,
+        } = &rich.content
+        else {
+            panic!("fixture rich-text must lower to structured content");
+        };
+        assert!(color.is_some());
+        assert!(route.is_some());
+        assert_eq!(spans.len(), 2);
+        assert!(matches!(
+            spans[0].background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(spans[0].border_color.is_some());
+        assert!(spans[0].radius.all.is_some());
+        assert!(spans[0].radius.bottom_left.is_some());
+        assert!(spans[0].padding.all.is_some());
+        assert!(spans[0].padding.left.is_some());
+        assert!(spans[0].underline.is_some());
+        assert!(spans[0].strikethrough.is_some());
+        assert!(matches!(spans[0].font, Some(ResolvedTextFont::Named(_))));
+        assert!(spans[1].link.is_some());
+        assert!(matches!(
+            spans[1].background,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+
+        for text in program.texts.values() {
+            let checked = program.checked_facts().interaction(text.id).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: text.id,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+        for span in spans {
+            assert_eq!(program.origin(span.origin).parent, Some(rich.origin));
+        }
+        assert_eq!(program.text(ViewId(3)).unwrap().options.tracking, Some(1.2));
+    }
+
+    #[test]
+    fn text_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedText\nextern crate::backend\n  text-style dynamic_text(active:bool)\n{THEME}state\n  active = true\n  label = \"Checked\"\nview\n  text label w=80.0 size=14.0 line-h=1.2 style=dynamic_text(active) align-x=center\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-text.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Text { value, options, .. } = &mut checked.document.view else {
+            panic!("fixture root must be text");
+        };
+        *value = Expr::Str("POISONED".into());
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.size = Some(Expr::F64(999.0));
+        options.line_height = Some(TextLineHeight::Relative(Expr::F64(999.0)));
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(false);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-text.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Text { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be text");
+        };
+        options.align_x = Some(TextAlignment::Right);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn text_codegen_ignores_raw_plain_and_rich_content_after_lowering() {
+        let source = format!(
+            "app LoweredText\n{THEME}on link(url)\nview\n  col\n    text \"Plain\" size=14.0 align-x=center\n    rich-text color=fg -> link _\n      span \"Docs\" link=\"https://example.com\" bg=primary underline\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-text.ice").unwrap();
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Text {
+            value,
+            options,
+            styles,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be text");
+        };
+        *value = Expr::Str("POISONED".into());
+        *options = TextOptions::default();
+        styles.clear();
+        let ViewNode::RichText {
+            options,
+            color,
+            spans,
+            styles,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be rich-text");
+        };
+        *options = TextOptions::default();
+        *color = Some("danger".into());
+        spans.clear();
+        styles.clear();
+        *route = None;
+
+        let actual = crate::codegen::generate(&program, "lowered-text.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn malformed_checked_text_expression_id_does_not_panic() {
+        let source = format!("app InvalidTextFacts\n{THEME}view\n  text \"Invalid\" size=14.0\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_rich_text_keeps_root_span_and_route_physical_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-text-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("text.ice");
+        fs::write(
+            &root,
+            format!("app ImportedTextApp\nuse \"text.ice\"\n{THEME}view\n  ImportedText\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedText()\n  on open(url)\n  rich-text color=fg -> open _\n    span \"Docs\" link=\"https://example.com\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let text = program.texts.values().next().unwrap();
+        let root_origin = program.origin(text.origin);
+        assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(root_origin.line, 3);
+        let ResolvedTextContent::Rich { spans, route, .. } = &text.content else {
+            panic!("imported content must be rich-text");
+        };
+        let span_origin = program.origin(spans[0].origin);
+        assert_eq!(span_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(span_origin.line, 4);
+        assert_eq!(span_origin.parent, Some(text.origin));
+        let route_origin = program.origin(route.as_ref().unwrap().origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.parent, Some(text.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
@@ -12970,6 +13266,33 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized layouts lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized text lowering and emission performance contract"]
+    fn performance_contract_four_thousand_text_nodes_lower_and_emit_under_two_seconds() {
+        const TEXTS: usize = 4_000;
+        let mut source = format!("app TextScale\n{THEME}view\n  col\n");
+        for index in 0..TEXTS {
+            writeln!(source, "    text \"Item {index}\" size=14.0 w=fill").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "text-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.texts.len(), TEXTS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text(__text_value.clone())")
+                .count(),
+            TEXTS
+        );
+        eprintln!("4k normalized text nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized text nodes lowered and emitted in {elapsed:?}"
         );
     }
 

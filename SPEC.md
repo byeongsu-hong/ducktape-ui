@@ -398,6 +398,21 @@ only for child subtrees and the still-shared widget ID surface; it does not
 reread layout/scroll options, route syntax, status selectors, surface colors,
 style extern names, or utility lookup state.
 
+Text and RichText are completed content HIR slices. A shared checked
+interaction contract assigns stable expression and route owners and freezes
+all option, custom-style, font, span, decoration, theme-color, and link-route
+topology. The text-specific checked record retains the exact text-style extern
+ID and parented physical origin for every rich span. Lowering resolves lengths,
+line heights, declared and built-in fonts, alignments, shaping, wrapping,
+tracking, theme tokens, utility styles, gradients, borders, padding,
+decorations, and optional link delivery into `ResolvedText` and
+`ResolvedRichSpan`. Generation consumes those records and checked expression
+IDs; it does not reread raw text values, options, spans, colors, styles, routes,
+or extern declarations. Structural snapshots, corrupt-fact handling,
+pre-/post-lowering AST mutation, imported root/span/route source maps, complete
+native text codegen, and a 4,000-node lower+emit budget provide the executable
+evidence.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

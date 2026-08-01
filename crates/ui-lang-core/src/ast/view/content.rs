@@ -354,6 +354,216 @@ pub struct RichSpanOptions {
     pub strikethrough: Option<Expr>,
 }
 
+fn push_text_length_root<'a>(roots: &mut Vec<&'a Expr>, length: &'a Option<LengthValue>) {
+    if let Some(LengthValue::Fixed(expression)) = length {
+        roots.push(expression);
+    }
+}
+
+fn push_text_line_height_root<'a>(
+    roots: &mut Vec<&'a Expr>,
+    line_height: &'a Option<TextLineHeight>,
+) {
+    if let Some(line_height) = line_height {
+        roots.push(match line_height {
+            TextLineHeight::Relative(expression) | TextLineHeight::Absolute(expression) => {
+                expression
+            }
+        });
+    }
+}
+
+fn push_text_background_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    background: &'a Option<BackgroundValue>,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+}
+
+fn push_text_option_roots<'a>(roots: &mut Vec<&'a Expr>, options: &'a TextOptions) {
+    push_text_length_root(roots, &options.width);
+    push_text_length_root(roots, &options.height);
+    roots.extend(options.size.as_ref());
+    push_text_line_height_root(roots, &options.line_height);
+    if let Some(style) = &options.custom_style {
+        roots.extend(&style.args);
+    }
+}
+
+pub(crate) fn text_expression_roots<'a>(
+    value: &'a Expr,
+    options: &'a TextOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![value];
+    push_text_option_roots(&mut roots, options);
+    roots
+}
+
+pub(crate) fn rich_text_expression_roots<'a>(
+    options: &'a TextOptions,
+    spans: &'a [RichSpan],
+) -> Vec<&'a Expr> {
+    let mut roots = Vec::new();
+    push_text_option_roots(&mut roots, options);
+    for span in spans {
+        roots.push(&span.value);
+        roots.extend(span.options.size.as_ref());
+        push_text_line_height_root(&mut roots, &span.options.line_height);
+        roots.extend(span.options.link.as_ref());
+        push_text_background_roots(&mut roots, &span.options.background);
+        roots.extend(
+            [
+                &span.options.border_width,
+                &span.options.radius,
+                &span.options.radius_top_left,
+                &span.options.radius_top_right,
+                &span.options.radius_bottom_right,
+                &span.options.radius_bottom_left,
+                &span.options.padding.all,
+                &span.options.padding.x,
+                &span.options.padding.y,
+                &span.options.padding.top,
+                &span.options.padding.right,
+                &span.options.padding.bottom,
+                &span.options.padding.left,
+                &span.options.underline,
+                &span.options.strikethrough,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+    roots
+}
+
+fn text_length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
+}
+
+fn text_font_semantic_key(font: &Option<FontPreset>) -> String {
+    match font {
+        None => "none".into(),
+        Some(FontPreset::Default) => "default".into(),
+        Some(FontPreset::Monospace) => "monospace".into(),
+        Some(FontPreset::Named(name)) => format!("named:{name}"),
+    }
+}
+
+fn text_line_height_semantic_key(line_height: &Option<TextLineHeight>) -> &'static str {
+    match line_height {
+        None => "none",
+        Some(TextLineHeight::Relative(_)) => "relative",
+        Some(TextLineHeight::Absolute(_)) => "absolute",
+    }
+}
+
+fn text_options_semantic_key(options: &TextOptions) -> String {
+    let custom = options.custom_style.as_ref().map_or_else(
+        || "none".into(),
+        |style| format!("{}:{}", style.function, style.args.len()),
+    );
+    format!(
+        "bounds={}:{}|size={}|line={}|font={}|align={:?}:{:?}|shape={:?}|wrap={:?}|tracking={:?}|custom={custom}",
+        text_length_semantic_key(&options.width),
+        text_length_semantic_key(&options.height),
+        options.size.is_some(),
+        text_line_height_semantic_key(&options.line_height),
+        text_font_semantic_key(&options.font),
+        options.align_x,
+        options.align_y,
+        options.shaping,
+        options.wrapping,
+        options.tracking.map(f64::to_bits),
+    )
+}
+
+pub(crate) fn text_semantic_key(options: &TextOptions) -> String {
+    format!("text|{}", text_options_semantic_key(options))
+}
+
+pub(crate) fn rich_text_semantic_key(
+    options: &TextOptions,
+    color: &Option<String>,
+    spans: &[RichSpan],
+    route: &Option<Route>,
+) -> String {
+    fn background(background: &Option<BackgroundValue>) -> String {
+        match background {
+            None => "none".into(),
+            Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+            Some(BackgroundValue::Linear { stops, .. }) => format!(
+                "linear:{}",
+                stops
+                    .iter()
+                    .map(|stop| stop.color.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        }
+    }
+
+    let spans = spans
+        .iter()
+        .map(|span| {
+            format!(
+                "size={}|line={}|font={}|color={:?}|link={}|bg={}|border={:?}|metrics={:?}",
+                span.options.size.is_some(),
+                text_line_height_semantic_key(&span.options.line_height),
+                text_font_semantic_key(&span.options.font),
+                span.options.color,
+                span.options.link.is_some(),
+                background(&span.options.background),
+                span.options.border,
+                [
+                    span.options.border_width.is_some(),
+                    span.options.radius.is_some(),
+                    span.options.radius_top_left.is_some(),
+                    span.options.radius_top_right.is_some(),
+                    span.options.radius_bottom_right.is_some(),
+                    span.options.radius_bottom_left.is_some(),
+                    span.options.padding.all.is_some(),
+                    span.options.padding.x.is_some(),
+                    span.options.padding.y.is_some(),
+                    span.options.padding.top.is_some(),
+                    span.options.padding.right.is_some(),
+                    span.options.padding.bottom.is_some(),
+                    span.options.padding.left.is_some(),
+                    span.options.underline.is_some(),
+                    span.options.strikethrough.is_some(),
+                ],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let route = route.as_ref().map_or_else(
+        || "none".into(),
+        |route| {
+            let args = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => 'e',
+                    RouteArg::Payload => 'p',
+                })
+                .collect::<String>();
+            format!("{}:{args}", route.handler)
+        },
+    );
+    format!(
+        "rich-text|{}|color={color:?}|spans={spans}|route={route}",
+        text_options_semantic_key(options)
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ButtonOptions {
     pub accessibility: AccessibilityOptions,

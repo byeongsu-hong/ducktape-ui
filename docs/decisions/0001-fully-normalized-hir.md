@@ -432,6 +432,18 @@ assertions, malformed facts, pre-/post-lowering AST poisoning, imported origins,
 complete native codegen, and an ignored 4,000-layout lower+emit budget provide
 the executable evidence.
 
+Text and RichText are completed content slices. Shared checked interaction
+records own deterministic expression and route partitions while a dedicated
+text record retains exact custom-style identity and parented span origins.
+Lowering resolves plain and rich values, dimensions, typography, fonts, theme
+colors, utility styles, gradients, borders, padding, decorations, custom-style
+arguments, and optional link delivery into `ResolvedText` and
+`ResolvedRichSpan`. Production emission consumes only those records and checked
+expression IDs; source text options, spans, colors, routes, and extern names are
+not reread. Structural assertions, malformed facts, pre-/post-lowering AST
+poisoning, imported root/span/route origins, complete native generation, and an
+ignored 4,000-text lower+emit budget provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

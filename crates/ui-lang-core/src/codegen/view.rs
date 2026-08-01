@@ -203,6 +203,7 @@ mod media;
 mod pane;
 mod structure;
 mod table;
+mod text;
 
 pub(super) use container::*;
 pub(super) use content::*;
@@ -214,3 +215,4 @@ pub(super) use media::*;
 pub(super) use pane::*;
 pub(super) use structure::*;
 pub(super) use table::*;
+pub(super) use text::*;

@@ -49,36 +49,13 @@ pub(in crate::codegen) fn render_foundation(
             scope,
             slot,
         ),
-        ViewNode::Text {
-            value,
+        ViewNode::Text { id, .. } | ViewNode::RichText { id, .. } => render_text(
+            document.hir().resolved_text_for(node)?,
             id,
-            options,
-            span,
-            ..
-        } => {
-            let style = &document.program().style_use(span)?.style;
-            let value = expr_code(value, env, document, ValueMode::Borrowed)?;
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "text", span, scope, env, document)?;
-            let code = text_code(options, style, message, env, document)?;
-            let selection = options.tracking.filter(|tracking| *tracking > 0.0).map_or(
-                "let __text = ::ui_lang_runtime::selectable_text(__text);",
-                |_| "",
-            );
-            Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
-            ))
-        }
-        ViewNode::RichText {
-            id,
-            options,
-            color,
-            spans,
-            route,
-            span,
-            ..
-        } => render_rich_text(
-            id, options, color, spans, route, span, document, message, env, scope,
+            document,
+            message,
+            env,
+            scope,
         ),
         ViewNode::Input {
             label,
@@ -246,94 +223,4 @@ pub(in crate::codegen) fn render_foundation(
         _ => return Ok(None),
     }?;
     Ok(Some(rendered))
-}
-
-/// Builds the widget behind `text`, reading `__text_value` from the scope the
-/// caller opened.
-///
-/// Without `tracking=` that is a single iced text widget. With it, iced has no
-/// letter spacing to set — `iced::advanced::text` carries no such field — so
-/// the run is lowered to one text widget per grapheme inside a row whose
-/// spacing is the tracking, and the properties that describe the run as a
-/// whole (bounds and alignment) move to a container around that row.
-fn text_code(
-    options: &TextOptions,
-    style: &ResolvedStyle,
-    message: &str,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let mut glyph = String::new();
-    let Some(tracking) = options.tracking.filter(|tracking| *tracking > 0.0) else {
-        glyph.push_str("::iced::widget::text(__text_value.clone())");
-        append_glyph_options(&mut glyph, options, style, env, document)?;
-        return Ok(glyph);
-    };
-    let mut run = options.clone();
-    run.width = None;
-    run.height = None;
-    run.align_x = None;
-    run.align_y = None;
-    glyph.push_str("::iced::widget::text(__grapheme.to_owned())");
-    append_glyph_options(&mut glyph, &run, style, env, document)?;
-    let mut code = format!(
-        "{{ let mut __tracked: ::std::vec::Vec<__IceElement<'_, {message}>> = ::std::vec::Vec::new(); for __grapheme in ::ui_lang_runtime::graphemes(&__text_value) {{ __tracked.push({glyph}.into()); }} let __spacing = ::ui_lang_runtime::bounded_spacing({}, __tracked.len()); let __run = ::iced::widget::row(__tracked).spacing(__spacing);",
-        rust_f64(tracking)
-    );
-    let bounded = options.width.is_some()
-        || options.height.is_some()
-        || options.align_x.is_some()
-        || options.align_y.is_some();
-    if !bounded {
-        code.push_str(" __run }");
-        return Ok(code);
-    }
-    let mut wrapper = String::from("::iced::widget::container(__run)");
-    append_dimensions(
-        &mut wrapper,
-        [&options.width, &options.height],
-        env,
-        document,
-    )?;
-    if let Some(alignment) = options.align_x {
-        let alignment = match alignment {
-            TextAlignment::Default | TextAlignment::Left => "Left",
-            TextAlignment::Center => "Center",
-            TextAlignment::Right => "Right",
-            TextAlignment::Justified => unreachable!("checker rejects justified tracking"),
-        };
-        write!(
-            wrapper,
-            ".align_x(::iced::alignment::Horizontal::{alignment})"
-        )
-        .unwrap();
-    }
-    if let Some(alignment) = options.align_y {
-        let alignment = match alignment {
-            VerticalAlignment::Top => "Top",
-            VerticalAlignment::Center => "Center",
-            VerticalAlignment::Bottom => "Bottom",
-        };
-        write!(
-            wrapper,
-            ".align_y(::iced::alignment::Vertical::{alignment})"
-        )
-        .unwrap();
-    }
-    write!(code, " {wrapper} }}").unwrap();
-    Ok(code)
-}
-
-fn append_glyph_options(
-    code: &mut String,
-    options: &TextOptions,
-    style: &ResolvedStyle,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(), Error> {
-    append_text_options(code, options, style, env, document)?;
-    if let Some(color) = &style.text_color {
-        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
-    }
-    Ok(())
 }

@@ -895,11 +895,13 @@ view
     let (large, large_elapsed, large_output) = measure(4_000);
     assert_eq!(small.view_analysis_passes, 500);
     assert_eq!(large.view_analysis_passes, 4_000);
-    assert_eq!(large.expression_uses - 1, (small.expression_uses - 1) * 8);
-    assert_eq!(large.expressions - 1, (small.expressions - 1) * 8);
+    // The state initializer and component-body Text value are fixed checked
+    // expressions; remove both before comparing per-call work.
+    assert_eq!(large.expression_uses - 2, (small.expression_uses - 2) * 8);
+    assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
     assert_eq!(
-        large.type_analysis_nodes - 1,
-        (small.type_analysis_nodes - 1) * 8
+        large.type_analysis_nodes - 2,
+        (small.type_analysis_nodes - 2) * 8
     );
     assert_eq!(large.type_scope_env_full_clones, 0);
     assert_eq!(large.scope_env_full_clones, 0);

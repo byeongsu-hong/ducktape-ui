@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -701,6 +701,20 @@ subtrees and the shared widget ID. Structural assertions, malformed expression
 IDs, pre- and post-lowering AST poisoning, imported layout/status origins,
 complete native layout and scroll-style codegen, the lexical HIR-boundary
 ratchet, and an ignored 4,000-layout lower+emit contract cover the boundary.
+
+Text and RichText have a complete private HIR boundary. Their shared checked
+interaction records own deterministic expression partitions and freeze length,
+line-height, font, alignment, shaping, wrapping, tracking, custom-style, span,
+theme-color, decoration, and optional link-route topology. A dedicated checked
+text record retains the exact text-style extern ID and parented span origins.
+Lowering resolves fonts, theme tokens, utility styles, gradients, borders,
+padding, expression operands, and route payloads into `ResolvedText` and
+`ResolvedRichSpan`. Production emission consumes those records; the raw view
+node supplies only the shared widget ID. Structural assertions, malformed
+expression facts, pre-lowering expression/static mutation, post-lowering plain
+and rich content poisoning, imported root/span/route origins, complete native
+text generation, the lexical HIR-boundary ratchet, and an ignored 4,000-text
+lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
