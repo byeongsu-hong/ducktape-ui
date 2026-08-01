@@ -16,7 +16,7 @@ src/codegen/expr/routes.rs 41 c3835265cc8529f7a51357ffc087034d
 src/codegen/probes.rs 48 3ff885f366cbf253fc750a105c326cca
 src/codegen/runtime.rs 45 938ebce068288bba5884c1fa56836b70
 src/codegen/settings.rs 18 364ccd688210ebb37f8551e6d34e1f17
-src/codegen/statement.rs 45 5871c0357ece4c9e3a92119671fceea2
+src/codegen/statement.rs 45 9a80f1aa05bfb98357c9d49f33a6f313
 src/codegen/statement/task.rs 18 cfb735f520bd5f9923c7041fdf983c6f
 src/codegen/statement/view_fn.rs 1 b7862801e9c6f058805484faba998e0c
 src/codegen/style/boolean.rs 28 137f4bff0c5b23241a0c734d35b6631a
