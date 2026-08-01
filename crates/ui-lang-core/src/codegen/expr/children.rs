@@ -53,44 +53,27 @@ pub(in crate::codegen) fn render_children(
                 out.push_str(" }");
             }
             ViewNode::Match { arms, span, .. } => {
-                let CheckedViewFlow::Match {
-                    value,
-                    arms: checked_arms,
-                } = &document.program().checked_view(span)?.flow
-                else {
-                    return Err(Error::new("E196", span, "match view has no checked flow"));
-                };
-                if arms.len() != checked_arms.len() {
-                    return Err(Error::new("E196", span, "match arm arena length diverged"));
+                let program = document.hir();
+                let resolved = program.resolved_match_for(child)?;
+                if arms.len() != resolved.arms.len() {
+                    return Err(Error::new("E196", span, "match HIR arm length diverged"));
                 }
-                let value_ty = document
-                    .program()
-                    .checked_facts()
-                    .expression_use(*value)
-                    .source
-                    .clone();
                 let value =
-                    checked_expr_use_code(document.program(), *value, env, ValueMode::Borrowed)?;
+                    checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
-                for (arm, checked_arm) in arms.iter().zip(checked_arms) {
+                for (arm, resolved_arm) in arms.iter().zip(&resolved.arms) {
                     write!(
                         out,
                         " {} => {{",
-                        checked_match_pattern_code(
-                            document.program(),
-                            &checked_arm.pattern,
-                            checked_arm.binding,
-                            &value_ty,
-                            &arm.span,
-                        )?
+                        resolved_match_pattern_code(resolved_arm, &arm.span)?
                     )
                     .unwrap();
                     let mut child_env = ScopedBindingEnv::new(env);
-                    if let Some(local) = checked_arm.binding {
-                        let name = document.program().checked_facts().local(local).name.clone();
+                    if let Some(binding) = &resolved_arm.binding {
+                        let name = binding.name.clone();
                         child_env.insert(
                             name.clone(),
-                            checked_local_binding(document.program(), local, name, false),
+                            checked_local_binding(program, binding.local, name, false),
                         );
                     }
                     render_children(

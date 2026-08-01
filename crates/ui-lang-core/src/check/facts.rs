@@ -866,6 +866,14 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_match_binding_local(&mut self, view: ViewId, arm: usize, raw: u32) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms[arm].binding = Some(CheckedLocalId(raw));
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_expression_use_root(&mut self, owner: CheckedExprOwner, raw: u32) {
         let id = self.expression_uses_by_owner[&owner];
         self.expression_uses[id.0 as usize].root = CheckedExprId(raw);
@@ -8748,7 +8756,7 @@ view
     }
 
     #[test]
-    fn malformed_match_hir_reports_the_raw_arm_source() {
+    fn malformed_match_hir_is_rejected_at_the_arm_origin_during_lowering() {
         let source = format!(
             "app MutatedMatch\n{THEME}state\n  choice:i64? = some(1)\nview\n  col\n    match choice\n      some(value)\n        text value\n      none\n        text \"none\"\n"
         );
@@ -8768,15 +8776,14 @@ view
         };
         arms[0].binding = None;
 
-        let program = lower::lower(checked).unwrap();
-        let error = crate::codegen::generate(&program, "mutated-match.ice").unwrap_err();
+        let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, expected_line);
-        assert!(error.message.contains("some pattern has no payload local"));
+        assert!(error.message.contains("payload presence diverged"));
     }
 
     #[test]
-    fn invalid_match_enum_id_is_a_fallible_source_mapped_invariant() {
+    fn invalid_match_enum_id_is_rejected_at_the_arm_origin_during_lowering() {
         let source = format!(
             "app MutatedEnum\n{THEME}enum Status\n  ready\nstate\n  status:Status = Status.ready\nview\n  col\n    match status\n      Status.ready\n        text \"ready\"\n"
         );
@@ -8799,11 +8806,10 @@ view
             index: 0,
         });
 
-        let program = lower::lower(checked).unwrap();
-        let error = crate::codegen::generate(&program, "mutated-enum.ice").unwrap_err();
+        let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, expected_line);
-        assert!(error.message.contains("invalid enum ID"));
+        assert!(error.message.contains("enum ID is outside its arena"));
     }
 
     #[test]

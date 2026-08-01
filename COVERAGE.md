@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +493,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -626,6 +626,17 @@ source nodes supply only child subtrees. Malformed expression/local IDs,
 post-check list and binding mutation, post-lowering flow poisoning, existing
 reconciliation codegen, and an ignored 4,000-node lower+emit contract cover the
 boundary.
+
+Match has a complete private HIR boundary. Its checked flow owns the stable
+value expression, exhaustive patterns, typed payload locals, and arm origins.
+Lowering revalidates the expression owner mapping and DAG, scope and value type,
+Option/Result/enum/palette pattern contracts, payload local types and owner
+roles, enum/palette declarations, and arm-origin parentage before publishing
+`ResolvedMatch`. Normal-layout and flex-layout emission consume resolved Rust
+owner/variant names and never reopen checker facts or declaration IDs. Malformed
+expression/local/enum IDs fail at the source-mapped arm during lowering;
+post-check and post-lowering AST poisoning, all typed pattern families, and an
+ignored 4,000-node lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

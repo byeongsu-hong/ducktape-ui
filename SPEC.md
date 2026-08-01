@@ -337,6 +337,12 @@ ownership, and the expression DAG. Normal and flex layout generation consume
 that record and do not reread the list expression, binding spelling, source-line
 identity, checked flow, or checked local facts.
 
+Match is a completed control-flow HIR slice. Its value expression, value type,
+exhaustive Option/Result/enum/palette/wildcard patterns, typed payload locals,
+resolved Rust owner and variant names, and arm origins are published as
+`ResolvedMatch`. Normal and flex layout generation consume that record and do
+not reread source patterns, checked flow/facts, or enum and palette declarations.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

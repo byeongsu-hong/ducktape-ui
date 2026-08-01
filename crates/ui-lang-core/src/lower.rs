@@ -3,10 +3,11 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMedia,
-    CheckedPathRoot, CheckedProjectionKind, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
-    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner,
+    CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjectionKind, CheckedTooltip,
+    CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
+    CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
+    lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -33,6 +34,7 @@ mod interaction;
 mod iteration;
 mod keyed_column;
 mod lazy;
+mod match_view;
 mod media;
 mod pin;
 mod responsive;
@@ -47,6 +49,7 @@ pub(crate) use interaction::*;
 pub(crate) use iteration::*;
 pub(crate) use keyed_column::*;
 pub(crate) use lazy::*;
+pub(crate) use match_view::*;
 pub(crate) use media::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
@@ -1458,6 +1461,7 @@ pub(crate) struct LoweredProgram {
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     conditionals: HashMap<ViewId, ResolvedConditional>,
     iterations: HashMap<ViewId, ResolvedIteration>,
+    match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
@@ -3038,6 +3042,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn match_view(&self, id: ViewId) -> Option<&ResolvedMatch> {
+        self.match_views.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
         self.lazy_views.get(&id)
     }
@@ -3361,6 +3370,32 @@ impl LoweredProgram {
         })
     }
 
+    pub(crate) fn resolved_match_for(&self, node: &ViewNode) -> Result<&ResolvedMatch, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "match view reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "match view reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.match_views.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "match view reached code generation without normalized HIR",
+            )
+        })
+    }
+
     fn resolved_interaction_for(
         &self,
         node: &ViewNode,
@@ -3624,6 +3659,7 @@ pub(crate) struct Lowerer {
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     conditionals: HashMap<ViewId, ResolvedConditional>,
     iterations: HashMap<ViewId, ResolvedIteration>,
+    match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
@@ -4344,6 +4380,7 @@ impl Lowerer {
             keyed_columns: HashMap::new(),
             conditionals: HashMap::new(),
             iterations: HashMap::new(),
+            match_views: HashMap::new(),
             lazy_views: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
@@ -4427,6 +4464,7 @@ impl Lowerer {
             keyed_columns: self.keyed_columns,
             conditionals: self.conditionals,
             iterations: self.iterations,
+            match_views: self.match_views,
             lazy_views: self.lazy_views,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
@@ -8324,7 +8362,8 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Match { arms, .. } => {
+            ViewNode::Match { value, arms, span } => {
+                self.lower_match_view(value, arms, span, outer_component)?;
                 for child in arms.iter().flat_map(|arm| &arm.children) {
                     self.lower_view(child, outer_component)?;
                 }
@@ -11447,6 +11486,100 @@ view
     }
 
     #[test]
+    fn normalizes_match_value_patterns_bindings_and_origins() {
+        let source = format!(
+            "app MatchHir\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let resolved = program.match_view(ViewId(0)).unwrap();
+        assert_eq!(resolved.id, ViewId(0));
+        assert_eq!(resolved.value_ty, Type::Option(Box::new(Type::Str)));
+        assert_eq!(resolved.arms.len(), 2);
+        assert!(matches!(
+            resolved.arms[0].pattern,
+            ResolvedMatchPattern::Some
+        ));
+        let binding = resolved.arms[0].binding.as_ref().unwrap();
+        assert_eq!(binding.name, "label");
+        assert_eq!(binding.ty, Type::Str);
+        assert_eq!(
+            program.checked_facts().local(binding.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::MatchPayload(0),
+            }
+        );
+        assert!(matches!(
+            resolved.arms[1].pattern,
+            ResolvedMatchPattern::None
+        ));
+        assert!(resolved.arms[1].binding.is_none());
+        assert_ne!(resolved.arms[0].origin, resolved.arms[1].origin);
+    }
+
+    #[test]
+    fn malformed_checked_match_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidMatchFacts\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::MatchValue,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_match_binding_local(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn match_lowering_and_codegen_ignore_raw_value_pattern_and_binding() {
+        let source = format!(
+            "app CheckedMatch\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-match.ice",
+        )
+        .unwrap();
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { value, arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        *value = Expr::Bool(false);
+        arms[0].pattern = MatchPattern::Wildcard;
+        let mut program = lower(changed).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { value, arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        *value = Expr::Bool(false);
+        arms[0].pattern = MatchPattern::Wildcard;
+        let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -11814,6 +11947,36 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized for views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized match-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_match_views_lower_and_emit_under_two_seconds() {
+        const MATCH_VIEWS: usize = 4_000;
+        let mut source =
+            format!("app MatchScale\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n");
+        for index in 0..MATCH_VIEWS {
+            writeln!(
+                source,
+                "    match choice\n      some(label_{index})\n        text label_{index}\n      none\n        text \"none\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "match-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.match_views.len(), MATCH_VIEWS);
+        assert_eq!(
+            generated.matches("match &(self.choice)").count(),
+            MATCH_VIEWS
+        );
+        eprintln!("4k normalized match views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized match views lowered and emitted in {elapsed:?}"
         );
     }
 

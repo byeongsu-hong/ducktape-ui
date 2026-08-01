@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::check::{
-    CheckedLocalId, CheckedMatchPattern, CheckedValueRef, CheckedViewFlow,
-    controlled_editor_bindings, controlled_state_bindings, expr_type,
+    CheckedLocalId, CheckedValueRef, CheckedViewFlow, controlled_editor_bindings,
+    controlled_state_bindings, expr_type,
 };
 use crate::hir::{HandlerId, RunSiteId};
 use crate::lower::*;
@@ -182,91 +182,42 @@ fn checked_local_binding(
     }
 }
 
-fn checked_match_pattern_code(
-    program: &LoweredProgram,
-    pattern: &CheckedMatchPattern,
-    binding: Option<CheckedLocalId>,
-    value_ty: &Type,
-    span: &Span,
-) -> Result<String, Error> {
-    let binding_name = binding.map(|binding| {
-        program
-            .checked_facts()
-            .local(binding)
-            .name
-            .as_str()
-            .to_owned()
-    });
-    Ok(match pattern {
-        CheckedMatchPattern::Some => format!(
+fn resolved_match_pattern_code(arm: &ResolvedMatchArm, span: &Span) -> Result<String, Error> {
+    let binding_name = arm.binding.as_ref().map(|binding| binding.name.as_str());
+    Ok(match &arm.pattern {
+        ResolvedMatchPattern::Some => format!(
             "::std::option::Option::Some({})",
             binding_name.ok_or_else(|| Error::new(
                 "E196",
                 span,
-                "checked some pattern has no payload local",
+                "normalized some pattern has no payload local",
             ))?
         ),
-        CheckedMatchPattern::None => "::std::option::Option::None".into(),
-        CheckedMatchPattern::Ok => format!(
+        ResolvedMatchPattern::None => "::std::option::Option::None".into(),
+        ResolvedMatchPattern::Ok => format!(
             "::std::result::Result::Ok({})",
             binding_name.ok_or_else(|| Error::new(
                 "E196",
                 span,
-                "checked ok pattern has no payload local",
+                "normalized ok pattern has no payload local",
             ))?
         ),
-        CheckedMatchPattern::Err => format!(
+        ResolvedMatchPattern::Err => format!(
             "::std::result::Result::Err({})",
             binding_name.ok_or_else(|| Error::new(
                 "E196",
                 span,
-                "checked err pattern has no payload local",
+                "normalized err pattern has no payload local",
             ))?
         ),
-        CheckedMatchPattern::Enum(id) => {
-            let owner = program
-                .declarations()
-                .try_enum_decl(id.owner)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        span,
-                        "checked match pattern references an invalid enum ID",
-                    )
-                })?;
-            let variant = program
-                .declarations()
-                .try_enum_variant_decl(*id)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        span,
-                        "checked match pattern references an invalid enum variant ID",
-                    )
-                })?;
-            binding_name.map_or_else(
-                || format!("{}::{}", owner.rust_name, pascal(&variant.name)),
-                |binding| format!("{}::{}({binding})", owner.rust_name, pascal(&variant.name)),
-            )
-        }
-        CheckedMatchPattern::Palette(id) => {
-            let Type::Palette(contract) = value_ty else {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked palette pattern has a non-palette value type",
-                ));
-            };
-            let palette = program.declarations().palette_name(*id).ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "checked palette pattern references an invalid palette ID",
-                )
-            })?;
+        ResolvedMatchPattern::Enum { owner, variant } => binding_name.map_or_else(
+            || format!("{}::{}", owner, pascal(variant)),
+            |binding| format!("{}::{}({binding})", owner, pascal(variant)),
+        ),
+        ResolvedMatchPattern::Palette { contract, palette } => {
             format!("{}::{}", generated_named_rust(contract), pascal(palette))
         }
-        CheckedMatchPattern::Wildcard => "_".into(),
+        ResolvedMatchPattern::Wildcard => "_".into(),
     })
 }
 

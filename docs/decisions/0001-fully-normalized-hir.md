@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, For, and Match therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -372,6 +372,17 @@ ID, and local owner role before publishing `ResolvedIteration`. Normal-layout
 and flex-layout emission consume that record; source nodes provide only child
 subtrees. Malformed IDs, post-check list/binding mutation, post-lowering flow
 poisoning, existing reconciliation codegen, and an ignored 4,000-node lower+emit
+budget provide the executable evidence.
+
+Match is a completed control-flow slice. Its checked flow owns the stable value
+expression, exhaustive patterns, typed payload locals, and arm origins.
+Lowering revalidates expression ownership and DAG, scope and value type,
+Option/Result/enum/palette contracts, payload local types and owner roles,
+declaration IDs, and origin parentage before publishing `ResolvedMatch` with
+resolved Rust owner and variant names. Normal-layout and flex-layout emission
+consume that record without checker-fact or declaration-index lookups. Malformed
+IDs fail at the source-mapped arm during lowering; post-check and post-lowering
+AST poisoning, typed-pattern coverage, and an ignored 4,000-node lower+emit
 budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
