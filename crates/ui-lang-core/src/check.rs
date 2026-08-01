@@ -762,7 +762,7 @@ use usage::*;
 use view::*;
 use widgets::*;
 
-pub(crate) use expr::expr_type;
+pub(crate) use expr::{ExprTypeEnv, expr_type};
 use expr::{check_length_value, contains_ui_enum};
 pub(crate) use facts::{
     CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,

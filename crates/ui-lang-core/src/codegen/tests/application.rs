@@ -1,4 +1,5 @@
 use super::*;
+use crate::codegen::{BindingEnvMetrics, binding_env_metrics, reset_binding_env_metrics};
 
 #[test]
 fn keeps_the_aot_view_and_wraps_only_its_rendered_root_for_dev_readiness() {
@@ -720,6 +721,130 @@ fn lowers_native_animation_without_a_custom_runtime() {
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
+}
+
+#[test]
+fn projection_binding_overlays_match_checked_and_ast_emission() {
+    let source = r#"app ProjectionOverlay
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  sample:f64 = 41.0
+  progress:animation[f64] = 0.0
+  secondary:animation[f64] = 0.0
+  captured:f64? = none
+derived
+  projected = animation.project(progress, sample, sample + 1.0)
+  nested = animation.project(progress, sample, animation.project(secondary, sample, sample) + sample)
+  optional = animation.project(progress, sample, some(sample))
+on capture
+  captured = animation.project(progress, sample, some(sample))
+view
+  col
+    text projected
+    text nested
+    button "Capture" -> capture
+"#;
+
+    let generated = compile(source, "projection_overlay.ice").unwrap();
+
+    let optional_projection = "interpolate_with(|__value| (::std::option::Option::Some((__value as f64))).map(|__value| __value as f32)";
+    assert_eq!(
+        generated.matches(optional_projection).count(),
+        2,
+        "checked derived and AST handler emission must produce the same optional projection"
+    );
+    assert!(generated.contains("interpolate_with(|__value| (((__value as f64) + 1.0)) as f32"));
+    assert!(generated.contains(
+        "interpolate_with(|__value| (((self.secondary).interpolate_with(|__value| ((__value as f64)) as f32"
+    ));
+    assert!(generated.contains("as f64 + (__value as f64))"));
+    assert!(
+        !generated.contains("|__value| (self.sample"),
+        "projection locals must shadow app bindings with the same name"
+    );
+}
+
+#[test]
+#[ignore = "explicit full compile and codegen projection linearity contract"]
+fn performance_contract_codegen_four_thousand_projections_uses_binding_overlays() {
+    use std::fmt::Write as _;
+    use std::time::Instant;
+
+    fn measure(derived: usize) -> (BindingEnvMetrics, std::time::Duration, usize) {
+        let mut source = String::from(
+            r#"app ProjectionCodegen
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  progress:animation[f64] = 0.0
+derived
+"#,
+        );
+        for index in 0..derived {
+            writeln!(
+                source,
+                "  value_{index} = animation.project(progress, sample, sample + 1.0)"
+            )
+            .unwrap();
+        }
+        source.push_str("view\n  text value_0\n");
+
+        reset_binding_env_metrics();
+        let started = Instant::now();
+        let generated = compile(&source, "projection_codegen.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert!(generated.contains(&format!("value_{}", derived - 1)));
+        (binding_env_metrics(), elapsed, generated.len())
+    }
+
+    let (small, small_elapsed, small_output) = measure(500);
+    let (large, large_elapsed, large_output) = measure(4_000);
+
+    assert_eq!(small.overlays, 500);
+    assert_eq!(large.overlays, 4_000);
+    assert_eq!(large.overlay_binding_allocations, 4_000);
+    assert!(
+        large.binding_clone_allocations <= large.overlays * 3,
+        "projection codegen copied more than a constant number of bindings per expression: {} clones for {} overlays",
+        large.binding_clone_allocations,
+        large.overlays
+    );
+    assert!(
+        large.binding_clone_allocations <= small.binding_clone_allocations * 10 + 32,
+        "binding clone allocations must remain linear: 500={}, 4k={}",
+        small.binding_clone_allocations,
+        large.binding_clone_allocations
+    );
+    assert!(large_output > small_output * 7);
+    eprintln!(
+        "500 projections in {small_elapsed:?} with {} binding clones; 4k in {large_elapsed:?} with {} binding clones",
+        small.binding_clone_allocations, large.binding_clone_allocations
+    );
+    assert!(
+        large_elapsed.as_secs_f64() < 8.0,
+        "4k projection full compile and codegen completed in {large_elapsed:?}"
+    );
+    assert!(
+        large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
+        "full projection compile/codegen scaling exceeded the linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
+    );
 }
 
 #[test]

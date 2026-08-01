@@ -2,10 +2,109 @@ use super::*;
 use crate::check::{
     CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,
     CheckedExprUseId, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
-    CheckedProjection, CheckedUnaryOperator,
+    CheckedProjection, CheckedUnaryOperator, ExprTypeEnv,
 };
 use crate::lower::{ExternFnId, ResolvedArgumentExpression};
 use crate::unqualified_name;
+
+#[cfg(test)]
+use std::cell::Cell;
+
+pub(in crate::codegen) trait BindingEnvironment {
+    fn get(&self, name: &str) -> Option<&Binding>;
+
+    fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+}
+
+impl BindingEnvironment for HashMap<String, Binding> {
+    fn get(&self, name: &str) -> Option<&Binding> {
+        HashMap::get(self, name)
+    }
+}
+
+struct LayeredBindingEnv<'a> {
+    base: &'a dyn BindingEnvironment,
+    name: &'a str,
+    binding: Binding,
+}
+
+impl<'a> LayeredBindingEnv<'a> {
+    fn new(base: &'a dyn BindingEnvironment, name: &'a str, binding: Binding) -> Self {
+        #[cfg(test)]
+        record_binding_env_overlay();
+        Self {
+            base,
+            name,
+            binding,
+        }
+    }
+}
+
+impl BindingEnvironment for LayeredBindingEnv<'_> {
+    fn get(&self, name: &str) -> Option<&Binding> {
+        if name == self.name {
+            Some(&self.binding)
+        } else {
+            self.base.get(name)
+        }
+    }
+}
+
+struct BindingTypeEnv<'a>(&'a dyn BindingEnvironment);
+
+impl ExprTypeEnv for BindingTypeEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.0.get(name).map(|binding| &binding.ty)
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::codegen) struct BindingEnvMetrics {
+    pub(in crate::codegen) overlays: usize,
+    pub(in crate::codegen) overlay_binding_allocations: usize,
+    pub(in crate::codegen) binding_clone_allocations: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static BINDING_ENV_METRICS: Cell<BindingEnvMetrics> = const { Cell::new(BindingEnvMetrics {
+        overlays: 0,
+        overlay_binding_allocations: 0,
+        binding_clone_allocations: 0,
+    }) };
+}
+
+#[cfg(test)]
+fn record_binding_clone() {
+    BINDING_ENV_METRICS.with(|metrics| {
+        let mut value = metrics.get();
+        value.binding_clone_allocations += 1;
+        metrics.set(value);
+    });
+}
+
+#[cfg(test)]
+fn record_binding_env_overlay() {
+    BINDING_ENV_METRICS.with(|metrics| {
+        let mut value = metrics.get();
+        value.overlays += 1;
+        value.overlay_binding_allocations += 1;
+        metrics.set(value);
+    });
+}
+
+#[cfg(test)]
+pub(in crate::codegen) fn reset_binding_env_metrics() {
+    BINDING_ENV_METRICS.set(BindingEnvMetrics::default());
+}
+
+#[cfg(test)]
+pub(in crate::codegen) fn binding_env_metrics() -> BindingEnvMetrics {
+    BINDING_ENV_METRICS.get()
+}
 
 #[derive(Clone, Copy)]
 enum ExprNode {
@@ -287,11 +386,11 @@ impl<'a> ExprEmission<'a> {
         }
     }
 
-    fn ty(&self, node: ExprNode, env: &HashMap<String, Binding>) -> Result<Type, Error> {
+    fn ty(&self, node: ExprNode, env: &dyn BindingEnvironment) -> Result<Type, Error> {
         match node {
             ExprNode::Ast(id) => expr_type(
                 self.ast_nodes[id as usize],
-                &env_types(env),
+                &BindingTypeEnv(env),
                 self.document,
                 &Span::line(1),
             ),
@@ -326,7 +425,7 @@ impl<'a> ExprEmission<'a> {
 
 pub(in crate::codegen) fn expr_list_code(
     values: &[Expr],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     Ok(values
@@ -338,7 +437,7 @@ pub(in crate::codegen) fn expr_list_code(
 
 pub(in crate::codegen) fn expr_args_suffix_code(
     values: &[Expr],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let args = expr_list_code(values, env, document)?;
@@ -351,7 +450,7 @@ pub(in crate::codegen) fn expr_args_suffix_code(
 
 pub(in crate::codegen) fn expr_code(
     expr: &Expr,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
     mode: ValueMode,
 ) -> Result<String, Error> {
@@ -361,7 +460,7 @@ pub(in crate::codegen) fn expr_code(
 
 fn expr_node_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
@@ -685,7 +784,7 @@ fn expr_node_code(
 fn expr_builtin_group_1(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -875,7 +974,7 @@ fn expr_builtin_group_1(
 fn expr_builtin_group_2(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -1185,7 +1284,7 @@ fn expr_builtin_group_2(
 fn expr_builtin_group_3(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -1392,9 +1491,9 @@ fn expr_builtin_group_3(
                 unreachable!("checker requires animation")
             };
             let binding = args.binding(1, context)?;
-            let mut projection_env = env.clone();
-            projection_env.insert(
-                binding.to_owned(),
+            let projection_env = LayeredBindingEnv::new(
+                env,
+                binding,
                 Binding {
                     code: if *inner == Type::F64 {
                         "(__value as f64)".into()
@@ -1542,7 +1641,7 @@ fn expr_builtin_group_3(
 fn expr_builtin_group_4(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -1790,7 +1889,7 @@ fn expr_builtin_group_4(
 fn expr_builtin_group_5(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -1991,7 +2090,7 @@ fn expr_builtin_group_5(
 fn expr_builtin_group_6(
     name: &str,
     args: &ExprArguments,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
@@ -2081,7 +2180,7 @@ fn expr_builtin_group_6(
 
 fn expr_node_list_code(
     values: &[ExprNode],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     Ok(values
@@ -2094,7 +2193,7 @@ fn expr_node_list_code(
 fn checked_path_code(
     root: &CheckedPathRoot,
     projections: &[CheckedProjection],
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
@@ -2247,7 +2346,7 @@ fn copy_expression_type(ty: &Type) -> bool {
 
 fn node_unit_f32_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
@@ -2256,7 +2355,7 @@ fn node_unit_f32_code(
 
 fn node_pixel_value_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
@@ -2269,7 +2368,7 @@ fn node_pixel_value_code(
 
 fn node_pixel_scalar_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
@@ -2282,7 +2381,7 @@ fn node_pixel_scalar_code(
 
 fn node_radius_value_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
@@ -2295,7 +2394,7 @@ fn node_radius_value_code(
 
 fn node_radians_value_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
@@ -2308,7 +2407,7 @@ fn node_radians_value_code(
 
 fn node_u32_code(
     expr: ExprNode,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     Ok(format!(
@@ -2320,7 +2419,7 @@ fn node_u32_code(
 fn expr_animation_at_code(
     args: &ExprArguments,
     index: usize,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     match args.get(index) {
@@ -2337,7 +2436,7 @@ fn expr_animation_at_code(
 pub(in crate::codegen) fn checked_expr_use_code(
     program: &LoweredProgram,
     expression_use: CheckedExprUseId,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
     let facts = program.checked_facts();
@@ -2381,7 +2480,7 @@ pub(in crate::codegen) fn checked_expr_use_code(
 pub(in crate::codegen) fn resolved_argument_code(
     program: &LoweredProgram,
     argument: &ResolvedArgumentExpression,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     match argument {
         ResolvedArgumentExpression::Supplied(expression) => {
@@ -2397,7 +2496,7 @@ pub(in crate::codegen) fn clamped_f32_code(
     expr: &Expr,
     min: &str,
     max: &str,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     document: &Document,
 ) -> Result<String, Error> {
     let code = expr_code(expr, env, document, ValueMode::Owned)?;

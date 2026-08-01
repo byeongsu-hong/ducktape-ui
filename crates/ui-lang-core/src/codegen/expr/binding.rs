@@ -1,11 +1,23 @@
 use super::*;
 
-#[derive(Clone)]
 pub(in crate::codegen) struct Binding {
     pub(in crate::codegen) code: String,
     pub(in crate::codegen) ty: Type,
     pub(in crate::codegen) local: bool,
     pub(in crate::codegen) state: Option<StateBinding>,
+}
+
+impl Clone for Binding {
+    fn clone(&self) -> Self {
+        #[cfg(test)]
+        record_binding_clone();
+        Self {
+            code: self.code.clone(),
+            ty: self.ty.clone(),
+            local: self.local,
+            state: self.state.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
