@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-const DEFAULT_CONTENT_VALIDATION_INTERVAL: Duration = Duration::from_millis(750);
+const DEFAULT_VALIDATION_INTERVAL: Duration = Duration::from_millis(750);
 
 /// The Ice language contract used by the current compiler.
 pub const LANGUAGE_REVISION: &str = "2.0";
@@ -144,6 +144,11 @@ pub struct AnalysisInvalidation {
 ///
 /// Metadata checks catch ordinary edits cheaply. Content checks are the
 /// authoritative fallback for timestamp-preserving writes and replacements.
+/// The default gives consumers without file watching bounded freshness without
+/// probing every file on every query. Watcher-backed consumers may use longer
+/// intervals together with [`AnalysisDb::refresh_input`], while operations that
+/// require an immediately current disk snapshot use
+/// [`AnalysisDb::query_root_fresh`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidationPolicy {
     pub metadata_interval: Duration,
@@ -165,8 +170,23 @@ impl ValidationPolicy {
 
 impl Default for ValidationPolicy {
     fn default() -> Self {
-        Self::new(Duration::ZERO, DEFAULT_CONTENT_VALIDATION_INTERVAL)
+        Self::new(DEFAULT_VALIDATION_INTERVAL, DEFAULT_VALIDATION_INTERVAL)
     }
+}
+
+#[derive(Clone, Debug)]
+struct OverlaySource {
+    canonical_path: PathBuf,
+    source: Arc<str>,
+    revision: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct OverlayStore {
+    sources_by_path: HashMap<PathBuf, Arc<str>>,
+    aliases: HashMap<PathBuf, PathBuf>,
+    sources_by_alias: HashMap<PathBuf, OverlaySource>,
+    revision: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -271,8 +291,8 @@ struct LoadedGraph {
 #[derive(Debug, Default)]
 pub struct AnalysisDb {
     config: AnalysisConfig,
-    overlays: HashMap<PathBuf, Arc<str>>,
-    overlay_aliases: HashMap<PathBuf, PathBuf>,
+    overlay_store: Arc<OverlayStore>,
+    inherited_overlay_store: Option<Arc<OverlayStore>>,
     parsed_files: HashMap<FileKey, Arc<ParsedFile>>,
     current_files: HashMap<PathBuf, FileKey>,
     dependencies: HashMap<PathBuf, BTreeSet<PathBuf>>,
@@ -314,8 +334,11 @@ impl AnalysisDb {
         self.validation_policy
     }
 
-    /// Analyze one candidate root overlay against a snapshot limited to that
-    /// root's source closure. The retained workspace DB is never mutated.
+    /// Analyze one candidate root overlay against a snapshot of retained state.
+    ///
+    /// Parsed and checked state is limited to the root's current source closure,
+    /// while every open overlay is shared by `Arc` so a candidate may add an
+    /// import of an unsaved file. The retained workspace DB is never mutated.
     pub fn analyze_overlay_candidate(
         &mut self,
         path: impl AsRef<Path>,
@@ -418,8 +441,7 @@ impl AnalysisDb {
             )
         })?;
         let path = self
-            .overlay_aliases
-            .get(&lexical_path)
+            .overlay_alias(&lexical_path)
             .cloned()
             .map_or_else(|| normalize_path(&lexical_path), Ok)
             .map_err(|error| {
@@ -430,21 +452,43 @@ impl AnalysisDb {
                     format!("cannot resolve overlay path: {error}"),
                 )
             })?;
-        self.overlay_aliases.insert(lexical_path, path.clone());
-        if self
-            .overlays
-            .get(&path)
-            .is_some_and(|current| current.as_ref() == source)
+        let source: Arc<str> = Arc::from(source);
+        let previous = self.overlay_source(&path).cloned();
+        let revision = self
+            .overlay_store
+            .revision
+            .max(
+                self.inherited_overlay_store
+                    .as_deref()
+                    .map_or(0, |store| store.revision),
+            )
+            .checked_add(1)
+            .expect("overlay revision exhausted");
+        let store = Arc::make_mut(&mut self.overlay_store);
+        store.revision = revision;
+        store.aliases.insert(lexical_path.clone(), path.clone());
+        store.sources_by_alias.insert(
+            lexical_path,
+            OverlaySource {
+                canonical_path: path.clone(),
+                source: Arc::clone(&source),
+                revision,
+            },
+        );
+        if previous
+            .as_ref()
+            .is_some_and(|current| current.as_ref() == source.as_ref())
         {
             return Ok(AnalysisInvalidation {
                 changed: false,
                 affected_roots: self.dirty_roots.clone(),
             });
         }
-        let source: Arc<str> = Arc::from(source);
         let key = self.file_key(path.clone(), &source);
         let changed = self.current_files.get(&path) != Some(&key);
-        self.overlays.insert(path.clone(), source);
+        Arc::make_mut(&mut self.overlay_store)
+            .sources_by_path
+            .insert(path.clone(), source);
         if !changed {
             return Ok(AnalysisInvalidation {
                 changed: false,
@@ -471,9 +515,15 @@ impl AnalysisDb {
                 format!("cannot resolve overlay path: {error}"),
             )
         })?;
-        let path = self
-            .overlay_aliases
-            .remove(&lexical_path)
+        let (opened, opened_path) = {
+            let store = Arc::make_mut(&mut self.overlay_store);
+            (
+                store.sources_by_alias.remove(&lexical_path),
+                store.aliases.remove(&lexical_path),
+            )
+        };
+        let path = opened_path
+            .or_else(|| opened.as_ref().map(|source| source.canonical_path.clone()))
             .map_or_else(|| normalize_path(&lexical_path), Ok)
             .map_err(|error| {
                 file_error(
@@ -483,10 +533,34 @@ impl AnalysisDb {
                     format!("cannot resolve overlay path: {error}"),
                 )
             })?;
-        if self.overlay_aliases.values().any(|key| key == &path) {
-            return Ok(AnalysisInvalidation::default());
+        if let Some(replacement) = self
+            .overlay_store
+            .sources_by_alias
+            .values()
+            .filter(|source| source.canonical_path == path)
+            .max_by_key(|source| source.revision)
+            .map(|source| Arc::clone(&source.source))
+        {
+            let unchanged = self
+                .overlay_source(&path)
+                .is_some_and(|current| current.as_ref() == replacement.as_ref());
+            Arc::make_mut(&mut self.overlay_store)
+                .sources_by_path
+                .insert(path.clone(), Arc::clone(&replacement));
+            if unchanged {
+                return Ok(AnalysisInvalidation::default());
+            }
+            let key = self.file_key(path.clone(), &replacement);
+            let affected_roots = self.replace_current_key(path, key);
+            return Ok(AnalysisInvalidation {
+                changed: true,
+                affected_roots,
+            });
         }
-        let Some(previous) = self.overlays.remove(&path) else {
+        let Some(previous) = Arc::make_mut(&mut self.overlay_store)
+            .sources_by_path
+            .remove(&path)
+        else {
             return Ok(AnalysisInvalidation::default());
         };
         let disk = match fs::read_to_string(&path) {
@@ -648,7 +722,24 @@ impl AnalysisDb {
     /// an eager invalidation hint; correctness does not depend on clients
     /// supporting or delivering them.
     pub fn query_root(&mut self, path: impl AsRef<Path>) -> Result<Arc<FileAnalysis>, Error> {
-        let requested = path.as_ref().to_owned();
+        self.query_root_with_validation(path.as_ref(), false)
+    }
+
+    /// Return a retained checked root only after validating every closed disk
+    /// source and asset by content, regardless of the configured epochs.
+    ///
+    /// Use this for correctness-sensitive operations, such as workspace rename,
+    /// whose edits must be computed from an immediately current snapshot.
+    pub fn query_root_fresh(&mut self, path: impl AsRef<Path>) -> Result<Arc<FileAnalysis>, Error> {
+        self.query_root_with_validation(path.as_ref(), true)
+    }
+
+    fn query_root_with_validation(
+        &mut self,
+        path: &Path,
+        force_content_validation: bool,
+    ) -> Result<Arc<FileAnalysis>, Error> {
+        let requested = path.to_owned();
         let root = self.normalize_db_path(&requested).map_err(|error| {
             file_error(
                 "E181",
@@ -657,7 +748,7 @@ impl AnalysisDb {
                 format!("cannot resolve source path: {error}"),
             )
         })?;
-        self.refresh_root_inputs(&root)?;
+        self.refresh_root_inputs(&root, force_content_validation)?;
         if !self.dirty_roots.contains(&root)
             && let Some(cached) = self.checked_roots.get(&root)
         {
@@ -768,15 +859,21 @@ impl AnalysisDb {
         }
     }
 
-    fn refresh_root_inputs(&mut self, root: &Path) -> Result<(), Error> {
+    fn refresh_root_inputs(
+        &mut self,
+        root: &Path,
+        force_content_validation: bool,
+    ) -> Result<(), Error> {
         let Some(checked) = self.checked_roots.get(root) else {
             return Ok(());
         };
         let now = Instant::now();
-        let metadata_due = now.duration_since(checked.metadata_validated_at)
-            >= self.validation_policy.metadata_interval;
-        let content_due = now.duration_since(checked.content_validated_at)
-            >= self.validation_policy.content_interval;
+        let metadata_due = force_content_validation
+            || now.duration_since(checked.metadata_validated_at)
+                >= self.validation_policy.metadata_interval;
+        let content_due = force_content_validation
+            || now.duration_since(checked.content_validated_at)
+                >= self.validation_policy.content_interval;
         if !metadata_due && !content_due {
             return Ok(());
         }
@@ -877,7 +974,7 @@ impl AnalysisDb {
     }
 
     fn read_source(&mut self, path: &Path) -> Result<Arc<str>, Error> {
-        let source = if let Some(source) = self.overlays.get(path) {
+        let source = if let Some(source) = self.overlay_source(path) {
             Arc::clone(source)
         } else {
             fs::read_to_string(path).map(Arc::from).map_err(|error| {
@@ -1123,7 +1220,7 @@ impl AnalysisDb {
         line: usize,
     ) -> Result<PathBuf, Error> {
         if let Ok(lexical) = absolute_lexical_path(candidate)
-            && let Some(path) = self.overlay_aliases.get(&lexical)
+            && let Some(path) = self.overlay_alias(&lexical)
         {
             return Ok(path.clone());
         }
@@ -1138,7 +1235,7 @@ impl AnalysisDb {
                         format!("cannot read `{}`: {error}", candidate.display()),
                     )
                 })?;
-                if self.overlays.contains_key(&normalized) {
+                if self.contains_overlay(&normalized) {
                     Ok(normalized)
                 } else {
                     Err(file_error(
@@ -1200,12 +1297,11 @@ impl AnalysisDb {
     }
 
     fn prune_unreachable_files(&mut self) {
-        let mut reachable = self
-            .known_roots
-            .iter()
-            .chain(self.overlays.keys())
-            .cloned()
-            .collect::<HashSet<_>>();
+        let mut reachable = self.known_roots.iter().cloned().collect::<HashSet<_>>();
+        reachable.extend(self.overlay_store.sources_by_path.keys().cloned());
+        if let Some(inherited) = &self.inherited_overlay_store {
+            reachable.extend(inherited.sources_by_path.keys().cloned());
+        }
         let mut pending = reachable.iter().cloned().collect::<Vec<_>>();
         while let Some(path) = pending.pop() {
             for dependency in self.dependencies.get(&path).into_iter().flatten() {
@@ -1227,23 +1323,42 @@ impl AnalysisDb {
             .retain(|key, _| reachable.contains(key.canonical_path()));
     }
 
+    fn overlay_source(&self, path: &Path) -> Option<&Arc<str>> {
+        self.overlay_store.sources_by_path.get(path).or_else(|| {
+            self.inherited_overlay_store
+                .as_deref()
+                .and_then(|store| store.sources_by_path.get(path))
+        })
+    }
+
+    fn overlay_alias(&self, lexical: &Path) -> Option<&PathBuf> {
+        self.overlay_store.aliases.get(lexical).or_else(|| {
+            self.inherited_overlay_store
+                .as_deref()
+                .and_then(|store| store.aliases.get(lexical))
+        })
+    }
+
+    fn contains_overlay(&self, path: &Path) -> bool {
+        self.overlay_source(path).is_some()
+    }
+
     fn normalize_db_path(&self, path: &Path) -> std::io::Result<PathBuf> {
         let lexical = absolute_lexical_path(path)?;
-        self.overlay_aliases
-            .get(&lexical)
+        self.overlay_alias(&lexical)
             .cloned()
             .map_or_else(|| normalize_path(&lexical), Ok)
     }
 
     fn is_overlay_path(&self, path: &Path) -> bool {
-        self.overlays.contains_key(path)
+        self.contains_overlay(path)
             || absolute_lexical_path(path)
                 .ok()
-                .and_then(|lexical| self.overlay_aliases.get(&lexical))
-                .is_some_and(|key| self.overlays.contains_key(key))
+                .and_then(|lexical| self.overlay_alias(&lexical))
+                .is_some_and(|key| self.contains_overlay(key))
             || normalize_path(path)
                 .ok()
-                .is_some_and(|resolved| self.overlays.contains_key(&resolved))
+                .is_some_and(|resolved| self.contains_overlay(&resolved))
     }
 
     fn roots_for_input(&self, lexical: &Path, resolved: &Path) -> BTreeSet<PathBuf> {
@@ -1318,18 +1433,7 @@ impl AnalysisDb {
                 }
             }
         }
-        let overlays = self
-            .overlays
-            .iter()
-            .filter(|(path, _)| reachable.contains(*path))
-            .map(|(path, source)| (path.clone(), Arc::clone(source)))
-            .collect();
-        let overlay_aliases = self
-            .overlay_aliases
-            .iter()
-            .filter(|(alias, key)| reachable.contains(*alias) || reachable.contains(*key))
-            .map(|(alias, key)| (alias.clone(), key.clone()))
-            .collect();
+        debug_assert!(self.inherited_overlay_store.is_none());
         let current_files = self
             .current_files
             .iter()
@@ -1365,8 +1469,8 @@ impl AnalysisDb {
             .unwrap_or_default();
         Self {
             config: self.config.clone(),
-            overlays,
-            overlay_aliases,
+            overlay_store: Arc::default(),
+            inherited_overlay_store: Some(Arc::clone(&self.overlay_store)),
             parsed_files,
             current_files,
             dependencies,
@@ -1597,7 +1701,7 @@ mod tests {
         assert_eq!(metrics.roots_checked, 0);
         assert_eq!(metrics.roots_reused, 0);
         assert_eq!(metrics.symbols_indexed, 0);
-        assert_eq!(metrics.source_stamps_checked, 2);
+        assert_eq!(metrics.source_stamps_checked, 0);
     }
 
     #[test]
@@ -1611,6 +1715,12 @@ mod tests {
         db.query_root(&root).unwrap();
         db.take_metrics();
         fixture.write("part.ice", &component("Renamed", "two"));
+        let checked = db
+            .checked_roots
+            .get_mut(&root.canonicalize().unwrap())
+            .unwrap();
+        checked.metadata_validated_at = Instant::now() - Duration::from_secs(1);
+        checked.content_validated_at = Instant::now() - Duration::from_secs(1);
 
         let error = db.query_root(&root).unwrap_err();
         let metrics = db.take_metrics();
@@ -1781,6 +1891,40 @@ mod tests {
         assert_eq!(analysis.document.app, "A");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn closing_the_latest_alias_overlay_restores_the_remaining_open_source() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Real"));
+        fixture.write("part.ice", &component("Disk", "disk"));
+        let root = fixture.path("app.ice");
+        let real = fixture.path("part.ice");
+        let link = fixture.path("part-link.ice");
+        symlink("part.ice", &link).unwrap();
+        let mut db = AnalysisDb::default();
+
+        db.set_overlay(&real, component("Real", "real buffer"))
+            .unwrap();
+        db.set_overlay(&link, component("Link", "link buffer"))
+            .unwrap();
+        assert!(db.query_root(&root).is_err());
+
+        let invalidation = db.remove_overlay(&link).unwrap();
+        let analysis = db.query_root(&root).unwrap();
+
+        assert!(invalidation.changed);
+        assert_eq!(analysis.document.app, "Demo");
+        assert_eq!(
+            db.overlay_store
+                .sources_by_path
+                .get(&real.canonicalize().unwrap())
+                .map(AsRef::as_ref),
+            Some(component("Real", "real buffer").as_str())
+        );
+    }
+
     #[test]
     fn metadata_only_source_change_does_not_recheck_semantics() {
         let fixture = Fixture::new();
@@ -1789,6 +1933,10 @@ mod tests {
         fixture.write("part.ice", &part_source);
         let root = fixture.path("app.ice");
         let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::new(
+            Duration::ZERO,
+            Duration::from_secs(60),
+        ));
 
         let first = db.query_root(&root).unwrap();
         db.take_metrics();
@@ -1841,7 +1989,7 @@ mod tests {
         db.take_metrics();
         fs::remove_file(&font).unwrap();
 
-        let error = db.query_root(&root).unwrap_err();
+        let error = db.query_root_fresh(&root).unwrap_err();
         assert_eq!(error.code, "E192");
         assert_eq!(db.metrics().asset_stamps_checked, 1);
 
@@ -1863,7 +2011,7 @@ mod tests {
         db.query_root(&root).unwrap();
         fixture.write("app.rgba", "RGBAFAIL");
 
-        let error = db.query_root(root).unwrap_err();
+        let error = db.query_root_fresh(root).unwrap_err();
         assert_eq!(error.code, "E193");
     }
 
@@ -1922,10 +2070,29 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disk validation syscall contract; run explicitly"]
-    fn validation_epoch_bounds_large_disk_closure_probes() {
+    fn speculative_candidate_can_import_an_unsaved_overlay_outside_the_old_closure() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &inline_app("Retained", "disk"));
+        let root = fixture.path("app.ice");
+        let pending = fixture.path("pending.ice");
+        let mut db = AnalysisDb::default();
+        let retained = db.query_root(&root).unwrap();
+        db.set_overlay(&pending, component("Pending", "unsaved"))
+            .unwrap();
+
+        let candidate = app("Candidate", "pending.ice", "Pending");
+        let analyzed = db.analyze_overlay_candidate(&root, candidate).unwrap();
+        let current = db.query_root(&root).unwrap();
+
+        assert_eq!(analyzed.document.app, "Candidate");
+        assert!(analyzed.dependencies.contains(&pending));
+        assert!(Arc::ptr_eq(&retained, &current));
+    }
+
+    #[test]
+    fn default_validation_epoch_bounds_large_disk_closure_probes() {
         const IMPORTS: usize = 1_000;
-        const REQUESTS: usize = 100;
+        const REQUESTS: usize = 10;
 
         let fixture = Fixture::new();
         let mut source = String::from("app Scale\n");
@@ -1940,10 +2107,10 @@ mod tests {
         fixture.write("app.ice", &source);
         let root = fixture.path("app.ice");
         let mut db = AnalysisDb::default();
-        db.set_validation_policy(ValidationPolicy::new(
-            Duration::from_millis(750),
-            Duration::from_millis(750),
-        ));
+        assert_eq!(
+            db.validation_policy(),
+            ValidationPolicy::new(Duration::from_millis(750), Duration::from_millis(750))
+        );
         db.query_root(&root).unwrap();
         db.take_metrics();
 

@@ -2970,7 +2970,11 @@ fn navigation_at(
     let mut incomplete = false;
     for root_uri in &roots {
         let checked = match file_uri_path(root_uri) {
-            Some(path) => match analysis_db.query_root(path) {
+            Some(path) => match if require_complete {
+                analysis_db.query_root_fresh(path)
+            } else {
+                analysis_db.query_root(path)
+            } {
                 Ok(analysis) => SemanticDocument::Retained(analysis),
                 Err(_) => {
                     incomplete = true;
@@ -3556,8 +3560,8 @@ mod tests {
         Navigation, SemanticDocument, WatchRegistrationState, WorkspaceIndex,
         accepts_code_action_kind, checked_document, code_actions_at as code_actions_at_with_db,
         collect_cargo_lint_diagnostics, compiler_diagnostic_to_lsp,
-        completion_items_at as completion_items_at_with_db, diagnostic_range, file_path_uri,
-        file_uri_path, has_unsaved_workspace_document, hover_at as hover_at_with_db,
+        completion_items_at as completion_items_at_with_db, configure_validation, diagnostic_range,
+        file_path_uri, file_uri_path, has_unsaved_workspace_document, hover_at as hover_at_with_db,
         lint_code_action, navigation_at as navigation_at_with_db, read_message,
         reanalyze_open_roots, record_watch_registration_response, refresh_watched_files, serve,
         signature_help_at as signature_help_at_with_db, source_range, whole_document_range,
@@ -3798,6 +3802,29 @@ mod tests {
             state,
             WatchRegistrationState::Rejected("not supported".into())
         );
+    }
+
+    #[test]
+    fn lsp_validation_epochs_match_watcher_reliability() {
+        let mut db = ui_lang_core::AnalysisDb::default();
+        let mut index = WorkspaceIndex::default();
+
+        configure_validation(&WatchRegistrationState::Unsupported, &mut db, &mut index);
+        assert_eq!(
+            db.validation_policy(),
+            ui_lang_core::ValidationPolicy::new(
+                Duration::from_millis(750),
+                Duration::from_millis(750),
+            )
+        );
+        assert_eq!(index.validation_interval, Duration::from_millis(750));
+
+        configure_validation(&WatchRegistrationState::Active, &mut db, &mut index);
+        assert_eq!(
+            db.validation_policy(),
+            ui_lang_core::ValidationPolicy::new(Duration::from_secs(5), Duration::from_secs(5))
+        );
+        assert_eq!(index.validation_interval, Duration::from_secs(5));
     }
 
     #[test]
@@ -4166,9 +4193,14 @@ mod tests {
             let uri = file_path_uri(&root);
             let documents = HashMap::from([(uri, source.to_owned())]);
             let mut db = seeded_db(&documents);
+            let mut index = WorkspaceIndex::default();
+            configure_validation(&state, &mut db, &mut index);
             db.query_root(&root).unwrap();
 
             fixture.write("part.ice", "component Renamed()\n  text \"after\"\n");
+            std::thread::sleep(
+                db.validation_policy().metadata_interval + Duration::from_millis(25),
+            );
             let error = db.query_root(&root).unwrap_err();
             assert_eq!(error.code, "E122", "watch state {state:?}");
         }
@@ -6489,6 +6521,56 @@ mod tests {
     }
 
     #[test]
+    fn rename_freshens_closed_workspace_roots_under_an_active_watcher() {
+        let fixture = Fixture::new();
+        let a = format!("app A\nuse \"part.ice\"\n{APP_THEME}view\n  Card\n");
+        let b = format!("app B\nuse \"part.ice\"\n{APP_THEME}view\n  Card\n");
+        let changed_b = b.replacen("  Card\n", "//Card\n", 1);
+        let part = "component Card()\n  text \"Card\"\n";
+        assert_eq!(b.len(), changed_b.len());
+        fixture.write("a.ice", &a);
+        fixture.write("b.ice", &b);
+        fixture.write("part.ice", part);
+        let a_uri = file_path_uri(&fixture.path("a.ice"));
+        let b_path = fixture.path("b.ice");
+        let b_uri = file_path_uri(&b_path);
+        let part_uri = file_path_uri(&fixture.path("part.ice"));
+        let documents = HashMap::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
+        let params = json!({
+            "textDocument": { "uri": a_uri },
+            "position": { "line": 13, "character": 3 },
+        });
+        let mut db = seeded_db(&documents);
+        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        configure_validation(&WatchRegistrationState::Active, &mut db, &mut index);
+
+        let stale = navigation_at_with_db(&mut db, &documents, &mut index, false, &params).unwrap();
+        assert!(workspace_edit(&documents, &stale, "Tile").unwrap()["changes"][&b_uri].is_array());
+        db.take_metrics();
+        let metadata = fs::metadata(&b_path).unwrap();
+        fixture.write("b.ice", &changed_b);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&b_path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed().unwrap())
+                    .set_modified(metadata.modified().unwrap()),
+            )
+            .unwrap();
+
+        let fresh = navigation_at_with_db(&mut db, &documents, &mut index, true, &params).unwrap();
+        let edit = workspace_edit(&documents, &fresh, "Tile").unwrap();
+        let metrics = db.take_metrics();
+
+        assert!(!fresh.renameable());
+        assert!(edit["changes"].get(&b_uri).is_none(), "{edit:?}");
+        assert!(edit["changes"][&part_uri].is_array(), "{edit:?}");
+        assert!(metrics.source_stamps_checked > 0, "{metrics:?}");
+    }
+
+    #[test]
     fn active_watcher_index_rescans_after_its_validation_epoch() {
         let fixture = Fixture::new();
         fixture.write("a.ice", "app A\nview\n  text \"A\"\n");
@@ -6764,6 +6846,58 @@ mod tests {
                 "end": { "line": 1, "character": 14 },
             })
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn closing_a_latest_symlink_buffer_restores_the_real_open_document() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        let real =
+            format!("app Demo\n{APP_THEME}component Card()\n  text \"Card\"\nview\n  Card\n");
+        let link =
+            format!("app Demo\n{APP_THEME}component Tile()\n  text \"Tile\"\nview\n  Tile\n");
+        fixture.write("app.ice", &real);
+        symlink("app.ice", fixture.path("link.ice")).unwrap();
+        let real_uri = file_path_uri(&fixture.path("app.ice"));
+        let link_uri = file_path_uri(&fixture.path("link.ice"));
+        let workspace_uri = file_path_uri(&fixture.0);
+
+        let messages = run(&[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": real_uri, "text": real } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": { "textDocument": { "uri": link_uri, "text": link } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": { "textDocument": { "uri": link_uri } },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/rename",
+                "params": { "textDocument": { "uri": real_uri }, "position": { "line": 14, "character": 3 }, "newName": "Panel" },
+            }),
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ])
+        .unwrap();
+
+        let changes = response(&messages, 2)["result"]["changes"]
+            .as_object()
+            .unwrap();
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[&real_uri].as_array().unwrap().len(), 2);
+        assert!(!changes.contains_key(&link_uri));
     }
 
     #[test]
