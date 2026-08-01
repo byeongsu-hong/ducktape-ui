@@ -8,7 +8,8 @@ use crate::hir::{
     CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
     ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
     ExternRef, HandlerId, MediaExpressionId, OriginArena, OriginId, PaletteId, RouteId,
-    StatementId, StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
+    StatementId, StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId,
+    TooltipExpressionId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -312,6 +313,7 @@ pub(crate) enum CheckedExprOwner {
     },
     Canvas(CanvasExpressionId),
     Media(MediaExpressionId),
+    Tooltip(TooltipExpressionId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -593,6 +595,14 @@ pub(crate) struct CheckedMedia {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedTooltip {
+    pub(crate) id: ViewId,
+    pub(crate) expression_count: u32,
+    pub(crate) semantic_key: String,
+    pub(crate) style: Option<ExternFnId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTask {
     pub(crate) id: TaskId,
     pub(crate) output: Option<Type>,
@@ -647,6 +657,7 @@ pub(crate) struct CheckedFacts {
     views: Vec<CheckedView>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
+    tooltips: HashMap<ViewId, CheckedTooltip>,
     subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
@@ -817,6 +828,10 @@ impl CheckedFacts {
 
     pub(crate) fn media(&self, id: ViewId) -> Option<&CheckedMedia> {
         self.media.get(&id).filter(|media| media.id == id)
+    }
+
+    pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
+        self.tooltips.get(&id).filter(|tooltip| tooltip.id == id)
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -1299,6 +1314,7 @@ pub(super) struct CheckedAnalyses {
     canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
     media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
 }
 
 impl CheckedAnalyses {
@@ -1339,6 +1355,7 @@ impl CheckedAnalyses {
             && self.canvas_entries.is_empty()
             && self.canvas_route_inputs.is_empty()
             && self.media_entries.is_empty()
+            && self.tooltip_entries.is_empty()
     }
 
     pub(super) fn insert_subscription(
@@ -1433,6 +1450,15 @@ impl CheckedAnalyses {
                 ));
             }
         }
+        for (key, analysis) in other.tooltip_entries {
+            if self.tooltip_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "tooltip expression was captured more than once",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1488,6 +1514,34 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "media expression was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_tooltip(
+        &mut self,
+        tooltip: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "tooltip expression capture unexpectedly retained routes",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self
+                .tooltip_entries
+                .insert((tooltip, key), analysis)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "tooltip expression was captured more than once",
                 ));
             }
         }
@@ -1746,13 +1800,14 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
                     self.analyses.canvas_entries.len(),
                     self.analyses.canvas_route_inputs.len(),
                     self.analyses.media_entries.len(),
+                    self.analyses.tooltip_entries.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -2474,6 +2529,111 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "media facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_tooltip_facts(
+        &mut self,
+        tooltip: ViewId,
+        options: &TooltipOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(tooltip).origin;
+        let roots = crate::ast::tooltip_expression_roots(options);
+        for (index, expression) in roots.iter().enumerate() {
+            let owner = CheckedExprOwner::Tooltip(TooltipExpressionId {
+                tooltip,
+                index: index as u32,
+            });
+            let analysis = self
+                .analyses
+                .tooltip_entries
+                .remove(&(tooltip, super::expr::expr_key(expression)))
+                .ok_or_else(|| {
+                    self.invariant(span, "missing authoritative tooltip expression analysis")
+                })?;
+            let metrics = analysis.metrics();
+            self.facts.metrics.view_analysis_passes += 1;
+            self.facts.metrics.type_analysis_queries += metrics.queries;
+            self.facts.metrics.type_analysis_nodes += metrics.nodes;
+            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
+                self.invariant(span, "missing retained tooltip expression root type")
+            })?;
+            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+            let origin = self.origins.push(span, Some(parent));
+            let lowering = ExpressionLowering {
+                analysis: &analysis,
+                owner: id,
+                origin,
+                span,
+            };
+            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+            if self.facts.expression(root).ty != source {
+                return Err(self.invariant(
+                    span,
+                    "tooltip expression source type does not match its checked root",
+                ));
+            }
+            self.facts.expression_uses.push(CheckedExprUse {
+                owner,
+                root,
+                source: source.clone(),
+                destination: source,
+                coercion: CheckedInitializerCoercion::None,
+                origin,
+            });
+            if self
+                .facts
+                .expression_uses_by_owner
+                .insert(owner, id)
+                .is_some()
+            {
+                return Err(self.invariant(span, "duplicate checked tooltip expression owner"));
+            }
+        }
+        let remaining = self
+            .analyses
+            .tooltip_entries
+            .keys()
+            .filter(|(owner, _)| *owner == tooltip)
+            .count();
+        if remaining != 0 {
+            return Err(self.invariant(
+                span,
+                format!("tooltip left {remaining} expression analyses unconsumed"),
+            ));
+        }
+        let style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ContainerStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "tooltip style extern disappeared"))
+            })
+            .transpose()?;
+        if self
+            .facts
+            .tooltips
+            .insert(
+                tooltip,
+                CheckedTooltip {
+                    id: tooltip,
+                    expression_count: roots.len() as u32,
+                    semantic_key: crate::ast::tooltip_semantic_key(options),
+                    style,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "tooltip facts were produced more than once"));
         }
         Ok(())
     }
@@ -5178,6 +5338,18 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_media_facts(view, *kind, source, options, env, span)?;
                 CheckedViewFlow::None
             }
+            ViewNode::Tooltip {
+                options,
+                content,
+                tip,
+                span,
+                ..
+            } => {
+                self.lower_tooltip_facts(view, options, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
+                self.lower_view_expression_tree(tip, env)?;
+                CheckedViewFlow::None
+            }
             ViewNode::Component {
                 name,
                 args,
@@ -7705,6 +7877,57 @@ view
                     }))
                     .is_some(),
                 "missing media expression {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn tooltip_facts_retain_stable_expression_owners_and_static_contract() {
+        let source = r#"app TooltipFacts
+extern crate::backend
+  box-style dynamic_tooltip(active:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+view
+  tooltip position=cursor gap=2.0 p=5.0 delay=100 snap=false style=dynamic_tooltip(active) bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary/75 border-w=1.0 r=5.0 r-tl=2.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=8.0 px-snap=true
+    text "Hover"
+    text "Tip"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
+        let ViewNode::Tooltip { options, .. } = &program.document().view else {
+            panic!("fixture root must be a tooltip");
+        };
+        assert_eq!(checked.id, ViewId(0));
+        assert_eq!(
+            checked.expression_count as usize,
+            crate::ast::tooltip_expression_roots(options).len()
+        );
+        assert_eq!(checked.style, Some(ExternFnId(0)));
+        assert_eq!(
+            checked.semantic_key,
+            crate::ast::tooltip_semantic_key(options)
+        );
+        for index in 0..checked.expression_count {
+            assert!(
+                program
+                    .checked_facts()
+                    .expression_use_by_owner(CheckedExprOwner::Tooltip(TooltipExpressionId {
+                        tooltip: checked.id,
+                        index,
+                    }))
+                    .is_some(),
+                "missing tooltip expression {index}"
             );
         }
     }

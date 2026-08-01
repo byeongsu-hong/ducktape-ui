@@ -156,6 +156,7 @@ pub(in crate::check) fn infer_media_group(
             tip,
             span,
         } => {
+            let tooltip_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             for (value, label) in [
                 (&options.gap, "tooltip gap"),
@@ -224,6 +225,7 @@ pub(in crate::check) fn infer_media_group(
                     extern_function(document, &style.function, ExternKind::ContainerStyle, span)?;
                 check_call_args(function, &style.args, env, document, span)?;
             }
+            retain_tooltip_analyses(span, tooltip_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
             infer_view(tip, env, document, signatures, ids)?;
         }

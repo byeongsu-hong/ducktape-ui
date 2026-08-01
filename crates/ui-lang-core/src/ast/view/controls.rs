@@ -442,3 +442,74 @@ pub(crate) fn media_semantic_key(kind: MediaKind, options: &MediaOptions) -> Str
         present(options.scale_step.is_some()),
     )
 }
+
+pub(crate) fn tooltip_expression_roots(options: &TooltipOptions) -> Vec<&Expr> {
+    let mut roots = vec![
+        &options.gap,
+        &options.padding,
+        &options.delay_ms,
+        &options.snap,
+    ];
+    if let Some(style) = &options.custom_style {
+        roots.extend(&style.args);
+    }
+    if let Some(BackgroundValue::Linear { angle, stops }) = &options.background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    for value in [
+        &options.border_width,
+        &options.radius,
+        &options.radius_top_left,
+        &options.radius_top_right,
+        &options.radius_bottom_right,
+        &options.radius_bottom_left,
+        &options.shadow_x,
+        &options.shadow_y,
+        &options.shadow_blur,
+        &options.pixel_snap,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.push(value);
+    }
+    roots
+}
+
+pub(crate) fn tooltip_semantic_key(options: &TooltipOptions) -> String {
+    let style = options.custom_style.as_ref().map_or_else(
+        || format!("preset:{:?}", options.style),
+        |style| format!("custom:{}:{}", style.function, style.args.len()),
+    );
+    let background = match &options.background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    let present = |value: bool| if value { '1' } else { '0' };
+    format!(
+        "position={:?}|style={style}|background={background}|text={:?}|border={:?}:{}|radius={}{}{}{}{}|shadow={:?}:{}{}{}|snap={}",
+        options.position,
+        options.text_color,
+        options.border_color,
+        present(options.border_width.is_some()),
+        present(options.radius.is_some()),
+        present(options.radius_top_left.is_some()),
+        present(options.radius_top_right.is_some()),
+        present(options.radius_bottom_right.is_some()),
+        present(options.radius_bottom_left.is_some()),
+        options.shadow_color,
+        present(options.shadow_x.is_some()),
+        present(options.shadow_y.is_some()),
+        present(options.shadow_blur.is_some()),
+        present(options.pixel_snap.is_some()),
+    )
+}

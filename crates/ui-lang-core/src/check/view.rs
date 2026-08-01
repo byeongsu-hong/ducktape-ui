@@ -152,6 +152,28 @@ pub(super) fn retain_media_analyses(
     })
 }
 
+pub(super) fn retain_tooltip_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "tooltip analysis session has no active view analysis",
+            )
+        })?;
+        let tooltip = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "tooltip has no shared view ID"))?;
+        active.analyses.retain_tooltip(tooltip, analyses)
+    })
+}
+
 impl Drop for ViewAnalysisGuard {
     fn drop(&mut self) {
         if self.active {
