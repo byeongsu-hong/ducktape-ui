@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+const REVIEW_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Default, PartialEq)]
 struct ReviewOptions {
     source: PathBuf,
@@ -102,6 +104,18 @@ impl BaselineScope {
 }
 
 pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
+    let root = root.to_owned();
+    let args = args.to_vec();
+    std::thread::Builder::new()
+        .name("cargo-ice-review".to_owned())
+        .stack_size(REVIEW_STACK_SIZE)
+        .spawn(move || review_on_compiler_stack(&root, &args))
+        .map_err(|error| format!("cannot start Ice review worker: {error}"))?
+        .join()
+        .map_err(|_| "Ice review worker panicked".to_owned())?
+}
+
+fn review_on_compiler_stack(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_review(args)?;
     let requested_source = root.join(&options.source);
     let resolved_source = requested_source
