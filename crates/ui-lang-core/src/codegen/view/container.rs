@@ -171,7 +171,7 @@ fn border_dash_code(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_overlay(
     id: &Option<Id>,
-    options: &OverlayOptions,
+    overlay: &ResolvedOverlay,
     content: &ViewNode,
     layer: &ViewNode,
     document: &RenderDocument<'_>,
@@ -180,25 +180,26 @@ pub(in crate::codegen) fn render_overlay(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
+    let program = document.program();
     let child_scope = rendered_child_scope(id.as_ref(), scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let layer = render_node(layer, document, message, env, &child_scope, slot)?;
-    let visible = expr_code(&options.visible, env, document, ValueMode::Owned)?;
-    let padding = expr_code(&options.padding, env, document, ValueMode::Owned)?;
-    let backdrop = theme_color(document, &options.backdrop);
-    let dismiss = options.dismiss.as_ref().map_or_else(
+    let visible = checked_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
+    let padding = checked_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
+    let backdrop = resolved_theme_color(&overlay.backdrop);
+    let dismiss = overlay.dismiss.as_ref().map_or_else(
         || Ok(format!("{message}::__ExternNoop")),
-        |route| route_code(route, "", env, document, message),
+        |route| resolved_interaction_route_code(route, &[], env, program, message),
     )?;
-    let align_x = match options.align_x {
-        FlexAlignment::Start => "Left",
-        FlexAlignment::Center => "Center",
-        FlexAlignment::End => "Right",
+    let align_x = match overlay.align_x {
+        ResolvedOverlayAlignment::Start => "Left",
+        ResolvedOverlayAlignment::Center => "Center",
+        ResolvedOverlayAlignment::End => "Right",
     };
-    let align_y = match options.align_y {
-        FlexAlignment::Start => "Top",
-        FlexAlignment::Center => "Center",
-        FlexAlignment::End => "Bottom",
+    let align_y = match overlay.align_y {
+        ResolvedOverlayAlignment::Start => "Top",
+        ResolvedOverlayAlignment::Center => "Center",
+        ResolvedOverlayAlignment::End => "Bottom",
     };
     let noop = format!("{message}::__ExternNoop");
     let rendered = format!(

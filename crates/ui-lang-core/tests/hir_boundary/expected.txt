@@ -27,11 +27,11 @@ src/codegen/style/selection.rs 30 2e800cd704697ee0d03c601d052cce80
 src/codegen/subscription.rs 51 196a4af62b4360dec796ec7003176f22
 src/codegen/testing.rs 65 b10d702d279cc4efbb5d795bed4ab69c
 src/codegen/view.rs 35 930b3878916e0f120c9aa564bb286bb6
-src/codegen/view/container.rs 30 a8375b0cd841ba3d4b1a771c3276a54d
+src/codegen/view/container.rs 23 f9d50777283b80a7f31c07bd5a0d613f
 src/codegen/view/content.rs 44 aad0d2962957ffeeb1641190e67184a9
 src/codegen/view/controls.rs 34 d1b86239f70c9947994f2961d4baaa13
 src/codegen/view/documents.rs 31 6e4aa85dab0e3d63ce8004d0f65171b8
-src/codegen/view/foundation.rs 39 bb5d94f4e225c7dec9fd7076c3509292
+src/codegen/view/foundation.rs 39 e900beb232995a5fc57c51ce4c01b50b
 src/codegen/view/layout.rs 159 42064abc6a8ad42b9118f700519d0d95
 src/codegen/view/media.rs 20 3f2bec4af015a98350177497155e1ff8
 src/codegen/view/pane.rs 15 b8b40c026859869ed60719d9219c1778
@@ -51,11 +51,11 @@ src/codegen/statement/view_fn.rs 1 0a6afed65123de586dfcb8f3ef2d52c1
 src/codegen/style/model.rs 1 d9930ed416210b027f669e4c746c4188
 src/codegen/testing.rs 1 b577600645de096428b861a4280c9bb6
 src/codegen/view.rs 4 c0d12692d9f4ab477c1e5ef0b6b94fc1
-src/codegen/view/container.rs 3 8c4ff6d36b6ba44a074d63d1ed3d6fae
+src/codegen/view/container.rs 3 c93f4b79fe217c07120d4e867f33f6fc
 src/codegen/view/content.rs 1 4bf68d712171c8c2fc31996763253ea9
 src/codegen/view/controls.rs 1 3df5e6c0cfa5bed6a5734733caf0c180
 src/codegen/view/documents.rs 1 2ec569592456bcd66f0a5a50d010d93e
-src/codegen/view/foundation.rs 1 e3f5fe6d8ccc8462a987350075118e3e
+src/codegen/view/foundation.rs 1 0c7a53793663bcbe135b92aa094ac9c8
 src/codegen/view/layout.rs 3 2a23cfaca59c1202c77939210b465f02
 src/codegen/view/media.rs 1 08a6329273328a075fe1948147db2829
 src/codegen/view/pane.rs 4 3841f30d22b7033dd13757b9dc7de245

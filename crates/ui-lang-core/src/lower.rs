@@ -39,6 +39,7 @@ mod keyed_column;
 mod lazy;
 mod match_view;
 mod media;
+mod overlay;
 mod pane_grid;
 mod pin;
 mod responsive;
@@ -56,6 +57,7 @@ pub(crate) use keyed_column::*;
 pub(crate) use lazy::*;
 pub(crate) use match_view::*;
 pub(crate) use media::*;
+pub(crate) use overlay::*;
 pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
@@ -1461,6 +1463,7 @@ pub(crate) struct LoweredProgram {
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
@@ -3016,6 +3019,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn overlay(&self, id: ViewId) -> Option<&ResolvedOverlay> {
+        self.overlays.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&ResolvedTooltip> {
         self.tooltips.get(&id)
     }
@@ -3129,6 +3137,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "media reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_overlay_for(&self, node: &ViewNode) -> Result<&ResolvedOverlay, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "overlay reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "overlay reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.overlays.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "overlay reached code generation without normalized HIR",
             )
         })
     }
@@ -3732,6 +3766,7 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
@@ -4460,6 +4495,7 @@ impl Lowerer {
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
             media: HashMap::new(),
+            overlays: HashMap::new(),
             tooltips: HashMap::new(),
             floats: HashMap::new(),
             pins: HashMap::new(),
@@ -4546,6 +4582,7 @@ impl Lowerer {
             tests,
             canvases: self.canvases,
             media: self.media,
+            overlays: self.overlays,
             tooltips: self.tooltips,
             floats: self.floats,
             pins: self.pins,
@@ -8467,7 +8504,14 @@ impl Lowerer {
             | ViewNode::Theme { content, .. } => {
                 self.lower_view(content, outer_component)?;
             }
-            ViewNode::Overlay { content, layer, .. } => {
+            ViewNode::Overlay {
+                options,
+                content,
+                layer,
+                span,
+                ..
+            } => {
+                self.lower_overlay(options, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
                 self.lower_view(layer, outer_component)?;
             }
@@ -10859,6 +10903,198 @@ view
     }
 
     #[test]
+    fn normalizes_overlay_expressions_route_color_alignment_and_origin() {
+        let source = format!(
+            "app OverlayHir\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let overlay = program.overlay(ViewId(0)).unwrap();
+
+        assert_eq!(overlay.id, ViewId(0));
+        assert_eq!(overlay.align_x, ResolvedOverlayAlignment::Center);
+        assert_eq!(overlay.align_y, ResolvedOverlayAlignment::End);
+        assert!(matches!(
+            overlay.backdrop,
+            ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Black,
+                opacity: Some(60),
+            }
+        ));
+        for (index, expression, expected) in [
+            (0, overlay.visible, Type::Bool),
+            (1, overlay.padding, Type::F64),
+        ] {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, expected);
+            assert_eq!(expression.destination, expected);
+            assert_eq!(
+                expression.owner,
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: ViewId(0),
+                    index,
+                })
+            );
+        }
+        let dismiss = overlay.dismiss.as_ref().unwrap();
+        assert_eq!(
+            dismiss.id,
+            InteractionRouteId {
+                widget: ViewId(0),
+                index: 0,
+            }
+        );
+        assert!(dismiss.source_payloads.is_empty());
+        assert!(!dismiss.ordered_payloads);
+        assert!(matches!(
+            dismiss.args.as_slice(),
+            [ResolvedInteractionRouteArg::Expression(_)]
+        ));
+        let ResolvedInteractionRouteTarget::TargetHandler(handler) = dismiss.target else {
+            panic!("overlay dismiss must target an app handler");
+        };
+        assert_eq!(program.try_handler(handler).unwrap().name, "close");
+        assert_eq!(program.origin(dismiss.origin).parent, Some(overlay.origin));
+    }
+
+    #[test]
+    fn overlay_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedOverlay\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-overlay.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Overlay { options, .. } = &mut checked.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.visible = Expr::Bool(false);
+        options.padding = Expr::F64(999.0);
+        let RouteArg::Expr(argument) = &mut options.dismiss.as_mut().unwrap().args[0] else {
+            panic!("dismiss route must contain an expression");
+        };
+        *argument = Expr::Bool(false);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-overlay.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Overlay { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.backdrop = "danger".into();
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn overlay_codegen_ignores_raw_options_and_route_after_lowering() {
+        let source = format!(
+            "app LoweredOverlay\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-overlay.ice").unwrap();
+
+        let ViewNode::Overlay { options, .. } = &mut program.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.visible = Expr::Bool(false);
+        options.padding = Expr::F64(999.0);
+        options.backdrop = "danger".into();
+        options.align_x = FlexAlignment::Start;
+        options.align_y = FlexAlignment::Start;
+        let dismiss = options.dismiss.as_mut().unwrap();
+        dismiss.handler = "poisoned".into();
+        dismiss.args.clear();
+
+        let actual = crate::codegen::generate(&program, "lowered-overlay.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("Poisoned"));
+        assert!(!actual.contains("999.0"));
+    }
+
+    #[test]
+    fn malformed_checked_overlay_expression_route_id_and_origin_do_not_panic() {
+        let source = format!(
+            "app InvalidOverlayFacts\n{THEME}state\n  shown = true\non close\nview\n  overlay when=shown dismiss=close backdrop=black/60 p=24.0\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_interaction_route_id(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_interaction_route_origin(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is outside its arena"));
+    }
+
+    #[test]
+    fn imported_overlay_keeps_physical_origins_and_generated_source_markers() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-overlay-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("overlay.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedOverlayApp\nuse \"overlay.ice\"\n{THEME}view\n  ImportedOverlay\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedOverlay()\n  state\n    shown = true\n  on close\n    shown = false\n  overlay when=shown dismiss=close backdrop=black/60 p=12.0\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let overlay = program.overlays.values().next().unwrap();
+        let origin = program.origin(overlay.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 6);
+        let route_origin = program.origin(overlay.dismiss.as_ref().unwrap().origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.parent, Some(overlay.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
@@ -12156,6 +12392,32 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized interaction widgets lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized overlay lowering and emission performance contract"]
+    fn performance_contract_four_thousand_overlays_lower_and_emit_under_two_seconds() {
+        const OVERLAYS: usize = 4_000;
+        let mut source = format!("app OverlayScale\n{THEME}on close\nview\n  col\n");
+        for index in 0..OVERLAYS {
+            writeln!(
+                source,
+                "    overlay when=true dismiss=close backdrop=black/60 p=8.0\n      content\n        text \"Page {index}\"\n      layer\n        text \"Dialog {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "overlay-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.overlays.len(), OVERLAYS);
+        assert_eq!(generated.matches("let __overlay_stack").count(), OVERLAYS);
+        eprintln!("4k normalized overlays lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized overlays lowered and emitted in {elapsed:?}"
         );
     }
 

@@ -188,6 +188,32 @@ pub struct OverlayOptions {
     pub align_y: FlexAlignment,
 }
 
+pub(crate) fn overlay_routes(options: &OverlayOptions) -> Vec<&Route> {
+    options.dismiss.iter().collect()
+}
+
+pub(crate) fn overlay_semantic_key(options: &OverlayOptions) -> String {
+    let dismiss = options.dismiss.as_ref().map_or_else(
+        || "none".into(),
+        |route| {
+            let arguments = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => "expression",
+                    RouteArg::Payload => "payload",
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{}({arguments})", route.handler)
+        },
+    );
+    format!(
+        "overlay|backdrop={}|align={:?}:{:?}|dismiss={dismiss}",
+        options.backdrop, options.align_x, options.align_y
+    )
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum PaneAxis {
     Horizontal,

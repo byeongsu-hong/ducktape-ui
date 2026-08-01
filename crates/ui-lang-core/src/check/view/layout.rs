@@ -241,6 +241,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(
                 &expr_type(&options.visible, env, document, span)?,
                 &Type::Bool,
@@ -257,6 +258,7 @@ pub(in crate::check) fn infer_layout_group(
             if let Some(dismiss) = &options.dismiss {
                 infer_route(dismiss, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
             infer_view(layer, env, document, signatures, ids)?;
         }

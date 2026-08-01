@@ -267,7 +267,7 @@ impl Lowerer {
         )
     }
 
-    fn interaction_contract(
+    pub(super) fn interaction_contract(
         &self,
         kind: CheckedInteractionKind,
         semantic_key: String,
@@ -300,7 +300,7 @@ impl Lowerer {
         Ok((id, checked, checked_view.scope, checked_view.origin))
     }
 
-    fn lower_optional_interaction_route(
+    pub(super) fn lower_optional_interaction_route(
         &self,
         source: &Option<Route>,
         checked: &CheckedInteraction,
@@ -345,6 +345,18 @@ impl Lowerer {
             })
         {
             return Err(self.invariant(&source.span, "interaction route ID diverged"));
+        }
+        let route_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
+            self.invariant(
+                &source.span,
+                "interaction route origin is outside its arena",
+            )
+        })?;
+        if route_origin.parent != Some(self.facts.view(widget).origin) {
+            return Err(self.invariant(
+                &source.span,
+                "interaction route origin has the wrong view parent",
+            ));
         }
         let source_args = match &checked.target {
             CheckedCanvasRouteTarget::ComponentEvent { name, .. } => {

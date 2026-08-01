@@ -29,14 +29,13 @@ pub(in crate::codegen) fn render_foundation(
             options, id, content, span, document, message, env, scope, slot,
         ),
         ViewNode::Overlay {
-            id,
-            options,
-            content,
-            layer,
-            ..
-        } => render_overlay(
-            id, options, content, layer, document, message, env, scope, slot,
-        ),
+            id, content, layer, ..
+        } => {
+            let overlay = document.program().resolved_overlay_for(node)?;
+            render_overlay(
+                id, overlay, content, layer, document, message, env, scope, slot,
+            )
+        }
         ViewNode::PaneGrid {
             panes, templates, ..
         } => render_pane_grid(

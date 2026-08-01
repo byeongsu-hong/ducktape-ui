@@ -366,6 +366,15 @@ pane nodes supply only content/title/control subtrees; generation does not
 reread PaneGrid expressions, names, configuration, options, styles, routes, or
 checker facts.
 
+Overlay is a completed structural interaction HIR slice. Its visibility and
+padding expressions, resolved backdrop color, horizontal and vertical
+alignment, optional typed dismiss route, stable view identity, and parented
+origins are published as `ResolvedOverlay`. Lowering revalidates expression
+ownership, DAGs, scope and types plus route identity, target, arguments, and
+origin parentage. Rust generation reads that record and uses the source node
+only for the content and layer subtrees and the still-shared widget ID surface;
+it does not reread Overlay options or its dismiss route.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

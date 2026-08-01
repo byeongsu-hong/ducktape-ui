@@ -876,6 +876,7 @@ pub(crate) enum CheckedInteractionKind {
     MouseArea,
     ResizeHandle,
     Sensor,
+    Overlay,
 }
 
 #[derive(Clone, Debug)]
@@ -1076,6 +1077,23 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_pane_template_origin(&mut self, view: ViewId, raw: u32) {
         self.pane_grids.get_mut(&view).unwrap().templates[0].origin = OriginId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_interaction_route_id(&mut self, view: ViewId, index: usize, raw: u32) {
+        self.interactions.get_mut(&view).unwrap().routes[index]
+            .id
+            .index = raw;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_interaction_route_origin(
+        &mut self,
+        view: ViewId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.interactions.get_mut(&view).unwrap().routes[index].origin = OriginId(raw);
     }
 
     #[cfg(test)]
@@ -7520,6 +7538,29 @@ impl<'a> FactsBuilder<'a> {
                     span,
                 )?;
                 self.lower_view_expression_tree(content, env)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Overlay {
+                options,
+                content,
+                layer,
+                span,
+                ..
+            } => {
+                self.lower_interaction_facts(
+                    view,
+                    CheckedInteractionKind::Overlay,
+                    crate::ast::overlay_semantic_key(options),
+                    vec![
+                        (&options.visible, Some(Type::Bool)),
+                        (&options.padding, Some(Type::F64)),
+                    ],
+                    crate::ast::overlay_routes(options),
+                    env,
+                    span,
+                )?;
+                self.lower_view_expression_tree(content, env)?;
+                self.lower_view_expression_tree(layer, env)?;
                 CheckedViewFlow::None
             }
             ViewNode::Component {

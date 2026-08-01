@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -397,6 +397,17 @@ content/title/control subtrees. Structural snapshots, malformed IDs,
 pre-/post-lowering AST poisoning, source-merged style ownership before physical
 origin remapping, complete production codegen, and an ignored 4,000-grid
 lower+emit budget provide the executable evidence.
+
+Overlay is a completed structural interaction slice. The checker retains its
+visibility and padding expressions and optional dismiss route in the shared
+interaction fact arena. Lowering revalidates expression ownership, DAGs, scope,
+types, route IDs, target/argument shape, and origin parentage, resolves backdrop
+color and alignment, and publishes `ResolvedOverlay`. Production emission reads
+that record while source nodes provide only content/layer subtrees and the
+shared widget ID surface. Structural assertions, malformed IDs, pre-lowering
+semantic mutation, post-lowering AST poisoning, existing native overlay
+codegen, and an ignored 4,000-overlay lower+emit budget provide the executable
+evidence.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
