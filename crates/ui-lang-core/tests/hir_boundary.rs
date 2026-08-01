@@ -5,6 +5,8 @@ const BACKDOORS: &[(&str, &str)] = &[
     ("source AST dependency", "use crate::ast::*;"),
     ("checked-document escape", "program.document()"),
     ("checker dependency", "crate::check"),
+    ("checked-facts escape", "checked_facts()"),
+    ("declaration-index escape", "declarations()"),
     ("type re-analysis", "expr_type("),
     ("extern re-resolution", "find_extern_function("),
     ("raw expression fallback", "ExprNode::Ast"),
@@ -29,6 +31,20 @@ src/codegen/expr.rs 4
 src/codegen/statement/task.rs 3
 src/codegen/statement.rs 1
 src/codegen.rs 1
+[checked-facts escape]
+src/codegen/expr/children.rs 3
+src/codegen/expr/discovery.rs 1
+src/codegen/expr.rs 7
+src/codegen/statement/view_fn.rs 1
+src/codegen/testing.rs 1
+src/codegen/view/layout.rs 3
+src/codegen/view/pane.rs 3
+src/codegen/view/structure.rs 3
+src/codegen/view/table.rs 2
+src/codegen.rs 2
+[declaration-index escape]
+src/codegen/expr.rs 4
+src/codegen.rs 3
 [type re-analysis]
 src/codegen/canvas/commands.rs 4
 src/codegen/canvas.rs 1
