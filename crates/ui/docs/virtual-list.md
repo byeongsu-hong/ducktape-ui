@@ -61,11 +61,19 @@ not remain mounted beside the replacement. Snapshots and forks share the
 immutable per-key semantic map in constant time. A successful `reconcile` is the
 only operation that atomically publishes a newly allocated complete map.
 
+Use `state.id().selector()` to target the collection and
+`state.item_selector(&key)` to target a key from the latest successful
+reconciliation. These helpers produce canonical exact selectors in a reserved,
+type-tagged namespace and percent-escape each UTF-8 logical-name component, so a
+list name cannot collide with a row selector even if it contains `/`, `%`, or
+text that resembles an item path. Selector strings are a runtime contract;
+callers should not reconstruct them from `logical()`.
+
 Mouse clicks and touch taps focus the named list without stealing input or
 cursor semantics from interactive row content or its native scrollbar. Touch
-ownership follows `FingerPressed` and `FingerLifted` positions within mounted-row
-bounds and descendant capture, even when the mouse cursor is unavailable or
-elsewhere. The
+ownership translates `FingerPressed` and `FingerLifted` positions into native
+scroll-content coordinates, clips them to the viewport, and observes descendant
+capture, even when the mouse cursor is unavailable or elsewhere. The
 focused list supports Up, Down, Home, End, PageUp, and PageDown.
 `scroll_to_item` and `scroll_to_key` update retained state; a private revisioned
 operation synchronizes the native scrollable on the next layout, including
@@ -94,8 +102,18 @@ anchoring evidence before admission.
 
 The `ducktape-ui` feature enables only the renderer-side
 `ui-lang-runtime/virtual-list` boundary and therefore compiles for
-`wasm32-unknown-unknown`. The full native Ice headless driver remains the
-runtime crate's default `test-runtime` feature. Release CI measures unchanged
+`wasm32-unknown-unknown`. Direct native runtime consumers that disable default
+features must also select a platform backend, for example:
+
+```toml
+ui-lang-runtime = { version = "0.1.0", default-features = false, features = ["virtual-list", "x11"] }
+```
+
+`wayland` is the Linux alternative; both enable `thread-pool`. The runtime also
+exposes `wgpu` and `tiny-skia` passthrough features, aligned with
+`ducktape-ui`. Bare `virtual-list` deliberately chooses no Linux window backend
+and is sufficient for `wasm32-unknown-unknown`. The full native Ice headless
+driver remains the runtime crate's default `test-runtime` feature. Release CI measures unchanged
 100,000-row frames, a showcase-equivalent `update_snapshot` plus `Scrolled`
 reducer step, and explicit 100,000-key reconciliation separately, with p50/p95
 time and allocation budgets for each path. The scalar-key reducer step has a

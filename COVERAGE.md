@@ -315,7 +315,8 @@ Fixed-height `VirtualList` is an explicit typed-runtime boundary, not a Core
 coverage claim. Runtime tests cover unique-key reconciliation, reorder/delete,
 empty and out-of-range behavior, owned non-`Copy` keys, mouse focus/selection,
 focus transfer to sibling lists and inputs, actual child-capture and native
-scrollbar touch/mouse precedence, all six keyboard movements,
+scrollbar touch/mouse precedence from a fresh native offset, scrolled row taps
+with an unavailable or unrelated cursor, all six keyboard movements,
 first-layout/remount/zero-offset programmatic scroll, measured fresh-mount and
 resize viewport events, touch taps, interactive-child cursor semantics, and
 AccessKit collection name/focus/count/active-descendant plus mounted-item
@@ -325,7 +326,8 @@ duplicate logical list names; mounted widget state follows the same keys across
 reorder and one-row mounted-window slides. Explicitly forked retained state
 requires a distinct logical name and receives a new native and semantic
 namespace; a concurrent headless-driver test proves each list and row selector
-has exactly one match. Separate constructors with duplicate logical names retain
+has exactly one match using canonical helper selectors and a list name shaped
+like an old row path. Separate constructors with duplicate logical names retain
 native and accessibility namespace safety under the documented caller-unique
 selector contract. Release 100,000-item CI contracts separately measure
 unchanged build/diff/layout/draw frames, constant-time `update_snapshot` plus
@@ -336,7 +338,10 @@ callback and exact mounted child-slot budgets.
 The extracted-crate downstream consumer compiles and executes the public
 runtime and `ducktape-ui` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
-capture; standalone `virtual-list` package checks cover native and wasm. The
+capture; direct `ui-lang-runtime` and `ducktape-ui` minimal-feature checks cover
+native X11 and wasm, and the extracted runtime package repeats the direct native
+`virtual-list,x11` contract. Bare `virtual-list` intentionally leaves native
+platform selection to the caller. The
 Windows native WGPU job requires a renderer primitive from a measured mounted
 row subtree before accepting the first frame. V1 explicitly excludes
 variable-height measurement and new Ice syntax.

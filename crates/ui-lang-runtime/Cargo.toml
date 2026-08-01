@@ -12,14 +12,19 @@ rust-version.workspace = true
 default = ["full-runtime", "test-runtime"]
 full-runtime = ["virtual-list"]
 virtual-list = []
+wgpu = ["iced/wgpu"]
+tiny-skia = ["iced/tiny-skia"]
+x11 = ["iced/x11", "thread-pool"]
+wayland = ["iced/wayland", "thread-pool"]
+thread-pool = ["iced/thread-pool"]
 test-runtime = [
     "dep:iced_test",
     "dep:iced_tiny_skia",
     "dep:png",
-    "iced/thread-pool",
-    "iced/tiny-skia",
-    "iced/wgpu",
-    "iced/x11",
+    "thread-pool",
+    "tiny-skia",
+    "wgpu",
+    "x11",
 ]
 
 [dependencies]

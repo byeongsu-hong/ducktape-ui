@@ -2054,6 +2054,11 @@ instead of aliasing it. Logical names must be unique among concurrently mounted
 lists so headless selectors are exact. Separate `VirtualListId::new` calls with
 duplicate logical names violate that selector contract, but their runtime-unique
 namespaces still prevent native widget and AccessKit identity collisions.
+The collection selector comes from `VirtualListId::selector`, and reconciled
+row selectors come from `VirtualListState::item_selector`; callers do not
+reconstruct either from the readable logical name. Canonical UTF-8 percent
+escaping and separate reserved list/item namespaces prevent a logical name that
+resembles a row path from aliasing another semantic target.
 `update_snapshot` preserves identity only for value-oriented reducer replacement
 and its old snapshot may not remain mounted. Its immutable per-key semantic map
 is shared in constant time; only successful explicit reconciliation publishes a
@@ -2062,8 +2067,9 @@ per-key semantic allocations remain distinct even when
 different keys produce the same hash. Only mounted visible-plus-overscan rows
 become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
 behavior take precedence over row selection. Touch ownership uses the pressed
-and lifted event positions against mounted-row bounds plus descendant capture
-before and after dispatch, independently of the current mouse cursor. Trees for
+and lifted event positions translated into native scroll-content coordinates,
+clipped to the viewport, plus descendant capture before and after dispatch,
+independently of the current mouse cursor. Trees for
 keys in consecutive mounted-window intersections
 remain retained. The focused AccessKit list exposes its selected mounted item as
 the active descendant. `VirtualList.Frame`

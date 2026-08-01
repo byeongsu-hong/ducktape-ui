@@ -26,9 +26,22 @@ mod tests {
         state
             .reconcile(&items, Clone::clone, config)
             .expect("packaged keys are unique");
-        let fork = state.fork("packaged-virtual-list-copy");
+        let fork = state.fork("packaged-virtual-list/item/2");
         assert_ne!(state.id(), fork.id());
         assert_ne!(state.id().logical(), fork.id().logical());
+        let selectors = [
+            state.id().selector(),
+            state.item_selector(&items[0]).unwrap(),
+            fork.id().selector(),
+            fork.item_selector(&items[0]).unwrap(),
+        ];
+        assert_eq!(
+            selectors
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            selectors.len()
+        );
         state.apply(
             VirtualListEvent::ViewportChanged { height: 100.0 },
             &items,

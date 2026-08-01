@@ -16,6 +16,7 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Write as _;
 use std::hash::Hash;
 use std::ops::Range;
 use std::rc::Rc;
@@ -23,6 +24,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_VIRTUAL_LIST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
+const VERTICAL_SCROLLBAR_WIDTH: f32 = 10.0;
+const SELECTOR_PREFIX: &str = "__ice/virtual-list";
 
 /// Explicit identity for one retained virtual-list instance.
 ///
@@ -58,6 +61,15 @@ impl VirtualListId {
         &self.logical
     }
 
+    /// Returns the canonical exact selector for this list.
+    ///
+    /// The logical name is escaped as one component below a runtime-reserved,
+    /// type-tagged namespace. Callers should use this helper instead of
+    /// reconstructing selector strings.
+    pub fn selector(&self) -> String {
+        self.selector_with_kind("list")
+    }
+
     fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
         format!("__ice_virtual_list/{}/{suffix}", self.namespace).into()
     }
@@ -66,6 +78,38 @@ impl VirtualListId {
         StableId::from_node_id(accesskit::NodeId(
             (u64::from(self.namespace) << 32) | u64::from(local),
         ))
+    }
+
+    fn item_selector(&self, local: u32) -> String {
+        let mut selector = self.selector_with_kind("item");
+        write!(&mut selector, "/{local}").expect("writing to a String cannot fail");
+        selector
+    }
+
+    fn selector_with_kind(&self, kind: &str) -> String {
+        let mut selector = String::with_capacity(
+            SELECTOR_PREFIX.len() + kind.len() + self.logical.len().saturating_mul(3) + 12,
+        );
+        selector.push_str(SELECTOR_PREFIX);
+        selector.push('/');
+        selector.push_str(kind);
+        selector.push('/');
+        push_escaped_selector_component(&mut selector, &self.logical);
+        selector
+    }
+}
+
+fn push_escaped_selector_component(escaped: &mut String, value: &str) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            escaped.push(char::from(byte));
+        } else {
+            escaped.push('%');
+            escaped.push(char::from(HEX[usize::from(byte >> 4)]));
+            escaped.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
     }
 }
 
@@ -511,6 +555,16 @@ where
                 .expect("virtual-list items must be reconciled before rendering"),
         )
     }
+
+    /// Returns the canonical exact selector for a reconciled item key.
+    ///
+    /// `None` means the key was not present in the latest successful
+    /// reconciliation.
+    pub fn item_selector(&self, key: &Key) -> Option<String> {
+        self.semantic_ids
+            .get(key)
+            .map(|local| self.id.item_selector(*local))
+    }
 }
 
 fn navigation_index(
@@ -581,7 +635,7 @@ where
             .get(&item_key)
             .copied()
             .expect("virtual-list items must be reconciled before rendering");
-        let logical_id = format!("{}/item/{semantic_key}", state.id.logical());
+        let logical_id = state.id.item_selector(semantic_key);
         let row: Element<'a, Message, Theme, Renderer> =
             accessible(row, state.semantic_id(&item_key), crate::Role::ListItem)
                 .logical_id(logical_id)
@@ -605,6 +659,7 @@ where
         keys: mounted_keys,
         children: mounted_children,
         touch_claim: Rc::clone(&touch_claim),
+        scroll_offset: Rc::clone(&native_scroll_offset),
     });
     let content = scrollable(
         column![
@@ -627,6 +682,11 @@ where
         .width(Length::Fill),
     )
     .id(state.scroll_id())
+    .direction(scrollable::Direction::Vertical(
+        scrollable::Scrollbar::new()
+            .width(VERTICAL_SCROLLBAR_WIDTH)
+            .scroller_width(VERTICAL_SCROLLBAR_WIDTH),
+    ))
     .width(Length::Fill)
     .height(Length::Fill)
     .on_scroll(move |viewport| {
@@ -643,6 +703,7 @@ where
         mounted,
         mounted_semantic_ids,
         config,
+        total_height: config.total_height(items.len()),
         scroll_offset,
         viewport_height: state.viewport_height,
         scroll_revision: state.scroll_revision,
@@ -661,7 +722,7 @@ where
         state.id.semantic_id(1),
         crate::Role::List,
     )
-    .logical_id(state.id.logical().to_owned())
+    .logical_id(state.id.selector())
     .label(collection_label)
     .focus_descendant()
     .active_descendant_maybe(active_descendant)
@@ -680,6 +741,7 @@ where
     mounted: Vec<(usize, Key)>,
     mounted_semantic_ids: Vec<u32>,
     config: VirtualListConfig,
+    total_height: f32,
     scroll_offset: f32,
     viewport_height: f32,
     scroll_revision: u64,
@@ -693,14 +755,15 @@ enum TouchClaim {
     None,
     Row,
     Child,
+    Scrollbar,
 }
 
 /// Transparent keyed-row boundary that observes actual descendant capture.
 ///
 /// Iced's scrollable captures every plain touch press to prepare native touch
-/// scrolling, while a scrollbar press reaches its content with a levitated
-/// cursor. Observing the row subtree before scrollable capture is the only
-/// reliable way to distinguish row, child, and scrollbar ownership.
+/// scrolling. This boundary distinguishes row and descendant ownership in
+/// translated content coordinates; the outer list separately reserves the
+/// native scrollbar rail from the touch event position.
 struct MountedRows<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
@@ -708,6 +771,7 @@ where
     keys: Vec<u32>,
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     touch_claim: Rc<Cell<TouchClaim>>,
+    scroll_offset: Rc<Cell<f32>>,
 }
 
 struct MountedRowsState {
@@ -822,7 +886,11 @@ where
             Event::Touch(
                 iced::touch::Event::FingerPressed { position, .. }
                 | iced::touch::Event::FingerLifted { position, .. },
-            ) => layout.bounds().contains(*position),
+            ) => {
+                let content_position =
+                    Point::new(position.x, position.y + self.scroll_offset.get());
+                layout.bounds().contains(content_position) && viewport.contains(content_position)
+            }
             _ => false,
         };
         let captured_before = shell.is_event_captured();
@@ -1132,6 +1200,19 @@ where
             viewport,
         );
 
+        if let Event::Touch(
+            iced::touch::Event::FingerPressed { position, .. }
+            | iced::touch::Event::FingerLifted { position, .. },
+        ) = event
+            && self.touch_over_vertical_scrollbar(
+                *position,
+                layout.bounds(),
+                state.measured_viewport_height,
+            )
+        {
+            self.touch_claim.set(TouchClaim::Scrollbar);
+        }
+
         if let Event::Touch(iced::touch::Event::FingerPressed { id, position }) = event {
             state.touch = (self.touch_claim.get() == TouchClaim::Row
                 && layout.bounds().contains(*position))
@@ -1309,6 +1390,20 @@ where
     Message: Clone,
     Renderer: iced::advanced::Renderer,
 {
+    fn touch_over_vertical_scrollbar(
+        &self,
+        position: Point,
+        bounds: Rectangle,
+        viewport_height: f32,
+    ) -> bool {
+        if self.total_height <= viewport_height || !bounds.contains(position) {
+            return false;
+        }
+
+        let width = VERTICAL_SCROLLBAR_WIDTH.min(bounds.width.max(0.0));
+        position.x >= bounds.x + bounds.width - width
+    }
+
     fn publish_selection(
         &self,
         position: Point,
@@ -1459,7 +1554,7 @@ mod tests {
             |item| *item,
             config(),
         );
-        let fork = original.fork("driver/fork");
+        let fork = original.fork("driver/original/item/2");
         ForkMountState {
             original,
             fork,
@@ -2089,14 +2184,39 @@ mod tests {
             DriverConfig::new("forked_virtual_list_selectors").viewport(240.0, 160.0),
         );
 
-        for logical_id in [
-            "driver/original",
-            "driver/original/item/2",
-            "driver/fork",
-            "driver/fork/item/2",
-        ] {
-            assert!(driver.target(logical_id, SOURCE).visible());
+        let selectors = {
+            let state = driver.state();
+            [
+                state.original.id().selector(),
+                state.original.item_selector(&10).unwrap(),
+                state.fork.id().selector(),
+                state.fork.item_selector(&10).unwrap(),
+            ]
+        };
+        let unique = selectors.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), selectors.len());
+
+        for selector in selectors {
+            assert!(driver.target(&selector, SOURCE).visible());
         }
+    }
+
+    #[test]
+    fn selectors_are_canonical_escaped_and_type_tagged() {
+        let items = [10_u64];
+        let mut state = VirtualListState::new(VirtualListId::new("a/%/\u{D55C}"));
+        state.reconcile(&items, |item| *item, config()).unwrap();
+
+        assert_eq!(
+            state.id().selector(),
+            "__ice/virtual-list/list/a%2F%25%2F%ED%95%9C"
+        );
+        assert_eq!(
+            state.item_selector(&10).as_deref(),
+            Some("__ice/virtual-list/item/a%2F%25%2F%ED%95%9C/2")
+        );
+        assert_ne!(state.id().selector(), state.item_selector(&10).unwrap());
+        assert_eq!(state.item_selector(&99), None);
     }
 
     #[test]
@@ -2900,6 +3020,66 @@ mod tests {
     }
 
     #[test]
+    fn scrolled_touch_uses_event_position_when_cursor_is_unavailable_or_elsewhere() {
+        let items: Vec<u64> = (0..100).collect();
+        let mut state = prepared_state("scrolled-touch-list");
+        state.reconcile(&items, |key| *key, config()).unwrap();
+        assert!(state.scroll_to_item(40, items.len(), config()));
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            config(),
+            "Scrolled touch results",
+            |key| *key,
+            |key| format!("Item {key}"),
+            |index, _, _| iced::widget::text(index).into(),
+            Message::List,
+        );
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        let point = Point::new(10.0, 10.0);
+
+        for (finger, cursor) in [
+            (iced::touch::Finger(21), mouse::Cursor::Unavailable),
+            (
+                iced::touch::Finger(22),
+                mouse::Cursor::Available(Point::new(500.0, 500.0)),
+            ),
+        ] {
+            let _ = ui.update(
+                &[
+                    Event::Touch(iced::touch::Event::FingerPressed {
+                        id: finger,
+                        position: point,
+                    }),
+                    Event::Touch(iced::touch::Event::FingerLifted {
+                        id: finger,
+                        position: point,
+                    }),
+                ],
+                cursor,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+        }
+
+        assert_eq!(
+            messages,
+            vec![
+                Message::List(VirtualListEvent::Select { index: 40, key: 40 }),
+                Message::List(VirtualListEvent::Select { index: 40, key: 40 }),
+            ]
+        );
+    }
+
+    #[test]
     fn native_scrollbar_press_and_drag_never_select_a_row() {
         let items: Vec<u64> = (0..100).collect();
         let mut state = prepared_state("scrollbar-list");
@@ -2929,6 +3109,39 @@ mod tests {
         );
         let mut messages = Vec::new();
         let press = Point::new(239.0, 40.0);
+
+        for (finger, cursor) in [
+            (iced::touch::Finger(13), mouse::Cursor::Unavailable),
+            (
+                iced::touch::Finger(14),
+                mouse::Cursor::Available(Point::new(500.0, 500.0)),
+            ),
+        ] {
+            let _ = ui.update(
+                &[
+                    Event::Touch(iced::touch::Event::FingerPressed {
+                        id: finger,
+                        position: press,
+                    }),
+                    Event::Touch(iced::touch::Event::FingerLifted {
+                        id: finger,
+                        position: press,
+                    }),
+                ],
+                cursor,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+        }
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::List(VirtualListEvent::Select { .. }))),
+            "touching a fresh native scrollbar must not select the row beneath it"
+        );
+
+        messages.clear();
         let _ = ui.update(
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
@@ -2957,24 +3170,31 @@ mod tests {
         );
 
         messages.clear();
-        let finger = iced::touch::Finger(13);
         let tap = Point::new(239.0, 40.0);
-        let _ = ui.update(
-            &[
-                Event::Touch(iced::touch::Event::FingerPressed {
-                    id: finger,
-                    position: tap,
-                }),
-                Event::Touch(iced::touch::Event::FingerLifted {
-                    id: finger,
-                    position: tap,
-                }),
-            ],
-            mouse::Cursor::Unavailable,
-            &mut renderer,
-            &mut iced::advanced::clipboard::Null,
-            &mut messages,
-        );
+        for (finger, cursor) in [
+            (iced::touch::Finger(15), mouse::Cursor::Unavailable),
+            (
+                iced::touch::Finger(16),
+                mouse::Cursor::Available(Point::new(500.0, 500.0)),
+            ),
+        ] {
+            let _ = ui.update(
+                &[
+                    Event::Touch(iced::touch::Event::FingerPressed {
+                        id: finger,
+                        position: tap,
+                    }),
+                    Event::Touch(iced::touch::Event::FingerLifted {
+                        id: finger,
+                        position: tap,
+                    }),
+                ],
+                cursor,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+        }
         assert!(
             !messages
                 .iter()
@@ -3208,6 +3428,7 @@ mod tests {
             keys: Vec::new(),
             children: Vec::new(),
             touch_claim: Rc::clone(&claim),
+            scroll_offset: Rc::new(Cell::new(0.0)),
         };
         let mut empty_tree = WidgetTree::new(&empty as &dyn Widget<Message, (), RecordingRenderer>);
         let mut renderer = RecordingRenderer::default();
@@ -3227,6 +3448,7 @@ mod tests {
             keys: vec![2],
             children: vec![Element::new(FocusLeaf)],
             touch_claim: claim,
+            scroll_offset: Rc::new(Cell::new(0.0)),
         };
         let mut mounted_tree =
             WidgetTree::new(&mounted as &dyn Widget<Message, (), RecordingRenderer>);
@@ -3255,6 +3477,7 @@ mod tests {
             mounted: Vec::<(usize, u64)>::new(),
             mounted_semantic_ids: Vec::new(),
             config: config(),
+            total_height: 40.0,
             scroll_offset: 0.0,
             viewport_height: 40.0,
             scroll_revision: 0,
