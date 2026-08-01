@@ -103,34 +103,38 @@ impl BaselineScope {
 
 pub(super) fn review(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_review(args)?;
-    let source = root
-        .join(&options.source)
+    let requested_source = root.join(&options.source);
+    let resolved_source = requested_source
         .canonicalize()
-        .map_err(|error| format!("cannot open {}: {error}", options.source.display()))?;
-    let source_text = fs::read_to_string(&source).map_err(|error| error.to_string())?;
-    if !ui_lang_core::source_is_app(&source_text) {
-        return Err(format!(
-            "{} is not an Ice root; review the file containing its top-level `app` or `daemon`",
-            source.display()
-        ));
-    }
-
-    let run_id = run_id()?;
-
+        .map_err(|error| format!("cannot open {}: {error}", options.source.display()));
     let output = options.output.as_ref().map_or_else(
         || {
-            root.join("target/ice-review")
-                .join(source_output_name(root, &source))
+            root.join("target/ice-review").join(source_output_name(
+                root,
+                resolved_source.as_deref().unwrap_or(&requested_source),
+            ))
         },
         |path| root.join(path),
     );
     fs::create_dir_all(&output)
         .map_err(|error| format!("cannot create review output {}: {error}", output.display()))?;
     let output = output.canonicalize().unwrap_or(output);
-    match review_opened(root, &source, &output, &options, &run_id) {
+    let run_id = run_id()?;
+    let review_result = resolved_source.and_then(|source| {
+        let source_text = fs::read_to_string(&source)
+            .map_err(|error| format!("cannot read {}: {error}", source.display()))?;
+        if !ui_lang_core::source_is_app(&source_text) {
+            return Err(format!(
+                "{} is not an Ice root; review the file containing its top-level `app` or `daemon`",
+                source.display()
+            ));
+        }
+        review_opened(root, &source, &output, &options, &run_id)
+    });
+    match review_result {
         Ok(()) => Ok(()),
         Err(error) => {
-            match ensure_current_failure_bundle(root, &source, &output, &run_id, &error) {
+            match ensure_current_failure_bundle(root, &requested_source, &output, &run_id, &error) {
                 Ok(()) => Err(error),
                 Err(publish_error) => Err(format!(
                     "{error}\nfailed to publish current review failure bundle: {publish_error}"
@@ -1663,6 +1667,43 @@ mod tests {
                 .contains("missing")
         );
         fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn source_open_and_root_validation_failures_replace_stale_success() {
+        for (name, source, expected) in [
+            ("missing-source", None, "cannot open"),
+            (
+                "non-root-source",
+                Some("component Card()\n  text \"Card\"\n"),
+                "is not an Ice root",
+            ),
+        ] {
+            let fixture = fixture(name);
+            let output = fixture.join("review");
+            fs::create_dir_all(&output).unwrap();
+            if let Some(source) = source {
+                fs::write(fixture.join("app.ice"), source).unwrap();
+            }
+            write_json(&output.join("report.json"), &review_report(json!([]))).unwrap();
+
+            let error = review(
+                &fixture,
+                &["app.ice".into(), "--output".into(), "review".into()],
+            )
+            .unwrap_err();
+            assert!(error.contains(expected), "{name}: {error}");
+            let report = read_json(&output.join("report.json")).unwrap();
+            assert_eq!(report["artifact_kind"], REVIEW_ARTIFACT_KIND);
+            assert_eq!(report["success"], false);
+            assert_ne!(report["run_id"], "fixture-run");
+            assert!(
+                report["failure"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(expected))
+            );
+            fs::remove_dir_all(fixture).unwrap();
+        }
     }
 
     #[test]
