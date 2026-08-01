@@ -370,7 +370,13 @@ fn check(
             record_write(&binding, &state.span);
         }
     }
-    infer_subscriptions(document, &states, &mut signatures)?;
+    infer_subscriptions(
+        document,
+        &states,
+        &mut signatures,
+        declarations,
+        &mut initializer_analyses,
+    )?;
     let empty_env = HashMap::new();
     for handler in &document.handlers {
         with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
@@ -799,8 +805,9 @@ pub(crate) use facts::{
     CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
     CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
     CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
-    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator,
-    CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
+    CheckedSubscriptionRoute, CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef,
+    CheckedView, CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 

@@ -26,6 +26,7 @@ arena_id!(TaskId);
 arena_id!(RouteId);
 arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
+arena_id!(SubscriptionId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AppSettingExprId {
@@ -235,6 +236,7 @@ pub(crate) struct DeclarationIndex {
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
     handlers: Vec<HandlerDeclaration>,
     handlers_by_owner_name: HashMap<(HandlerOwner, String), HandlerId>,
+    subscriptions: Vec<Declaration<SubscriptionId>>,
     statements: Vec<StatementDeclaration>,
     tasks: Vec<TaskDeclaration>,
     routes: Vec<RouteDeclaration>,
@@ -511,6 +513,16 @@ impl DeclarationIndex {
             .map(|function| (function.name.clone(), function.declaration.id))
             .collect();
 
+        let subscriptions = document
+            .subscriptions
+            .iter()
+            .enumerate()
+            .map(|(index, subscription)| Declaration {
+                id: SubscriptionId(index as u32),
+                origin: origins.push(&subscription.span, None),
+            })
+            .collect();
+
         let mut views = Vec::new();
         let mut views_by_site = HashMap::new();
         let mut component_calls_by_view = HashMap::new();
@@ -674,6 +686,7 @@ impl DeclarationIndex {
             palettes_by_name,
             externs,
             externs_by_name,
+            subscriptions,
             views,
             views_by_site,
             component_calls_by_view,
@@ -803,6 +816,49 @@ impl DeclarationIndex {
         self.structs
             .get(id.0 as usize)
             .filter(|declaration| declaration.declaration.id == id)
+    }
+
+    pub(crate) fn rust_type(&self, ty: &Type, span: &Span) -> Result<String, crate::Error> {
+        Ok(match ty {
+            Type::List(inner) => format!("::std::vec::Vec<{}>", self.rust_type(inner, span)?),
+            Type::Option(inner) => {
+                format!("::std::option::Option<{}>", self.rust_type(inner, span)?)
+            }
+            Type::Result(output, error) => format!(
+                "::std::result::Result<{}, {}>",
+                self.rust_type(output, span)?,
+                self.rust_type(error, span)?
+            ),
+            Type::Combo(inner) => format!(
+                "::iced::widget::combo_box::State<{}>",
+                self.rust_type(inner, span)?
+            ),
+            Type::Animation(inner) if **inner == Type::F64 => "::iced::Animation<f32>".into(),
+            Type::Animation(inner) => {
+                format!("::iced::Animation<{}>", self.rust_type(inner, span)?)
+            }
+            Type::Named(name) => {
+                if let Some(item) = self.struct_decl_by_name(name) {
+                    item.rust_path.clone()
+                } else if let Some(item) = self.enum_decl_by_name(name) {
+                    item.rust_name.clone()
+                } else {
+                    return Err(crate::Error::new(
+                        "E196",
+                        span,
+                        format!("checked type references unknown named declaration `{name}`"),
+                    ));
+                }
+            }
+            Type::Unknown => {
+                return Err(crate::Error::new(
+                    "E196",
+                    span,
+                    "checked type remained unknown at code generation",
+                ));
+            }
+            ty => ty.rust(&[]),
+        })
     }
 
     pub(crate) fn struct_field(
@@ -967,6 +1023,38 @@ impl DeclarationIndex {
 
     pub(crate) fn run_site_count(&self) -> usize {
         self.run_sites.len()
+    }
+
+    pub(crate) fn checked_extern_decl(
+        &self,
+        id: ExternFnId,
+        span: &Span,
+    ) -> Result<&ExternDeclaration, crate::Error> {
+        self.try_extern_decl(id).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked HIR references an invalid extern declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn checked_handler(
+        &self,
+        id: HandlerId,
+        span: &Span,
+    ) -> Result<&HandlerDeclaration, crate::Error> {
+        self.try_handler(id).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked route references an invalid handler declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
+        self.subscriptions[index]
     }
 }
 

@@ -472,6 +472,19 @@ fields, named-window opening, packaged fonts, custom renderer/executor, and
 native application/daemon builders. The ignored 5,000-named-window contract
 requires stable sequential IDs and a two-second debug-build lowering budget.
 
+Application subscription HIR covers every native source plus `repeat`, stream
+`run`, recipe, raw-event recipe, and extern-subscription sources. Stable
+subscription, handler, and extern IDs replace source-name lookup. Source
+arguments, event identities, contexts, and conditions retain one authoritative
+typed expression analysis; source payloads and delivered filter/context
+payloads are separate fixed contracts; routes retain only ordered checked
+payload indices. Production codegen consumes those facts without raw
+subscription AST access or checker re-analysis. Native/extern generation tests,
+post-check source/route mutation tests, malformed retained-analysis `E196`
+checks, imported source-marker coverage, and an ignored 500-to-4,000 linearity
+contract provide the evidence. Handler bodies, task flows, canvas locals,
+settings, tests, and expression-bearing widget options remain open HIR slices.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

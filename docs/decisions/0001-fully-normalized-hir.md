@@ -228,6 +228,19 @@ Structured snapshots, imported extern/origin and direct source-marker tests,
 the existing complete application/window compile surface, and a 5,000 named
 window lowering contract are the executable evidence.
 
+Application subscriptions are normalized into the same checked arena. Every
+subscription has a stable `SubscriptionId`; extern-backed sources and filters
+carry `ExternFnId`s; condition, context, worker arguments, and event identity
+carry retained typed expression-use IDs; native and extern source payloads are
+fixed before filtering; post-filter/context payloads are recorded separately;
+and the route carries a stable `HandlerId` plus ordered payload indices. The
+Rust subscription emitter iterates this representation and no longer reads raw
+subscription sources, expressions, filters, or routes, nor invokes checker
+lookups. Post-check source and route mutations therefore cannot change emitted
+behavior. Imported source markers keep the subscription origin. A 500-to-4,000
+contract verifies exact linear expression growth, one shared app scope, zero
+full-scope clones, and a bounded debug-build wall time.
+
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and
 hands the owned result to fact construction; fact construction cannot invoke a

@@ -145,31 +145,80 @@ pub(in crate::check) fn infer_subscriptions(
     document: &Document,
     states: &HashMap<String, Type>,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    declarations: &crate::hir::DeclarationIndex,
+    analyses: &mut facts::CheckedAnalyses,
 ) -> Result<(), Error> {
-    for subscription in &document.subscriptions {
+    for (index, subscription) in document.subscriptions.iter().enumerate() {
+        let declaration = declarations.subscription(index);
         if let Some(condition) = &subscription.condition {
-            require_type(
-                &expr_type(condition, states, document, &subscription.span)?,
-                &Type::Bool,
+            let actual = retain_subscription_expression(
+                declaration.id,
+                facts::CheckedSubscriptionExprRole::Condition,
+                condition,
+                states,
+                document,
                 &subscription.span,
+                analyses,
             )?;
+            require_type(&actual, &Type::Bool, &subscription.span)?;
         }
-        let mut payloads = match &subscription.source {
+        let (source, mut payloads) = match &subscription.source {
+            SubscriptionSource::Every { milliseconds } => (
+                facts::CheckedSubscriptionSourceAnalysis::Every {
+                    milliseconds: *milliseconds,
+                },
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
             SubscriptionSource::Repeat { function, .. } => {
-                let source =
-                    extern_function(document, function, ExternKind::Future, &subscription.span)?;
-                check_call_args(source, &[], states, document, &subscription.span)?;
-                vec![source.error.as_ref().map_or_else(
-                    || source.output.clone(),
-                    |error| Type::Result(Box::new(source.output.clone()), Box::new(error.clone())),
-                )]
+                let source = subscription_extern_function(
+                    declarations,
+                    function,
+                    ExternKind::Future,
+                    &subscription.span,
+                )?;
+                retain_subscription_arguments(
+                    declaration.id,
+                    &[],
+                    source,
+                    states,
+                    document,
+                    &subscription.span,
+                    analyses,
+                )?;
+                let SubscriptionSource::Repeat { milliseconds, .. } = &subscription.source else {
+                    unreachable!()
+                };
+                (
+                    facts::CheckedSubscriptionSourceAnalysis::Repeat {
+                        function: source.declaration.id,
+                        milliseconds: *milliseconds,
+                    },
+                    vec![source.error.as_ref().map_or_else(
+                        || source.output.clone(),
+                        |error| {
+                            Type::Result(Box::new(source.output.clone()), Box::new(error.clone()))
+                        },
+                    )],
+                )
             }
             SubscriptionSource::Run { function, args } => {
-                let source =
-                    extern_function(document, function, ExternKind::Stream, &subscription.span)?;
-                check_call_args(source, args, states, document, &subscription.span)?;
-                for arg in args {
-                    let ty = expr_type(arg, states, document, &subscription.span)?;
+                let source = subscription_extern_function(
+                    declarations,
+                    function,
+                    ExternKind::Stream,
+                    &subscription.span,
+                )?;
+                let types = retain_subscription_arguments(
+                    declaration.id,
+                    args,
+                    source,
+                    states,
+                    document,
+                    &subscription.span,
+                    analyses,
+                )?;
+                for ty in types {
                     if !lazy_hashable(&ty) {
                         return Err(Error::new(
                             "E129",
@@ -181,52 +230,142 @@ pub(in crate::check) fn infer_subscriptions(
                         ));
                     }
                 }
-                vec![source.error.as_ref().map_or_else(
-                    || source.output.clone(),
-                    |error| Type::Result(Box::new(source.output.clone()), Box::new(error.clone())),
-                )]
+                (
+                    facts::CheckedSubscriptionSourceAnalysis::Run {
+                        function: source.declaration.id,
+                    },
+                    vec![source.error.as_ref().map_or_else(
+                        || source.output.clone(),
+                        |error| {
+                            Type::Result(Box::new(source.output.clone()), Box::new(error.clone()))
+                        },
+                    )],
+                )
             }
             SubscriptionSource::Recipe { function, args } => {
-                let source =
-                    extern_function(document, function, ExternKind::Recipe, &subscription.span)?;
-                check_call_args(source, args, states, document, &subscription.span)?;
-                vec![source.output.clone()]
+                let source = subscription_extern_function(
+                    declarations,
+                    function,
+                    ExternKind::Recipe,
+                    &subscription.span,
+                )?;
+                retain_subscription_arguments(
+                    declaration.id,
+                    args,
+                    source,
+                    states,
+                    document,
+                    &subscription.span,
+                    analyses,
+                )?;
+                (
+                    facts::CheckedSubscriptionSourceAnalysis::Recipe {
+                        function: source.declaration.id,
+                    },
+                    vec![source.output.clone()],
+                )
             }
             SubscriptionSource::Events { id, filter } => {
-                let source = extern_function(
-                    document,
+                let source = subscription_extern_function(
+                    declarations,
                     filter,
                     ExternKind::EventFilter,
                     &subscription.span,
                 )?;
-                let id = expr_type(id, states, document, &subscription.span)?;
-                if !lazy_hashable(&id) {
+                let identity = retain_subscription_expression(
+                    declaration.id,
+                    facts::CheckedSubscriptionExprRole::EventIdentity,
+                    id,
+                    states,
+                    document,
+                    &subscription.span,
+                    analyses,
+                )?;
+                if !lazy_hashable(&identity) {
                     return Err(Error::new(
                         "E129",
                         &subscription.span,
                         format!(
                             "raw event identity must be hashable, got `{}`",
-                            id.display()
+                            identity.display()
                         ),
                     ));
                 }
-                vec![source.output.clone()]
+                (
+                    facts::CheckedSubscriptionSourceAnalysis::Events {
+                        filter: source.declaration.id,
+                    },
+                    vec![source.output.clone()],
+                )
             }
             SubscriptionSource::Extern { function, args } => {
-                let source = extern_function(
-                    document,
+                let source = subscription_extern_function(
+                    declarations,
                     function,
                     ExternKind::Subscription,
                     &subscription.span,
                 )?;
-                check_call_args(source, args, states, document, &subscription.span)?;
-                vec![source.output.clone()]
+                retain_subscription_arguments(
+                    declaration.id,
+                    args,
+                    source,
+                    states,
+                    document,
+                    &subscription.span,
+                    analyses,
+                )?;
+                (
+                    facts::CheckedSubscriptionSourceAnalysis::Extern {
+                        function: source.declaration.id,
+                    },
+                    vec![source.output.clone()],
+                )
             }
-            source => native_subscription_payloads(source, subscription.window_id)
-                .expect("native subscription payloads"),
+            SubscriptionSource::Event { raw } => (
+                facts::CheckedSubscriptionSourceAnalysis::Event { raw: *raw },
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::InputMethod(event) => (
+                facts::CheckedSubscriptionSourceAnalysis::InputMethod(*event),
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::Keyboard(event) => (
+                facts::CheckedSubscriptionSourceAnalysis::Keyboard(*event),
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::Mouse(event) => (
+                facts::CheckedSubscriptionSourceAnalysis::Mouse(*event),
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::SystemTheme => (
+                facts::CheckedSubscriptionSourceAnalysis::SystemTheme,
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::Touch(event) => (
+                facts::CheckedSubscriptionSourceAnalysis::Touch(*event),
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
+            SubscriptionSource::Window(event) => (
+                facts::CheckedSubscriptionSourceAnalysis::Window(*event),
+                native_subscription_payloads(&subscription.source, subscription.window_id)
+                    .expect("native subscription payloads"),
+            ),
         };
+        let source_payloads = payloads.clone();
+        let mut filter_id = None;
         if let Some(filter) = &subscription.filter {
-            let function = extern_function(document, filter, ExternKind::Sync, &subscription.span)?;
+            let function = subscription_extern_function(
+                declarations,
+                filter,
+                ExternKind::Sync,
+                &subscription.span,
+            )?;
             if function.params.len() != payloads.len() {
                 return Err(Error::new(
                     "E142",
@@ -249,20 +388,29 @@ pub(in crate::check) fn infer_subscriptions(
                 ));
             };
             payloads = vec![(**output).clone()];
+            filter_id = Some(function.declaration.id);
         }
         if let Some(context) = &subscription.context {
-            let context = expr_type(context, states, document, &subscription.span)?;
-            if !lazy_hashable(&context) {
+            let context_ty = retain_subscription_expression(
+                declaration.id,
+                facts::CheckedSubscriptionExprRole::Context,
+                context,
+                states,
+                document,
+                &subscription.span,
+                analyses,
+            )?;
+            if !lazy_hashable(&context_ty) {
                 return Err(Error::new(
                     "E129",
                     &subscription.span,
                     format!(
                         "subscription context must be hashable, got `{}`",
-                        context.display()
+                        context_ty.display()
                     ),
                 ));
             }
-            payloads.insert(0, context);
+            payloads.insert(0, context_ty);
         }
         if subscription
             .route
@@ -288,8 +436,120 @@ pub(in crate::check) fn infer_subscriptions(
                 "subscription",
             )?;
         }
+        let route_handler = declarations
+            .handler_id(crate::hir::HandlerOwner::App, &subscription.route.handler)
+            .ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    &subscription.route.span,
+                    "checked subscription route has no stable handler ID",
+                )
+            })?;
+        analyses.insert_subscription(
+            declaration.id,
+            facts::CheckedSubscriptionAnalysis {
+                source,
+                source_payloads,
+                delivered_payloads: payloads,
+                filter: filter_id,
+                route_handler,
+                route_payloads: (0..subscription.route.args.len() as u32).collect(),
+            },
+        )?;
     }
     Ok(())
+}
+
+fn subscription_extern_function<'a>(
+    declarations: &'a crate::hir::DeclarationIndex,
+    name: &str,
+    kind: ExternKind,
+    span: &Span,
+) -> Result<&'a crate::hir::ExternDeclaration, Error> {
+    if let Some(declaration) = declarations.extern_decl_by_name(name)
+        && declaration.kind == kind
+    {
+        return Ok(declaration);
+    }
+    let label = match kind {
+        ExternKind::Future => "function",
+        ExternKind::Stream => "stream",
+        ExternKind::Recipe => "recipe",
+        ExternKind::EventFilter => "event filter",
+        ExternKind::Sync => "sync function",
+        ExternKind::Subscription => "subscription",
+        _ => "extern",
+    };
+    Err(Error::new(
+        "E130",
+        span,
+        format!("unknown extern {label} `{name}`"),
+    ))
+}
+
+fn retain_subscription_arguments(
+    subscription: crate::hir::SubscriptionId,
+    arguments: &[Expr],
+    function: &crate::hir::ExternDeclaration,
+    states: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+    analyses: &mut facts::CheckedAnalyses,
+) -> Result<Vec<Type>, Error> {
+    if arguments.len() != function.params.len() {
+        return Err(Error::new(
+            "E142",
+            span,
+            format!(
+                "extern `{}` expects {} arguments, got {}",
+                function.name,
+                function.params.len(),
+                arguments.len()
+            ),
+        ));
+    }
+    arguments
+        .iter()
+        .zip(&function.params)
+        .enumerate()
+        .map(|(index, (argument, (_, expected)))| {
+            let actual = retain_subscription_expression(
+                subscription,
+                facts::CheckedSubscriptionExprRole::SourceArgument(index as u32),
+                argument,
+                states,
+                document,
+                span,
+                analyses,
+            )?;
+            require_type(&actual, expected, span)?;
+            Ok(actual)
+        })
+        .collect()
+}
+
+fn retain_subscription_expression(
+    subscription: crate::hir::SubscriptionId,
+    role: facts::CheckedSubscriptionExprRole,
+    expression: &Expr,
+    states: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+    analyses: &mut facts::CheckedAnalyses,
+) -> Result<Type, Error> {
+    let analysis = expr::analyze_expr_types(expression, states, document, span)?;
+    let ty = analysis.type_of(expression).cloned().ok_or_else(|| {
+        Error::new(
+            "E196",
+            span,
+            "subscription expression has no retained root type",
+        )
+    })?;
+    analyses.insert_expression(
+        facts::CheckedExprOwner::Subscription { subscription, role },
+        analysis,
+    )?;
+    Ok(ty)
 }
 
 pub(in crate::check) fn infer_runs(

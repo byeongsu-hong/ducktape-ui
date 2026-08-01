@@ -1,43 +1,5 @@
 use super::*;
-
-pub(in crate::codegen) fn subscription_payload_arity(
-    source: &SubscriptionSource,
-    window_id: bool,
-) -> usize {
-    let arity = match source {
-        SubscriptionSource::Every { .. }
-        | SubscriptionSource::Repeat { .. }
-        | SubscriptionSource::Run { .. }
-        | SubscriptionSource::Recipe { .. }
-        | SubscriptionSource::Events { .. }
-        | SubscriptionSource::Extern { .. }
-        | SubscriptionSource::Event { .. }
-        | SubscriptionSource::Keyboard(_)
-        | SubscriptionSource::SystemTheme => 1,
-        SubscriptionSource::InputMethod(InputMethodEvent::Opened | InputMethodEvent::Closed)
-        | SubscriptionSource::Mouse(MouseEvent::Entered | MouseEvent::Left)
-        | SubscriptionSource::Window(
-            WindowEvent::Frame
-            | WindowEvent::Closed
-            | WindowEvent::CloseRequested
-            | WindowEvent::Focused
-            | WindowEvent::Unfocused
-            | WindowEvent::FilesHoveredLeft,
-        ) => 0,
-        SubscriptionSource::InputMethod(InputMethodEvent::Commit)
-        | SubscriptionSource::Mouse(MouseEvent::Pressed | MouseEvent::Released)
-        | SubscriptionSource::Window(
-            WindowEvent::Rescaled | WindowEvent::FileHovered | WindowEvent::FileDropped,
-        ) => 1,
-        SubscriptionSource::Mouse(MouseEvent::Moved)
-        | SubscriptionSource::Window(WindowEvent::Moved | WindowEvent::Resized) => 2,
-        SubscriptionSource::InputMethod(InputMethodEvent::Preedit)
-        | SubscriptionSource::Mouse(MouseEvent::Wheel)
-        | SubscriptionSource::Touch(_) => 3,
-        SubscriptionSource::Window(WindowEvent::Opened) => 4,
-    };
-    arity + usize::from(window_id)
-}
+use crate::lower::{CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource};
 
 pub(in crate::codegen) fn identified_window_filter(filter: &str, arity: usize) -> String {
     match arity {
@@ -55,12 +17,13 @@ pub(in crate::codegen) fn identified_window_filter(filter: &str, arity: usize) -
 
 pub(in crate::codegen) fn generate_subscription(
     out: &mut String,
-    document: &Document,
-    settings: &ResolvedAppSettings,
-    animations: bool,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let env = state_env(document, "self");
+    let document = program.document();
+    let settings = program.settings();
+    let animations = has_animations(program);
+    let env = checked_state_env(program, "self");
     writeln!(
         out,
         "fn __subscription(&self) -> ::iced::Subscription<{message}> {{"
@@ -79,21 +42,15 @@ pub(in crate::codegen) fn generate_subscription(
         )
         .unwrap();
     }
-    for subscription in &document.subscriptions {
+    for subscription in program.subscriptions() {
         writeln!(out, "{}", source_marker(&subscription.span)).unwrap();
-        let source_arity = subscription_payload_arity(&subscription.source, subscription.window_id);
+        let source_arity = subscription.source_payloads.len();
         let filter = subscription
             .filter
-            .as_ref()
             .map(|filter| {
-                let function = find_extern_function(document, filter, ExternKind::Sync)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown subscription filter `{filter}`"),
-                        )
-                    })?;
+                let function = program
+                    .declarations()
+                    .checked_extern_decl(filter, &subscription.span)?;
                 let args = match source_arity {
                     0 => String::new(),
                     1 => "__value".into(),
@@ -112,8 +69,15 @@ pub(in crate::codegen) fn generate_subscription(
             .unwrap_or_default();
         let context = subscription
             .context
-            .as_ref()
-            .map(|context| expr_code(context, &env, document, ValueMode::Owned))
+            .map(|context| {
+                checked_expr_use_code_at(
+                    program,
+                    context,
+                    &env,
+                    ValueMode::Owned,
+                    &subscription.span,
+                )
+            })
             .transpose()?
             .map(|context| format!(".with({context})"))
             .unwrap_or_default();
@@ -141,45 +105,51 @@ pub(in crate::codegen) fn generate_subscription(
                 }
             })),
         }
-        let payloads = payloads.iter().map(String::as_str).collect::<Vec<_>>();
-        let route = ordered_route_code(&subscription.route, &payloads, &env, document, message)?;
+        if payloads.len() != subscription.delivered_payloads.len() {
+            return Err(Error::new(
+                "E196",
+                &subscription.span,
+                "subscription transform payload shape disagrees with checked HIR",
+            ));
+        }
+        let route = checked_subscription_route_code(program, subscription, &payloads, message)?;
         let transforms = format!("{filter}{context}");
         let condition = subscription
             .condition
-            .as_ref()
-            .map(|condition| expr_code(condition, &env, document, ValueMode::Owned))
+            .map(|condition| {
+                checked_expr_use_code_at(
+                    program,
+                    condition,
+                    &env,
+                    ValueMode::Owned,
+                    &subscription.span,
+                )
+            })
             .transpose()?;
         if let Some(condition) = &condition {
             write!(out, "if {condition} {{ ::iced::Subscription::batch([").unwrap();
         }
         match &subscription.source {
-            SubscriptionSource::Every { milliseconds } => {
+            CheckedSubscriptionSource::Every { milliseconds } => {
                 writeln!(out, "::iced::time::every(::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Repeat {
+            CheckedSubscriptionSource::Repeat {
                 function,
                 milliseconds,
             } => {
-                let source = find_extern_function(document, function, ExternKind::Future)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown repeated async function `{function}`"),
-                        )
-                    })?;
+                let source = program
+                    .declarations()
+                    .checked_extern_decl(*function, &subscription.span)?;
                 writeln!(out, "::iced::time::repeat({}, ::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
             }
-            SubscriptionSource::Run { function, args } => {
-                let source = find_extern_function(document, function, ExternKind::Stream)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown subscription stream `{function}`"),
-                        )
-                    })?;
-                if args.is_empty() {
+            CheckedSubscriptionSource::Run {
+                function,
+                arguments,
+            } => {
+                let source = program
+                    .declarations()
+                    .checked_extern_decl(*function, &subscription.span)?;
+                if arguments.is_empty() {
                     writeln!(
                         out,
                         "::iced::Subscription::run({}){transforms}.map(move |__value| {route}),",
@@ -187,22 +157,30 @@ pub(in crate::codegen) fn generate_subscription(
                     )
                     .unwrap();
                 } else {
-                    let data = args
+                    let data = arguments
                         .iter()
-                        .map(|arg| expr_code(arg, &env, document, ValueMode::Owned))
+                        .map(|argument| {
+                            checked_expr_use_code_at(
+                                program,
+                                *argument,
+                                &env,
+                                ValueMode::Owned,
+                                &subscription.span,
+                            )
+                        })
                         .collect::<Result<Vec<_>, _>>()?;
                     let types = source
                         .params
                         .iter()
-                        .map(|(_, ty)| ty.rust(&document.structs))
-                        .collect::<Vec<_>>();
-                    let (data, data_type, builder_args) = if args.len() == 1 {
+                        .map(|(_, ty)| program.declarations().rust_type(ty, &subscription.span))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let (data, data_type, builder_args) = if arguments.len() == 1 {
                         (data[0].clone(), types[0].clone(), "__data.clone()".into())
                     } else {
                         (
                             format!("({},)", data.join(", ")),
                             format!("({},)", types.join(", ")),
-                            (0..args.len())
+                            (0..arguments.len())
                                 .map(|index| format!("__data.{index}.clone()"))
                                 .collect::<Vec<_>>()
                                 .join(", "),
@@ -211,32 +189,32 @@ pub(in crate::codegen) fn generate_subscription(
                     writeln!(out, "::iced::Subscription::run_with({data}, |__data: &{data_type}| {}({builder_args})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
                 }
             }
-            SubscriptionSource::Recipe { function, args } => {
-                let source = find_extern_function(document, function, ExternKind::Recipe)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown subscription recipe `{function}`"),
-                        )
-                    })?;
-                let args = expr_list_code(args, &env, document)?;
+            CheckedSubscriptionSource::Recipe {
+                function,
+                arguments,
+            } => {
+                let source = program
+                    .declarations()
+                    .checked_extern_decl(*function, &subscription.span)?;
+                let args =
+                    checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
                 writeln!(out, "::iced::advanced::subscription::from_recipe({}({args})){transforms}.map(move |__value| {route}),", source.rust_path).unwrap();
             }
-            SubscriptionSource::Events { id, filter } => {
-                let _source = find_extern_function(document, filter, ExternKind::EventFilter)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown event filter `{filter}`"),
-                        )
-                    })?;
-                let id = expr_code(id, &env, document, ValueMode::Owned)?;
-                let recipe = event_filter_type(filter);
+            CheckedSubscriptionSource::Events { identity, filter } => {
+                let source = program
+                    .declarations()
+                    .checked_extern_decl(*filter, &subscription.span)?;
+                let id = checked_expr_use_code_at(
+                    program,
+                    *identity,
+                    &env,
+                    ValueMode::Owned,
+                    &subscription.span,
+                )?;
+                let recipe = event_filter_type(&source.name);
                 writeln!(out, "::iced::advanced::subscription::from_recipe({recipe} {{ id: {id} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Event { raw } => {
+            CheckedSubscriptionSource::Event { raw } => {
                 let value = if subscription.window_id {
                     "::std::option::Option::Some((__id, __event))"
                 } else {
@@ -246,16 +224,15 @@ pub(in crate::codegen) fn generate_subscription(
                 let listen = if *raw { "listen_raw" } else { "listen_with" };
                 writeln!(out, "::iced::event::{listen}(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Extern { function, args } => {
-                let source = find_extern_function(document, function, ExternKind::Subscription)
-                    .ok_or_else(|| {
-                        Error::new(
-                            "E130",
-                            &subscription.span,
-                            format!("unknown extern subscription `{function}`"),
-                        )
-                    })?;
-                let args = expr_list_code(args, &env, document)?;
+            CheckedSubscriptionSource::Extern {
+                function,
+                arguments,
+            } => {
+                let source = program
+                    .declarations()
+                    .checked_extern_decl(*function, &subscription.span)?;
+                let args =
+                    checked_subscription_arguments(program, arguments, &env, &subscription.span)?;
                 writeln!(
                     out,
                     "{}({args}){transforms}.map(move |__value| {route}),",
@@ -263,7 +240,7 @@ pub(in crate::codegen) fn generate_subscription(
                 )
                 .unwrap();
             }
-            SubscriptionSource::InputMethod(event) => {
+            CheckedSubscriptionSource::InputMethod(event) => {
                 let filter = match event {
                     InputMethodEvent::Opened => {
                         "matches!(__event, ::iced::Event::InputMethod(::iced::advanced::input_method::Event::Opened)).then_some(())"
@@ -281,7 +258,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Keyboard(event) => {
+            CheckedSubscriptionSource::Keyboard(event) => {
                 let filter = match event {
                     KeyboardEvent::Press => {
                         "match __event { ::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat } => ::std::option::Option::Some(__IceKeyPress { key, modified_key, physical_key, location, modifiers, text: text.map(|value| value.to_string()), repeat }), _ => ::std::option::Option::None }"
@@ -299,7 +276,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(&filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Mouse(event) => {
+            CheckedSubscriptionSource::Mouse(event) => {
                 let filter = match event {
                     MouseEvent::Entered => {
                         "matches!(__event, ::iced::Event::Mouse(::iced::mouse::Event::CursorEntered)).then_some(())"
@@ -323,10 +300,10 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::SystemTheme => {
+            CheckedSubscriptionSource::SystemTheme => {
                 writeln!(out, "::iced::system::theme_changes().map(__ice_system_theme){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Touch(event) => {
+            CheckedSubscriptionSource::Touch(event) => {
                 let variant = match event {
                     TouchEvent::Pressed => "FingerPressed",
                     TouchEvent::Moved => "FingerMoved",
@@ -339,7 +316,7 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(&filter, subscription.status);
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
-            SubscriptionSource::Window(event) => {
+            CheckedSubscriptionSource::Window(event) => {
                 if *event == WindowEvent::Frame {
                     writeln!(
                         out,
@@ -391,7 +368,13 @@ pub(in crate::codegen) fn generate_subscription(
                 let filter = if subscription.window_id {
                     identified_window_filter(
                         filter,
-                        subscription_payload_arity(&subscription.source, false),
+                        source_arity.checked_sub(1).ok_or_else(|| {
+                            Error::new(
+                                "E196",
+                                &subscription.span,
+                                "window-id subscription retained no window payload",
+                            )
+                        })?,
                     )
                 } else {
                     filter.to_owned()
@@ -429,6 +412,51 @@ pub(in crate::codegen) fn generate_subscription(
     }
     writeln!(out, "])\n}}").unwrap();
     Ok(())
+}
+
+fn checked_subscription_arguments(
+    program: &LoweredProgram,
+    arguments: &[crate::check::CheckedExprUseId],
+    env: &dyn BindingEnvironment,
+    span: &Span,
+) -> Result<String, Error> {
+    arguments
+        .iter()
+        .map(|argument| checked_expr_use_code_at(program, *argument, env, ValueMode::Owned, span))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|arguments| arguments.join(", "))
+}
+
+fn checked_subscription_route_code(
+    program: &LoweredProgram,
+    subscription: &CheckedSubscription,
+    payloads: &[String],
+    message: &str,
+) -> Result<String, Error> {
+    let CheckedSubscriptionRoute {
+        handler,
+        payloads: route_payloads,
+    } = &subscription.route;
+    let handler = program
+        .declarations()
+        .checked_handler(*handler, &subscription.span)?;
+    let variant = handler_variant(&handler.name);
+    if route_payloads.is_empty() {
+        return Ok(format!("{message}::{variant}"));
+    }
+    let arguments = route_payloads
+        .iter()
+        .map(|index| {
+            payloads.get(*index as usize).cloned().ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    &subscription.span,
+                    "subscription route references an invalid checked payload",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!("{message}::{variant}({})", arguments.join(", ")))
 }
 
 pub(in crate::codegen) fn event_status_filter(
