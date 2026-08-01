@@ -115,7 +115,7 @@ family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors, canvas locals, tests, and
+The remaining expression-backed native styles/colors, canvas locals, and
 remaining widget options therefore remain open implementation slices; this
 status does not satisfy the migration-complete criteria below. Migrated handler
 and application-setting generation uses the shared origin arena directly for
@@ -160,7 +160,7 @@ validates raw view kind/children against the stable checked topology. Invalid
 owner, topology, match binding, and enum IDs therefore fail with source-mapped
 `E196`. Imported expressions retain physical locations and parent chains;
 missing, duplicate, or leftover authoritative analyses also fail with `E196`.
-Canvas/test expressions and expression-bearing widget options
+Canvas expressions and expression-bearing widget options
 remain later slices, so the full-HIR completion criteria remain open.
 
 Handler bodies are now a completed production HIR slice. One deterministic
@@ -247,6 +247,30 @@ lowering diagnostics and source markers keep the subscription origin. A
 while verifying exact generated subscription counts, linear expression growth,
 one shared app scope, zero full-scope clones, and a bounded debug-build wall
 time.
+
+First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
+`TestStepId` form parented declaration arenas; target aliases are typed locals,
+and every dynamic target key or step operand has a deterministic checked
+expression owner. Test configuration, target path topology, static action
+metadata, dispatch handler identity, and exact source spelling are frozen as
+checked semantic contracts before lowering. Lowering converts every action,
+key/IME/window/touch event, accessibility assertion, and expectation into a
+`ResolvedTestStepKind`; direct paths retain resolved checked key expressions,
+aliases retain target IDs, dispatch retains an App `HandlerId`, and equality
+assertions retain the checked comparison children used for `check_eq` or
+`check_ne`. Numeric range, index, positive-count, expression-owner, handler
+signature, origin, and complete-arena contracts are revalidated while the HIR
+is built.
+
+The test backend iterates only `ResolvedTest` records and checked expression
+IDs. It does not consume `TestDecl`, `TestStep`, raw `Expr`, or raw route
+semantics, and post-check expression mutations cannot affect generated Rust or
+the retained diagnostic statement. Test mount rendering still uses the general
+view renderer and therefore remains subject to the open view-structure HIR
+boundary rather than a test-specific fallback. Structural ID/owner snapshots,
+config/target/step corruption tests, post-check AST poisoning, imported source
+locations, complete semantic-action generation, and an ignored 4,000-step
+lower+emit budget are the executable evidence.
 
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and

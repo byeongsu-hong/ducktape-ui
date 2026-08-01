@@ -14,17 +14,321 @@ pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, ComponentCallId, ComponentEventId, ComponentId,
     ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
     HandlerId, HandlerOwner, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId,
-    RunSiteId, StatementId, SubscriptionId, TaskId,
+    RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod style;
+mod testing;
 
 pub(crate) use style::*;
 
 pub(crate) type ResolvedExpressionId = CheckedExprUseId;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestTheme {
+    Light,
+    Dark,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestPlatform {
+    Linux,
+    Windows,
+    Macos,
+    Wasm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestMouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestWheelUnit {
+    Pixels,
+    Lines,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestScrollMode {
+    To,
+    By,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestTouchPhase {
+    Down,
+    Move,
+    Up,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestAccessibilityAction {
+    Activate,
+    Focus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTestKey {
+    Named(String),
+    Character(String),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ResolvedTestKeyLocation {
+    #[default]
+    Standard,
+    Left,
+    Right,
+    Numpad,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ResolvedTestModifiers {
+    pub(crate) shift: bool,
+    pub(crate) control: bool,
+    pub(crate) alt: bool,
+    pub(crate) logo: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedTestKeyEvent {
+    pub(crate) key: ResolvedTestKey,
+    pub(crate) modified_key: Option<ResolvedTestKey>,
+    pub(crate) location: ResolvedTestKeyLocation,
+    pub(crate) physical: Option<String>,
+    pub(crate) text: Option<String>,
+    pub(crate) repeat: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTestConfig {
+    pub(crate) viewport: Option<(f64, f64)>,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) theme: Option<ResolvedTestTheme>,
+    pub(crate) scale_factor: Option<f64>,
+    pub(crate) locale: Option<String>,
+    pub(crate) platform: Option<ResolvedTestPlatform>,
+    pub(crate) reduced_motion: Option<bool>,
+    pub(crate) preset: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTestTargetSegment {
+    pub(crate) name: String,
+    pub(crate) key: Option<ResolvedExpressionId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTestTargetPath {
+    pub(crate) segments: Vec<ResolvedTestTargetSegment>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTestTarget {
+    pub(crate) id: TestTargetId,
+    pub(crate) name: String,
+    pub(crate) path: ResolvedTestTargetPath,
+    pub(crate) local: CheckedLocalId,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTestTargetRef {
+    Alias(TestTargetId),
+    Id(ResolvedTestTargetPath),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTestComposition {
+    Start,
+    Update {
+        value: ResolvedExpressionId,
+        selection: Option<(ResolvedExpressionId, ResolvedExpressionId)>,
+    },
+    Commit(ResolvedExpressionId),
+    Cancel,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTestAccessibilityProperty {
+    Role(ResolvedExpressionId),
+    Name(ResolvedExpressionId),
+    Value(ResolvedExpressionId),
+    Checked(ResolvedExpressionId),
+    Disabled(ResolvedExpressionId),
+    Focused(ResolvedExpressionId),
+    Action {
+        name: String,
+        expected: ResolvedExpressionId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTestExpectation {
+    Expr {
+        expression: ResolvedExpressionId,
+        unwrap_operator: bool,
+    },
+    Equality {
+        left: CheckedExprId,
+        right: CheckedExprId,
+        negated: bool,
+        expression: ResolvedExpressionId,
+    },
+    Approx {
+        left: ResolvedExpressionId,
+        right: ResolvedExpressionId,
+    },
+    Exists(ResolvedTestTargetRef),
+    Missing(ResolvedTestTargetRef),
+    Text {
+        value: ResolvedExpressionId,
+        within: Option<ResolvedTestTargetRef>,
+        negated: bool,
+    },
+    Accessibility {
+        target: ResolvedTestTargetRef,
+        property: ResolvedTestAccessibilityProperty,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTestStepKind {
+    Click {
+        target: ResolvedTestTargetRef,
+        button: ResolvedTestMouseButton,
+        count: u8,
+    },
+    ClickAt {
+        x: ResolvedExpressionId,
+        y: ResolvedExpressionId,
+        button: ResolvedTestMouseButton,
+        count: u8,
+    },
+    Hover(ResolvedTestTargetRef),
+    Enter(ResolvedTestTargetRef),
+    Leave,
+    MoveTarget(ResolvedTestTargetRef),
+    MovePoint(ResolvedExpressionId, ResolvedExpressionId),
+    Press {
+        target: ResolvedTestTargetRef,
+        button: ResolvedTestMouseButton,
+    },
+    Release(ResolvedTestMouseButton),
+    Wheel {
+        unit: ResolvedTestWheelUnit,
+        x: ResolvedExpressionId,
+        y: ResolvedExpressionId,
+    },
+    Scroll {
+        mode: ResolvedTestScrollMode,
+        target: ResolvedTestTargetRef,
+        x: ResolvedExpressionId,
+        y: ResolvedExpressionId,
+    },
+    Snap {
+        target: ResolvedTestTargetRef,
+        x: ResolvedExpressionId,
+        y: ResolvedExpressionId,
+    },
+    SnapEnd(ResolvedTestTargetRef),
+    Drag {
+        from: ResolvedTestTargetRef,
+        to: ResolvedTestTargetRef,
+    },
+    Drop(ResolvedTestTargetRef),
+    Focus(ResolvedTestTargetRef),
+    FocusNext,
+    FocusPrevious,
+    Blur,
+    WindowFocus(bool),
+    Type(ResolvedExpressionId),
+    Clear,
+    Replace(ResolvedExpressionId),
+    Select(ResolvedExpressionId, ResolvedExpressionId),
+    SelectAll,
+    Cursor(ResolvedExpressionId),
+    CursorFront,
+    CursorEnd,
+    Composition(ResolvedTestComposition),
+    Key(ResolvedTestKey),
+    KeyDown(ResolvedTestKeyEvent),
+    KeyUp(ResolvedTestKeyEvent),
+    Modifiers(ResolvedTestModifiers),
+    Chord {
+        modifiers: ResolvedTestModifiers,
+        key: ResolvedTestKey,
+    },
+    Repeat {
+        key: ResolvedTestKey,
+        count: ResolvedExpressionId,
+    },
+    Tap {
+        target: ResolvedTestTargetRef,
+        count: u8,
+    },
+    Touch {
+        phase: ResolvedTestTouchPhase,
+        id: ResolvedExpressionId,
+        x: ResolvedExpressionId,
+        y: ResolvedExpressionId,
+    },
+    WindowMove(ResolvedExpressionId, ResolvedExpressionId),
+    Resize(ResolvedExpressionId, ResolvedExpressionId),
+    Rescale(ResolvedExpressionId),
+    WindowClose,
+    WindowOpened,
+    WindowClosed,
+    Redraw,
+    SystemTheme(ResolvedTestTheme),
+    FileHover(ResolvedExpressionId),
+    FileDrop(ResolvedExpressionId),
+    FileLeave,
+    Wait(u64),
+    Advance(u64),
+    Idle,
+    Capture(String),
+    Accessibility {
+        action: ResolvedTestAccessibilityAction,
+        target: ResolvedTestTargetRef,
+    },
+    Dispatch {
+        handler: HandlerId,
+        handler_name: String,
+        args: Vec<ResolvedExpressionId>,
+    },
+    Expect(ResolvedTestExpectation),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTestStep {
+    pub(crate) id: TestStepId,
+    pub(crate) kind: ResolvedTestStepKind,
+    pub(crate) source: String,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTest {
+    pub(crate) id: TestId,
+    pub(crate) name: String,
+    pub(crate) config: ResolvedTestConfig,
+    pub(crate) window_local: Option<CheckedLocalId>,
+    pub(crate) mount: Option<ViewId>,
+    pub(crate) targets: Vec<ResolvedTestTarget>,
+    pub(crate) steps: Vec<ResolvedTestStep>,
+    pub(crate) origin: OriginId,
+}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -1115,6 +1419,9 @@ pub(crate) struct LoweredProgram {
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
     subscriptions: Vec<ResolvedSubscription>,
+    tests: Vec<ResolvedTest>,
+    test_mounts: HashMap<TestId, ViewNode>,
+    preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
     derived: Vec<DerivedContract>,
@@ -2641,6 +2948,18 @@ impl LoweredProgram {
         &self.subscriptions
     }
 
+    pub(crate) fn tests(&self) -> &[ResolvedTest] {
+        &self.tests
+    }
+
+    pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
+        self.test_mounts.get(&id)
+    }
+
+    pub(crate) fn preset_names(&self) -> &[String] {
+        &self.preset_names
+    }
+
     pub(crate) fn named_type_rust_path(&self, id: NamedTypeId) -> Option<&str> {
         self.named_type_rust_paths.get(&id).map(String::as_str)
     }
@@ -3027,6 +3346,12 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
                     "app setting expression cannot reference a view local",
                 ));
             }
+            CheckedLocalOwner::TestTarget(_) => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "app setting expression cannot reference a test target",
+                ));
+            }
             CheckedLocalOwner::HandlerParam { .. }
             | CheckedLocalOwner::StatementLet(_)
             | CheckedLocalOwner::TaskTransform { .. } => {
@@ -3086,6 +3411,155 @@ struct SubscriptionExpressionPolicy<'a> {
     lowerer: &'a Lowerer,
     use_id: CheckedExprUseId,
     span: &'a Span,
+}
+
+struct TestExpressionPolicy<'a> {
+    lowerer: &'a Lowerer,
+    use_id: CheckedExprUseId,
+    test: TestId,
+    span: &'a Span,
+}
+
+impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
+    fn use_id(&self) -> CheckedExprUseId {
+        self.use_id
+    }
+
+    fn span(&self) -> &Span {
+        self.span
+    }
+
+    fn value_type(&self, value: CheckedValueRef) -> Result<Type, Error> {
+        let checked = self.lowerer.facts.try_value_by_ref(value).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test path references an invalid value ID")
+        })?;
+        match value {
+            CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
+            CheckedValueRef::ComponentParam(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_param(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "test path references an invalid component parameter ID",
+                        )
+                    })?;
+                Err(self.lowerer.invariant(
+                    self.span,
+                    "test path cannot reference a component parameter",
+                ))
+            }
+            CheckedValueRef::ComponentState(id) => {
+                self.lowerer
+                    .declarations
+                    .try_component_state(id)
+                    .ok_or_else(|| {
+                        self.lowerer.invariant(
+                            self.span,
+                            "test path references an invalid component state ID",
+                        )
+                    })?;
+                Err(self
+                    .lowerer
+                    .invariant(self.span, "test path cannot reference component state"))
+            }
+        }
+    }
+
+    fn local_type(&self, id: CheckedLocalId) -> Result<Type, Error> {
+        let local = self.lowerer.facts.try_local(id).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test expression references an invalid local ID")
+        })?;
+        match local.owner {
+            CheckedLocalOwner::TestTarget(target) if target.test == self.test => {
+                let declaration =
+                    self.lowerer
+                        .declarations
+                        .test_target(target)
+                        .ok_or_else(|| {
+                            self.lowerer.invariant(
+                                self.span,
+                                "test expression references an invalid target ID",
+                            )
+                        })?;
+                if local.ty != Type::TestTarget || local.origin != declaration.declaration.origin {
+                    return Err(self.lowerer.invariant(
+                        self.span,
+                        "test target local has an inconsistent retained contract",
+                    ));
+                }
+            }
+            CheckedLocalOwner::TestTarget(_) => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression references a target from another test",
+                ));
+            }
+            CheckedLocalOwner::View {
+                role: crate::check::CheckedViewLocalRole::DaemonWindow,
+                ..
+            } if self.lowerer.document.daemon
+                && self.lowerer.facts.daemon_window_local() == Some(id)
+                && local.name == "window"
+                && local.ty == Type::WindowId => {}
+            CheckedLocalOwner::ExpressionBinding { expression, .. }
+                if expression == self.use_id => {}
+            CheckedLocalOwner::ExpressionBinding { .. } => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression binding belongs to another expression use",
+                ));
+            }
+            _ => {
+                return Err(self.lowerer.invariant(
+                    self.span,
+                    "test expression references an incompatible local",
+                ));
+            }
+        }
+        Ok(local.ty.clone())
+    }
+
+    fn slot_type(&self, slot: ComponentSlotId) -> Result<Type, Error> {
+        self.lowerer
+            .declarations
+            .try_component_slot(slot)
+            .ok_or_else(|| {
+                self.lowerer
+                    .invariant(self.span, "test expression references an invalid slot ID")
+            })?;
+        Err(self.lowerer.invariant(
+            self.span,
+            "test expression cannot reference a component slot",
+        ))
+    }
+
+    fn palette_type(&self, id: PaletteId) -> Result<Type, Error> {
+        self.lowerer.declarations.palette_name(id).ok_or_else(|| {
+            self.lowerer
+                .invariant(self.span, "test path references an invalid palette ID")
+        })?;
+        let expression = self
+            .lowerer
+            .facts
+            .try_expression_use(self.use_id)
+            .ok_or_else(|| {
+                self.lowerer.invariant(
+                    self.span,
+                    "test palette path has an invalid expression-use ID",
+                )
+            })?;
+        match &expression.source {
+            Type::Palette(contract) => Ok(Type::Palette(contract.clone())),
+            _ => Err(self.lowerer.invariant(
+                self.span,
+                "test palette path has no checked theme-contract type",
+            )),
+        }
+    }
 }
 
 impl CheckedExpressionOwnerPolicy for SubscriptionExpressionPolicy<'_> {
@@ -3257,6 +3731,7 @@ impl Lowerer {
             return Err(self.invariant_at_origin(origin, message));
         }
         let settings = self.lower_app_settings()?;
+        self.validate_test_expression_contracts()?;
         self.lower_style_program()?;
         let subscriptions = self.lower_subscriptions()?;
         let named_type_rust_paths = self.declarations.named_type_rust_paths();
@@ -3264,6 +3739,7 @@ impl Lowerer {
         let derived = self.lower_derived()?;
         self.index_components()?;
         self.lower_handlers()?;
+        let tests = self.lower_tests()?;
         let component_roots = self
             .components
             .iter()
@@ -3290,12 +3766,32 @@ impl Lowerer {
                 "style lowering completed without a normalized theme program",
             )
         })?;
+        let test_mounts = self
+            .document
+            .tests
+            .iter()
+            .enumerate()
+            .filter_map(|(index, test)| {
+                test.mount
+                    .clone()
+                    .map(|mount| (TestId(index as u32), mount))
+            })
+            .collect();
+        let preset_names = self
+            .document
+            .presets
+            .iter()
+            .map(|preset| preset.name.clone())
+            .collect();
         Ok(LoweredProgram {
             document: self.document,
             facts: self.facts,
             declarations: self.declarations,
             settings,
             subscriptions,
+            tests,
+            test_mounts,
+            preset_names,
             named_type_rust_paths,
             app_states,
             derived,
@@ -4532,6 +5028,175 @@ impl Lowerer {
             .iter()
             .map(|(name, span)| (name.clone(), self.push_origin(span, Some(parent))))
             .collect()
+    }
+
+    fn validate_test_expression_contracts(&self) -> Result<(), Error> {
+        if self.document.tests.len() != self.declarations.test_count() {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked test topology changed before HIR lowering",
+            ));
+        }
+        let mut expected_expressions = 0usize;
+        let mut expected_targets = 0usize;
+        for (test_index, test) in self.document.tests.iter().enumerate() {
+            let declaration = self.declarations.test(test_index);
+            if declaration.declaration.id != TestId(test_index as u32)
+                || declaration.name != test.name
+                || declaration.semantic_key != crate::ast::test_declaration_semantic_key(test)
+                || declaration.targets.len() != test.targets.len()
+                || declaration.steps.len() != test.steps.len()
+            {
+                return Err(self.invariant(
+                    &test.span,
+                    "checked test declaration topology changed before HIR lowering",
+                ));
+            }
+            for (target_index, target) in test.targets.iter().enumerate() {
+                expected_targets += 1;
+                let id = TestTargetId {
+                    test: declaration.declaration.id,
+                    index: target_index as u32,
+                };
+                let target_declaration = self.declarations.test_target(id).ok_or_else(|| {
+                    self.invariant(&target.span, "test target has no stable declaration ID")
+                })?;
+                let target_segments = target
+                    .target
+                    .segments
+                    .iter()
+                    .map(|segment| (segment.name.clone(), segment.key.is_some()))
+                    .collect::<Vec<_>>();
+                let local = self
+                    .facts
+                    .local_by_owner(CheckedLocalOwner::TestTarget(id))
+                    .and_then(|id| self.facts.try_local(id))
+                    .ok_or_else(|| {
+                        self.invariant(&target.span, "test target has no checked local")
+                    })?;
+                if target_declaration.name != target.name
+                    || target_declaration.segments != target_segments
+                    || local.name != target_declaration.name
+                    || local.ty != Type::TestTarget
+                    || local.origin != target_declaration.declaration.origin
+                {
+                    return Err(self.invariant(
+                        &target.span,
+                        "test target local has a mismatched retained contract",
+                    ));
+                }
+                for (segment_index, segment) in target.target.segments.iter().enumerate() {
+                    let Some(_) = &segment.key else {
+                        continue;
+                    };
+                    expected_expressions += 1;
+                    self.validate_test_expression_use(
+                        CheckedExprOwner::TestTargetKey {
+                            target: id,
+                            segment: segment_index as u32,
+                        },
+                        declaration.declaration.id,
+                        &target.span,
+                    )?;
+                }
+            }
+            for (step_index, step) in test.steps.iter().enumerate() {
+                let id = TestStepId {
+                    test: declaration.declaration.id,
+                    index: step_index as u32,
+                };
+                let step_declaration = self.declarations.test_step(id).ok_or_else(|| {
+                    self.invariant(&step.span, "test step has no stable declaration ID")
+                })?;
+                if step_declaration.semantic_key != crate::ast::test_step_semantic_key(step) {
+                    return Err(self.invariant(
+                        &step.span,
+                        "checked test step semantic contract changed before HIR lowering",
+                    ));
+                }
+                for (operand, _) in crate::ast::test_step_expression_roots(step)
+                    .into_iter()
+                    .enumerate()
+                {
+                    expected_expressions += 1;
+                    self.validate_test_expression_use(
+                        CheckedExprOwner::TestStepOperand {
+                            step: id,
+                            operand: operand as u32,
+                        },
+                        declaration.declaration.id,
+                        &step.span,
+                    )?;
+                }
+            }
+        }
+        let actual_expressions = self
+            .facts
+            .expression_uses()
+            .iter()
+            .filter(|expression| {
+                matches!(
+                    expression.owner,
+                    CheckedExprOwner::TestTargetKey { .. }
+                        | CheckedExprOwner::TestStepOperand { .. }
+                )
+            })
+            .count();
+        let actual_targets = self
+            .facts
+            .locals()
+            .iter()
+            .filter(|local| matches!(local.owner, CheckedLocalOwner::TestTarget(_)))
+            .count();
+        if actual_expressions != expected_expressions || actual_targets != expected_targets {
+            return Err(self.invariant_at(
+                &Span::line(1),
+                "checked test HIR contains extra or missing arena entries",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_test_expression_use(
+        &self,
+        owner: CheckedExprOwner,
+        test: TestId,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let id = self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+            self.invariant(span, "test expression has no checked expression-use ID")
+        })?;
+        let expression = self.facts.try_expression_use(id).ok_or_else(|| {
+            self.invariant(
+                span,
+                "test expression references an invalid expression-use ID",
+            )
+        })?;
+        if expression.owner != owner {
+            return Err(self.invariant(span, "test expression has a mismatched retained owner"));
+        }
+        let policy = TestExpressionPolicy {
+            lowerer: self,
+            use_id: id,
+            test,
+            span,
+        };
+        self.validate_checked_expression_use_graph(
+            expression,
+            &expression.source,
+            &policy,
+            &mut CheckedExpressionGraph::default(),
+        )?;
+        let root = self.facts.try_expression(expression.root).ok_or_else(|| {
+            self.invariant(span, "test expression references an invalid checked root")
+        })?;
+        if root.ty != expression.source {
+            return Err(self.invariant(
+                span,
+                "test expression root type diverged from its retained use",
+            ));
+        }
+        Ok(id)
     }
 
     fn lower_subscriptions(&self) -> Result<Vec<ResolvedSubscription>, Error> {
@@ -10057,6 +10722,153 @@ view
         assert!(generated.contains("crate::backend::scale(window)"));
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_first_class_test_hir_and_ignores_raw_expression_mutations() {
+        let source = format!(
+            r#"app TestHir
+{THEME}state
+  label = "row"
+  count = 0
+on change(next)
+  count = next
+view
+  col #root
+    text label #row(label)
+test stable_flow
+  target row = #root/row(label)
+  click #root/row(label)
+  type label
+  dispatch change(count + 1)
+  expect count == 1
+"#
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.document.tests[0].targets[0].target.segments[1].key =
+            Some(Expr::Str("unchecked-target-poison".into()));
+        let TestStepKind::Click { target, .. } = &mut checked.document.tests[0].steps[0].kind
+        else {
+            panic!("fixture must start with a click");
+        };
+        let TestTargetRef::Id(target) = target else {
+            panic!("fixture click must use a direct target");
+        };
+        target.segments[1].key = Some(Expr::Str("unchecked-click-poison".into()));
+        let TestStepKind::Type(value) = &mut checked.document.tests[0].steps[1].kind else {
+            panic!("fixture second step must type text");
+        };
+        *value = Expr::Str("unchecked-type-poison".into());
+        let TestStepKind::Dispatch { args, .. } = &mut checked.document.tests[0].steps[2].kind
+        else {
+            panic!("fixture third step must dispatch");
+        };
+        args[0] = Expr::Str("unchecked-dispatch-poison".into());
+        let TestStepKind::Expect(TestExpectation::Expr(value)) =
+            &mut checked.document.tests[0].steps[3].kind
+        else {
+            panic!("fixture fourth step must expect an expression");
+        };
+        *value = Expr::Bool(false);
+
+        let program = lower(checked).unwrap();
+        let test = &program.tests()[0];
+        assert_eq!(test.id, TestId(0));
+        assert_eq!(test.name, "stable_flow");
+        assert_eq!(
+            test.targets[0].id,
+            TestTargetId {
+                test: test.id,
+                index: 0
+            }
+        );
+        assert!(test.targets[0].path.segments[1].key.is_some());
+        assert!(matches!(
+            test.steps[2].kind,
+            ResolvedTestStepKind::Dispatch {
+                handler: HandlerId(0),
+                ref handler_name,
+                ref args,
+            } if handler_name == "change" && args.len() == 1
+        ));
+        assert!(matches!(
+            test.steps[3].kind,
+            ResolvedTestStepKind::Expect(ResolvedTestExpectation::Equality { negated: false, .. })
+        ));
+        assert_eq!(test.steps[1].source, "type label");
+        assert_eq!(test.steps[2].source, "dispatch change((count + 1))");
+
+        let generated = crate::codegen::generate(&program, "test-hir.ice").unwrap();
+        assert!(generated.contains("self.label"));
+        assert!(generated.contains("__test.state().count + 1"));
+        assert!(generated.contains("\"type label\""));
+        for poison in [
+            "unchecked-target-poison",
+            "unchecked-click-poison",
+            "unchecked-type-poison",
+            "unchecked-dispatch-poison",
+        ] {
+            assert!(
+                !generated.contains(poison),
+                "raw AST poison `{poison}` leaked"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_test_config_target_and_step_semantic_mutations() {
+        let source = format!(
+            "app TestContracts\n{THEME}view\n  text \"Item\" #item\ntest contract\n  viewport 320 240\n  target item = #item\n  click item\n"
+        );
+
+        let mut config = analyze(&source).unwrap();
+        config.document.tests[0].viewport = Some((640.0, 240.0));
+        let error = lower(config).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("test declaration topology"));
+
+        let mut target = analyze(&source).unwrap();
+        target.document.tests[0].targets[0].target.segments[0].name = "changed".into();
+        let error = lower(target).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("test target local"));
+
+        let mut step = analyze(&source).unwrap();
+        let TestStepKind::Click { count, .. } = &mut step.document.tests[0].steps[0].kind else {
+            panic!("fixture must contain a click");
+        };
+        *count = 2;
+        let error = lower(step).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("test step semantic contract"));
+    }
+
+    #[test]
+    #[ignore = "explicit first-class test HIR performance contract"]
+    fn performance_contract_four_thousand_test_steps_lower_and_emit_linearly() {
+        const STEPS: usize = 4_000;
+        let mut source = format!(
+            "app TestPerf\n{THEME}state\n  value = 0\nview\n  text value #surface\ntest large_contract\n  target surface = #surface\n"
+        );
+        for index in 0..STEPS {
+            writeln!(source, "  expect value + {index} >= 0").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "test-perf.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.tests()[0].steps.len(), STEPS);
+        assert_eq!(
+            generated
+                .matches("::ui_lang_runtime::testing::step(")
+                .count(),
+            STEPS
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "{STEPS} checked test steps lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

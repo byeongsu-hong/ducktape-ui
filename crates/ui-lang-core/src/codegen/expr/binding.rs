@@ -232,38 +232,6 @@ pub(in crate::codegen) fn derived_method(name: &str) -> String {
     format!("__ice_derived_{name}")
 }
 
-pub(in crate::codegen) fn state_env(document: &Document, name: &str) -> HashMap<String, Binding> {
-    let mut env = document
-        .states
-        .iter()
-        .map(|state| {
-            (
-                state.name.clone(),
-                Binding {
-                    code: format!("{name}.{}", state.name),
-                    ty: state.ty.clone(),
-                    local: false,
-                    state: Some(StateBinding::App(state.name.clone())),
-                    owner: None,
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    env.extend(document.derived.iter().map(|derived| {
-        (
-            derived.name.clone(),
-            Binding {
-                code: format!("Self::{}({name})", derived_method(&derived.name)),
-                ty: derived.ty.clone(),
-                local: true,
-                state: None,
-                owner: None,
-            },
-        )
-    }));
-    env
-}
-
 pub(in crate::codegen) fn checked_state_env(
     program: &LoweredProgram,
     name: &str,

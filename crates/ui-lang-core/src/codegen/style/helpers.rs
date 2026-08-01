@@ -306,34 +306,3 @@ pub(in crate::codegen) fn accessibility_code(
         .unwrap_or_default();
     Ok((label, description))
 }
-
-pub(in crate::codegen) fn widget_target_path_code(
-    target: &WidgetTarget,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    if let Some((_, context)) = component_context(env) {
-        let mut scope = context.code.clone();
-        for segment in &target.segments {
-            scope = id_code(segment, &scope, env, document)?;
-        }
-        return Ok(scope);
-    }
-    if target.segments.iter().all(|segment| segment.key.is_none()) {
-        return Ok(rust_string(&format!(
-            "{}/{}",
-            document.app,
-            target
-                .segments
-                .iter()
-                .map(|segment| segment.name.as_str())
-                .collect::<Vec<_>>()
-                .join("/")
-        )));
-    }
-    let mut scope = rust_string(&document.app);
-    for segment in &target.segments {
-        scope = id_code(segment, &scope, env, document)?;
-    }
-    Ok(scope)
-}
