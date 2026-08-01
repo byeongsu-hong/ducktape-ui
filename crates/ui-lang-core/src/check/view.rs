@@ -174,6 +174,28 @@ pub(super) fn retain_tooltip_analyses(
     })
 }
 
+pub(super) fn retain_interaction_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "interaction analysis session has no active view analysis",
+            )
+        })?;
+        let widget = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "interaction widget has no shared view ID"))?;
+        active.analyses.retain_interaction(widget, analyses)
+    })
+}
+
 impl Drop for ViewAnalysisGuard {
     fn drop(&mut self) {
         if self.active {

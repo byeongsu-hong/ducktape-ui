@@ -235,6 +235,7 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             if let Some(interaction) = &options.interaction_expr {
                 require_type(
@@ -279,6 +280,7 @@ pub(in crate::check) fn infer_media_group(
                     "mouse scroll",
                 )?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::ResizeHandle {
@@ -287,6 +289,7 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             if let Some(route) = &options.drag {
                 infer_ordered_payload_route(
@@ -301,6 +304,7 @@ pub(in crate::check) fn infer_media_group(
             for route in [&options.press, &options.release].into_iter().flatten() {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Canvas {

@@ -345,6 +345,70 @@ pub struct ResizeHandleOptions {
     pub interaction: Option<MouseInteraction>,
 }
 
+pub(crate) fn mouse_area_routes(options: &MouseAreaOptions) -> Vec<&Route> {
+    [
+        &options.press,
+        &options.release,
+        &options.double_click,
+        &options.right_press,
+        &options.right_release,
+        &options.middle_press,
+        &options.middle_release,
+        &options.enter,
+        &options.exit,
+        &options.move_route,
+        &options.scroll,
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+pub(crate) fn resize_handle_routes(options: &ResizeHandleOptions) -> Vec<&Route> {
+    [&options.drag, &options.press, &options.release]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+fn interaction_route_key(route: &Route) -> String {
+    let arguments = route
+        .args
+        .iter()
+        .map(|argument| match argument {
+            RouteArg::Expr(_) => "expression",
+            RouteArg::Payload => "payload",
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{}({arguments})", route.handler)
+}
+
+pub(crate) fn mouse_area_semantic_key(options: &MouseAreaOptions) -> String {
+    format!(
+        "mouse|static={:?}|dynamic={}|routes={}",
+        options.interaction,
+        options.interaction_expr.is_some(),
+        mouse_area_routes(options)
+            .into_iter()
+            .map(interaction_route_key)
+            .collect::<Vec<_>>()
+            .join("|")
+    )
+}
+
+pub(crate) fn resize_handle_semantic_key(options: &ResizeHandleOptions) -> String {
+    format!(
+        "resize|interaction={:?}|routes={}",
+        options.interaction,
+        resize_handle_routes(options)
+            .into_iter()
+            .map(interaction_route_key)
+            .collect::<Vec<_>>()
+            .join("|")
+    )
+}
+
 pub(crate) fn media_expression_roots<'a>(
     source: &'a Expr,
     options: &'a MediaOptions,
