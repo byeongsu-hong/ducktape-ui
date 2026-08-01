@@ -298,6 +298,209 @@ pub(crate) fn canvas_command_span(command: &CanvasCommand) -> &Span {
     }
 }
 
+pub(crate) fn canvas_options_semantic_key(options: &CanvasOptions) -> String {
+    fn length(value: &Option<LengthValue>) -> String {
+        match value {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(value)) => format!("portion:{value}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed:#".into(),
+        }
+    }
+    let routes = [
+        &options.press,
+        &options.release,
+        &options.right_press,
+        &options.right_release,
+        &options.middle_press,
+        &options.middle_release,
+        &options.enter,
+        &options.move_route,
+        &options.scroll,
+        &options.exit,
+    ]
+    .map(Option::is_some);
+    format!(
+        "w={};h={};cache={};group={:?};capture={};routes={routes:?};interaction={:?};interaction_expr={};outside={}",
+        length(&options.width),
+        length(&options.height),
+        options.cache.is_some(),
+        options.cache_group,
+        options.capture.is_some(),
+        options.interaction,
+        options.interaction_expr.is_some(),
+        options.interaction_outside.is_some(),
+    )
+}
+
+fn canvas_radius_semantic_key(radius: &CanvasRadius) -> String {
+    format!(
+        "{:?}",
+        [
+            radius.all.is_some(),
+            radius.top_left.is_some(),
+            radius.top_right.is_some(),
+            radius.bottom_right.is_some(),
+            radius.bottom_left.is_some(),
+        ]
+    )
+}
+
+fn canvas_background_semantic_key(background: &BackgroundValue) -> String {
+    match background {
+        BackgroundValue::Color(color) => format!("color:{color}"),
+        BackgroundValue::Linear { stops, .. } => format!(
+            "linear:{:?}",
+            stops.iter().map(|stop| &stop.color).collect::<Vec<_>>()
+        ),
+    }
+}
+
+fn canvas_stroke_semantic_key(stroke: &CanvasStroke) -> String {
+    format!(
+        "{}:{:?}:{:?}:dash={}",
+        canvas_background_semantic_key(&stroke.style),
+        stroke.cap,
+        stroke.join,
+        stroke.dash.len()
+    )
+}
+
+fn canvas_paint_semantic_key(paint: &CanvasPaint) -> String {
+    format!(
+        "fill={:?}:{:?};stroke={:?}",
+        paint.fill.as_ref().map(canvas_background_semantic_key),
+        paint.fill_rule,
+        paint.stroke.as_ref().map(canvas_stroke_semantic_key)
+    )
+}
+
+fn canvas_path_semantic_key(segments: &[CanvasPathSegment]) -> String {
+    segments
+        .iter()
+        .map(|segment| match segment {
+            CanvasPathSegment::Move(..) => "move".into(),
+            CanvasPathSegment::Line(..) => "line".into(),
+            CanvasPathSegment::Arc { .. } => "arc".into(),
+            CanvasPathSegment::ArcTo { .. } => "arc-to".into(),
+            CanvasPathSegment::Ellipse { .. } => "ellipse".into(),
+            CanvasPathSegment::Bezier { .. } => "bezier".into(),
+            CanvasPathSegment::Quadratic { .. } => "quadratic".into(),
+            CanvasPathSegment::Rectangle { .. } => "rectangle".into(),
+            CanvasPathSegment::RoundedRectangle { radius, .. } => {
+                format!("rounded:{}", canvas_radius_semantic_key(radius))
+            }
+            CanvasPathSegment::Circle { .. } => "circle".into(),
+            CanvasPathSegment::Close => "close".into(),
+        })
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
+pub(crate) fn canvas_command_semantic_key(command: &CanvasCommand) -> String {
+    match command {
+        CanvasCommand::Rectangle { radius, paint, .. } => format!(
+            "rectangle:r={};p={}",
+            canvas_radius_semantic_key(radius),
+            canvas_paint_semantic_key(paint)
+        ),
+        CanvasCommand::Circle { paint, .. } => {
+            format!("circle:p={}", canvas_paint_semantic_key(paint))
+        }
+        CanvasCommand::Line { stroke, .. } => {
+            format!("line:s={}", canvas_stroke_semantic_key(stroke))
+        }
+        CanvasCommand::Text {
+            max_width,
+            color,
+            size,
+            line_height,
+            font,
+            align_x,
+            align_y,
+            shaping,
+            ..
+        } => format!(
+            "text:max={};color={color:?};size={};line={:?};font={font:?};x={align_x:?};y={align_y:?};shape={shaping:?}",
+            max_width.is_some(),
+            size.is_some(),
+            line_height
+                .as_ref()
+                .map(|value| matches!(value, TextLineHeight::Absolute(_))),
+        ),
+        CanvasCommand::Image { filter, radius, .. } => {
+            format!("image:{filter:?}:r={}", canvas_radius_semantic_key(radius))
+        }
+        CanvasCommand::Svg { memory, color, .. } => format!("svg:memory={memory};color={color:?}"),
+        CanvasCommand::Path {
+            segments, paint, ..
+        } => format!(
+            "path:{};p={}",
+            canvas_path_semantic_key(segments),
+            canvas_paint_semantic_key(paint)
+        ),
+        CanvasCommand::Group {
+            transform,
+            commands,
+            ..
+        } => format!(
+            "group:{:?}:children={}",
+            [
+                transform.x.is_some(),
+                transform.y.is_some(),
+                transform.rotate.is_some(),
+                transform.scale.is_some(),
+                transform.scale_x.is_some(),
+                transform.scale_y.is_some(),
+                transform.clip.is_some(),
+            ],
+            commands.len()
+        ),
+        CanvasCommand::If { commands, .. } => format!("if:children={}", commands.len()),
+        CanvasCommand::For { item, commands, .. } => {
+            format!("for:{item}:children={}", commands.len())
+        }
+    }
+}
+
+pub(crate) fn canvas_command_semantic_keys(commands: &[CanvasCommand]) -> Vec<String> {
+    fn collect(commands: &[CanvasCommand], keys: &mut Vec<String>) {
+        for command in commands {
+            keys.push(canvas_command_semantic_key(command));
+            match command {
+                CanvasCommand::Group { commands, .. }
+                | CanvasCommand::If { commands, .. }
+                | CanvasCommand::For { commands, .. } => collect(commands, keys),
+                _ => {}
+            }
+        }
+    }
+    let mut keys = Vec::new();
+    collect(commands, &mut keys);
+    keys
+}
+
+pub(crate) fn canvas_event_semantic_key(event: &CanvasEvent) -> String {
+    let action = match &event.action {
+        None => "none".into(),
+        Some(CanvasEventAction::Route(_)) => "route".into(),
+        Some(CanvasEventAction::Redraw { after_ms }) => format!("redraw:{after_ms:?}"),
+    };
+    format!(
+        "source={:?};bindings={:?};updates={:?};action={action};capture={};payload={}",
+        event.source,
+        event.bindings,
+        event
+            .updates
+            .iter()
+            .map(|update| &update.name)
+            .collect::<Vec<_>>(),
+        event.capture,
+        event.route_payload,
+    )
+}
+
 pub(crate) fn canvas_routes<'a>(
     options: &'a CanvasOptions,
     events: &'a [CanvasEvent],

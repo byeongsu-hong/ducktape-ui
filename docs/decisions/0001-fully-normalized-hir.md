@@ -108,15 +108,15 @@ nested gradients, token references, and opacity are resolved before their
 migrated emitters run.
 
 This is deliberately not a claim that every style-shaped AST node has been
-migrated. Expression-bearing native widget status blocks and direct
-view/canvas color fields remain AST-backed with the expression/view family.
+migrated. Expression-bearing native widget status blocks and direct non-Canvas
+view color fields remain AST-backed with the expression/view family.
 Palette enum paths inside the general expression emitter also remain in that
 family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors, canvas locals, and
-remaining widget options therefore remain open implementation slices; this
+The remaining expression-backed native styles/colors and widget options
+therefore remain open implementation slices; this
 status does not satisfy the migration-complete criteria below. Migrated handler
 and application-setting generation uses the shared origin arena directly for
 imported and root source markers.
@@ -160,8 +160,8 @@ validates raw view kind/children against the stable checked topology. Invalid
 owner, topology, match binding, and enum IDs therefore fail with source-mapped
 `E196`. Imported expressions retain physical locations and parent chains;
 missing, duplicate, or leftover authoritative analyses also fail with `E196`.
-Canvas expressions and expression-bearing widget options
-remain later slices, so the full-HIR completion criteria remain open.
+Expression-bearing widget options remain later slices, so the full-HIR
+completion criteria remain open.
 
 Handler bodies are now a completed production HIR slice. One deterministic
 preorder arena owns app, implicit `mount`, component, and preset handlers;
@@ -247,6 +247,20 @@ lowering diagnostics and source markers keep the subscription origin. A
 while verifying exact generated subscription counts, linear expression growth,
 one shared app scope, zero full-scope clones, and a bounded debug-build wall
 time.
+
+Canvas is now a completed vertical slice. Stable Canvas-local, command, event,
+route, and expression IDs partition every Canvas view. Lowering freezes its
+options and static topology with checked semantic keys and exhaustively converts
+all draw commands, paths, transforms, paints, fonts, interactions, state
+updates, redraw actions, and routes into `ResolvedCanvas`. Every dynamic operand
+uses the shared checked expression arena; loop and event bindings use typed local
+IDs; named values, fonts, theme colors, and payload routes are resolved before
+emission. The backend no longer accepts raw Canvas options, commands, events,
+paths, or expressions, repeats type inference, or recovers named types, fonts,
+and theme-token positions from `Document`. Corrupt graph IDs and post-check
+static mutations fail with source-mapped `E196`; post-lowering raw Canvas and
+theme-token mutations cannot affect generated Rust. Structural snapshots and an
+ignored 4,000-command lower+emit budget complete the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

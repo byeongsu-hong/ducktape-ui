@@ -810,6 +810,7 @@ use smells::*;
 use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};
 pub(crate) use state::{controlled_editor_bindings, controlled_state_bindings};
 use style::*;
+pub(crate) use subscription::native_subscription_payloads;
 use subscription::*;
 use testing::*;
 use usage::*;
@@ -825,12 +826,13 @@ use expr::{check_length_value, contains_ui_enum};
 pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedAppSettings, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
-    CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
-    CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
-    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
-    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef,
-    CheckedView, CheckedViewFlow, CheckedViewLocalRole,
+    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
+    CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
+    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
+    CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
+    CheckedRouteArgKind, CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole,
+    CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 

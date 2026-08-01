@@ -1153,7 +1153,11 @@ impl Lowerer {
         })
     }
 
-    fn resolve_theme_color(&self, value: &str, span: &Span) -> Result<ResolvedThemeColor, Error> {
+    pub(super) fn resolve_theme_color(
+        &self,
+        value: &str,
+        span: &Span,
+    ) -> Result<ResolvedThemeColor, Error> {
         let (name, opacity) = value
             .split_once('/')
             .map_or((value, None), |(name, value)| (name, Some(value)));

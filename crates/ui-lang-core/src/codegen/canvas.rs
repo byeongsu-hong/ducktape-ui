@@ -1,32 +1,40 @@
 use super::*;
 
 pub(in crate::codegen) fn render_canvas(
-    options: &CanvasOptions,
-    locals: &[State],
-    commands: &[CanvasCommand],
-    events: &[CanvasEvent],
-    document: &Document,
+    canvas: &ResolvedCanvas,
+    program: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let state_fields = locals
+    let options = &canvas.options;
+    let state_fields = canvas
+        .states
         .iter()
-        .map(|local| format!("{}: {},", local.name, local.ty.rust(&document.structs)))
-        .collect::<Vec<_>>()
+        .map(|local| {
+            let origin = program.origin(local.origin);
+            let span = Span {
+                line: origin.line,
+                column: origin.column,
+            };
+            resolved_type_code(program, &local.resolved_ty, &span)
+                .map(|ty| format!("{}: {ty},", local.name))
+        })
+        .collect::<Result<Vec<_>, Error>>()?
         .join(" ");
-    let state_initials = locals
+    let state_initials = canvas
+        .states
         .iter()
         .map(|local| {
             Ok(format!(
                 "{}: {},",
                 local.name,
-                canvas_initial_code(local, document)?
+                resolved_initializer_code(&local.initializer, program)?
             ))
         })
         .collect::<Result<Vec<_>, Error>>()?
         .join(" ");
     let mut canvas_env = env.snapshot();
-    for local in locals {
+    for local in &canvas.states {
         canvas_env.insert(
             local.name.clone(),
             Binding {
@@ -34,7 +42,7 @@ pub(in crate::codegen) fn render_canvas(
                 ty: local.ty.clone(),
                 local: false,
                 state: None,
-                owner: None,
+                owner: Some(BindingOwner::Local(local.local)),
             },
         );
     }
@@ -45,7 +53,7 @@ pub(in crate::codegen) fn render_canvas(
             ty: Type::F64,
             local: true,
             state: None,
-            owner: None,
+            owner: Some(BindingOwner::Local(canvas.width_local)),
         },
     );
     canvas_env.insert(
@@ -55,7 +63,7 @@ pub(in crate::codegen) fn render_canvas(
             ty: Type::F64,
             local: true,
             state: None,
-            owner: None,
+            owner: Some(BindingOwner::Local(canvas.height_local)),
         },
     );
     let mut captures = component_state_scopes(env);
@@ -69,10 +77,10 @@ pub(in crate::codegen) fn render_canvas(
     let (canvas_update_env, _) = canvas_capture_env(&canvas_env, &captures, "update");
     let (interaction_env, interaction_captures) =
         canvas_capture_env(&canvas_env, &captures, "interaction");
-    let draw_commands = canvas_commands_code(commands, &draw_env, document)?;
+    let draw_commands = canvas_commands_code(&canvas.commands, &draw_env, program)?;
     let use_cache = options.cache.is_some();
     let cache_key = if let Some(dependency) = &options.cache {
-        let dependency = expr_code(dependency, env, document, ValueMode::Owned)?;
+        let dependency = checked_expr_use_code(program, *dependency, env, ValueMode::Owned)?;
         format!(
             "::std::option::Option::Some({{ let mut __hasher = ::std::hash::DefaultHasher::new(); ::std::hash::Hash::hash(&(__ice_palette.name, {dependency}), &mut __hasher); ::std::hash::Hasher::finish(&__hasher) }})"
         )
@@ -81,22 +89,21 @@ pub(in crate::codegen) fn render_canvas(
     };
     let update = canvas_update_code(
         options,
-        events,
+        &canvas.events,
         &update_env,
         &canvas_update_env,
-        document,
+        program,
         message,
         use_cache,
     )?;
     let interaction = if let Some(value) = &options.interaction_expr {
-        let interaction = expr_code(value, &interaction_env, document, ValueMode::Owned)?;
-        if expr_type(
-            value,
-            &env_types(&interaction_env),
-            document,
-            &Span::line(1),
-        )? == Type::MouseInteraction
-        {
+        let interaction = checked_expr_use_code(
+            program,
+            value.expression,
+            &interaction_env,
+            ValueMode::Owned,
+        )?;
+        if value.source == Type::MouseInteraction {
             interaction
         } else {
             format!(
@@ -115,7 +122,7 @@ pub(in crate::codegen) fn render_canvas(
     let interaction_outside = options
         .interaction_outside
         .as_ref()
-        .map(|outside| expr_code(outside, &interaction_env, document, ValueMode::Owned))
+        .map(|outside| checked_expr_use_code(program, *outside, &interaction_env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let interaction_guard = match interaction_outside.as_str() {
@@ -168,39 +175,37 @@ message: ::std::marker::PhantomData,
 }};
 let __canvas = ::iced::widget::canvas(__program)"
     );
-    append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
+    append_canvas_dimensions(&mut code, [&options.width, &options.height], env, program)?;
     code.push_str("; __canvas.into() }");
     Ok(code)
 }
 
-// Canvas-local state belongs to the still AST-backed view-expression slice.
-// Unlike the former shared initializer fallback, emission is checked and fallible.
-fn canvas_initial_code(state: &State, document: &Document) -> Result<String, Error> {
-    if matches!(state.ty, Type::Animation(_)) {
-        return Err(Error::new(
-            "E196",
-            &state.span,
-            "canvas-local animation passed semantic checking",
-        ));
+fn append_canvas_dimensions(
+    code: &mut String,
+    dimensions: [&Option<ResolvedCanvasLength>; 2],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<(), Error> {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        let Some(length) = length else { continue };
+        let value = match length {
+            ResolvedCanvasLength::Fill => "::iced::Fill".into(),
+            ResolvedCanvasLength::FillPortion(portion) => {
+                format!("::iced::Length::FillPortion({portion})")
+            }
+            ResolvedCanvasLength::Shrink => "::iced::Shrink".into(),
+            ResolvedCanvasLength::Fixed { expression, source } => {
+                let value = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+                if *source == Type::Length {
+                    value
+                } else {
+                    format!("{value} as f32")
+                }
+            }
+        };
+        write!(code, ".{method}({value})").unwrap();
     }
-    Ok(match (&state.initial, &state.ty) {
-        (Expr::Str(value), Type::Markdown) => format!(
-            "::iced::widget::markdown::Content::parse({})",
-            rust_string(value)
-        ),
-        (Expr::Str(value), Type::Editor) => format!(
-            "::iced::widget::text_editor::Content::with_text({})",
-            rust_string(value)
-        ),
-        (Expr::EmptyList, Type::Combo(_)) => {
-            "::iced::widget::combo_box::State::new(::std::vec::Vec::new())".into()
-        }
-        (Expr::List(values), Type::Combo(_)) => format!(
-            "::iced::widget::combo_box::State::new(::std::vec![{}])",
-            expr_list_code(values, &HashMap::new(), document)?
-        ),
-        _ => expr_code(&state.initial, &HashMap::new(), document, ValueMode::Owned)?,
-    })
+    Ok(())
 }
 
 fn canvas_capture_env(

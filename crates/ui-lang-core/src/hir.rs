@@ -308,10 +308,23 @@ pub(crate) struct TestStepDeclaration {
 #[derive(Clone, Debug)]
 pub(crate) struct CanvasDeclaration {
     pub(crate) declaration: Declaration<ViewId>,
+    pub(crate) options_semantic_key: String,
     pub(crate) locals: Vec<CanvasLocalDeclaration>,
-    pub(crate) commands: Vec<Declaration<CanvasCommandId>>,
-    pub(crate) events: Vec<Declaration<CanvasEventId>>,
+    pub(crate) commands: Vec<CanvasCommandDeclaration>,
+    pub(crate) events: Vec<CanvasEventDeclaration>,
     pub(crate) routes: Vec<Declaration<CanvasRouteId>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasCommandDeclaration {
+    pub(crate) declaration: Declaration<CanvasCommandId>,
+    pub(crate) semantic_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasEventDeclaration {
+    pub(crate) declaration: Declaration<CanvasEventId>,
+    pub(crate) semantic_key: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1100,7 +1113,7 @@ impl DeclarationIndex {
         self.canvas(id.canvas)?
             .events
             .get(id.index as usize)
-            .copied()
+            .map(|declaration| declaration.declaration)
             .filter(|declaration| declaration.id == id)
     }
 
@@ -1706,24 +1719,31 @@ fn index_view_declarations(
             .collect();
         let command_declarations = crate::ast::canvas_command_spans(commands)
             .into_iter()
+            .zip(crate::ast::canvas_command_semantic_keys(commands))
             .enumerate()
-            .map(|(index, span)| Declaration {
-                id: CanvasCommandId {
-                    canvas: id,
-                    index: index as u32,
+            .map(|(index, (span, semantic_key))| CanvasCommandDeclaration {
+                declaration: Declaration {
+                    id: CanvasCommandId {
+                        canvas: id,
+                        index: index as u32,
+                    },
+                    origin: origins.push(span, Some(origin)),
                 },
-                origin: origins.push(span, Some(origin)),
+                semantic_key,
             })
             .collect();
         let event_declarations = events
             .iter()
             .enumerate()
-            .map(|(index, event)| Declaration {
-                id: CanvasEventId {
-                    canvas: id,
-                    index: index as u32,
+            .map(|(index, event)| CanvasEventDeclaration {
+                declaration: Declaration {
+                    id: CanvasEventId {
+                        canvas: id,
+                        index: index as u32,
+                    },
+                    origin: origins.push(&event.span, Some(origin)),
                 },
-                origin: origins.push(&event.span, Some(origin)),
+                semantic_key: crate::ast::canvas_event_semantic_key(event),
             })
             .collect();
         let route_declarations = crate::ast::canvas_routes(options, events)
@@ -1741,6 +1761,7 @@ fn index_view_declarations(
             id,
             CanvasDeclaration {
                 declaration: Declaration { id, origin },
+                options_semantic_key: crate::ast::canvas_options_semantic_key(options),
                 locals: local_declarations,
                 commands: command_declarations,
                 events: event_declarations,

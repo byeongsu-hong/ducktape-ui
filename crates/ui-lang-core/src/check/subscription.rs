@@ -17,7 +17,7 @@ fn require_single_payload_routes<'a>(
     Ok(())
 }
 
-pub(in crate::check) fn native_subscription_payloads(
+pub(crate) fn native_subscription_payloads(
     source: &SubscriptionSource,
     window_id: bool,
 ) -> Option<Vec<Type>> {

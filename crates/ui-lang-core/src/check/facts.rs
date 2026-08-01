@@ -2584,8 +2584,7 @@ impl<'a> FactsBuilder<'a> {
             let retained = declaration
                 .commands
                 .get(command_id.index as usize)
-                .copied()
-                .filter(|value| value.id == command_id)
+                .filter(|value| value.declaration.id == command_id)
                 .ok_or_else(|| {
                     self.invariant(
                         crate::ast::canvas_command_span(command),
@@ -2602,7 +2601,7 @@ impl<'a> FactsBuilder<'a> {
                     false,
                     env,
                     crate::ast::canvas_command_span(command),
-                    retained.origin,
+                    retained.declaration.origin,
                 )?);
             }
             match command {
@@ -2628,7 +2627,7 @@ impl<'a> FactsBuilder<'a> {
                         item_ty.as_ref().clone(),
                         CheckedLocalOwner::CanvasCommandItem(command_id),
                         crate::ast::canvas_command_span(command),
-                        retained.origin,
+                        retained.declaration.origin,
                     );
                     let scoped = LayeredFactEnv {
                         base: env,
@@ -7486,6 +7485,37 @@ view
         ));
         assert!(canvas.routes[0].source_payloads.is_empty());
         assert!(!canvas.routes[0].ordered_payloads);
+    }
+
+    #[test]
+    fn canvas_codegen_uses_checked_expressions_and_rejects_static_contract_mutation() {
+        let source = format!(
+            "app FrozenCanvas\n{THEME}view\n  canvas w=120.0 h=80.0\n    circle x=10.0 y=20.0 r=4.0 fill=primary\n"
+        );
+        let mut expression_mutation = analyze(&source).unwrap();
+        let ViewNode::Canvas { commands, .. } = &mut expression_mutation.document.view else {
+            panic!("fixture root must be a canvas");
+        };
+        let CanvasCommand::Circle { x, .. } = &mut commands[0] else {
+            panic!("fixture command must be a circle");
+        };
+        *x = Expr::F64(99.0);
+        let program = lower::lower(expression_mutation).unwrap();
+        let generated = crate::codegen::generate(&program, "frozen-canvas.ice").unwrap();
+        assert!(generated.contains("::iced::Point::new(10.0 as f32, 20.0 as f32)"));
+        assert!(!generated.contains("::iced::Point::new(99.0 as f32, 20.0 as f32)"));
+
+        let mut static_mutation = analyze(&source).unwrap();
+        let ViewNode::Canvas { commands, .. } = &mut static_mutation.document.view else {
+            panic!("fixture root must be a canvas");
+        };
+        let CanvasCommand::Circle { paint, .. } = &mut commands[0] else {
+            panic!("fixture command must be a circle");
+        };
+        paint.fill = Some(BackgroundValue::Color("fg".into()));
+        let error = lower::lower(static_mutation).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("canvas command has no declaration"));
     }
 
     #[test]
