@@ -680,10 +680,10 @@ fn diff_events(
             ),
             (None, Some(_)) => push_change(
                 changes,
-                ChangeClassification::Additive,
+                ChangeClassification::Breaking,
                 "event_added",
                 path,
-                "named event was added",
+                "named event was added to the closed routing contract",
             ),
             (Some(left), Some(right)) if left.payload != right.payload => push_change(
                 changes,
@@ -1055,7 +1055,7 @@ view
         );
         assert_eq!(
             code("event_added").classification,
-            ChangeClassification::Additive
+            ChangeClassification::Breaking
         );
         assert_eq!(
             code("theme_token_added").classification,
@@ -1069,6 +1069,45 @@ view
             code("recipe_semantics_changed").classification,
             ChangeClassification::BehavioralReview
         );
+    }
+
+    #[test]
+    fn adding_a_named_event_to_an_existing_component_is_breaking() {
+        let before = source("component Card()\n  space", "p-2", "extra");
+        let after = source(
+            "component Card()\n  emits\n    opened(str)\n  space",
+            "p-2",
+            "extra",
+        );
+
+        let report = diff(&fingerprint(&before), &fingerprint(&after));
+        assert_eq!(report.changes.len(), 1, "{:?}", report.changes);
+        let change = &report.changes[0];
+        assert_eq!(change.code, "event_added");
+        assert_eq!(change.path, "components.Card.events.opened");
+        assert_eq!(change.classification, ChangeClassification::Breaking);
+        assert_eq!(report.summary.breaking, 1);
+        assert_eq!(report.summary.additive, 0);
+    }
+
+    #[test]
+    fn adding_a_new_component_with_named_events_is_one_additive_component_change() {
+        let before = source("", "p-2", "extra");
+        let after = source(
+            "component Card()\n  emits\n    opened(str)\n  space",
+            "p-2",
+            "extra",
+        );
+
+        let report = diff(&fingerprint(&before), &fingerprint(&after));
+        assert_eq!(report.changes.len(), 1, "{:?}", report.changes);
+        assert_eq!(report.changes[0].code, "component_added");
+        assert_eq!(
+            report.changes[0].classification,
+            ChangeClassification::Additive
+        );
+        assert_eq!(report.summary.additive, 1);
+        assert_eq!(report.summary.breaking, 0);
     }
 
     #[test]

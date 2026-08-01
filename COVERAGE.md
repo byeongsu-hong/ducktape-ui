@@ -97,12 +97,18 @@ extern surfaces, retaining imported namespace identity without source paths or
 backend/HIR details. `cargo ice api diff` validates artifact schema, hash,
 canonical ordering, unique names, and required/default consistency, emits human
 or machine-readable breaking/behavioral/additive classifications, and fails on
-breaking changes. Pull-request CI requires an exactly regenerated `ducktape-ui`
-artifact, compares it with the target commit's reviewed baseline, and accepts a
-breaking result only through a maintainer-controlled label event for the latest
-head. This
-is tooling evidence over the existing Core contract, not a new syntax or LSP
-capability.
+breaking changes. Focused contracts prove that adding a named event to an
+existing component is breaking because its routes are closed, while adding a
+new component that already owns events remains one additive component change.
+The extracted-crate downstream fixture runs the packaged `cargo-ice` binary to
+prove deterministic emission, a zero JSON diff, rejection of that named-event
+change, and rejection of a corrupt fingerprint outside the workspace.
+Pull-request CI requires an exactly regenerated `ducktape-ui` artifact,
+compares it with the target commit's reviewed baseline, and accepts a breaking
+result only through a maintainer-controlled label event for the latest head.
+The release packages job independently regenerates the artifact and requires
+byte equality plus a zero JSON diff before a tag can publish. This is tooling
+evidence over the existing Core contract, not a new syntax or LSP capability.
 
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
 the selected Ice import graph, embedded fonts and icons, participating project
