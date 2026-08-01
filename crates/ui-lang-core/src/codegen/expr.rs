@@ -2612,7 +2612,20 @@ pub(in crate::codegen) fn checked_expr_use_code(
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
+    checked_expr_use_code_at(program, expression_use, env, mode, &Span::line(1))
+}
+
+pub(in crate::codegen) fn checked_expr_use_code_at(
+    program: &LoweredProgram,
+    expression_use: CheckedExprUseId,
+    env: &dyn BindingEnvironment,
+    mode: ValueMode,
+    span: &Span,
+) -> Result<String, Error> {
     let facts = program.checked_facts();
+    for id in facts.validate_expression_use(expression_use, span)? {
+        program.declarations().checked_extern_decl(id, span)?;
+    }
     let expression_use = facts.expression_use(expression_use);
     let context = ExprEmission::for_checked(program);
     let code = expr_node_code(ExprNode::Checked(expression_use.root), env, &context, mode)?;

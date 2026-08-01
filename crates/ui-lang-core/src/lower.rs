@@ -2,6 +2,9 @@ use crate::ast::*;
 use crate::check::{
     CheckedComponentArgumentSource, CheckedExprUseId, CheckedFacts, CheckedValueRef,
 };
+pub(crate) use crate::check::{
+    CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
+};
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
@@ -290,6 +293,10 @@ impl LoweredProgram {
     #[allow(dead_code)]
     pub(crate) fn checked_facts(&self) -> &CheckedFacts {
         &self.facts
+    }
+
+    pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
+        self.facts.subscriptions()
     }
 
     pub(crate) fn declarations(&self) -> &DeclarationIndex {

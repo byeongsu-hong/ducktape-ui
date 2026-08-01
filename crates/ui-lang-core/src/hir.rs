@@ -1,4 +1,6 @@
 use crate::ast::*;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -20,6 +22,8 @@ arena_id!(ExternFnId);
 arena_id!(OriginId);
 arena_id!(ViewId);
 arena_id!(ComponentCallId);
+arena_id!(HandlerId);
+arena_id!(SubscriptionId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -207,9 +211,20 @@ pub(crate) struct DeclarationIndex {
     palettes_by_name: HashMap<String, PaletteId>,
     externs: Vec<ExternDeclaration>,
     externs_by_name: HashMap<String, ExternFnId>,
+    handlers: Vec<NamedDeclaration<HandlerId>>,
+    handlers_by_name: HashMap<String, HandlerId>,
+    subscriptions: Vec<Declaration<SubscriptionId>>,
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
+    #[cfg(test)]
+    extern_name_lookups: Cell<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NamedDeclaration<T> {
+    pub(crate) declaration: Declaration<T>,
+    pub(crate) name: String,
 }
 
 impl DeclarationIndex {
@@ -430,6 +445,32 @@ impl DeclarationIndex {
             .map(|function| (function.name.clone(), function.declaration.id))
             .collect();
 
+        let handlers = document
+            .handlers
+            .iter()
+            .enumerate()
+            .map(|(index, handler)| NamedDeclaration {
+                declaration: Declaration {
+                    id: HandlerId(index as u32),
+                    origin: origins.push(&handler.span, None),
+                },
+                name: handler.name.clone(),
+            })
+            .collect::<Vec<_>>();
+        let handlers_by_name = handlers
+            .iter()
+            .map(|handler| (handler.name.clone(), handler.declaration.id))
+            .collect();
+        let subscriptions = document
+            .subscriptions
+            .iter()
+            .enumerate()
+            .map(|(index, subscription)| Declaration {
+                id: SubscriptionId(index as u32),
+                origin: origins.push(&subscription.span, None),
+            })
+            .collect();
+
         let mut views = Vec::new();
         let mut views_by_site = HashMap::new();
         let mut component_calls_by_view = HashMap::new();
@@ -478,9 +519,14 @@ impl DeclarationIndex {
             palettes_by_name,
             externs,
             externs_by_name,
+            handlers,
+            handlers_by_name,
+            subscriptions,
             views,
             views_by_site,
             component_calls_by_view,
+            #[cfg(test)]
+            extern_name_lookups: Cell::new(0),
         }
     }
 
@@ -548,6 +594,49 @@ impl DeclarationIndex {
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
         let id = self.structs_by_name.get(name)?;
         self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn rust_type(&self, ty: &Type, span: &Span) -> Result<String, crate::Error> {
+        Ok(match ty {
+            Type::List(inner) => format!("::std::vec::Vec<{}>", self.rust_type(inner, span)?),
+            Type::Option(inner) => {
+                format!("::std::option::Option<{}>", self.rust_type(inner, span)?)
+            }
+            Type::Result(output, error) => format!(
+                "::std::result::Result<{}, {}>",
+                self.rust_type(output, span)?,
+                self.rust_type(error, span)?
+            ),
+            Type::Combo(inner) => format!(
+                "::iced::widget::combo_box::State<{}>",
+                self.rust_type(inner, span)?
+            ),
+            Type::Animation(inner) if **inner == Type::F64 => "::iced::Animation<f32>".into(),
+            Type::Animation(inner) => {
+                format!("::iced::Animation<{}>", self.rust_type(inner, span)?)
+            }
+            Type::Named(name) => {
+                if let Some(item) = self.struct_decl_by_name(name) {
+                    item.rust_path.clone()
+                } else if let Some(item) = self.enum_decl_by_name(name) {
+                    item.rust_name.clone()
+                } else {
+                    return Err(crate::Error::new(
+                        "E196",
+                        span,
+                        format!("checked type references unknown named declaration `{name}`"),
+                    ));
+                }
+            }
+            Type::Unknown => {
+                return Err(crate::Error::new(
+                    "E196",
+                    span,
+                    "checked type remained unknown at code generation",
+                ));
+            }
+            ty => ty.rust(&[]),
+        })
     }
 
     pub(crate) fn struct_field(
@@ -618,12 +707,56 @@ impl DeclarationIndex {
     }
 
     pub(crate) fn extern_decl_by_name(&self, name: &str) -> Option<&ExternDeclaration> {
+        #[cfg(test)]
+        self.extern_name_lookups
+            .set(self.extern_name_lookups.get() + 1);
         let id = self.externs_by_name.get(name)?;
         self.externs.get(id.0 as usize)
     }
 
+    #[cfg(test)]
+    pub(crate) fn extern_name_lookup_count(&self) -> usize {
+        self.extern_name_lookups.get()
+    }
+
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
+    }
+
+    pub(crate) fn checked_extern_decl(
+        &self,
+        id: ExternFnId,
+        span: &Span,
+    ) -> Result<&ExternDeclaration, crate::Error> {
+        self.externs.get(id.0 as usize).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked HIR references an invalid extern declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn handler_id(&self, name: &str) -> Option<HandlerId> {
+        self.handlers_by_name.get(name).copied()
+    }
+
+    pub(crate) fn checked_handler(
+        &self,
+        id: HandlerId,
+        span: &Span,
+    ) -> Result<&NamedDeclaration<HandlerId>, crate::Error> {
+        self.handlers.get(id.0 as usize).ok_or_else(|| {
+            crate::Error::new(
+                "E196",
+                span,
+                "checked route references an invalid handler declaration ID",
+            )
+        })
+    }
+
+    pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
+        self.subscriptions[index]
     }
 }
 
