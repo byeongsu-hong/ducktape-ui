@@ -472,6 +472,32 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_expression_first_child(&mut self, owner: CheckedExprOwner, raw: u32) {
+        let id = self.expression_uses_by_owner[&owner];
+        let root = self.expression_uses[id.0 as usize].root;
+        let invalid = CheckedExprId(raw);
+        match &mut self.expressions[root.0 as usize].kind {
+            CheckedExprKind::List(values) => values[0] = invalid,
+            CheckedExprKind::Call { arguments, .. } => {
+                let CheckedCallArgument::Value(value) = &mut arguments[0] else {
+                    panic!("test expression argument must be a value");
+                };
+                *value = invalid;
+            }
+            CheckedExprKind::Unary { value, .. } => *value = invalid,
+            CheckedExprKind::Binary { left, .. } => *left = invalid,
+            _ => panic!("test expression root must contain a child"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_expression_first_child_to_root(&mut self, owner: CheckedExprOwner) {
+        let id = self.expression_uses_by_owner[&owner];
+        let root = self.expression_uses[id.0 as usize].root;
+        self.corrupt_expression_first_child(owner, root.0);
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_task_extern_target(&mut self, task: TaskId, raw: u32) {
         self.tasks[task.0 as usize]
             .as_mut()
@@ -573,6 +599,112 @@ impl CheckedFacts {
     pub(crate) fn try_expression(&self, id: CheckedExprId) -> Option<&CheckedExpr> {
         self.record_lookup();
         self.expressions.get(id.0 as usize)
+    }
+
+    pub(crate) fn expressions(&self) -> &[CheckedExpr] {
+        &self.expressions
+    }
+
+    pub(crate) fn validate_expression_arena(&self) -> Result<(), (OriginId, &'static str)> {
+        let mut state = vec![0u8; self.expressions.len()];
+        for raw in 0..self.expressions.len() {
+            if state[raw] == 2 {
+                continue;
+            }
+            let root = CheckedExprId(raw as u32);
+            let root_origin = self.expressions[raw].origin;
+            let mut stack = vec![(root, false, root_origin)];
+            while let Some((id, leaving, source_origin)) = stack.pop() {
+                let Some(mark) = state.get_mut(id.0 as usize) else {
+                    return Err((
+                        source_origin,
+                        "expression descendant ID is outside its arena",
+                    ));
+                };
+                if leaving {
+                    *mark = 2;
+                    continue;
+                }
+                match *mark {
+                    1 => {
+                        return Err((source_origin, "checked expression graph contains a cycle"));
+                    }
+                    2 => continue,
+                    _ => *mark = 1,
+                }
+                let expression = &self.expressions[id.0 as usize];
+                stack.push((id, true, expression.origin));
+                match &expression.kind {
+                    CheckedExprKind::Path { root, .. } => match root {
+                        CheckedPathRoot::Value(value) => {
+                            if !self.values_by_ref.contains_key(value) {
+                                return Err((
+                                    expression.origin,
+                                    "expression value ID is outside its arena",
+                                ));
+                            }
+                        }
+                        CheckedPathRoot::Local(local) => {
+                            if self.locals.get(local.0 as usize).is_none() {
+                                return Err((
+                                    expression.origin,
+                                    "expression local ID is outside its arena",
+                                ));
+                            }
+                        }
+                        CheckedPathRoot::EnumVariant(_) | CheckedPathRoot::Palette(_) => {}
+                    },
+                    CheckedExprKind::Call { target, arguments } => {
+                        if let CheckedCallTarget::Builtin(id) = target
+                            && self.builtins.get(id.0 as usize).is_none()
+                        {
+                            return Err((
+                                expression.origin,
+                                "expression builtin ID is outside its arena",
+                            ));
+                        }
+                        for argument in arguments.iter().rev() {
+                            match argument {
+                                CheckedCallArgument::Value(value) => {
+                                    stack.push((*value, false, expression.origin));
+                                }
+                                CheckedCallArgument::Binding(local) => {
+                                    if self.locals.get(local.0 as usize).is_none() {
+                                        return Err((
+                                            expression.origin,
+                                            "expression binding local ID is outside its arena",
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    CheckedExprKind::List(values) => {
+                        stack.extend(
+                            values
+                                .iter()
+                                .rev()
+                                .map(|value| (*value, false, expression.origin)),
+                        );
+                    }
+                    CheckedExprKind::Unary { value, .. } => {
+                        stack.push((*value, false, expression.origin));
+                    }
+                    CheckedExprKind::Binary { left, right, .. } => {
+                        stack.push((*right, false, expression.origin));
+                        stack.push((*left, false, expression.origin));
+                    }
+                    CheckedExprKind::Bool(_)
+                    | CheckedExprKind::I64(_)
+                    | CheckedExprKind::F64(_)
+                    | CheckedExprKind::Str(_)
+                    | CheckedExprKind::Bytes(_)
+                    | CheckedExprKind::None
+                    | CheckedExprKind::SlotProvided(_) => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn builtin(&self, id: CheckedBuiltinId) -> &str {

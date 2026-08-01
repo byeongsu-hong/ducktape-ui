@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::check::{
-    CheckedExprUseId, CheckedLocalId, CheckedMatchPattern, CheckedValueRef, CheckedViewFlow,
+    CheckedLocalId, CheckedMatchPattern, CheckedValueRef, CheckedViewFlow,
     controlled_editor_bindings, controlled_state_bindings, expr_type,
 };
 use crate::hir::{HandlerId, RunSiteId};

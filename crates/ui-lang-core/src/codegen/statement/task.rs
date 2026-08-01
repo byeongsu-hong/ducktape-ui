@@ -3,7 +3,7 @@ use super::*;
 fn resolved_effect_call(
     kind: EffectKind,
     target: &ResolvedEffectTarget,
-    args: &[CheckedExprUseId],
+    args: &[ResolvedExpressionId],
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {

@@ -664,6 +664,17 @@ impl DeclarationIndex {
         self.components[component.0 as usize].slots[index]
     }
 
+    pub(crate) fn try_component_slot(
+        &self,
+        id: ComponentSlotId,
+    ) -> Option<Declaration<ComponentSlotId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .slots
+            .get(id.index as usize)
+            .copied()
+    }
+
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
         self.views[id.0 as usize]
     }
@@ -694,6 +705,16 @@ impl DeclarationIndex {
         let id = self.struct_fields_by_owner.get(&owner)?.get(name)?;
         self.structs
             .get(owner.0 as usize)?
+            .fields
+            .get(id.index as usize)
+    }
+
+    pub(crate) fn try_struct_field_decl(
+        &self,
+        id: StructFieldId,
+    ) -> Option<&StructFieldDeclaration> {
+        self.structs
+            .get(id.owner.0 as usize)?
             .fields
             .get(id.index as usize)
     }

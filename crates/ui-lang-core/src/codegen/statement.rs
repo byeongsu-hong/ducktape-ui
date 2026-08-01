@@ -14,7 +14,7 @@ fn route_result_code(route: &ResolvedRoute, binding: &str, expression: String) -
 
 fn editor_self_assignment_code(
     target: &ResolvedWritableState,
-    value: CheckedExprUseId,
+    value: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
     state: &str,
@@ -566,7 +566,7 @@ pub(in crate::codegen) fn generate_statements(
                 let id = |target: &ResolvedWidgetTarget| {
                     resolved_widget_target_code(target, env, program)
                 };
-                let value = |value: CheckedExprUseId, cast: &str| {
+                let value = |value: ResolvedExpressionId, cast: &str| {
                     let code = checked_expr_use_code(program, value, env, ValueMode::Owned)?;
                     Ok::<_, Error>(if cast == "usize" {
                         format!("usize::try_from({code}).unwrap_or(0)")
@@ -828,13 +828,13 @@ pub(in crate::codegen) fn generate_statements(
                     .map(|target| checked_expr_use_code(program, *target, env, ValueMode::Owned))
                     .transpose()?;
                 let id = target.as_deref().unwrap_or("__window");
-                let value = |value: CheckedExprUseId, cast: &str| {
+                let value = |value: ResolvedExpressionId, cast: &str| {
                     Ok::<_, Error>(format!(
                         "({}) as {cast}",
                         checked_expr_use_code(program, value, env, ValueMode::Owned)?
                     ))
                 };
-                let size = |width: CheckedExprUseId, height: CheckedExprUseId| {
+                let size = |width: ResolvedExpressionId, height: ResolvedExpressionId| {
                     let positive = |value| {
                         Ok::<_, Error>(format!(
                             "(({}) as f32).max(f32::EPSILON).min(f32::MAX)",
@@ -847,15 +847,16 @@ pub(in crate::codegen) fn generate_statements(
                         positive(height)?
                     ))
                 };
-                let optional_size = |size_value: &Option<(CheckedExprUseId, CheckedExprUseId)>| {
-                    Ok::<_, Error>(match size_value {
-                        Some((width, height)) => {
-                            format!("::std::option::Option::Some({})", size(*width, *height)?)
-                        }
-                        None => "::std::option::Option::None".into(),
-                    })
-                };
-                let bool_value = |value: CheckedExprUseId| {
+                let optional_size =
+                    |size_value: &Option<(ResolvedExpressionId, ResolvedExpressionId)>| {
+                        Ok::<_, Error>(match size_value {
+                            Some((width, height)) => {
+                                format!("::std::option::Option::Some({})", size(*width, *height)?)
+                            }
+                            None => "::std::option::Option::None".into(),
+                        })
+                    };
+                let bool_value = |value: ResolvedExpressionId| {
                     checked_expr_use_code(program, value, env, ValueMode::Owned)
                 };
                 let task = match operation {

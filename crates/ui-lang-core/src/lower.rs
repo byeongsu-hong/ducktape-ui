@@ -16,6 +16,8 @@ mod style;
 
 pub(crate) use style::*;
 
+pub(crate) type ResolvedExpressionId = CheckedExprUseId;
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct ComponentParamContract {
@@ -745,6 +747,464 @@ pub(crate) struct LoweredProgram {
     origins: OriginArena,
 }
 
+fn validate_expression_declaration_references(
+    facts: &CheckedFacts,
+    declarations: &DeclarationIndex,
+) -> Result<(), (OriginId, &'static str)> {
+    use crate::check::{
+        CheckedCallTarget, CheckedExprKind, CheckedPathRoot, CheckedProjectionKind,
+    };
+
+    for expression in facts.expressions() {
+        let valid = match &expression.kind {
+            CheckedExprKind::SlotProvided(id) => declarations.try_component_slot(*id).is_some(),
+            CheckedExprKind::Path { root, projections } => {
+                let root_valid = match root {
+                    CheckedPathRoot::EnumVariant(id) => {
+                        declarations.try_enum_variant_decl(*id).is_some()
+                    }
+                    CheckedPathRoot::Palette(id) => declarations.palette_name(*id).is_some(),
+                    CheckedPathRoot::Value(_) | CheckedPathRoot::Local(_) => true,
+                };
+                root_valid
+                    && projections.iter().all(|projection| match &projection.kind {
+                        CheckedProjectionKind::Struct(id) => {
+                            declarations.try_struct_field_decl(*id).is_some()
+                        }
+                        CheckedProjectionKind::Native
+                        | CheckedProjectionKind::OptionalWidgetTarget => true,
+                    })
+            }
+            CheckedExprKind::Call { target, .. } => match target {
+                CheckedCallTarget::Extern(id) => declarations.try_extern_decl(*id).is_some(),
+                CheckedCallTarget::EnumVariant(id) => {
+                    declarations.try_enum_variant_decl(*id).is_some()
+                }
+                CheckedCallTarget::Builtin(_) => true,
+            },
+            _ => true,
+        };
+        if !valid {
+            return Err((
+                expression.origin,
+                "expression declaration ID is outside its arena",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolved_statement_semantic_key(
+    program: &LoweredProgram,
+    statement: &ResolvedStatement,
+) -> Result<String, Error> {
+    fn route_shape(route: &ResolvedRoute) -> String {
+        let name = match &route.target {
+            ResolvedRouteTarget::App { name, .. } | ResolvedRouteTarget::Component { name, .. } => {
+                name
+            }
+        };
+        let args = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                ResolvedRouteArg::Payload { .. } => '_',
+                ResolvedRouteArg::Expression(_) => 'e',
+            })
+            .collect::<String>();
+        format!("{name}:{args}")
+    }
+
+    fn effect_name(
+        program: &LoweredProgram,
+        target: &ResolvedEffectTarget,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        match target {
+            ResolvedEffectTarget::Builtin(name) => Ok(name.clone()),
+            ResolvedEffectTarget::Extern(id) => program
+                .declarations
+                .try_extern_decl(*id)
+                .map(|declaration| declaration.name.clone())
+                .ok_or_else(|| {
+                    program.invariant_at_origin(origin, "effect target ID is outside its arena")
+                }),
+        }
+    }
+
+    fn source_key(
+        program: &LoweredProgram,
+        source: &ResolvedTaskSource,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        Ok(match source {
+            ResolvedTaskSource::Effect {
+                kind, target, args, ..
+            } => format!(
+                "effect:{kind:?}:{}:{}",
+                effect_name(program, target, origin)?,
+                args.len()
+            ),
+            ResolvedTaskSource::Done { .. } => "done".into(),
+            ResolvedTaskSource::None { output, .. } => format!("none:{output:?}"),
+        })
+    }
+
+    fn transform_key(
+        program: &LoweredProgram,
+        transform: &ResolvedTaskTransform,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        Ok(match transform {
+            ResolvedTaskTransform::Map { binding, .. } => format!("map:{binding}"),
+            ResolvedTaskTransform::Then {
+                binding, source, ..
+            } => format!("then:{binding}:{}", source_key(program, source, origin)?),
+            ResolvedTaskTransform::AndThen {
+                binding, source, ..
+            } => format!(
+                "and-then:{binding}:{}",
+                source_key(program, source, origin)?
+            ),
+            ResolvedTaskTransform::MapError { binding, .. } => {
+                format!("map-error:{binding}")
+            }
+            ResolvedTaskTransform::Collect { .. } => "collect".into(),
+            ResolvedTaskTransform::Discard { .. } => "discard".into(),
+        })
+    }
+
+    Ok(match &statement.kind {
+        ResolvedStatementKind::Let { name, .. } => format!("let:{name}"),
+        ResolvedStatementKind::Assign { target, at, .. } => {
+            format!("assign:{}:{}", target.name, at.is_some())
+        }
+        ResolvedStatementKind::MarkdownAppend { target, .. } => {
+            format!("markdown-append:{}", target.name)
+        }
+        ResolvedStatementKind::ComboPush { target, .. } => {
+            format!("combo-push:{}", target.name)
+        }
+        ResolvedStatementKind::ReturnIf { .. } => "return-if".into(),
+        ResolvedStatementKind::Exit => "exit".into(),
+        ResolvedStatementKind::Run(run) => format!(
+            "run:{:?}:{:?}:{}:{}:{}:{}",
+            run.kind,
+            run.mode,
+            effect_name(program, &run.target, statement.origin)?,
+            run.args.len(),
+            route_shape(&run.success),
+            run.error.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::Sip(sip) => {
+            let function = program
+                .declarations
+                .try_extern_decl(sip.target)
+                .map(|declaration| declaration.name.as_str())
+                .ok_or_else(|| {
+                    program
+                        .invariant_at_origin(statement.origin, "sip target ID is outside its arena")
+                })?;
+            format!(
+                "sip:{function}:{}:{}:{}:{}",
+                sip.args.len(),
+                route_shape(&sip.progress),
+                route_shape(&sip.success),
+                sip.error.as_ref().map(route_shape).unwrap_or_default()
+            )
+        }
+        ResolvedStatementKind::TaskFlow(flow) => format!(
+            "flow:{}:[{}]:{}:{}:{}",
+            source_key(program, &flow.source, statement.origin)?,
+            flow.transforms
+                .iter()
+                .map(|transform| transform_key(program, transform, statement.origin))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(","),
+            flow.success.as_ref().map(route_shape).unwrap_or_default(),
+            flow.error.as_ref().map(route_shape).unwrap_or_default(),
+            flow.units.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::TaskGroup { kind, .. } => format!("task-group:{kind:?}"),
+        ResolvedStatementKind::Abortable {
+            handle,
+            abort_on_drop,
+            ..
+        } => format!("abortable:{}:{abort_on_drop}", handle.name),
+        ResolvedStatementKind::Abort { handle } => format!("abort:{}", handle.name),
+        ResolvedStatementKind::DebugStart { target, .. } => {
+            format!("debug-start:{}", target.name)
+        }
+        ResolvedStatementKind::DebugFinish { target } => {
+            format!("debug-finish:{}", target.name)
+        }
+        ResolvedStatementKind::ClipboardWrite { primary, .. } => {
+            format!("clipboard:{primary}")
+        }
+        ResolvedStatementKind::WidgetOperation {
+            operation, route, ..
+        } => format!(
+            "widget:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::PaneOperation {
+            grid,
+            operation,
+            route,
+            ..
+        } => format!(
+            "pane:{grid}:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::WindowOperation {
+            operation,
+            target,
+            route,
+        } => format!(
+            "window:{:?}:{}:{}",
+            std::mem::discriminant(operation),
+            target.is_some(),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+    })
+}
+
+fn resolved_handler_operation_contract(
+    program: &LoweredProgram,
+    statement: &ResolvedStatement,
+) -> Result<Option<crate::hir::HandlerOperationContract>, Error> {
+    use crate::hir::{
+        CheckedPaneEdge, CheckedPaneOperation, CheckedPaneReference, CheckedWidgetOperation,
+        CheckedWidgetSelector, CheckedWidgetTarget, CheckedWindowOperation,
+        HandlerOperationContract,
+    };
+
+    fn target(value: &ResolvedWidgetTarget) -> CheckedWidgetTarget {
+        CheckedWidgetTarget(
+            value
+                .segments
+                .iter()
+                .map(|segment| (segment.name.clone(), segment.key.is_some()))
+                .collect(),
+        )
+    }
+    fn pane(value: &ResolvedPaneReference) -> CheckedPaneReference {
+        match value {
+            ResolvedPaneReference::Static(name) => CheckedPaneReference::Static(name.clone()),
+            ResolvedPaneReference::Dynamic { template, .. } => {
+                CheckedPaneReference::Dynamic(template.clone())
+            }
+        }
+    }
+    fn edge(value: PaneEdge) -> CheckedPaneEdge {
+        match value {
+            PaneEdge::Top => CheckedPaneEdge::Top,
+            PaneEdge::Left => CheckedPaneEdge::Left,
+            PaneEdge::Right => CheckedPaneEdge::Right,
+            PaneEdge::Bottom => CheckedPaneEdge::Bottom,
+        }
+    }
+    fn extern_name(
+        program: &LoweredProgram,
+        id: ExternFnId,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        program
+            .declarations
+            .try_extern_decl(id)
+            .map(|declaration| declaration.name.clone())
+            .ok_or_else(|| {
+                program.invariant_at_origin(origin, "operation extern ID is outside its arena")
+            })
+    }
+
+    Ok(Some(match &statement.kind {
+        ResolvedStatementKind::WidgetOperation { operation, .. } => {
+            HandlerOperationContract::Widget(match operation {
+                ResolvedWidgetOperation::FocusPrevious => CheckedWidgetOperation::FocusPrevious,
+                ResolvedWidgetOperation::FocusNext => CheckedWidgetOperation::FocusNext,
+                ResolvedWidgetOperation::Focus { target: value } => {
+                    CheckedWidgetOperation::Focus(target(value))
+                }
+                ResolvedWidgetOperation::Focused { target: value } => {
+                    CheckedWidgetOperation::Focused(target(value))
+                }
+                ResolvedWidgetOperation::CursorFront { target: value } => {
+                    CheckedWidgetOperation::CursorFront(target(value))
+                }
+                ResolvedWidgetOperation::CursorEnd { target: value } => {
+                    CheckedWidgetOperation::CursorEnd(target(value))
+                }
+                ResolvedWidgetOperation::Cursor { target: value, .. } => {
+                    CheckedWidgetOperation::Cursor(target(value))
+                }
+                ResolvedWidgetOperation::SelectAll { target: value } => {
+                    CheckedWidgetOperation::SelectAll(target(value))
+                }
+                ResolvedWidgetOperation::Select { target: value, .. } => {
+                    CheckedWidgetOperation::Select(target(value))
+                }
+                ResolvedWidgetOperation::Snap { target: value, .. } => {
+                    CheckedWidgetOperation::Snap(target(value))
+                }
+                ResolvedWidgetOperation::SnapEnd { target: value } => {
+                    CheckedWidgetOperation::SnapEnd(target(value))
+                }
+                ResolvedWidgetOperation::ScrollTo { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollTo(target(value))
+                }
+                ResolvedWidgetOperation::ScrollBy { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollBy(target(value))
+                }
+                ResolvedWidgetOperation::Find { selector, all } => CheckedWidgetOperation::Find {
+                    selector: match selector {
+                        ResolvedWidgetSelector::Id(value) => {
+                            CheckedWidgetSelector::Id(target(value))
+                        }
+                        ResolvedWidgetSelector::Text(_) => CheckedWidgetSelector::Text,
+                        ResolvedWidgetSelector::Point { .. } => CheckedWidgetSelector::Point,
+                        ResolvedWidgetSelector::Focused => CheckedWidgetSelector::Focused,
+                        ResolvedWidgetSelector::Extern { target: id, args } => {
+                            CheckedWidgetSelector::Extern {
+                                function: extern_name(program, *id, statement.origin)?,
+                                arguments: args.len(),
+                            }
+                        }
+                    },
+                    all: *all,
+                },
+            })
+        }
+        ResolvedStatementKind::PaneOperation {
+            grid, operation, ..
+        } => HandlerOperationContract::Pane {
+            grid: grid.clone(),
+            operation: match operation {
+                ResolvedPaneOperation::Maximize { pane: value } => {
+                    CheckedPaneOperation::Maximize(pane(value))
+                }
+                ResolvedPaneOperation::Restore => CheckedPaneOperation::Restore,
+                ResolvedPaneOperation::Maximized => CheckedPaneOperation::Maximized,
+                ResolvedPaneOperation::Adjacent {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Adjacent(pane(value), edge(*value_edge)),
+                ResolvedPaneOperation::Swap { first, second } => {
+                    CheckedPaneOperation::Swap(pane(first), pane(second))
+                }
+                ResolvedPaneOperation::Close { pane: value } => {
+                    CheckedPaneOperation::Close(pane(value))
+                }
+                ResolvedPaneOperation::Move {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Move(pane(value), edge(*value_edge)),
+                ResolvedPaneOperation::Resize { split, .. } => {
+                    CheckedPaneOperation::Resize(split.clone())
+                }
+                ResolvedPaneOperation::Drop {
+                    pane: value,
+                    target,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Drop(pane(value), pane(target), value_edge.map(edge)),
+                ResolvedPaneOperation::Split {
+                    target,
+                    pane: value,
+                    axis,
+                    ..
+                } => CheckedPaneOperation::Split {
+                    target: pane(target),
+                    pane: pane(value),
+                    axis: format!("{axis:?}"),
+                },
+            },
+        },
+        ResolvedStatementKind::WindowOperation { operation, .. } => {
+            HandlerOperationContract::Window(match operation {
+                ResolvedWindowOperation::Open(index) => CheckedWindowOperation::Open(
+                    index
+                        .map(|index| {
+                            program
+                                .document
+                                .settings
+                                .windows
+                                .get(index as usize)
+                                .map(|window| window.name.clone())
+                                .ok_or_else(|| {
+                                    program.invariant_at_origin(
+                                        statement.origin,
+                                        "named window index is outside its arena",
+                                    )
+                                })
+                        })
+                        .transpose()?,
+                ),
+                ResolvedWindowOperation::Oldest => CheckedWindowOperation::Oldest,
+                ResolvedWindowOperation::Latest => CheckedWindowOperation::Latest,
+                ResolvedWindowOperation::Close => CheckedWindowOperation::Close,
+                ResolvedWindowOperation::Drag => CheckedWindowOperation::Drag,
+                ResolvedWindowOperation::DragResize(direction) => {
+                    CheckedWindowOperation::DragResize(format!("{direction:?}"))
+                }
+                ResolvedWindowOperation::Resize(..) => CheckedWindowOperation::Resize,
+                ResolvedWindowOperation::Resizable(_) => CheckedWindowOperation::Resizable,
+                ResolvedWindowOperation::MinSize(value) => {
+                    CheckedWindowOperation::MinSize(value.is_some())
+                }
+                ResolvedWindowOperation::MaxSize(value) => {
+                    CheckedWindowOperation::MaxSize(value.is_some())
+                }
+                ResolvedWindowOperation::ResizeIncrements(value) => {
+                    CheckedWindowOperation::ResizeIncrements(value.is_some())
+                }
+                ResolvedWindowOperation::Size => CheckedWindowOperation::Size,
+                ResolvedWindowOperation::IsMaximized => CheckedWindowOperation::IsMaximized,
+                ResolvedWindowOperation::Maximize(_) => CheckedWindowOperation::Maximize,
+                ResolvedWindowOperation::IsMinimized => CheckedWindowOperation::IsMinimized,
+                ResolvedWindowOperation::Minimize(_) => CheckedWindowOperation::Minimize,
+                ResolvedWindowOperation::Position => CheckedWindowOperation::Position,
+                ResolvedWindowOperation::ScaleFactor => CheckedWindowOperation::ScaleFactor,
+                ResolvedWindowOperation::Move(..) => CheckedWindowOperation::Move,
+                ResolvedWindowOperation::Mode => CheckedWindowOperation::Mode,
+                ResolvedWindowOperation::SetMode(mode) => {
+                    CheckedWindowOperation::SetMode(format!("{mode:?}"))
+                }
+                ResolvedWindowOperation::ToggleMaximize => CheckedWindowOperation::ToggleMaximize,
+                ResolvedWindowOperation::ToggleDecorations => {
+                    CheckedWindowOperation::ToggleDecorations
+                }
+                ResolvedWindowOperation::Attention(value) => {
+                    CheckedWindowOperation::Attention(value.map(|value| format!("{value:?}")))
+                }
+                ResolvedWindowOperation::Focus => CheckedWindowOperation::Focus,
+                ResolvedWindowOperation::SetLevel(level) => {
+                    CheckedWindowOperation::SetLevel(format!("{level:?}"))
+                }
+                ResolvedWindowOperation::SystemMenu => CheckedWindowOperation::SystemMenu,
+                ResolvedWindowOperation::RawId => CheckedWindowOperation::RawId,
+                ResolvedWindowOperation::Screenshot => CheckedWindowOperation::Screenshot,
+                ResolvedWindowOperation::MousePassthrough(_) => {
+                    CheckedWindowOperation::MousePassthrough
+                }
+                ResolvedWindowOperation::MonitorSize => CheckedWindowOperation::MonitorSize,
+                ResolvedWindowOperation::AutomaticTabbing(_) => {
+                    CheckedWindowOperation::AutomaticTabbing
+                }
+                ResolvedWindowOperation::Icon { .. } => CheckedWindowOperation::Icon,
+                ResolvedWindowOperation::Callback { target, args } => {
+                    CheckedWindowOperation::Callback {
+                        function: extern_name(program, *target, statement.origin)?,
+                        arguments: args.len(),
+                    }
+                }
+            })
+        }
+        _ => return Ok(None),
+    }))
+}
+
 impl LoweredProgram {
     pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
         fn validate_expression_use(
@@ -1431,7 +1891,25 @@ impl LoweredProgram {
                 }
                 _ => {}
             }
+            let checked = program.facts.statement(statement.id);
+            if checked.semantic_key != resolved_statement_semantic_key(program, statement)?
+                || checked.operation != resolved_handler_operation_contract(program, statement)?
+            {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement semantics or operation contract diverged from checked HIR",
+                ));
+            }
             Ok(())
+        }
+
+        if let Err((origin, message)) = self.facts.validate_expression_arena() {
+            return Err(self.invariant_at_origin(origin, message));
+        }
+        if let Err((origin, message)) =
+            validate_expression_declaration_references(&self.facts, &self.declarations)
+        {
+            return Err(self.invariant_at_origin(origin, message));
         }
 
         for handler in &self.handlers {
@@ -1800,6 +2278,14 @@ impl Lowerer {
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        if let Err((origin, message)) = self.facts.validate_expression_arena() {
+            return Err(self.invariant_at_origin(origin, message));
+        }
+        if let Err((origin, message)) =
+            validate_expression_declaration_references(&self.facts, &self.declarations)
+        {
+            return Err(self.invariant_at_origin(origin, message));
+        }
         self.lower_style_program()?;
         let app_states = self.lower_app_states()?;
         let derived = self.lower_derived()?;
@@ -4111,6 +4597,25 @@ impl Lowerer {
             format!("lowering invariant failed: {}", message.into()),
         )
     }
+
+    fn invariant_at_origin(&self, origin: OriginId, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some(origin) = self.origins.try_get(origin) else {
+            return Error::new("E196", &Span::line(1), message);
+        };
+        let mut error = Error::new(
+            "E196",
+            &Span {
+                line: origin.line,
+                column: origin.column,
+            },
+            message,
+        );
+        if let Some(path) = &origin.path {
+            error = error.at_path(path.display().to_string());
+        }
+        error
+    }
 }
 
 fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
@@ -4923,7 +5428,7 @@ view
     fn malformed_handler_hir_ids_are_fallible_source_mapped_invariants() {
         fn program() -> LoweredProgram {
             let source = format!(
-                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
+                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
             );
             lower(analyze(&source).unwrap()).unwrap()
         }
@@ -5024,6 +5529,18 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("expression-use ID"));
 
+        let mut invalid_descendant = program();
+        let task = invalid_descendant.handlers[0].statements[0]
+            .task
+            .expect("fixture run task");
+        invalid_descendant.facts.corrupt_expression_first_child(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+            u32::MAX,
+        );
+        let error = crate::codegen::generate(&invalid_descendant, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+
         let mut invalid_route_operand = program();
         let ResolvedRouteArg::Expression(expression) =
             &mut route(&mut invalid_route_operand).args[0]
@@ -5104,10 +5621,57 @@ view
     }
 
     #[test]
+    fn malformed_operation_discriminants_are_e196_before_route_expectations() {
+        let widget = format!(
+            "app WidgetOperation\n{THEME}state\n  field = \"\"\non inspect\n  task widget focus #field\nview\n  input \"Field\" #field <-> field\n"
+        );
+        let mut invalid_widget = lower(analyze(&widget).unwrap()).unwrap();
+        let statement = &mut invalid_widget.handlers[0].statements[0];
+        let ResolvedStatementKind::WidgetOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a widget operation");
+        };
+        let ResolvedWidgetOperation::Focus { target } = operation else {
+            panic!("fixture must contain widget focus");
+        };
+        *operation = ResolvedWidgetOperation::Focused {
+            target: target.clone(),
+        };
+        let error = crate::codegen::generate(&invalid_widget, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+
+        let pane = format!(
+            "app PaneOperation\n{THEME}on inspect\n  pane #work restore\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane).unwrap()).unwrap();
+        let statement = &mut invalid_pane.handlers[0].statements[0];
+        let ResolvedStatementKind::PaneOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a pane operation");
+        };
+        *operation = ResolvedPaneOperation::Maximized;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+
+        let window = format!(
+            "app WindowOperation\n{THEME}on inspect\n  task window close\nview\n  text \"Window\"\n"
+        );
+        let mut invalid_window = lower(analyze(&window).unwrap()).unwrap();
+        let statement = &mut invalid_window.handlers[0].statements[0];
+        let ResolvedStatementKind::WindowOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a window operation");
+        };
+        *operation = ResolvedWindowOperation::Size;
+        let error = crate::codegen::generate(&invalid_window, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+    }
+
+    #[test]
     fn malformed_checked_handler_local_expression_and_extern_ids_do_not_panic() {
         fn checked() -> CheckedDocument {
             let source = format!(
-                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
             );
             analyze(&source).unwrap()
         }
@@ -5132,6 +5696,35 @@ view
         let error = lower(invalid_root).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("expression root ID"));
+
+        let mut invalid_descendant = checked();
+        let statement = invalid_descendant.declarations.handlers()[0].statement_roots[0];
+        let task = invalid_descendant
+            .declarations
+            .statement(statement)
+            .task
+            .expect("fixture run task");
+        invalid_descendant.facts.corrupt_expression_first_child(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+            u32::MAX,
+        );
+        let error = lower(invalid_descendant).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+
+        let mut invalid_cycle = checked();
+        let statement = invalid_cycle.declarations.handlers()[0].statement_roots[0];
+        let task = invalid_cycle
+            .declarations
+            .statement(statement)
+            .task
+            .expect("fixture run task");
+        invalid_cycle.facts.corrupt_expression_first_child_to_root(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+        );
+        let error = lower(invalid_cycle).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cycle"));
 
         let mut invalid_extern = checked();
         let task = invalid_extern
