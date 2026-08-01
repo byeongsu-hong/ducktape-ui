@@ -6,10 +6,11 @@ scratch=$(mktemp -d -t ice-generation-overlap.XXXXXX)
 dev_log="$scratch/dev.log"
 check_log="$scratch/check.log"
 dev_pid=
+dev_group=
 check_pid=
 
 cleanup() {
-  for pid in "$check_pid" "$dev_pid"; do
+  for pid in "$check_pid" "$dev_group"; do
     if [[ -n "$pid" ]] && kill -0 -- "-$pid" 2>/dev/null; then
       kill -TERM -- "-$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -21,8 +22,15 @@ trap cleanup EXIT
 
 cd "$workspace"
 
+# Remove only the disposable iced-app package artifacts so both commands must
+# publish their own generated cache during this run. Without this boundary,
+# two stale manifests from an earlier build could make the cache assertions a
+# false positive.
+cargo clean -p iced-app
+
 setsid cargo ice dev examples/iced-app/src/ui/tasks.ice -- -p iced-app >"$dev_log" 2>&1 &
 dev_pid=$!
+dev_group=$dev_pid
 setsid cargo check --locked -p iced-app >"$check_log" 2>&1 &
 check_pid=$!
 
@@ -118,6 +126,13 @@ if ! wait "$dev_pid"; then
   exit 1
 fi
 dev_pid=
+
+if kill -0 -- "-$dev_group" 2>/dev/null; then
+  echo "cargo ice dev left a process in its session after clean shutdown" >&2
+  cat "$dev_log" >&2
+  exit 1
+fi
+dev_group=
 
 grep -Fq "ice dev: stopping" "$dev_log"
 echo "separate cargo ice dev and cargo check processes published valid generated caches"
