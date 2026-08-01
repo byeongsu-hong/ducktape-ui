@@ -367,6 +367,8 @@ pub(crate) struct CheckedStatement {
     pub(crate) semantic_key: String,
     pub(crate) operation: Option<crate::hir::HandlerOperationContract>,
     pub(crate) writable_targets: Vec<CheckedValueRef>,
+    pub(crate) editor_self_move: Option<bool>,
+    pub(crate) pane_grid_dynamic: Option<bool>,
     pub(crate) operand_count: u32,
     pub(crate) origin: OriginId,
 }
@@ -705,6 +707,68 @@ impl CheckedFacts {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn editor_self_move_contract(
+        &self,
+        expression: CheckedExprUseId,
+        target: CheckedValueRef,
+        declarations: &DeclarationIndex,
+    ) -> Result<bool, (OriginId, &'static str)> {
+        let expression_use = self.try_expression_use(expression).ok_or((
+            OriginId(u32::MAX),
+            "editor expression-use ID is outside its arena",
+        ))?;
+        let root = self.try_expression(expression_use.root).ok_or((
+            expression_use.origin,
+            "editor expression root ID is outside its arena",
+        ))?;
+        let CheckedExprKind::Call {
+            target: CheckedCallTarget::Extern(function),
+            ..
+        } = root.kind
+        else {
+            return Ok(false);
+        };
+        let function = declarations
+            .try_extern_decl(function)
+            .ok_or((root.origin, "editor sync extern ID is outside its arena"))?;
+        if function.kind != ExternKind::Sync {
+            return Ok(false);
+        }
+
+        let mut occurrences = 0usize;
+        let mut stack = vec![expression_use.root];
+        while let Some(id) = stack.pop() {
+            let expression = self.try_expression(id).ok_or((
+                expression_use.origin,
+                "editor expression descendant ID is outside its arena",
+            ))?;
+            match &expression.kind {
+                CheckedExprKind::Path { root, .. } => {
+                    occurrences += usize::from(*root == CheckedPathRoot::Value(target));
+                }
+                CheckedExprKind::List(values) => stack.extend(values.iter().copied()),
+                CheckedExprKind::Call { arguments, .. } => {
+                    stack.extend(arguments.iter().filter_map(|argument| match argument {
+                        CheckedCallArgument::Value(value) => Some(*value),
+                        CheckedCallArgument::Binding(_) => None,
+                    }));
+                }
+                CheckedExprKind::Unary { value, .. } => stack.push(*value),
+                CheckedExprKind::Binary { left, right, .. } => {
+                    stack.extend([*left, *right]);
+                }
+                CheckedExprKind::Bool(_)
+                | CheckedExprKind::I64(_)
+                | CheckedExprKind::F64(_)
+                | CheckedExprKind::Str(_)
+                | CheckedExprKind::Bytes(_)
+                | CheckedExprKind::None
+                | CheckedExprKind::SlotProvided(_) => {}
+            }
+        }
+        Ok(occurrences == 1)
     }
 
     pub(crate) fn builtin(&self, id: CheckedBuiltinId) -> &str {
@@ -1990,6 +2054,43 @@ impl<'a> FactsBuilder<'a> {
                 "statement left a checked route declaration unconsumed",
             ));
         }
+        let editor_self_move = match statement {
+            Statement::Assign { span, .. } => {
+                let target = writable_targets.first().copied().ok_or_else(|| {
+                    self.invariant(span, "assignment has no checked writable target")
+                })?;
+                let target_ty = &self
+                    .facts
+                    .try_value_by_ref(target)
+                    .ok_or_else(|| {
+                        self.invariant(span, "assignment target ID is outside its arena")
+                    })?
+                    .ty;
+                let value = self
+                    .facts
+                    .expression_use_by_owner(CheckedExprOwner::HandlerStatement {
+                        statement: statement_id,
+                        operand: 0,
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(span, "assignment value has no checked expression")
+                    })?;
+                Some(if *target_ty == Type::Editor {
+                    self.facts
+                        .editor_self_move_contract(value, target, self.declarations)
+                        .map_err(|(_, message)| self.invariant(span, message))?
+                } else {
+                    false
+                })
+            }
+            _ => None,
+        };
+        let pane_grid_dynamic = match statement {
+            Statement::PaneOperation { grid, .. } => {
+                Some(crate::hir::pane_grid_is_dynamic(self.document, grid))
+            }
+            _ => None,
+        };
         if statement_id.0 as usize >= self.facts.statements.len() {
             return Err(self.invariant(
                 statement.span(),
@@ -2008,6 +2109,8 @@ impl<'a> FactsBuilder<'a> {
             semantic_key: crate::hir::statement_semantic_key(statement),
             operation: crate::hir::handler_operation_contract(statement),
             writable_targets,
+            editor_self_move,
+            pane_grid_dynamic,
             operand_count: operand,
             origin: declaration.declaration.origin,
         });

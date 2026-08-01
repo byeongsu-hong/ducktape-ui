@@ -1270,6 +1270,8 @@ impl LoweredProgram {
                 ));
             }
             if checked.id != route.id
+                || checked.origin != route.origin
+                || declaration.declaration.origin != route.origin
                 || checked.target != handler
                 || checked.target_owner != owner
                 || checked.args.len() != route.args.len()
@@ -1727,6 +1729,132 @@ impl LoweredProgram {
             }
         }
 
+        fn statement_writable_targets(
+            statement: &ResolvedStatement,
+        ) -> Vec<&ResolvedWritableState> {
+            match &statement.kind {
+                ResolvedStatementKind::Assign { target, .. }
+                | ResolvedStatementKind::MarkdownAppend { target, .. }
+                | ResolvedStatementKind::ComboPush { target, .. }
+                | ResolvedStatementKind::DebugStart { target, .. }
+                | ResolvedStatementKind::DebugFinish { target }
+                | ResolvedStatementKind::Abort { handle: target }
+                | ResolvedStatementKind::Abortable { handle: target, .. } => vec![target],
+                _ => Vec::new(),
+            }
+        }
+
+        fn validate_writable_targets(
+            program: &LoweredProgram,
+            statement: &ResolvedStatement,
+            checked: &crate::check::CheckedStatement,
+        ) -> Result<(), Error> {
+            let resolved = statement_writable_targets(statement);
+            if resolved.len() != checked.writable_targets.len() {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement writable target cardinality diverged from checked HIR",
+                ));
+            }
+            for (target, expected) in resolved.iter().zip(&checked.writable_targets) {
+                let value = program.facts.try_value_by_ref(*expected).ok_or_else(|| {
+                    program.invariant_at_origin(
+                        statement.origin,
+                        "checked writable target ID is outside its arena",
+                    )
+                })?;
+                if target.value != *expected || target.name != value.name || target.ty != value.ty {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "statement writable target identity or type diverged from checked HIR",
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn validate_transform_local(
+            program: &LoweredProgram,
+            transform: &ResolvedTaskTransform,
+            index: usize,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let (task, local, binding, input, input_fallible) = match transform {
+                ResolvedTaskTransform::Map {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    input_fallible,
+                    ..
+                } => (*task, *local, binding, input, Some(*input_fallible)),
+                ResolvedTaskTransform::Then {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                }
+                | ResolvedTaskTransform::AndThen {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                }
+                | ResolvedTaskTransform::MapError {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                } => (*task, *local, binding, input, None),
+                ResolvedTaskTransform::Collect { .. } | ResolvedTaskTransform::Discard { .. } => {
+                    return Ok(());
+                }
+            };
+            let expected =
+                program
+                    .facts
+                    .local_by_owner(crate::check::CheckedLocalOwner::TaskTransform {
+                        task,
+                        index: index as u32,
+                    });
+            let local_fact = program.facts.try_local(local).ok_or_else(|| {
+                program.invariant_at_origin(
+                    statement.origin,
+                    "task transform local ID is outside its arena",
+                )
+            })?;
+            if expected != Some(local)
+                || local_fact.name != *binding
+                || local_fact.ty != *input
+                || local_fact.owner
+                    != (crate::check::CheckedLocalOwner::TaskTransform {
+                        task,
+                        index: index as u32,
+                    })
+            {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task transform local identity, binding, or type diverged from checked HIR",
+                ));
+            }
+            if let Some(input_fallible) = input_fallible {
+                let expected = program
+                    .facts
+                    .try_task(task)
+                    .is_some_and(|task| task.error.is_some());
+                if input_fallible != expected {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "task transform fallibility diverged from checked HIR",
+                    ));
+                }
+            }
+            Ok(())
+        }
+
         fn visit(
             program: &LoweredProgram,
             handler: &ResolvedHandler,
@@ -1744,10 +1872,11 @@ impl LoweredProgram {
                 || declaration.parent != parent
                 || declaration.task != statement.task
                 || declaration.is_final != statement.is_final
+                || declaration.declaration.origin != statement.origin
             {
                 return Err(program.invariant_at_origin(
                     statement.origin,
-                    "statement owner, parent, task ID, or finality diverged from its declaration",
+                    "statement owner, parent, task ID, finality, or origin diverged from its declaration",
                 ));
             }
             if let Some(task) = statement.task {
@@ -1839,9 +1968,28 @@ impl LoweredProgram {
                     validate_task_operands(program, task, &sip.args, statement.origin)?;
                 }
                 ResolvedStatementKind::TaskFlow(flow) => {
+                    let root_task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow statement has no normalized root task ID",
+                        )
+                    })?;
+                    let checked_root = program.facts.try_task(root_task).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow root task has no checked HIR contract",
+                        )
+                    })?;
+                    if flow.output != checked_root.output || flow.error_type != checked_root.error {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow output or error type diverged from checked HIR",
+                        ));
+                    }
                     let mut source_tasks =
                         vec![validate_task_source(program, &flow.source, statement)?];
-                    for transform in &flow.transforms {
+                    for (index, transform) in flow.transforms.iter().enumerate() {
+                        validate_transform_local(program, transform, index, statement)?;
                         let task = match transform {
                             ResolvedTaskTransform::Map { task, value, .. }
                             | ResolvedTaskTransform::MapError { task, value, .. } => {
@@ -1892,6 +2040,50 @@ impl LoweredProgram {
                 _ => {}
             }
             let checked = program.facts.statement(statement.id);
+            validate_writable_targets(program, statement, checked)?;
+            match &statement.kind {
+                ResolvedStatementKind::Let {
+                    local, name, ty, ..
+                } => {
+                    let expected = program.facts.local_by_owner(
+                        crate::check::CheckedLocalOwner::StatementLet(statement.id),
+                    );
+                    let local_fact = program.facts.try_local(*local).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "let local ID is outside its arena",
+                        )
+                    })?;
+                    if expected != Some(*local)
+                        || local_fact.name != *name
+                        || local_fact.ty != *ty
+                        || local_fact.owner
+                            != crate::check::CheckedLocalOwner::StatementLet(statement.id)
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "let local identity, name, or type diverged from checked HIR",
+                        ));
+                    }
+                }
+                ResolvedStatementKind::Assign { move_self, .. }
+                    if checked.editor_self_move != Some(*move_self) =>
+                {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "editor self-move mode diverged from checked HIR",
+                    ));
+                }
+                ResolvedStatementKind::PaneOperation { dynamic, .. }
+                    if checked.pane_grid_dynamic != Some(*dynamic) =>
+                {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "pane grid mode diverged from checked HIR",
+                    ));
+                }
+                _ => {}
+            }
             if checked.semantic_key != resolved_statement_semantic_key(program, statement)?
                 || checked.operation != resolved_handler_operation_contract(program, statement)?
             {
@@ -3254,8 +3446,9 @@ impl Lowerer {
             } => {
                 let target = self.writable_state(checked_statement, &mut writable, span)?;
                 let value = self.checked_statement_expression(id, &mut operand, span)?;
-                let move_self = target.ty == Type::Editor
-                    && self.editor_self_move(value, target.value, span)?;
+                let move_self = checked_statement.editor_self_move.ok_or_else(|| {
+                    self.invariant(span, "assignment has no checked editor move contract")
+                })?;
                 ResolvedStatementKind::Assign {
                     target,
                     value,
@@ -3534,7 +3727,9 @@ impl Lowerer {
                 span,
             } => ResolvedStatementKind::PaneOperation {
                 grid: grid.clone(),
-                dynamic: self.pane_grid_is_dynamic(grid),
+                dynamic: checked_statement.pane_grid_dynamic.ok_or_else(|| {
+                    self.invariant(span, "pane operation has no checked grid mode contract")
+                })?,
                 operation: self.lower_pane_operation(operation, id, &mut operand, span)?,
                 route: route
                     .as_ref()
@@ -3633,84 +3828,6 @@ impl Lowerer {
             is_final: declaration.is_final,
             origin: declaration.declaration.origin,
         })
-    }
-
-    fn editor_self_move(
-        &self,
-        expression: CheckedExprUseId,
-        target: CheckedValueRef,
-        span: &Span,
-    ) -> Result<bool, Error> {
-        fn count(
-            facts: &CheckedFacts,
-            expression: crate::check::CheckedExprId,
-            target: CheckedValueRef,
-            span: &Span,
-        ) -> Result<usize, Error> {
-            let expression = facts.try_expression(expression).ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "lowering invariant failed: editor expression node ID is outside its arena",
-                )
-            })?;
-            Ok(match &expression.kind {
-                crate::check::CheckedExprKind::Path { root, .. } => {
-                    usize::from(*root == crate::check::CheckedPathRoot::Value(target))
-                }
-                crate::check::CheckedExprKind::List(values) => values
-                    .iter()
-                    .map(|value| count(facts, *value, target, span))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .sum(),
-                crate::check::CheckedExprKind::Call { arguments, .. } => arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        crate::check::CheckedCallArgument::Value(value) => {
-                            count(facts, *value, target, span)
-                        }
-                        crate::check::CheckedCallArgument::Binding(_) => Ok(0),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .sum(),
-                crate::check::CheckedExprKind::Unary { value, .. } => {
-                    count(facts, *value, target, span)?
-                }
-                crate::check::CheckedExprKind::Binary { left, right, .. } => {
-                    count(facts, *left, target, span)? + count(facts, *right, target, span)?
-                }
-                crate::check::CheckedExprKind::Bool(_)
-                | crate::check::CheckedExprKind::I64(_)
-                | crate::check::CheckedExprKind::F64(_)
-                | crate::check::CheckedExprKind::Str(_)
-                | crate::check::CheckedExprKind::Bytes(_)
-                | crate::check::CheckedExprKind::None
-                | crate::check::CheckedExprKind::SlotProvided(_) => 0,
-            })
-        }
-
-        let use_fact = self
-            .facts
-            .try_expression_use(expression)
-            .ok_or_else(|| self.invariant(span, "editor expression-use ID is outside its arena"))?;
-        let root = self.facts.try_expression(use_fact.root).ok_or_else(|| {
-            self.invariant(span, "editor expression root ID is outside its arena")
-        })?;
-        let crate::check::CheckedExprKind::Call {
-            target: crate::check::CheckedCallTarget::Extern(function),
-            ..
-        } = root.kind
-        else {
-            return Ok(false);
-        };
-        let function = self
-            .declarations
-            .try_extern_decl(function)
-            .ok_or_else(|| self.invariant(span, "editor sync extern ID is outside its arena"))?;
-        Ok(function.kind == ExternKind::Sync
-            && count(&self.facts, use_fact.root, target, span)? == 1)
     }
 
     fn lower_task_source(
@@ -4015,29 +4132,6 @@ impl Lowerer {
                 key: self.checked_statement_expression(statement, operand, span)?,
             },
         })
-    }
-
-    fn pane_grid_is_dynamic(&self, name: &str) -> bool {
-        fn find(node: &ViewNode, name: &str) -> bool {
-            matches!(
-                node,
-                ViewNode::PaneGrid {
-                    name: candidate,
-                    templates,
-                    ..
-                } if candidate == name && !templates.is_empty()
-            ) || crate::hir::view_children(node)
-                .into_iter()
-                .any(|child| find(child, name))
-        }
-
-        find(&self.document.view, name)
-            || self
-                .document
-                .tests
-                .iter()
-                .filter_map(|test| test.mount.as_ref())
-                .any(|root| find(root, name))
     }
 
     fn lower_pane_operation(
@@ -5665,6 +5759,92 @@ view
         let error = crate::codegen::generate(&invalid_window, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("operation contract"));
+    }
+
+    #[test]
+    fn malformed_codegen_consumed_handler_fields_are_e196() {
+        fn editor_program() -> LoweredProgram {
+            let source = format!(
+                "app EditorContract\nextern crate::backend\n  sync apply_command(content:editor, command:str) -> editor\n{THEME}state\n  notes:editor = \"hello\"\non command\n  notes = apply_command(notes, \"bold\")\nview\n  editor <-> notes\n"
+            );
+            lower(analyze(&source).unwrap()).unwrap()
+        }
+
+        let mut invalid_move = editor_program();
+        let ResolvedStatementKind::Assign { move_self, .. } =
+            &mut invalid_move.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        *move_self = false;
+        let error = crate::codegen::generate(&invalid_move, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("self-move"));
+
+        let mut invalid_writable = editor_program();
+        let ResolvedStatementKind::Assign { target, .. } =
+            &mut invalid_writable.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        target.ty = Type::Str;
+        let error = crate::codegen::generate(&invalid_writable, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("writable target"));
+
+        let let_source =
+            format!("app LetContract\n{THEME}on start\n  let total = 1\nview\n  text \"ready\"\n");
+        let mut invalid_let = lower(analyze(&let_source).unwrap()).unwrap();
+        let ResolvedStatementKind::Let { ty, .. } = &mut invalid_let.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a let");
+        };
+        *ty = Type::F64;
+        let error = crate::codegen::generate(&invalid_let, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("let local"));
+
+        let pane_source = format!(
+            "app PaneMode\n{THEME}on inspect\n  pane #work restore\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane_source).unwrap()).unwrap();
+        let ResolvedStatementKind::PaneOperation { dynamic, .. } =
+            &mut invalid_pane.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a pane operation");
+        };
+        *dynamic = !*dynamic;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("pane grid mode"));
+
+        let flow_source = format!(
+            "app FlowContract\n{THEME}on start\n  flow\n    from done 1\n    map value -> value + 1\n    done -> loaded _\non loaded(value)\nview\n  text \"ready\"\n"
+        );
+        let mut invalid_flow = lower(analyze(&flow_source).unwrap()).unwrap();
+        let ResolvedStatementKind::TaskFlow(flow) =
+            &mut invalid_flow.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a flow");
+        };
+        flow.output = Some(Type::F64);
+        let error = crate::codegen::generate(&invalid_flow, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("output or error type"));
+
+        let mut invalid_transform = lower(analyze(&flow_source).unwrap()).unwrap();
+        let ResolvedStatementKind::TaskFlow(flow) =
+            &mut invalid_transform.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a flow");
+        };
+        let ResolvedTaskTransform::Map { input, .. } = &mut flow.transforms[0] else {
+            panic!("fixture must contain a map transform");
+        };
+        *input = Type::F64;
+        let error = crate::codegen::generate(&invalid_transform, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("transform local"));
     }
 
     #[test]

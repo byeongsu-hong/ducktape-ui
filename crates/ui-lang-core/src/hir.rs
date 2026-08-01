@@ -1174,6 +1174,28 @@ pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
     }
 }
 
+pub(crate) fn pane_grid_is_dynamic(document: &Document, name: &str) -> bool {
+    fn find(node: &ViewNode, name: &str) -> bool {
+        matches!(
+            node,
+            ViewNode::PaneGrid {
+                name: candidate,
+                templates,
+                ..
+            } if candidate == name && !templates.is_empty()
+        ) || view_children(node)
+            .into_iter()
+            .any(|child| find(child, name))
+    }
+
+    find(&document.view, name)
+        || document
+            .tests
+            .iter()
+            .filter_map(|test| test.mount.as_ref())
+            .any(|root| find(root, name))
+}
+
 pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
     fn route_shape(route: &Route) -> String {
         let args = route
