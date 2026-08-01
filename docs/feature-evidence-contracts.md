@@ -58,3 +58,18 @@ HIR, schema, or generic component evidence unless it changes those surfaces.
 Reviewers reject claims based only on generated Rust string snapshots, a
 workspace-internal build, or a visual screenshot when the relevant contract
 also requires semantics, source mapping, packaging, or performance evidence.
+
+## Delivery roles
+
+Each epic separates three responsibilities, even when one person coordinates
+the work:
+
+| Role | Responsibility |
+| --- | --- |
+| Design | choose the owning layer; define the typed contract, invalid cases, lifecycle, and performance budget |
+| Implementation | deliver the smallest complete vertical slice and remove the superseded path |
+| Adversarial review | independently probe edge cases, source maps, property/performance bounds, packaged consumers, and platform behavior |
+
+Task changes live in dedicated worktrees and focused branches. The implementer
+does not provide the final adversarial approval for the same change; every
+actionable finding is resolved and the affected evidence is rerun before merge.
