@@ -25,6 +25,18 @@ arena_id!(StatementId);
 arena_id!(TaskId);
 arena_id!(RouteId);
 arena_id!(RunSiteId);
+arena_id!(NamedWindowId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AppSettingExprId {
+    Title,
+    Theme,
+    ThemeFactoryArgument(u32),
+    Palette,
+    Background,
+    TextColor,
+    ScaleFactor,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -201,6 +213,8 @@ struct SourceSite {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeclarationIndex {
+    app_settings: Declaration<AppSettingsId>,
+    app_setting_expressions: HashMap<AppSettingExprId, Declaration<AppSettingExprId>>,
     app_states: Vec<Declaration<AppStateId>>,
     derived: Vec<Declaration<DerivedId>>,
     components: Vec<ComponentDeclarations>,
@@ -275,6 +289,9 @@ pub(crate) struct RunSiteDeclaration {
     pub(crate) statement: StatementId,
     pub(crate) mode: FutureMode,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct AppSettingsId;
 
 impl DeclarationIndex {
     pub(crate) fn build(document: &Document, origins: &mut OriginArena) -> Self {
@@ -592,7 +609,56 @@ impl DeclarationIndex {
             })
             .collect();
 
+        let app_settings = Declaration {
+            id: AppSettingsId,
+            origin: origins.push(&document.settings.span, None),
+        };
+        let mut app_setting_expressions = HashMap::new();
+        let mut push_app_expression = |id: AppSettingExprId, expression: &AppExpression| {
+            app_setting_expressions.insert(
+                id,
+                Declaration {
+                    id,
+                    origin: origins.push(&expression.span, Some(app_settings.origin)),
+                },
+            );
+        };
+        if let Some(expression) = &document.settings.title {
+            push_app_expression(AppSettingExprId::Title, expression);
+        }
+        if let Some(expression) = &document.settings.theme {
+            push_app_expression(AppSettingExprId::Theme, expression);
+            if let Expr::Call { name, args } = &expression.value
+                && document
+                    .functions
+                    .iter()
+                    .any(|function| function.name == *name && function.kind == ExternKind::Theme)
+            {
+                for (index, _) in args.iter().enumerate() {
+                    push_app_expression(
+                        AppSettingExprId::ThemeFactoryArgument(index as u32),
+                        expression,
+                    );
+                }
+            }
+        }
+        for (id, expression) in [
+            (AppSettingExprId::Palette, &document.settings.palette),
+            (AppSettingExprId::Background, &document.settings.background),
+            (AppSettingExprId::TextColor, &document.settings.text_color),
+            (
+                AppSettingExprId::ScaleFactor,
+                &document.settings.scale_factor,
+            ),
+        ] {
+            if let Some(expression) = expression {
+                push_app_expression(id, expression);
+            }
+        }
+
         Self {
+            app_settings,
+            app_setting_expressions,
             app_states,
             derived,
             components,
@@ -618,6 +684,17 @@ impl DeclarationIndex {
             routes,
             run_sites,
         }
+    }
+
+    pub(crate) fn app_settings(&self) -> Declaration<AppSettingsId> {
+        self.app_settings
+    }
+
+    pub(crate) fn app_setting_expression(
+        &self,
+        id: AppSettingExprId,
+    ) -> Option<Declaration<AppSettingExprId>> {
+        self.app_setting_expressions.get(&id).copied()
     }
 
     pub(crate) fn app_state(&self, index: usize) -> Declaration<AppStateId> {
@@ -786,7 +863,6 @@ impl DeclarationIndex {
     pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
         self.externs.get(id.0 as usize)
     }
-
     pub(crate) fn handlers(&self) -> &[HandlerDeclaration] {
         &self.handlers
     }

@@ -1,13 +1,72 @@
 use super::*;
 
-pub(in crate::codegen) fn has_animations(document: &Document) -> bool {
-    document
-        .states
+fn marked_setting(program: &LoweredProgram, origin: OriginId, code: String) -> String {
+    format!(
+        "\n{}\n{code}\n{SOURCE_MARKER_END}\n",
+        source_marker_for_origin(program, origin)
+    )
+}
+
+fn marked_field(
+    program: &LoweredProgram,
+    settings: &ResolvedAppSettings,
+    name: &str,
+    code: String,
+) -> String {
+    marked_setting(
+        program,
+        settings
+            .field_origins
+            .get(name)
+            .copied()
+            .unwrap_or(settings.origin),
+        code,
+    )
+}
+
+fn marked_window_field(
+    program: &LoweredProgram,
+    settings: &ResolvedWindowSettings,
+    name: &str,
+    code: String,
+) -> String {
+    marked_setting(
+        program,
+        settings
+            .field_origins
+            .get(name)
+            .copied()
+            .unwrap_or(settings.origin),
+        code,
+    )
+}
+
+fn marked_platform_field(
+    program: &LoweredProgram,
+    origins: &HashMap<String, OriginId>,
+    fallback: OriginId,
+    name: &str,
+    code: String,
+) -> String {
+    marked_setting(
+        program,
+        origins.get(name).copied().unwrap_or(fallback),
+        code,
+    )
+}
+
+pub(in crate::codegen) fn has_animations(program: &LoweredProgram) -> bool {
+    program
+        .app_states()
         .iter()
         .any(|state| matches!(state.ty, Type::Animation(_)))
 }
 
-pub(in crate::codegen) fn font_assets_code(settings: &AppSettings, source_path: &str) -> String {
+pub(in crate::codegen) fn font_assets_code(
+    program: &LoweredProgram,
+    settings: &ResolvedAppSettings,
+    source_path: &str,
+) -> String {
     let parent = Path::new(source_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
@@ -15,32 +74,53 @@ pub(in crate::codegen) fn font_assets_code(settings: &AppSettings, source_path: 
         .fonts
         .iter()
         .map(|font| {
-            format!(
-                ".font(include_bytes!({}).as_slice())",
-                rust_string(&parent.join(&font.path).display().to_string())
+            marked_setting(
+                program,
+                font.origin,
+                format!(
+                    ".font(include_bytes!({}).as_slice())",
+                    rust_string(&parent.join(&font.path).display().to_string())
+                ),
             )
         })
         .collect()
 }
 
-pub(in crate::codegen) fn app_settings_code(settings: &AppSettings) -> String {
+pub(in crate::codegen) fn app_settings_code(
+    program: &LoweredProgram,
+    settings: &ResolvedAppSettings,
+) -> String {
     let mut fields = String::new();
     if let Some(id) = &settings.id {
-        write!(
-            fields,
+        let value = format!(
             "id: ::std::option::Option::Some({}.to_owned()),",
             rust_string(id)
-        )
-        .unwrap();
+        );
+        fields.push_str(&marked_field(program, settings, "id", value));
     }
     if let Some(size) = settings.default_text_size {
-        write!(fields, "default_text_size: ::iced::Pixels({size} as f32),").unwrap();
+        fields.push_str(&marked_field(
+            program,
+            settings,
+            "text-size",
+            format!("default_text_size: ::iced::Pixels({size} as f32),"),
+        ));
     }
     if let Some(value) = settings.antialiasing {
-        write!(fields, "antialiasing: {value},").unwrap();
+        fields.push_str(&marked_field(
+            program,
+            settings,
+            "antialiasing",
+            format!("antialiasing: {value},"),
+        ));
     }
     if let Some(value) = settings.vsync {
-        write!(fields, "vsync: {value},").unwrap();
+        fields.push_str(&marked_field(
+            program,
+            settings,
+            "vsync",
+            format!("vsync: {value},"),
+        ));
     }
     if fields.is_empty() {
         String::new()
@@ -50,13 +130,11 @@ pub(in crate::codegen) fn app_settings_code(settings: &AppSettings) -> String {
 }
 
 pub(in crate::codegen) fn window_settings_code(
-    settings: Option<&WindowSettings>,
+    program: &LoweredProgram,
+    settings: &ResolvedWindowSettings,
     source_path: &str,
 ) -> String {
-    let settings = settings.map_or_else(
-        || "::iced::window::Settings::default()".to_owned(),
-        |settings| window_settings_value_code(settings, source_path),
-    );
+    let settings = window_settings_value_code(program, settings, source_path);
     format!(
         ".window({{ let mut __window = {settings}; #[cfg(target_os = \"windows\")] {{ __window.visible = false; __window.maximized = false; __window.fullscreen = false; }} __window }})"
     )
@@ -64,28 +142,37 @@ pub(in crate::codegen) fn window_settings_code(
 
 pub(in crate::codegen) fn generate_named_windows(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
+    settings: &ResolvedAppSettings,
     source_path: &str,
 ) {
-    for (index, window) in document.settings.windows.iter().enumerate() {
+    for window in &settings.named_windows {
+        let index = window.id.0;
         writeln!(
             out,
-            "fn __window_{index}() -> ::iced::window::Settings {{ {} }}",
-            window_settings_value_code(&window.settings, source_path)
+            "{}\nfn __window_{index}() -> ::iced::window::Settings {{ {} }}\n{SOURCE_MARKER_END}",
+            source_marker_for_origin(program, window.origin),
+            window_settings_value_code(program, &window.settings, source_path)
         )
         .unwrap();
     }
 }
 
 pub(in crate::codegen) fn window_settings_value_code(
-    settings: &WindowSettings,
+    program: &LoweredProgram,
+    settings: &ResolvedWindowSettings,
     source_path: &str,
 ) -> String {
     let mut fields = String::new();
     let size =
         |(width, height): (f64, f64)| format!("::iced::Size::new({width} as f32, {height} as f32)");
     if let Some(value) = settings.size {
-        write!(fields, "size: {},", size(value)).unwrap();
+        fields.push_str(&marked_window_field(
+            program,
+            settings,
+            "size",
+            format!("size: {},", size(value)),
+        ));
     }
     for (name, value) in [
         ("maximized", settings.maximized),
@@ -100,57 +187,75 @@ pub(in crate::codegen) fn window_settings_value_code(
         ("exit_on_close_request", settings.exit_on_close_request),
     ] {
         if let Some(value) = value {
-            write!(fields, "{name}: {value},").unwrap();
+            let source_name = match name {
+                "exit_on_close_request" => "exit-on-close",
+                name => name,
+            };
+            fields.push_str(&marked_window_field(
+                program,
+                settings,
+                source_name,
+                format!("{name}: {value},"),
+            ));
         }
     }
     if let Some(position) = settings.position {
         let position = match position {
-            WindowPosition::Default => "::iced::window::Position::Default".into(),
-            WindowPosition::Centered => "::iced::window::Position::Centered".into(),
-            WindowPosition::Specific(x, y) => format!(
+            ResolvedWindowPosition::Default => "::iced::window::Position::Default".into(),
+            ResolvedWindowPosition::Centered => "::iced::window::Position::Centered".into(),
+            ResolvedWindowPosition::Specific(x, y) => format!(
                 "::iced::window::Position::Specific(::iced::Point::new({x} as f32, {y} as f32))"
             ),
         };
-        write!(fields, "position: {position},").unwrap();
+        fields.push_str(&marked_window_field(
+            program,
+            settings,
+            "position",
+            format!("position: {position},"),
+        ));
     }
     if let Some(value) = settings.min_size {
-        write!(
-            fields,
-            "min_size: ::std::option::Option::Some({}),",
-            size(value)
-        )
-        .unwrap();
+        fields.push_str(&marked_window_field(
+            program,
+            settings,
+            "min-size",
+            format!("min_size: ::std::option::Option::Some({}),", size(value)),
+        ));
     }
     if let Some(value) = settings.max_size {
-        write!(
-            fields,
-            "max_size: ::std::option::Option::Some({}),",
-            size(value)
-        )
-        .unwrap();
+        fields.push_str(&marked_window_field(
+            program,
+            settings,
+            "max-size",
+            format!("max_size: ::std::option::Option::Some({}),", size(value)),
+        ));
     }
     if let Some(level) = settings.level {
         let level = match level {
-            WindowLevel::Normal => "Normal",
-            WindowLevel::AlwaysOnBottom => "AlwaysOnBottom",
-            WindowLevel::AlwaysOnTop => "AlwaysOnTop",
+            ResolvedWindowLevel::Normal => "Normal",
+            ResolvedWindowLevel::AlwaysOnBottom => "AlwaysOnBottom",
+            ResolvedWindowLevel::AlwaysOnTop => "AlwaysOnTop",
         };
-        write!(fields, "level: ::iced::window::Level::{level},").unwrap();
+        fields.push_str(&marked_window_field(
+            program,
+            settings,
+            "level",
+            format!("level: ::iced::window::Level::{level},"),
+        ));
     }
     if let Some(icon) = &settings.icon {
         let parent = Path::new(source_path)
             .parent()
             .unwrap_or_else(|| Path::new("."));
         let path = parent.join(&icon.path).display().to_string();
-        write!(
-            fields,
+        let value = format!(
             "icon: ::std::option::Option::Some({{ const __ICE_RGBA: &[u8] = include_bytes!({}); const _: () = ::std::assert!(__ICE_RGBA.len() == {}, \"window icon RGBA byte length does not match width × height × 4\"); ::iced::window::icon::from_rgba(__ICE_RGBA.to_vec(), {}, {}).expect(\"statically checked RGBA window icon\") }}),",
             rust_string(&path),
             icon.byte_len,
             icon.width,
             icon.height
-        )
-        .unwrap();
+        );
+        fields.push_str(&marked_setting(program, icon.origin, value));
     }
     if settings.linux.is_some()
         || settings.windows.is_some()
@@ -160,26 +265,39 @@ pub(in crate::codegen) fn window_settings_value_code(
         write!(
             fields,
             "platform_specific: {},",
-            window_platform_code(settings)
+            window_platform_code(program, settings)
         )
         .unwrap();
     }
     format!("::iced::window::Settings {{ {fields} ..::std::default::Default::default() }}")
 }
 
-pub(in crate::codegen) fn window_platform_code(settings: &WindowSettings) -> String {
+pub(in crate::codegen) fn window_platform_code(
+    program: &LoweredProgram,
+    settings: &ResolvedWindowSettings,
+) -> String {
     let mut linux = String::new();
     if let Some(settings) = &settings.linux {
         if let Some(value) = &settings.application_id {
-            write!(
-                linux,
-                "__platform.application_id = {}.to_owned();",
-                rust_string(value)
-            )
-            .unwrap();
+            linux.push_str(&marked_platform_field(
+                program,
+                &settings.field_origins,
+                settings.origin,
+                "app-id",
+                format!(
+                    "__platform.application_id = {}.to_owned();",
+                    rust_string(value)
+                ),
+            ));
         }
         if let Some(value) = settings.override_redirect {
-            write!(linux, "__platform.override_redirect = {value};").unwrap();
+            linux.push_str(&marked_platform_field(
+                program,
+                &settings.field_origins,
+                settings.origin,
+                "override-redirect",
+                format!("__platform.override_redirect = {value};"),
+            ));
         }
     }
 
@@ -191,21 +309,31 @@ pub(in crate::codegen) fn window_platform_code(settings: &WindowSettings) -> Str
             ("undecorated_shadow", settings.undecorated_shadow),
         ] {
             if let Some(value) = value {
-                write!(windows, "__platform.{name} = {value};").unwrap();
+                windows.push_str(&marked_platform_field(
+                    program,
+                    &settings.field_origins,
+                    settings.origin,
+                    &name.replace('_', "-"),
+                    format!("__platform.{name} = {value};"),
+                ));
             }
         }
         if let Some(value) = settings.corner {
             let value = match value {
-                WindowCorner::Default => "Default",
-                WindowCorner::DoNotRound => "DoNotRound",
-                WindowCorner::Round => "Round",
-                WindowCorner::RoundSmall => "RoundSmall",
+                ResolvedWindowCorner::Default => "Default",
+                ResolvedWindowCorner::DoNotRound => "DoNotRound",
+                ResolvedWindowCorner::Round => "Round",
+                ResolvedWindowCorner::RoundSmall => "RoundSmall",
             };
-            write!(
-                windows,
-                "__platform.corner_preference = ::iced::window::settings::platform::CornerPreference::{value};"
-            )
-            .unwrap();
+            windows.push_str(&marked_platform_field(
+                program,
+                &settings.field_origins,
+                settings.origin,
+                "corner",
+                format!(
+                    "__platform.corner_preference = ::iced::window::settings::platform::CornerPreference::{value};"
+                ),
+            ));
         }
     }
 
@@ -217,7 +345,13 @@ pub(in crate::codegen) fn window_platform_code(settings: &WindowSettings) -> Str
             ("fullsize_content_view", settings.fullsize_content_view),
         ] {
             if let Some(value) = value {
-                write!(macos, "__platform.{name} = {value};").unwrap();
+                macos.push_str(&marked_platform_field(
+                    program,
+                    &settings.field_origins,
+                    settings.origin,
+                    &name.replace('_', "-"),
+                    format!("__platform.{name} = {value};"),
+                ));
             }
         }
     }
@@ -228,18 +362,30 @@ pub(in crate::codegen) fn window_platform_code(settings: &WindowSettings) -> Str
         .as_ref()
         .and_then(|settings| settings.target.as_ref())
     {
-        write!(
-            wasm,
-            "__platform.target = ::std::option::Option::Some({}.to_owned());",
-            rust_string(target)
-        )
-        .unwrap();
+        let wasm_settings = settings.wasm.as_ref().unwrap();
+        wasm.push_str(&marked_platform_field(
+            program,
+            &wasm_settings.field_origins,
+            wasm_settings.origin,
+            "target",
+            format!(
+                "__platform.target = ::std::option::Option::Some({}.to_owned());",
+                rust_string(target)
+            ),
+        ));
     } else if settings
         .wasm
         .as_ref()
         .is_some_and(|settings| settings.target == Some(None))
     {
-        wasm.push_str("__platform.target = ::std::option::Option::None;");
+        let wasm_settings = settings.wasm.as_ref().unwrap();
+        wasm.push_str(&marked_platform_field(
+            program,
+            &wasm_settings.field_origins,
+            wasm_settings.origin,
+            "target",
+            "__platform.target = ::std::option::Option::None;".into(),
+        ));
     }
 
     format!(

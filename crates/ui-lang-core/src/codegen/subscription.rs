@@ -55,9 +55,10 @@ pub(in crate::codegen) fn identified_window_filter(filter: &str, arity: usize) -
 
 pub(in crate::codegen) fn generate_subscription(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
+    let document = program.document();
     let env = state_env(document, "self");
     writeln!(
         out,
@@ -65,7 +66,7 @@ pub(in crate::codegen) fn generate_subscription(
     )
     .unwrap();
     writeln!(out, "::iced::Subscription::batch([").unwrap();
-    if !document.daemon {
+    if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
             "self.__ice_accessibility.subscription().map({message}::__AccessibilityAction),"
@@ -406,7 +407,7 @@ pub(in crate::codegen) fn generate_subscription(
         }
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    if has_animations(document) {
+    if has_animations(program) {
         let active = document
             .states
             .iter()

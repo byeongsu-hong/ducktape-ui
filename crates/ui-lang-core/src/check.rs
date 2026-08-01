@@ -231,7 +231,7 @@ fn check(
             )?;
         }
     }
-    check_app_settings(document, &states)?;
+    check_app_settings(document, &states, &mut initializer_analyses)?;
     for handler in document.handlers.iter().chain(&preset_handlers) {
         if let Some((mode, span)) = scoped_run(&handler.statements) {
             let keyword = match mode {
@@ -793,12 +793,12 @@ use expr::{check_length_value, contains_ui_enum};
 #[cfg(test)]
 pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
-    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedComponentArgumentSource,
-    CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUseId,
-    CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
-    CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
-    CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator, CheckedValueRef, CheckedView,
-    CheckedViewFlow,
+    CheckedAppSettings, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
+    CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
+    CheckedExprOwner, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId,
+    CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
+    CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator,
+    CheckedValueRef, CheckedView, CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 

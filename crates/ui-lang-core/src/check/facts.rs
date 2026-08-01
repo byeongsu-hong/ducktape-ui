@@ -4,9 +4,9 @@ use super::expr::{
 };
 use super::*;
 use crate::hir::{
-    AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId,
-    DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, HandlerId, OriginArena, OriginId,
-    PaletteId, RouteId, StatementId, StructFieldId, TaskId, TestId, ViewId,
+    AppSettingExprId, AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId,
+    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, HandlerId,
+    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, TaskId, TestId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -101,6 +101,9 @@ pub(crate) enum CheckedLocalOwner {
     TaskTransform {
         task: TaskId,
         index: u32,
+    },
+    AppSettingDaemonWindow {
+        setting: AppSettingExprId,
     },
 }
 
@@ -206,6 +209,7 @@ pub(crate) enum CheckedMatchPattern {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedExprOwner {
     Value(CheckedValueRef),
+    AppSetting(AppSettingExprId),
     ComponentArgument {
         call: ComponentCallId,
         param: ComponentParamId,
@@ -417,6 +421,7 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) type_analysis_nodes: usize,
     pub(crate) type_analysis_cache_hits: usize,
     pub(crate) initializer_analysis_passes: usize,
+    pub(crate) app_setting_analysis_passes: usize,
     pub(crate) view_analysis_passes: usize,
     /// Final checker analyses consumed directly while constructing handler HIR.
     pub(crate) handler_authoritative_analyses: usize,
@@ -451,9 +456,25 @@ pub(crate) struct CheckedFacts {
     tasks: Vec<Option<CheckedTask>>,
     routes: Vec<Option<CheckedRoute>>,
     builtins: Vec<String>,
+    app_theme_factory: Option<CheckedAppThemeFactory>,
+    app_settings: Option<CheckedAppSettings>,
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedAppThemeFactory {
+    pub(crate) function: ExternFnId,
+    pub(crate) arguments: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedAppSettings {
+    pub(crate) app_name: String,
+    pub(crate) daemon: bool,
+    pub(crate) source: AppSettings,
+    pub(crate) has_default_font: bool,
 }
 
 impl CheckedFacts {
@@ -559,6 +580,18 @@ impl CheckedFacts {
         self.locals_by_owner.get(&owner).copied()
     }
 
+    pub(crate) fn app_setting_daemon_window_local(&self) -> Option<CheckedLocalId> {
+        self.locals
+            .iter()
+            .position(|local| {
+                matches!(
+                    local.owner,
+                    CheckedLocalOwner::AppSettingDaemonWindow { .. }
+                )
+            })
+            .map(|index| CheckedLocalId(index as u32))
+    }
+
     pub(crate) fn views(&self) -> &[CheckedView] {
         &self.views
     }
@@ -591,6 +624,49 @@ impl CheckedFacts {
         param: ComponentParamId,
     ) -> Option<CheckedComponentArgumentSource> {
         self.component_argument_sources.get(&(call, param)).copied()
+    }
+
+    pub(crate) fn expression_uses(&self) -> &[CheckedExprUse] {
+        &self.expression_uses
+    }
+
+    pub(crate) fn app_theme_factory(&self) -> Option<&CheckedAppThemeFactory> {
+        self.app_theme_factory.as_ref()
+    }
+
+    pub(crate) fn app_settings(&self) -> Option<&CheckedAppSettings> {
+        self.app_settings.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_app_settings(&mut self) {
+        self.app_settings = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_app_setting_expression(&mut self, id: AppSettingExprId) {
+        self.expression_uses_by_owner
+            .remove(&CheckedExprOwner::AppSetting(id));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_app_theme_factory_id(&mut self) {
+        if let Some(factory) = &mut self.app_theme_factory {
+            factory.function = ExternFnId(u32::MAX);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn app_setting_daemon_window_local_count(&self) -> usize {
+        self.locals
+            .iter()
+            .filter(|local| {
+                matches!(
+                    local.owner,
+                    CheckedLocalOwner::AppSettingDaemonWindow { .. }
+                )
+            })
+            .count()
     }
 
     pub(crate) fn expression(&self, id: CheckedExprId) -> &CheckedExpr {
@@ -1133,8 +1209,15 @@ impl<'a> FactsBuilder<'a> {
     }
 
     fn build(mut self) -> Result<CheckedFacts, Error> {
+        self.facts.app_settings = Some(CheckedAppSettings {
+            app_name: self.document.app.clone(),
+            daemon: self.document.daemon,
+            source: self.document.settings.clone(),
+            has_default_font: self.document.fonts.iter().any(|font| font.default),
+        });
         self.index_values()?;
         self.lower_initializers()?;
+        self.lower_app_setting_expressions()?;
         self.index_views()?;
         self.lower_view_expressions()?;
         self.lower_handler_expressions()?;
@@ -1298,6 +1381,181 @@ impl<'a> FactsBuilder<'a> {
                 let id = self.value_id(scope, &state.name, &state.span)?;
                 self.push_expression_use(id, &state.initial, &state.ty, &empty_env, &state.span)?;
             }
+        }
+        Ok(())
+    }
+
+    fn lower_app_setting_expressions(&mut self) -> Result<(), Error> {
+        if self.document.settings.title.is_none()
+            && self.document.settings.theme.is_none()
+            && self.document.settings.palette.is_none()
+            && self.document.settings.background.is_none()
+            && self.document.settings.text_color.is_none()
+            && self.document.settings.scale_factor.is_none()
+        {
+            return Ok(());
+        }
+        let mut state_env = FactEnv::default();
+        for (index, state) in self.document.states.iter().enumerate() {
+            let value_ref = CheckedValueRef::AppState(self.declarations.app_state(index).id);
+            let value = self.facts.value_by_ref(value_ref);
+            state_env.insert(
+                state.name.clone(),
+                CheckedPathRoot::Value(value.id),
+                value.ty.clone(),
+            );
+        }
+        self.facts.metrics.scope_env_builds += 1;
+        self.facts.metrics.scope_env_entries += state_env.len();
+
+        let lower = |this: &mut Self,
+                     id: AppSettingExprId,
+                     expression: &Expr,
+                     expected: &Type,
+                     env: &dyn FactEnvironment,
+                     span: &Span|
+         -> Result<(), Error> {
+            let declaration = this
+                .declarations
+                .app_setting_expression(id)
+                .ok_or_else(|| this.invariant(span, "app setting has no stable expression ID"))?;
+            this.push_retained_expression(
+                CheckedExprOwner::AppSetting(id),
+                expression,
+                expected,
+                env,
+                span,
+                declaration.origin,
+            )?;
+            Ok(())
+        };
+
+        for (id, setting) in [
+            (
+                AppSettingExprId::Background,
+                &self.document.settings.background,
+            ),
+            (
+                AppSettingExprId::TextColor,
+                &self.document.settings.text_color,
+            ),
+        ] {
+            if let Some(setting) = setting {
+                lower(
+                    self,
+                    id,
+                    &setting.value,
+                    &Type::Str,
+                    &state_env,
+                    &setting.span,
+                )?;
+            }
+        }
+
+        let mut callback_env = state_env;
+        let callback_ids = [
+            AppSettingExprId::Title,
+            AppSettingExprId::Theme,
+            AppSettingExprId::Palette,
+            AppSettingExprId::ScaleFactor,
+        ];
+        if self.document.daemon {
+            let owner = callback_ids
+                .into_iter()
+                .find(|id| self.declarations.app_setting_expression(*id).is_some());
+            if let Some(id) = owner {
+                let declaration = self.declarations.app_setting_expression(id).unwrap();
+                let local = self.push_local(
+                    "window",
+                    Type::WindowId,
+                    CheckedLocalOwner::AppSettingDaemonWindow { setting: id },
+                    &self.document.settings.span,
+                    declaration.origin,
+                );
+                callback_env.insert(
+                    "window".into(),
+                    CheckedPathRoot::Local(local),
+                    Type::WindowId,
+                );
+            }
+        }
+        if let Some(setting) = &self.document.settings.title {
+            lower(
+                self,
+                AppSettingExprId::Title,
+                &setting.value,
+                &Type::Str,
+                &callback_env,
+                &setting.span,
+            )?;
+        }
+        if let Some(setting) = &self.document.settings.theme {
+            if let Expr::Call { name, args } = &setting.value
+                && let Some(factory) =
+                    self.document.functions.iter().find(|function| {
+                        function.name == *name && function.kind == ExternKind::Theme
+                    })
+            {
+                let function = self
+                    .declarations
+                    .extern_decl_by_name(name)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &setting.span,
+                            "app theme factory has no stable extern declaration",
+                        )
+                    })?
+                    .declaration
+                    .id;
+                self.facts.app_theme_factory = Some(CheckedAppThemeFactory {
+                    function,
+                    arguments: args.len() as u32,
+                });
+                for (index, (argument, (_, expected))) in
+                    args.iter().zip(&factory.params).enumerate()
+                {
+                    lower(
+                        self,
+                        AppSettingExprId::ThemeFactoryArgument(index as u32),
+                        argument,
+                        expected,
+                        &callback_env,
+                        &setting.span,
+                    )?;
+                }
+            } else {
+                lower(
+                    self,
+                    AppSettingExprId::Theme,
+                    &setting.value,
+                    &Type::Str,
+                    &callback_env,
+                    &setting.span,
+                )?;
+            }
+        }
+        if let Some(setting) = &self.document.settings.palette {
+            let contract = self.document.theme_contract.as_ref().ok_or_else(|| {
+                self.invariant(&setting.span, "app palette has no checked theme contract")
+            })?;
+            lower(
+                self,
+                AppSettingExprId::Palette,
+                &setting.value,
+                &Type::Palette(contract.name.clone()),
+                &callback_env,
+                &setting.span,
+            )?;
+        }
+        if let Some(setting) = &self.document.settings.scale_factor {
+            lower(
+                self,
+                AppSettingExprId::ScaleFactor,
+                &setting.value,
+                &Type::F64,
+                &callback_env,
+                &setting.span,
+            )?;
         }
         Ok(())
     }
@@ -2775,6 +3033,86 @@ impl<'a> FactsBuilder<'a> {
         Ok(id)
     }
 
+    fn push_retained_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        expr: &Expr,
+        expected: &Type,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let analysis = self.analyses.remove(owner).ok_or_else(|| {
+            self.invariant(
+                span,
+                "missing authoritative app-setting expression analysis",
+            )
+        })?;
+        let analysis_metrics = analysis.metrics();
+        self.facts.metrics.app_setting_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
+        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += analysis_metrics.scoped_env_full_clones;
+        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
+            self.invariant(span, "missing retained app-setting expression root type")
+        })?;
+        let source = resolve_erased_type(&contextual_type(inferred, Some(expected)));
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                "app-setting expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source,
+            destination: expected.clone(),
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked app-setting expression owner"));
+        }
+        Ok(id)
+    }
+
+    fn push_local(
+        &mut self,
+        name: &str,
+        ty: Type,
+        owner: CheckedLocalOwner,
+        span: &Span,
+        parent: OriginId,
+    ) -> CheckedLocalId {
+        let id = CheckedLocalId(self.facts.locals.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        self.facts.locals.push(CheckedLocal {
+            name: name.to_owned(),
+            ty,
+            owner,
+            origin,
+        });
+        self.facts.locals_by_owner.insert(owner, id);
+        id
+    }
+
     fn push_view_local(
         &mut self,
         name: &str,
@@ -4131,7 +4469,7 @@ use u3 Value(Derived(DerivedId(0))) root=e7 source=Str destination=Str coercion=
 use u4 Value(Derived(DerivedId(1))) root=e14 source=Bool destination=Bool coercion=None origin=o4
 use u5 Value(ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 })) root=e15 source=Str destination=Str coercion=None origin=o6
 use u6 Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) root=e16 source=Bool destination=Bool coercion=None origin=o7
-use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o22
+use u7 View { view: ViewId(2), role: IfCondition } root=e17 source=Bool destination=Bool coercion=None origin=o23
 expr e0 i64 1 : I64 origin=o0
 expr e1 call Extern(ExternFnId(0)) [CheckedExprId(0)] : Named("User") origin=o0
 expr e2 f64 0.25 : F64 origin=o1
@@ -4149,7 +4487,7 @@ expr e13 binary Equality { op: NotEq, operand: Str } e11 e12 : Bool origin=o4
 expr e14 binary Boolean(And) e10 e13 : Bool origin=o4
 expr e15 str "Card" : Str origin=o6
 expr e16 bool false : Bool origin=o7
-expr e17 path Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) [] : Bool origin=o22
+expr e17 path Value(ComponentState(ComponentStateId { component: ComponentId(0), index: 0 })) [] : Bool origin=o23
 view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
 view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
 view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(7) } origin=o17
@@ -4171,6 +4509,7 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 type_analysis_nodes: 18,
                 type_analysis_cache_hits: 0,
                 initializer_analysis_passes: 7,
+                app_setting_analysis_passes: 0,
                 view_analysis_passes: 1,
                 handler_authoritative_analyses: 0,
                 handler_auxiliary_analyses: 0,
@@ -4583,7 +4922,8 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 CheckedLocalOwner::ExpressionBinding { .. }
                 | CheckedLocalOwner::HandlerParam { .. }
                 | CheckedLocalOwner::StatementLet(_)
-                | CheckedLocalOwner::TaskTransform { .. } => None,
+                | CheckedLocalOwner::TaskTransform { .. }
+                | CheckedLocalOwner::AppSettingDaemonWindow { .. } => None,
             })
             .collect::<Vec<_>>();
         for role in [

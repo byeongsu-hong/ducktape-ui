@@ -395,7 +395,7 @@ pub(crate) struct ResolvedPalette {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedPaletteSelection {
     Static(PaletteId),
-    Dynamic(Expr),
+    Dynamic(ResolvedAppExpression),
 }
 
 #[allow(dead_code)]
@@ -406,13 +406,21 @@ pub(crate) struct ResolvedThemeFactory {
     pub(crate) origin: OriginId,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAppThemeFactory {
+    pub(crate) function: ExternFnId,
+    pub(crate) arguments: Vec<ResolvedAppExpression>,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedAppThemeSelection {
     App,
     Default,
     BuiltIn(String),
-    Dynamic(Expr),
-    Factory(ResolvedThemeFactory),
+    Dynamic(ResolvedAppExpression),
+    Factory(ResolvedAppThemeFactory),
 }
 
 #[derive(Clone, Debug)]
@@ -447,7 +455,9 @@ pub(crate) struct ResolvedThemeProgram {
     pub(crate) contract: ResolvedThemeContract,
     pub(crate) palettes: Vec<ResolvedPalette>,
     pub(crate) active_palette: ResolvedPaletteSelection,
+    pub(crate) active_palette_origin: OriginId,
     pub(crate) app_theme: ResolvedAppThemeSelection,
+    pub(crate) app_theme_origin: OriginId,
     pub(crate) native_tokens: ResolvedNativeThemeTokens,
 }
 
@@ -654,30 +664,51 @@ impl Lowerer {
             .first()
             .map(|palette| palette.id)
             .ok_or_else(|| self.invariant(&source.span, "checked theme has no palette"))?;
-        let active_palette = match self.document.settings.palette.as_ref() {
+        let checked_settings = &self
+            .facts
+            .app_settings()
+            .ok_or_else(|| {
+                self.invariant(
+                    &self.document.settings.span,
+                    "application settings are missing their authoritative checked snapshot",
+                )
+            })?
+            .source;
+        let active_palette_origin = checked_settings
+            .palette
+            .as_ref()
+            .and_then(|_| {
+                self.declarations
+                    .app_setting_expression(AppSettingExprId::Palette)
+                    .map(|declaration| declaration.origin)
+            })
+            .unwrap_or_else(|| self.declarations.app_settings().origin);
+        let active_palette = match checked_settings.palette.as_ref() {
             Some(setting) => {
-                if let Expr::Path(path) = &setting.value
-                    && let [contract_name, palette_name] = path.as_slice()
-                    && contract_name == &source.name
-                {
-                    let id = self
-                        .styles
-                        .palette_ids
-                        .get(palette_name)
-                        .copied()
-                        .ok_or_else(|| {
-                            self.invariant(
-                                &setting.span,
-                                format!("unknown checked palette `{palette_name}`"),
-                            )
-                        })?;
-                    ResolvedPaletteSelection::Static(id)
-                } else {
-                    ResolvedPaletteSelection::Dynamic(setting.value.clone())
+                let expression =
+                    self.checked_app_setting_expression(AppSettingExprId::Palette, &setting.span)?;
+                let checked = self
+                    .facts
+                    .expression(self.facts.expression_use(expression.expression).root);
+                match &checked.kind {
+                    crate::check::CheckedExprKind::Path {
+                        root: crate::check::CheckedPathRoot::Palette(id),
+                        projections,
+                    } if projections.is_empty() => ResolvedPaletteSelection::Static(*id),
+                    _ => ResolvedPaletteSelection::Dynamic(expression),
                 }
             }
             None => ResolvedPaletteSelection::Static(default_palette),
         };
+        let app_theme_origin = checked_settings
+            .theme
+            .as_ref()
+            .and_then(|_| {
+                self.declarations
+                    .app_setting_expression(AppSettingExprId::Theme)
+                    .map(|declaration| declaration.origin)
+            })
+            .unwrap_or_else(|| self.declarations.app_settings().origin);
         let app_theme = self.lower_app_theme_selection()?;
         let native_token = |name: &str| {
             self.styles.token_ids.get(name).copied().ok_or_else(|| {
@@ -691,7 +722,9 @@ impl Lowerer {
             contract,
             palettes,
             active_palette,
+            active_palette_origin,
             app_theme,
+            app_theme_origin,
             native_tokens: ResolvedNativeThemeTokens {
                 background: native_token("bg")?,
                 text: native_token("fg")?,
@@ -703,31 +736,62 @@ impl Lowerer {
     }
 
     fn lower_app_theme_selection(&mut self) -> Result<ResolvedAppThemeSelection, Error> {
-        let Some(setting) = self.document.settings.theme.clone() else {
+        let checked_settings = self
+            .facts
+            .app_settings()
+            .ok_or_else(|| {
+                self.invariant(
+                    &self.document.settings.span,
+                    "application settings are missing their authoritative checked snapshot",
+                )
+            })?
+            .source
+            .clone();
+        let Some(setting) = checked_settings.theme.as_ref() else {
             return Ok(ResolvedAppThemeSelection::App);
         };
-        match setting.value {
-            Expr::Str(name) if name == "app" => Ok(ResolvedAppThemeSelection::App),
-            Expr::Str(name) if name == "default" => Ok(ResolvedAppThemeSelection::Default),
-            Expr::Str(name) if BUILT_IN_THEMES.contains(&name.as_str()) => {
-                Ok(ResolvedAppThemeSelection::BuiltIn(name))
+        let span = setting.span.clone();
+        if let Some(factory) = self.facts.app_theme_factory() {
+            let function = factory.function;
+            let argument_count = factory.arguments;
+            let origin = self
+                .declarations
+                .app_setting_expression(AppSettingExprId::Theme)
+                .ok_or_else(|| self.invariant(&span, "app theme factory has no origin"))?
+                .origin;
+            let arguments = (0..argument_count)
+                .map(|index| {
+                    self.checked_app_setting_expression(
+                        AppSettingExprId::ThemeFactoryArgument(index),
+                        &span,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ResolvedAppThemeSelection::Factory(
+                ResolvedAppThemeFactory {
+                    function,
+                    arguments,
+                    origin,
+                },
+            ));
+        }
+        let expression = self.checked_app_setting_expression(AppSettingExprId::Theme, &span)?;
+        let checked = self
+            .facts
+            .expression(self.facts.expression_use(expression.expression).root);
+        match &checked.kind {
+            crate::check::CheckedExprKind::Str(name) if name == "app" => {
+                Ok(ResolvedAppThemeSelection::App)
             }
-            Expr::Call { name, args } => {
-                if let Some(function) = self.theme_factory_id(&name) {
-                    let origin = self.push_origin(&setting.span, None);
-                    Ok(ResolvedAppThemeSelection::Factory(ResolvedThemeFactory {
-                        function,
-                        arguments: args,
-                        origin,
-                    }))
-                } else {
-                    Ok(ResolvedAppThemeSelection::Dynamic(Expr::Call {
-                        name,
-                        args,
-                    }))
-                }
+            crate::check::CheckedExprKind::Str(name) if name == "default" => {
+                Ok(ResolvedAppThemeSelection::Default)
             }
-            value => Ok(ResolvedAppThemeSelection::Dynamic(value)),
+            crate::check::CheckedExprKind::Str(name)
+                if BUILT_IN_THEMES.contains(&name.as_str()) =>
+            {
+                Ok(ResolvedAppThemeSelection::BuiltIn(name.clone()))
+            }
+            _ => Ok(ResolvedAppThemeSelection::Dynamic(expression)),
         }
     }
 

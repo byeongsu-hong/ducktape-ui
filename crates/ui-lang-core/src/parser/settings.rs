@@ -59,7 +59,10 @@ pub(in crate::parser) fn parse_preset(name: &str, line: &Line) -> Result<Preset,
 }
 
 pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, Error> {
-    let mut settings = AppSettings::default();
+    let mut settings = AppSettings {
+        span: Span::line(line.number),
+        ..AppSettings::default()
+    };
     for item in &line.children {
         if item.text == "window" {
             if settings.window.is_some() {
@@ -80,6 +83,7 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
             settings.windows.push(NamedWindow {
                 name,
                 settings: parse_window_settings(item)?,
+                span: Span::line(item.number),
             });
             continue;
         }
@@ -93,9 +97,12 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
         };
         let value = value.trim();
         macro_rules! set {
-            ($field:ident, $value:expr) => {
-                set_setting(&mut settings.$field, $value, name, item)?
-            };
+            ($field:ident, $value:expr) => {{
+                set_setting(&mut settings.$field, $value, name, item)?;
+                settings
+                    .setting_spans
+                    .insert(name.to_owned(), Span::line(item.number));
+            }};
         }
         match name {
             "title" => set!(title, app_expression(value, item)?),
@@ -126,6 +133,10 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
                     path,
                     span: Span::line(item.number),
                 });
+                settings.setting_spans.insert(
+                    format!("font:{}", settings.fonts.len() - 1),
+                    Span::line(item.number),
+                );
             }
             "text-size" => set!(default_text_size, config_positive_number(value, item)?),
             "antialiasing" => set!(antialiasing, config_bool(value, item)?),
@@ -158,7 +169,10 @@ pub(in crate::parser) fn app_number_expression(
 }
 
 pub(in crate::parser) fn parse_window_settings(line: &Line) -> Result<WindowSettings, Error> {
-    let mut settings = WindowSettings::default();
+    let mut settings = WindowSettings {
+        span: Span::line(line.number),
+        ..WindowSettings::default()
+    };
     for item in &line.children {
         if let Some(platform) = item.text.strip_prefix("platform ") {
             match platform.trim() {
@@ -204,9 +218,12 @@ pub(in crate::parser) fn parse_window_settings(line: &Line) -> Result<WindowSett
                 (name, value.trim())
             });
         macro_rules! set {
-            ($field:ident, $value:expr) => {
-                set_setting(&mut settings.$field, $value, name, item)?
-            };
+            ($field:ident, $value:expr) => {{
+                set_setting(&mut settings.$field, $value, name, item)?;
+                settings
+                    .setting_spans
+                    .insert(name.to_owned(), Span::line(item.number));
+            }};
         }
         match name {
             "size" => set!(size, config_size(value, item)?),
@@ -266,7 +283,10 @@ pub(in crate::parser) fn parse_window_settings(line: &Line) -> Result<WindowSett
 pub(in crate::parser) fn parse_linux_window_settings(
     line: &Line,
 ) -> Result<LinuxWindowSettings, Error> {
-    let mut settings = LinuxWindowSettings::default();
+    let mut settings = LinuxWindowSettings {
+        span: Span::line(line.number),
+        ..LinuxWindowSettings::default()
+    };
     for item in &line.children {
         ensure_leaf(item)?;
         let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
@@ -294,6 +314,9 @@ pub(in crate::parser) fn parse_linux_window_settings(
                 ));
             }
         }
+        settings
+            .setting_spans
+            .insert(name.to_owned(), Span::line(item.number));
     }
     Ok(settings)
 }
@@ -301,7 +324,10 @@ pub(in crate::parser) fn parse_linux_window_settings(
 pub(in crate::parser) fn parse_windows_window_settings(
     line: &Line,
 ) -> Result<WindowsWindowSettings, Error> {
-    let mut settings = WindowsWindowSettings::default();
+    let mut settings = WindowsWindowSettings {
+        span: Span::line(line.number),
+        ..WindowsWindowSettings::default()
+    };
     for item in &line.children {
         ensure_leaf(item)?;
         let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
@@ -357,6 +383,9 @@ pub(in crate::parser) fn parse_windows_window_settings(
                 ));
             }
         }
+        settings
+            .setting_spans
+            .insert(name.to_owned(), Span::line(item.number));
     }
     Ok(settings)
 }
@@ -364,7 +393,10 @@ pub(in crate::parser) fn parse_windows_window_settings(
 pub(in crate::parser) fn parse_macos_window_settings(
     line: &Line,
 ) -> Result<MacosWindowSettings, Error> {
-    let mut settings = MacosWindowSettings::default();
+    let mut settings = MacosWindowSettings {
+        span: Span::line(line.number),
+        ..MacosWindowSettings::default()
+    };
     for item in &line.children {
         ensure_leaf(item)?;
         let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
@@ -384,6 +416,9 @@ pub(in crate::parser) fn parse_macos_window_settings(
             }
         };
         set_setting(slot, config_bool(value, item)?, name, item)?;
+        settings
+            .setting_spans
+            .insert(name.to_owned(), Span::line(item.number));
     }
     Ok(settings)
 }
@@ -391,7 +426,10 @@ pub(in crate::parser) fn parse_macos_window_settings(
 pub(in crate::parser) fn parse_wasm_window_settings(
     line: &Line,
 ) -> Result<WasmWindowSettings, Error> {
-    let mut settings = WasmWindowSettings::default();
+    let mut settings = WasmWindowSettings {
+        span: Span::line(line.number),
+        ..WasmWindowSettings::default()
+    };
     for item in &line.children {
         ensure_leaf(item)?;
         let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
@@ -417,6 +455,9 @@ pub(in crate::parser) fn parse_wasm_window_settings(
                 ));
             }
         }
+        settings
+            .setting_spans
+            .insert(name.to_owned(), Span::line(item.number));
     }
     Ok(settings)
 }

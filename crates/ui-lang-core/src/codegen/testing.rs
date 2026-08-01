@@ -7,13 +7,14 @@ pub(in crate::codegen) fn generate_test_mounts(
     source_path: &str,
 ) -> Result<(), Error> {
     let document = program.document();
+    let daemon = program.settings().kind == ProgramKind::Daemon;
     let render_document = RenderDocument::new(program);
     for (index, test) in document.tests.iter().enumerate() {
         let Some(mount) = &test.mount else {
             continue;
         };
         let mut env = checked_state_env(program, "self");
-        if document.daemon {
+        if daemon {
             env.insert(
                 "window".into(),
                 Binding {
@@ -37,16 +38,16 @@ pub(in crate::codegen) fn generate_test_mounts(
             None,
         )?
         .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
-        let window_arg = if document.daemon {
+        let window_arg = if daemon {
             ", window: ::iced::window::Id"
         } else {
             ""
         };
-        let callback_value = if document.daemon { "window" } else { "" };
+        let callback_value = if daemon { "window" } else { "" };
         let palette = format!(
             "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
         );
-        if document.daemon {
+        if daemon {
             writeln!(
                 out,
                 "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {root} }}"
@@ -59,15 +60,15 @@ pub(in crate::codegen) fn generate_test_mounts(
             )
             .unwrap();
         }
-        let program = test_program_code(document, source_path, index);
-        let program_ty = if document.daemon {
+        let test_program = test_program_code(program, source_path, index);
+        let program_ty = if daemon {
             "::iced::Daemon"
         } else {
             "::iced::Application"
         };
         writeln!(
             out,
-            "#[cfg(test)]\nfn __ice_test_program_{index}() -> {program_ty}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{ {program} }}"
+            "#[cfg(test)]\nfn __ice_test_program_{index}() -> {program_ty}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{ {test_program} }}"
         )
         .unwrap();
     }
@@ -176,7 +177,7 @@ fn generate_test(
     for step in &test.steps {
         let statement = test_step_source(step);
         let location = location_code(program, source_path, &step.span, &statement);
-        let env = test_env(test, document, &location)?;
+        let env = test_env(test, program, &location)?;
         writeln!(
             out,
             "::ui_lang_runtime::testing::step({}, {location}, || {{",
@@ -756,11 +757,12 @@ fn accessibility_action_variant(name: &str) -> &'static str {
 
 fn test_env(
     test: &TestDecl,
-    document: &Document,
+    program: &LoweredProgram,
     location: &str,
 ) -> Result<HashMap<String, Binding>, Error> {
+    let document = program.document();
     let mut env = state_env(document, "__test.state()");
-    if document.daemon {
+    if program.settings().kind == ProgramKind::Daemon {
         env.insert(
             "window".into(),
             Binding {
@@ -830,30 +832,33 @@ fn location_code(
     )
 }
 
-fn test_program_code(document: &Document, source_path: &str, index: usize) -> String {
+fn test_program_code(program: &LoweredProgram, source_path: &str, index: usize) -> String {
+    let document = program.document();
+    let app_settings = program.settings();
     let subscription = ".subscription(Self::__subscription)";
-    let default_font = document
-        .fonts
-        .iter()
-        .find(|font| font.default)
-        .map_or("", |_| ".default_font(Self::default_font())");
-    let title = document
-        .settings
+    let default_font = if app_settings.has_default_font {
+        ".default_font(Self::default_font())"
+    } else {
+        ""
+    };
+    let title = app_settings
         .title
         .as_ref()
         .map_or("", |_| ".title(Self::__title)");
-    let settings = app_settings_code(&document.settings);
-    let fonts = font_assets_code(&document.settings, source_path);
-    let window = if document.daemon {
+    let settings = app_settings_code(program, app_settings);
+    let fonts = font_assets_code(program, app_settings, source_path);
+    let window = if app_settings.kind == ProgramKind::Daemon {
         String::new()
     } else {
-        window_settings_code(document.settings.window.as_ref(), source_path)
+        window_settings_code(program, &app_settings.primary_window, source_path)
     };
-    let executor = document
-        .settings
-        .executor
-        .as_ref()
-        .map_or_else(String::new, |executor| format!(".executor::<{executor}>()"));
+    let executor = match &app_settings.executor {
+        ResolvedExecutorSelection::Default => String::new(),
+        ResolvedExecutorSelection::Custom { path, origin } => format!(
+            "\n{}\n.executor::<{path}>()\n{SOURCE_MARKER_END}\n",
+            source_marker_for_origin(program, *origin)
+        ),
+    };
     let presets = if document.presets.is_empty() {
         String::new()
     } else {
@@ -871,18 +876,16 @@ fn test_program_code(document: &Document, source_path: &str, index: usize) -> St
                 .join(", ")
         )
     };
-    let scale_factor = document
-        .settings
+    let scale_factor = app_settings
         .scale_factor
         .as_ref()
         .map_or("", |_| ".scale_factor(Self::__scale_factor)");
-    let style = if document.settings.background.is_some() || document.settings.text_color.is_some()
-    {
+    let style = if app_settings.background.is_some() || app_settings.text_color.is_some() {
         ".style(Self::__style)"
     } else {
         ""
     };
-    let root = if document.daemon {
+    let root = if app_settings.kind == ProgramKind::Daemon {
         "::iced::daemon(Self::__boot, Self::__update, Self::__ice_test_mount_"
     } else {
         "::iced::application(Self::__boot, Self::__update, Self::__ice_test_mount_"

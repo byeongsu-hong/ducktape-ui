@@ -386,7 +386,9 @@ example, and workspace compilation tests provide the executable evidence.
 The private HIR fixes theme-contract and token IDs in declaration order,
 palette IDs and token-ordered RGBA tables, the default/static/dynamic active
 palette choice, and app or nested built-in/native-factory selections before
-emission. Theme factories use resolved extern-function IDs; nested semantic
+emission. Dynamic app palette/theme selection and app theme-factory arguments
+use retained checked expression IDs, while theme factories use resolved
+extern-function IDs; nested semantic
 text/background colors and gradient stops carry token IDs and optional opacity.
 Structured tests cover dynamic palettes, app and nested factories, ordered
 alpha palettes, token opacity, gradients, invalid post-check mutations, and
@@ -426,8 +428,7 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
-Handlers, tasks, canvas
-locals, settings, tests, and expression-bearing widget options remain outside
+Handlers, tasks, canvas locals, tests, and expression-bearing widget options remain outside
 this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -442,6 +443,29 @@ paths, and every fingerprint change requires explicit review; completion still
 requires every selected count to reach zero. Mutation probes guard the scanner's
 documented lexical coverage. This is not Rust name resolution, and full HIR also
 requires ordinary semantic review for unrepresented behavior.
+
+Application and daemon settings have a complete private HIR boundary. Stable
+setting-expression and named-window IDs retain title, active palette, theme,
+background, foreground, scale, native theme-factory arguments, renderer,
+executor, ordered font assets, application settings, the primary window, named
+windows, every platform-specific window field, and source origins. An omitted
+primary window is folded to one canonical runtime-default record; renderer
+defaulting is folded before emission. The checker performs exactly one retained
+analysis for each dynamic setting expression and owns one typed daemon
+current-window local shared by all callback settings. Rust generation consumes
+those facts and never rereads an application-setting AST expression or invokes
+type inference for this family. Static program kind/settings topology is
+snapshotted in checked facts; any later static mutation fails with a
+source-mapped `E196`, while callbacks build their value scope only from lowered
+app-state and derived contracts. Renderer, executor, app fields, fonts,
+primary/named window fields, icons, and platform subfields each emit exact
+declaration source markers. Structural tests cover the complete static and
+dynamic record, post-check AST mutation, missing/mismatched `E196` invariants,
+daemon scope, imported extern IDs and physical origins, and direct generated
+source markers. Existing production tests cover all common/platform window
+fields, named-window opening, packaged fonts, custom renderer/executor, and
+native application/daemon builders. The ignored 5,000-named-window contract
+requires stable sequential IDs and a two-second debug-build lowering budget.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

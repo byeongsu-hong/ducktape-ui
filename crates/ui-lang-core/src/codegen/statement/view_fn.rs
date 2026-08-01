@@ -6,6 +6,7 @@ pub(in crate::codegen) fn generate_view(
     message: &str,
 ) -> Result<(), Error> {
     let document = program.document();
+    let daemon = program.settings().kind == ProgramKind::Daemon;
     let render_document = RenderDocument::new(program);
     let mounted = program
         .components()
@@ -14,7 +15,7 @@ pub(in crate::codegen) fn generate_view(
         .map(|component| component_state_field(&component.name))
         .collect::<Vec<_>>();
     let mut env = checked_state_env(program, "self");
-    if document.daemon {
+    if daemon {
         env.insert(
             "window".into(),
             Binding {
@@ -43,16 +44,16 @@ pub(in crate::codegen) fn generate_view(
         None,
     )?
     .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
-    let window_arg = if document.daemon {
+    let window_arg = if daemon {
         ", window: ::iced::window::Id"
     } else {
         ""
     };
-    let callback_value = if document.daemon { "window" } else { "" };
+    let callback_value = if daemon { "window" } else { "" };
     let palette = format!(
         "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
     );
-    if mounted.is_empty() && document.daemon {
+    if mounted.is_empty() && daemon {
         writeln!(
             out,
             "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
@@ -65,7 +66,7 @@ pub(in crate::codegen) fn generate_view(
         )
         .unwrap();
     } else {
-        let root_scope_code = if document.daemon {
+        let root_scope_code = if daemon {
             format!(
                 "format!(\"{{}}/{{:?}}\", {}, window)",
                 rust_string(&document.app)
@@ -81,7 +82,7 @@ pub(in crate::codegen) fn generate_view(
             .iter()
             .map(|field| format!("self.{field}.finish_render(__ice_root_scope_ref);"))
             .collect::<String>();
-        let result = if document.daemon {
+        let result = if daemon {
             "__ice_content".into()
         } else {
             format!(
