@@ -527,6 +527,13 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.document.lines.len(), 100_001);
     assert_eq!(state.metrics, LayoutMetrics::default());
     assert_performance_budget("1,000 caret layouts", caret_elapsed, 5);
+    record_performance_metrics(
+        "caret_1000",
+        1_000,
+        caret_elapsed,
+        Duration::from_secs(5),
+        &state.metrics,
+    );
 
     tree.state
         .downcast_mut::<State<text::highlighter::PlainText>>()
@@ -553,12 +560,8 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
             selection: None,
         }
     );
-    content.perform(text_editor::Action::Edit(Edit::Insert('x')));
-    assert_eq!(
-        content.line(50_000).map(|line| line.text.into_owned()),
-        Some("linex 50000".to_owned())
-    );
     let started = Instant::now();
+    content.perform(text_editor::Action::Edit(Edit::Insert('x')));
     let mut editor = RichTextEditor::<_, ()>::new(&content, ContentVersion::new(11, 1))
         .change_hint(EditorChange::new(
             ContentVersion::new(11, 0),
@@ -572,6 +575,10 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
         .wrapping(text::Wrapping::None);
     editor.layout(&mut tree, &renderer, &limits);
     let elapsed = started.elapsed();
+    assert_eq!(
+        content.line(50_000).map(|line| line.text.into_owned()),
+        Some("linex 50000".to_owned())
+    );
 
     let state = tree
         .state
@@ -593,6 +600,13 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
     assert_performance_budget("hinted 100k-line edit", elapsed, 5);
+    record_performance_metrics(
+        "one_char_insertion",
+        1,
+        elapsed,
+        Duration::from_secs(5),
+        &state.metrics,
+    );
     eprintln!(
         "100k caret={caret_elapsed:?}, insertion={elapsed:?}, metrics={:?}",
         state.metrics
@@ -713,6 +727,13 @@ fn performance_contract_100k_selection_drag_pointer_events() {
     assert_eq!(state.document.lines.len(), 100_001);
     assert_eq!(state.metrics, LayoutMetrics::default());
     assert_performance_budget("1,000 selection drag events", elapsed, 10);
+    record_performance_metrics(
+        "selection_drag_1000",
+        1_000,
+        elapsed,
+        Duration::from_secs(10),
+        &state.metrics,
+    );
     eprintln!(
         "100k selection drag={elapsed:?}, metrics={:?}",
         state.metrics
@@ -789,7 +810,67 @@ fn performance_contract_100k_hangul_ime_sequence() {
     assert_eq!(state.metrics.highlighted_lines, 150_003);
     assert_eq!(state.metrics.accepted_change_hints, 0);
     assert_performance_budget("100k-line Hangul IME sequence", elapsed, 15);
+    record_performance_metrics(
+        "hangul_ime_sequence",
+        3,
+        elapsed,
+        Duration::from_secs(15),
+        &state.metrics,
+    );
     eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
+}
+
+#[test]
+#[ignore = "large-document performance contract run explicitly in CI"]
+fn performance_contract_100k_format_key_only_layout() {
+    let source = large_source();
+    let content = Content::with_text(&source);
+    let renderer = headless_renderer();
+    let limits = layout::Limits::new(Size::ZERO, Size::new(800.0, 600.0));
+    let version = ContentVersion::new(15, 0);
+    let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None)
+        .highlight_with::<WholeLine>((), 0, |_| Format::default());
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    editor.layout(&mut tree, &renderer, &limits);
+    drop(editor);
+    tree.state.downcast_mut::<State<WholeLine>>().metrics = LayoutMetrics::default();
+
+    let started = Instant::now();
+    let mut editor = RichTextEditor::<_, ()>::new(&content, version)
+        .width(Length::Fixed(800.0))
+        .height(Length::Fixed(600.0))
+        .wrapping(text::Wrapping::None)
+        .highlight_with::<WholeLine>((), 1, |_| Format {
+            color: Some(Color::BLACK),
+            ..Format::default()
+        });
+    editor.layout(&mut tree, &renderer, &limits);
+    let elapsed = started.elapsed();
+
+    let state = tree.state.downcast_ref::<State<WholeLine>>();
+    assert_eq!(state.metrics.full_text_materializations, 0);
+    assert_eq!(state.metrics.materialized_source_bytes, 0);
+    assert_eq!(state.metrics.parsed_line_strings, 0);
+    assert_eq!(state.metrics.mapping_line_comparisons, 0);
+    assert_eq!(state.metrics.styled_signature_comparisons, 100_001);
+    assert_eq!(state.metrics.newly_owned_styled_texts, 0);
+    assert_eq!(state.metrics.newly_owned_styled_text_bytes, 0);
+    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
+    assert_eq!(state.metrics.rebuilt_lines, 100_001);
+    assert_eq!(state.metrics.shaped_paragraphs, 100_001);
+    assert_eq!(state.metrics.highlighted_lines, 100_001);
+    assert_performance_budget("100k-line format-key-only layout", elapsed, 30);
+    record_performance_metrics(
+        "format_key_only",
+        1,
+        elapsed,
+        Duration::from_secs(30),
+        &state.metrics,
+    );
+    eprintln!("100k format key={elapsed:?}, metrics={:?}", state.metrics);
 }
 
 #[test]
@@ -832,6 +913,13 @@ fn performance_contract_100k_viewport_resize() {
     assert_eq!(state.metrics.shaped_paragraphs, 100_001);
     assert_eq!(state.metrics.highlighted_lines, 0);
     assert_performance_budget("100k-line viewport resize", elapsed, 30);
+    record_performance_metrics(
+        "viewport_resize",
+        1,
+        elapsed,
+        Duration::from_secs(30),
+        &state.metrics,
+    );
     eprintln!("100k resize={elapsed:?}, metrics={:?}", state.metrics);
 }
 
@@ -846,4 +934,55 @@ fn assert_performance_budget(label: &str, elapsed: Duration, seconds: u64) {
         elapsed < Duration::from_secs(seconds),
         "{label} took {elapsed:?}; budget is {seconds}s"
     );
+}
+
+fn record_performance_metrics(
+    scenario: &str,
+    iterations: usize,
+    elapsed: Duration,
+    budget: Duration,
+    metrics: &LayoutMetrics,
+) {
+    use std::fs::OpenOptions;
+    use std::io::Write as _;
+
+    let Some(path) = std::env::var_os("ICE_EDITOR_PERF_JSONL") else {
+        return;
+    };
+    let mut output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .unwrap_or_else(|error| panic!("failed to open {}: {error}", path.to_string_lossy()));
+    let value = serde_json::json!({
+        "schema": "ice.rich-text-editor.performance.v1",
+        "kind": "operation",
+        "scenario": scenario,
+        "document_lines": 100_001,
+        "iterations": iterations,
+        "elapsed_ns": u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+        "wall_time_budget_ns": u64::try_from(budget.as_nanos()).unwrap_or(u64::MAX),
+        "metrics": {
+            "full_text_materializations": metrics.full_text_materializations,
+            "materialized_source_bytes": metrics.materialized_source_bytes,
+            "parsed_line_strings": metrics.parsed_line_strings,
+            "parsed_line_bytes": metrics.parsed_line_bytes,
+            "composition_display_strings": metrics.composition_display_strings,
+            "composition_display_bytes": metrics.composition_display_bytes,
+            "composition_line_strings": metrics.composition_line_strings,
+            "composition_line_bytes": metrics.composition_line_bytes,
+            "mapping_line_comparisons": metrics.mapping_line_comparisons,
+            "styled_signature_comparisons": metrics.styled_signature_comparisons,
+            "newly_owned_styled_texts": metrics.newly_owned_styled_texts,
+            "newly_owned_styled_text_bytes": metrics.newly_owned_styled_text_bytes,
+            "line_vector_slots_prepared": metrics.line_vector_slots_prepared,
+            "rebuilt_lines": metrics.rebuilt_lines,
+            "shaped_paragraphs": metrics.shaped_paragraphs,
+            "highlighted_lines": metrics.highlighted_lines,
+            "accepted_change_hints": metrics.accepted_change_hints,
+            "rejected_change_hints": metrics.rejected_change_hints,
+        },
+    });
+    writeln!(output, "{value}")
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.to_string_lossy()));
 }

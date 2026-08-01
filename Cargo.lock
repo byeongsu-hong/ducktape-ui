@@ -5619,6 +5619,7 @@ dependencies = [
  "accesskit",
  "accesskit_unix",
  "accesskit_windows",
+ "dhat",
  "iced",
  "iced_test",
  "iced_tiny_skia",
