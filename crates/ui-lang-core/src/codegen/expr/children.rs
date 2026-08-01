@@ -11,14 +11,11 @@ pub(in crate::codegen) fn render_children(
 ) -> Result<(), Error> {
     for child in children {
         match child {
-            ViewNode::If { children, span, .. } => {
-                let CheckedViewFlow::If { condition } =
-                    &document.program().checked_view(span)?.flow
-                else {
-                    return Err(Error::new("E196", span, "if view has no checked flow"));
-                };
+            ViewNode::If { children, .. } => {
+                let program = document.hir();
+                let conditional = program.resolved_conditional_for(child)?;
                 let condition =
-                    checked_expr_use_code(document.program(), *condition, env, ValueMode::Owned)?;
+                    checked_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
                 if condition == "false" {
                     continue;
                 }

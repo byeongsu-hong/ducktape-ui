@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod canvas;
+mod conditional;
 mod float;
 mod interaction;
 mod keyed_column;
@@ -39,6 +40,7 @@ mod testing;
 mod tooltip;
 
 pub(crate) use canvas::*;
+pub(crate) use conditional::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use keyed_column::*;
@@ -1452,6 +1454,7 @@ pub(crate) struct LoweredProgram {
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
+    conditionals: HashMap<ViewId, ResolvedConditional>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
@@ -3022,6 +3025,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn conditional(&self, id: ViewId) -> Option<&ResolvedConditional> {
+        self.conditionals.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
         self.lazy_views.get(&id)
     }
@@ -3287,6 +3295,35 @@ impl LoweredProgram {
         })
     }
 
+    pub(crate) fn resolved_conditional_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedConditional, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "if view reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "if view reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.conditionals.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "if view reached code generation without normalized HIR",
+            )
+        })
+    }
+
     fn resolved_interaction_for(
         &self,
         node: &ViewNode,
@@ -3548,6 +3585,7 @@ pub(crate) struct Lowerer {
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
     keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
+    conditionals: HashMap<ViewId, ResolvedConditional>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
@@ -4266,6 +4304,7 @@ impl Lowerer {
             pins: HashMap::new(),
             responsives: HashMap::new(),
             keyed_columns: HashMap::new(),
+            conditionals: HashMap::new(),
             lazy_views: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
@@ -4347,6 +4386,7 @@ impl Lowerer {
             pins: self.pins,
             responsives: self.responsives,
             keyed_columns: self.keyed_columns,
+            conditionals: self.conditionals,
             lazy_views: self.lazy_views,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
@@ -8218,9 +8258,17 @@ impl Lowerer {
                     self.lower_view(&slot.content, outer_component)?;
                 }
             }
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
+            ViewNode::If {
+                condition,
+                children,
+                span,
+            } => {
+                self.lower_conditional(condition, span, outer_component)?;
+                for child in children {
+                    self.lower_view(child, outer_component)?;
+                }
+            }
+            ViewNode::Layout { children, .. } | ViewNode::For { children, .. } => {
                 for child in children {
                     self.lower_view(child, outer_component)?;
                 }
@@ -11167,6 +11215,78 @@ view
     }
 
     #[test]
+    fn normalizes_if_condition_type_owner_and_scope() {
+        let source = format!(
+            "app IfHir\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let conditional = program.conditional(ViewId(0)).unwrap();
+        assert_eq!(conditional.id, ViewId(0));
+        let expression = program
+            .checked_facts()
+            .expression_use(conditional.condition);
+        assert_eq!(expression.source, Type::Bool);
+        assert_eq!(expression.destination, Type::Bool);
+        assert_eq!(
+            expression.owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::IfCondition,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_if_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidIfFacts\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::IfCondition,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn if_lowering_and_codegen_ignore_raw_condition_mutation() {
+        let source = format!(
+            "app CheckedIf\n{THEME}state\n  enabled = true\nview\n  col\n    if enabled\n      text \"Visible\"\n"
+        );
+        let expected =
+            crate::codegen::generate(&lower(analyze(&source).unwrap()).unwrap(), "checked-if.ice")
+                .unwrap();
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::If { condition, .. } = &mut children[0] else {
+            panic!("fixture child must be if");
+        };
+        *condition = Expr::Bool(false);
+        let mut program = lower(changed).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-if.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::If { condition, .. } = &mut children[0] else {
+            panic!("fixture child must be if");
+        };
+        *condition = Expr::Bool(false);
+        let actual = crate::codegen::generate(&program, "checked-if.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -11483,6 +11603,28 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized keyed columns lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized if-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_if_views_lower_and_emit_under_two_seconds() {
+        const IF_VIEWS: usize = 4_000;
+        let mut source = format!("app IfScale\n{THEME}state\n  enabled = true\nview\n  col\n");
+        for index in 0..IF_VIEWS {
+            writeln!(source, "    if enabled\n      text \"Visible {index}\"").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "if-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.conditionals.len(), IF_VIEWS);
+        assert_eq!(generated.matches("if self.enabled").count(), IF_VIEWS);
+        eprintln!("4k normalized if views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized if views lowered and emitted in {elapsed:?}"
         );
     }
 

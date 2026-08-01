@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, and KeyedColumn therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, and If therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -356,6 +356,14 @@ that record and uses the source node only for the child template. Malformed IDs,
 post-check expression/static mutation, post-lowering AST poisoning, configured
 codegen, and an ignored 4,000-node lower+emit budget provide the executable
 evidence.
+
+If is a completed control-flow slice. Its checked flow owns a stable boolean
+condition expression. Lowering revalidates owner mapping, DAG, scope, type, and
+coercion before publishing `ResolvedConditional`. Normal-layout and flex-layout
+emission consume that record, while source nodes provide only child subtrees.
+Malformed expression IDs, post-check and post-lowering condition poisoning,
+existing layout codegen, and an ignored 4,000-node lower+emit budget provide the
+executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

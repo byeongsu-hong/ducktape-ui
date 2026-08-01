@@ -324,6 +324,12 @@ owner, scope, type, expression DAG, and static option topology before publishing
 template and does not reread keyed expressions, layout options, checked flow,
 or checked local facts.
 
+If is a completed control-flow HIR slice. Its boolean condition has a stable
+checked expression ID whose owner, scope, type, coercion, and expression DAG are
+validated before `ResolvedConditional` is published. Normal and flex layout
+generation consume that record and do not reread the source condition, checked
+flow, or checked facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
