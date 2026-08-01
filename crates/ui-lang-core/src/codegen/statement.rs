@@ -170,6 +170,9 @@ pub(in crate::codegen) fn generate_statements(
     state: &str,
     return_task: bool,
 ) -> Result<bool, Error> {
+    if statements.is_empty() {
+        return Ok(false);
+    }
     let mut local_env = ScopedBindingEnv::new(env);
     let env = &mut local_env;
     let mut has_task = false;
