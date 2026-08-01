@@ -359,6 +359,7 @@ cargo run -p browser-example
 cargo run -p markdown-example
 cargo run -p terminal-example
 cargo run -p showcase
+cargo run -p ice-starter
 ```
 
 `browser-example` demonstrates a native Chromium Embedded Framework child
@@ -387,6 +388,8 @@ clipboard bindings, scrolling, and live resize propagation. See the
 `music-example` recreates the core macOS Music flows with original cover
 art, a real-time liquid-glass player, and a local mock API for discovery,
 library browsing, search, sign-in, queueing, and playback controls.
+`ice-starter` is the minimal copyable build/include/test path; see
+[`examples/starter`](examples/starter).
 `showcase` exercises the default `ducktape-ui` component catalog through Ice.
 The library lives in [`crates/ui`](crates/ui), including its workspace-local
 Ice interface, default theme, and semantic recipes; the runnable app in

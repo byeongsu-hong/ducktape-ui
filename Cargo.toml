@@ -11,6 +11,7 @@ members = [
     "examples/iced-app",
     "examples/markdown-editor",
     "examples/showcase",
+    "examples/starter",
     "examples/terminal",
     "conformance/ice",
 ]
