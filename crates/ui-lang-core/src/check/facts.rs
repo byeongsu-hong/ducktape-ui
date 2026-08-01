@@ -42,6 +42,13 @@ pub(crate) struct CheckedValueId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedLocalId(u32);
 
+#[cfg(test)]
+impl CheckedLocalId {
+    pub(crate) fn invalid_for_test() -> Self {
+        Self(u32::MAX)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedBuiltinId(u32);
 

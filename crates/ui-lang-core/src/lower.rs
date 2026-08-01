@@ -1444,6 +1444,44 @@ impl LoweredProgram {
                     "handler identity diverged from its declaration",
                 ));
             }
+            let checked = self.facts.try_handler(handler.id).ok_or_else(|| {
+                self.invariant_at_origin(handler.origin, "handler has no checked HIR contract")
+            })?;
+            if checked.id != handler.id
+                || checked.origin != handler.origin
+                || checked.params.len() != handler.params.len()
+                || checked.param_names.len() != handler.params.len()
+                || checked.param_types.len() != handler.params.len()
+            {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler parameter cardinality or origin diverged from its checked contract",
+                ));
+            }
+            for (index, param) in handler.params.iter().enumerate() {
+                let local = self.facts.try_local(param.local).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        handler.origin,
+                        "handler parameter local ID is outside its arena",
+                    )
+                })?;
+                if checked.params[index] != param.local
+                    || checked.param_names[index] != param.name
+                    || checked.param_types[index] != param.ty
+                    || local.name != param.name
+                    || local.ty != param.ty
+                    || local.owner
+                        != (crate::check::CheckedLocalOwner::HandlerParam {
+                            handler: handler.id,
+                            index: index as u32,
+                        })
+                {
+                    return Err(self.invariant_at_origin(
+                        handler.origin,
+                        "handler parameter identity, type, or local owner diverged",
+                    ));
+                }
+            }
             for statement in &handler.statements {
                 visit(self, handler, statement, None)?;
             }
@@ -4996,6 +5034,13 @@ view
         let error = crate::codegen::generate(&invalid_route_operand, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("expression-use ID"));
+
+        let mut invalid_param = program();
+        invalid_param.handlers[1].params[0].local =
+            crate::check::CheckedLocalId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_param, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter local ID"));
     }
 
     #[test]
