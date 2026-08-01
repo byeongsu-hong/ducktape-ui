@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BACKDOORS: &[(&str, &str)] = &[
-    ("source AST dependency", "use crate::ast::*;"),
+    ("source AST dependency", "crate::ast::"),
     ("checked-document escape", "program.document()"),
     ("checker dependency", "crate::check"),
     ("checked-facts escape", "checked_facts()"),
