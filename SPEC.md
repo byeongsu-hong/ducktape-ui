@@ -200,7 +200,7 @@ contracts retain declaration order, palettes retain complete token-ordered RGBA
 tables, and app or nested theme selections retain resolved built-in/factory and
 static/dynamic palette choices. Lowering still resolves source component and
 recipe names. Expression-bearing native widget status blocks and other direct
-view/canvas color fields remain AST-backed as part of the expression/view
+non-Canvas view color fields remain AST-backed as part of the expression/view
 migration, so this slice does not claim that all style-related AST has gone.
 Each later slice must remove its prior backend path when it adds normalized
 nodes.
@@ -222,9 +222,8 @@ state or bind parameter. `if`, `for`, typed `match`, keyed, lazy, table, pane,
 responsive, and daemon-window scopes retain typed locals and resolved patterns
 or declaration IDs before Rust generation. Slot-presence expressions retain a
 component-slot ID. Their migrated emitters do not inspect raw expressions or
-repeat scope, match, binding, or slot resolution. Handler, task, canvas,
-settings, test, and expression-bearing widget-option families remain later
-vertical slices.
+repeat scope, match, binding, or slot resolution. Expression-bearing
+widget-option families remain later vertical slices.
 
 Application subscriptions are also a completed vertical HIR slice. Lowering
 converts every native, timer, event, stream, recipe, and extern-subscription
@@ -242,6 +241,18 @@ identity data, intrinsic/extern contracts, handler owners, and route payloads
 with source-mapped `E196`. The subscription backend consumes only resolved
 records and expression IDs; it performs no raw subscription, declaration, or
 extern-name lookup.
+
+Canvas is a completed vertical HIR slice. Each Canvas view owns stable state,
+command, event, route, and expression IDs. Lowering freezes options, dimensions,
+cache and pointer behavior; resolves state and lexical bindings; and exhaustively
+normalizes every draw command, path segment, transform, paint, font, theme color,
+event update, redraw action, and route. Dynamic operands use the shared checked
+expression arena, named types and theme tokens use declaration IDs, and event
+payload arguments retain their checked type and index. Static Canvas topology is
+frozen by semantic keys, so post-check structural changes fail with source-mapped
+`E196`. Rust emission consumes only `ResolvedCanvas` records and checked
+expression IDs; it does not inspect raw Canvas declarations, infer operand types,
+or recover fonts and theme-token positions from the source `Document`.
 
 The Rust adapter is one manifest-relative include:
 

@@ -1,14 +1,14 @@
 use super::*;
 
 pub(in crate::codegen) fn canvas_commands_code(
-    commands: &[CanvasCommand],
+    commands: &[ResolvedCanvasCommand],
     env: &dyn BindingEnvironment,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     let mut code = String::new();
     for command in commands {
         match command {
-            CanvasCommand::Rectangle {
+            ResolvedCanvasCommand::Rectangle {
                 x,
                 y,
                 width,
@@ -17,14 +17,14 @@ pub(in crate::codegen) fn canvas_commands_code(
                 paint,
                 ..
             } => {
-                let point = canvas_point_code(x, y, env, document)?;
-                let size = canvas_size_code(width, height, env, document)?;
+                let point = canvas_point_code(*x, *y, env, program)?;
+                let size = canvas_size_code(*width, *height, env, program)?;
                 if canvas_radius_is_empty(radius) {
                     if let Some(fill) = &paint.fill {
                         write!(
                             code,
                             " __frame.fill_rectangle({point}, {size}, {});",
-                            canvas_fill_code(fill, paint.fill_rule, env, document)?
+                            canvas_fill_code(fill, paint.fill_rule, env, program)?
                         )
                         .unwrap();
                     }
@@ -32,37 +32,37 @@ pub(in crate::codegen) fn canvas_commands_code(
                         write!(
                             code,
                             " __frame.stroke_rectangle({point}, {size}, {});",
-                            canvas_stroke_code(stroke, env, document)?
+                            canvas_stroke_code(stroke, env, program)?
                         )
                         .unwrap();
                     }
                 } else {
-                    let radius = canvas_radius_code(radius, env, document)?;
+                    let radius = canvas_radius_code(radius, env, program)?;
                     write!(
                         code,
                         " {{ let __path = ::iced::widget::canvas::Path::rounded_rectangle({point}, {size}, {radius}); {} }}",
-                        canvas_paint_code(paint, "&__path", env, document)?
+                        canvas_paint_code(paint, "&__path", env, program)?
                     )
                     .unwrap();
                 }
             }
-            CanvasCommand::Circle {
+            ResolvedCanvasCommand::Circle {
                 x,
                 y,
                 radius,
                 paint,
                 ..
             } => {
-                let point = canvas_point_code(x, y, env, document)?;
-                let radius = clamped_f32_code(radius, "0.0", "f32::MAX", env, document)?;
+                let point = canvas_point_code(*x, *y, env, program)?;
+                let radius = canvas_clamped_f32_code(*radius, "0.0", "f32::MAX", env, program)?;
                 write!(
                     code,
                     " {{ let __path = ::iced::widget::canvas::Path::circle({point}, {radius}); {} }}",
-                    canvas_paint_code(paint, "&__path", env, document)?
+                    canvas_paint_code(paint, "&__path", env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::Line {
+            ResolvedCanvasCommand::Line {
                 x1,
                 y1,
                 x2,
@@ -70,16 +70,16 @@ pub(in crate::codegen) fn canvas_commands_code(
                 stroke,
                 ..
             } => {
-                let from = canvas_point_code(x1, y1, env, document)?;
-                let to = canvas_point_code(x2, y2, env, document)?;
+                let from = canvas_point_code(*x1, *y1, env, program)?;
+                let to = canvas_point_code(*x2, *y2, env, program)?;
                 write!(
                     code,
                     " {{ let __path = ::iced::widget::canvas::Path::line({from}, {to}); __frame.stroke(&__path, {}); }}",
-                    canvas_stroke_code(stroke, env, document)?
+                    canvas_stroke_code(stroke, env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::Text {
+            ResolvedCanvasCommand::Text {
                 value,
                 x,
                 y,
@@ -91,45 +91,47 @@ pub(in crate::codegen) fn canvas_commands_code(
                 align_x,
                 align_y,
                 shaping,
-                span,
+                value_type,
+                ..
             } => {
-                let ty = expr_type(value, &env_types(env), document, span)?;
-                let value = expr_code(value, env, document, ValueMode::Owned)?;
-                let content = if ty == Type::Str {
+                let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let content = if *value_type == Type::Str {
                     value
                 } else {
                     format!("::std::format!(\"{{}}\", {value})")
                 };
-                let position = canvas_point_code(x, y, env, document)?;
+                let position = canvas_point_code(*x, *y, env, program)?;
                 let max_width = max_width
                     .as_ref()
-                    .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", env, document))
+                    .map(|value| canvas_clamped_f32_code(*value, "0.0", "f32::MAX", env, program))
                     .transpose()?
                     .unwrap_or_else(|| "f32::INFINITY".into());
-                let color = color.as_ref().map_or_else(
-                    || theme_color(document, "fg"),
-                    |color| theme_color(document, color),
-                );
+                let color = resolved_theme_color(color);
                 let size = size
                     .as_ref()
-                    .map(|value| clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document))
+                    .map(|value| {
+                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)
+                    })
                     .transpose()?
                     .unwrap_or_else(|| "16.0".into());
                 let line_height = match line_height {
-                    Some(TextLineHeight::Relative(value)) => format!(
+                    Some(ResolvedCanvasLineHeight::Relative(value)) => format!(
                         "::iced::widget::text::LineHeight::Relative({})",
-                        clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)?
+                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
                     ),
-                    Some(TextLineHeight::Absolute(value)) => format!(
+                    Some(ResolvedCanvasLineHeight::Absolute(value)) => format!(
                         "::iced::widget::text::LineHeight::Absolute(::iced::Pixels({}))",
-                        clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)?
+                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
                     ),
                     None => "::iced::widget::text::LineHeight::default()".into(),
                 };
                 let font = font
                     .as_ref()
-                    .map(|font| font_preset_code(font, document))
-                    .transpose()?
+                    .map(|font| match font {
+                        ResolvedCanvasFont::Default => "::iced::Font::DEFAULT".into(),
+                        ResolvedCanvasFont::Monospace => "::iced::Font::MONOSPACE".into(),
+                        ResolvedCanvasFont::Custom(font) => resolved_default_font_code(font),
+                    })
                     .unwrap_or_else(|| "::iced::Font::DEFAULT".into());
                 let align_x = align_x.map_or("Default", |value| text_alignment_code(value));
                 let align_y = match align_y {
@@ -144,7 +146,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 )
                 .unwrap();
             }
-            CanvasCommand::Image {
+            ResolvedCanvasCommand::Image {
                 source,
                 x,
                 y,
@@ -155,11 +157,11 @@ pub(in crate::codegen) fn canvas_commands_code(
                 opacity,
                 snap,
                 radius,
-                span,
+                source_type,
+                ..
             } => {
-                let source_ty = expr_type(source, &env_types(env), document, span)?;
-                let source = expr_code(source, env, document, ValueMode::Owned)?;
-                let handle = if source_ty == Type::Str {
+                let source = checked_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                let handle = if *source_type == Type::Str {
                     format!("::iced::widget::image::Handle::from_path({source})")
                 } else {
                     source
@@ -171,16 +173,16 @@ pub(in crate::codegen) fn canvas_commands_code(
                 write!(
                     code,
                     " __frame.draw_image(::iced::Rectangle::new({}, {}), ::iced::widget::canvas::Image {{ handle: {handle}, filter_method: ::iced::widget::image::FilterMethod::{filter}, rotation: ::iced::Radians({} as f32), border_radius: {}, opacity: {}, snap: {} }});",
-                    canvas_point_code(x, y, env, document)?,
-                    canvas_size_code(width, height, env, document)?,
-                    canvas_expr_code(rotation, env, document)?,
-                    canvas_radius_code(radius, env, document)?,
-                    clamped_f32_code(opacity, "0.0", "1.0", env, document)?,
-                    canvas_expr_code(snap, env, document)?
+                    canvas_point_code(*x, *y, env, program)?,
+                    canvas_size_code(*width, *height, env, program)?,
+                    canvas_expr_code(*rotation, env, program)?,
+                    canvas_radius_code(radius, env, program)?,
+                    canvas_clamped_f32_code(*opacity, "0.0", "1.0", env, program)?,
+                    canvas_expr_code(*snap, env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::Svg {
+            ResolvedCanvasCommand::Svg {
                 source,
                 memory,
                 x,
@@ -190,11 +192,11 @@ pub(in crate::codegen) fn canvas_commands_code(
                 color,
                 rotation,
                 opacity,
-                span,
+                source_type,
+                ..
             } => {
-                let source_ty = expr_type(source, &env_types(env), document, span)?;
-                let source = expr_code(source, env, document, ValueMode::Owned)?;
-                let handle = if *memory && source_ty == Type::Bytes {
+                let source = checked_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                let handle = if *memory && *source_type == Type::Bytes {
                     format!("::iced::advanced::svg::Handle::from_memory({source})")
                 } else if *memory {
                     format!("::iced::advanced::svg::Handle::from_memory(({source}).into_bytes())")
@@ -206,49 +208,49 @@ pub(in crate::codegen) fn canvas_commands_code(
                     |color| {
                         format!(
                             "::std::option::Option::Some({})",
-                            theme_color(document, color)
+                            resolved_theme_color(color)
                         )
                     },
                 );
                 write!(
                     code,
                     " __frame.draw_svg(::iced::Rectangle::new({}, {}), ::iced::advanced::svg::Svg {{ handle: {handle}, color: {color}, rotation: ::iced::Radians({} as f32), opacity: {} }});",
-                    canvas_point_code(x, y, env, document)?,
-                    canvas_size_code(width, height, env, document)?,
-                    canvas_expr_code(rotation, env, document)?,
-                    clamped_f32_code(opacity, "0.0", "1.0", env, document)?
+                    canvas_point_code(*x, *y, env, program)?,
+                    canvas_size_code(*width, *height, env, program)?,
+                    canvas_expr_code(*rotation, env, program)?,
+                    canvas_clamped_f32_code(*opacity, "0.0", "1.0", env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::Path {
+            ResolvedCanvasCommand::Path {
                 segments, paint, ..
             } => {
-                let path = canvas_path_code(segments, env, document)?;
+                let path = canvas_path_code(segments, env, program)?;
                 write!(
                     code,
                     " {{ let __path = {path}; {} }}",
-                    canvas_paint_code(paint, "&__path", env, document)?
+                    canvas_paint_code(paint, "&__path", env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::Group {
+            ResolvedCanvasCommand::Group {
                 transform,
                 commands,
                 ..
             } => {
-                let inner = canvas_commands_code(commands, env, document)?;
+                let inner = canvas_commands_code(commands, env, program)?;
                 let mut body = String::new();
                 if transform.x.is_some() || transform.y.is_some() {
                     let x = transform
                         .x
                         .as_ref()
-                        .map(|value| canvas_expr_code(value, env, document))
+                        .map(|value| canvas_expr_code(*value, env, program))
                         .transpose()?
                         .unwrap_or_else(|| "0.0".into());
                     let y = transform
                         .y
                         .as_ref()
-                        .map(|value| canvas_expr_code(value, env, document))
+                        .map(|value| canvas_expr_code(*value, env, program))
                         .transpose()?
                         .unwrap_or_else(|| "0.0".into());
                     write!(
@@ -261,7 +263,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     write!(
                         body,
                         " __frame.rotate({} as f32);",
-                        canvas_expr_code(value, env, document)?
+                        canvas_expr_code(*value, env, program)?
                     )
                     .unwrap();
                 }
@@ -269,7 +271,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     write!(
                         body,
                         " __frame.scale({});",
-                        clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)?
+                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
                     )
                     .unwrap();
                 }
@@ -278,7 +280,13 @@ pub(in crate::codegen) fn canvas_commands_code(
                         .scale_x
                         .as_ref()
                         .map(|value| {
-                            clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)
+                            canvas_clamped_f32_code(
+                                *value,
+                                "f32::EPSILON",
+                                "f32::MAX",
+                                env,
+                                program,
+                            )
                         })
                         .transpose()?
                         .unwrap_or_else(|| "1.0".into());
@@ -286,7 +294,13 @@ pub(in crate::codegen) fn canvas_commands_code(
                         .scale_y
                         .as_ref()
                         .map(|value| {
-                            clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)
+                            canvas_clamped_f32_code(
+                                *value,
+                                "f32::EPSILON",
+                                "f32::MAX",
+                                env,
+                                program,
+                            )
                         })
                         .transpose()?
                         .unwrap_or_else(|| "1.0".into());
@@ -297,8 +311,8 @@ pub(in crate::codegen) fn canvas_commands_code(
                     .unwrap();
                 }
                 if let Some([x, y, width, height]) = &transform.clip {
-                    let point = canvas_point_code(x, y, env, document)?;
-                    let size = canvas_size_code(width, height, env, document)?;
+                    let point = canvas_point_code(*x, *y, env, program)?;
+                    let size = canvas_size_code(*width, *height, env, program)?;
                     write!(
                         body,
                         " __frame.with_clip(::iced::Rectangle {{ x: {point}.x, y: {point}.y, width: {size}.width, height: {size}.height }}, |__frame| {{ {inner} }});"
@@ -309,44 +323,42 @@ pub(in crate::codegen) fn canvas_commands_code(
                 }
                 write!(code, " __frame.with_save(|__frame| {{ {body} }});").unwrap();
             }
-            CanvasCommand::If {
+            ResolvedCanvasCommand::If {
                 condition,
                 commands,
                 ..
             } => {
-                let condition = expr_code(condition, env, document, ValueMode::Owned)?;
+                let condition = checked_expr_use_code(program, *condition, env, ValueMode::Owned)?;
                 write!(
                     code,
                     " if {condition} {{ {} }}",
-                    canvas_commands_code(commands, env, document)?
+                    canvas_commands_code(commands, env, program)?
                 )
                 .unwrap();
             }
-            CanvasCommand::For {
+            ResolvedCanvasCommand::For {
                 item,
                 items,
                 commands,
-                span,
+                ..
             } => {
-                let Type::List(inner) = expr_type(items, &env_types(env), document, span)? else {
-                    return Err(Error::new("E190", span, "canvas for expects a list"));
-                };
-                let items = expr_code(items, env, document, ValueMode::Borrowed)?;
+                let items = checked_expr_use_code(program, *items, env, ValueMode::Borrowed)?;
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
-                    item.clone(),
+                    item.name.clone(),
                     Binding {
-                        code: item.clone(),
-                        ty: *inner,
+                        code: item.name.clone(),
+                        ty: item.ty.clone(),
                         local: false,
                         state: None,
-                        owner: None,
+                        owner: Some(BindingOwner::Local(item.local)),
                     },
                 );
                 write!(
                     code,
-                    " for {item} in {items}.iter() {{ {} }}",
-                    canvas_commands_code(commands, &child_env, document)?
+                    " for {} in {items}.iter() {{ {} }}",
+                    item.name,
+                    canvas_commands_code(commands, &child_env, program)?
                 )
                 .unwrap();
             }

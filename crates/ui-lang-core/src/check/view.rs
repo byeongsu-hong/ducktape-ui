@@ -108,6 +108,28 @@ pub(super) fn record_view_env_full_clone() {
     });
 }
 
+pub(super) fn retain_canvas_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "canvas analysis session has no active view analysis",
+            )
+        })?;
+        let canvas = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "canvas has no shared view ID"))?;
+        active.analyses.retain_canvas(canvas, analyses)
+    })
+}
+
 impl Drop for ViewAnalysisGuard {
     fn drop(&mut self) {
         if self.active {

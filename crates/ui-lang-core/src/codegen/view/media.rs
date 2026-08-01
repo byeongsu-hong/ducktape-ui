@@ -375,13 +375,11 @@ pub(in crate::codegen) fn render_media(
             }
             Ok(format!("{code}.into() }}"))
         }
-        ViewNode::Canvas {
-            options,
-            locals,
-            commands,
-            events,
-            ..
-        } => render_canvas(options, locals, commands, events, document, message, env),
+        ViewNode::Canvas { .. } => {
+            let hir = document.hir();
+            let resolved = hir.resolved_canvas_for(node)?;
+            render_canvas(resolved, hir, message, env)
+        }
         _ => return Ok(None),
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;

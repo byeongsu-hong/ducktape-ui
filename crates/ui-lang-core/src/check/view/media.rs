@@ -307,6 +307,7 @@ pub(in crate::check) fn infer_media_group(
             events,
             span,
         } => {
+            let canvas_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "canvas size")?;
@@ -570,6 +571,7 @@ pub(in crate::check) fn infer_media_group(
                     infer_route(route, None, &event_env, document, signatures)?;
                 }
             }
+            retain_canvas_analyses(span, canvas_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

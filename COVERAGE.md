@@ -393,7 +393,7 @@ text/background colors and gradient stops carry token IDs and optional opacity.
 Structured tests cover dynamic palettes, app and nested factories, ordered
 alpha palettes, token opacity, gradients, invalid post-check mutations, and
 namespaced factory/recipe physical origins. Direct expression-bearing native
-widget style blocks and other view/canvas color fields remain in the later
+widget style blocks and other non-Canvas view color fields remain in the later
 expression/view HIR slice; their presence is not counted as a completed
 AST-free style migration.
 
@@ -428,8 +428,7 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
-Canvas locals and expression-bearing widget options remain outside
-this slice.
+Expression-bearing widget options remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -492,8 +491,22 @@ handler injection, wrong-role/cycle/wrong-kind/same-signature identity swap,
 invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
-Canvas locals and remaining expression-bearing widget options remain
-open HIR slices.
+Remaining expression-bearing widget options remain open HIR slices.
+
+Canvas has a complete private HIR boundary. Stable Canvas-local, command,
+event, route, and expression IDs retain state initializers, built-in dimensions,
+all command and path operands, lexical `for` bindings, event payload bindings,
+state updates, redraw actions, and direct/component routes. Options and every
+static command/event contract have semantic keys; complete arena consumption,
+owner scope, checked expression DAGs, payload indices and types, named type IDs,
+fonts, theme-token IDs, and source origins are revalidated during lowering.
+The five Canvas emitters consume only `ResolvedCanvas` records and checked
+expression IDs. They do not read raw Canvas options, commands, events, paths,
+expressions, or source theme/font declarations, and they perform no type
+re-analysis. Structural snapshots, malformed-ID handling, post-check static
+mutation, post-lowering raw-AST poisoning, and existing interaction/IME/path
+generation tests cover the boundary. An ignored 4,000-command lower+emit
+contract completes in under two seconds in a debug test build.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

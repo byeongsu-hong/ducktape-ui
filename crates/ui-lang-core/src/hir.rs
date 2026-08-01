@@ -54,6 +54,36 @@ pub(crate) struct TestStepId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CanvasLocalId {
+    pub(crate) canvas: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CanvasCommandId {
+    pub(crate) canvas: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CanvasEventId {
+    pub(crate) canvas: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CanvasRouteId {
+    pub(crate) canvas: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CanvasExpressionId {
+    pub(crate) canvas: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NamedTypeId {
     Struct(StructId),
     Enum(EnumId),
@@ -238,9 +268,18 @@ impl OriginArena {
 #[derive(Clone, Debug)]
 struct ComponentDeclarations {
     declaration: Declaration<ComponentId>,
+    output: Type,
     params: Vec<Declaration<ComponentParamId>>,
+    events: Vec<ComponentEventDeclaration>,
     slots: Vec<Declaration<ComponentSlotId>>,
     states: Vec<Declaration<ComponentStateId>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ComponentEventDeclaration {
+    pub(crate) declaration: Declaration<ComponentEventId>,
+    pub(crate) name: String,
+    pub(crate) payloads: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -264,6 +303,35 @@ pub(crate) struct TestStepDeclaration {
     pub(crate) declaration: Declaration<TestStepId>,
     pub(crate) semantic_key: String,
     pub(crate) source: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasDeclaration {
+    pub(crate) declaration: Declaration<ViewId>,
+    pub(crate) options_semantic_key: String,
+    pub(crate) locals: Vec<CanvasLocalDeclaration>,
+    pub(crate) commands: Vec<CanvasCommandDeclaration>,
+    pub(crate) events: Vec<CanvasEventDeclaration>,
+    pub(crate) routes: Vec<Declaration<CanvasRouteId>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasCommandDeclaration {
+    pub(crate) declaration: Declaration<CanvasCommandId>,
+    pub(crate) semantic_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasEventDeclaration {
+    pub(crate) declaration: Declaration<CanvasEventId>,
+    pub(crate) semantic_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasLocalDeclaration {
+    pub(crate) declaration: Declaration<CanvasLocalId>,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -295,6 +363,7 @@ pub(crate) struct DeclarationIndex {
     extern_name_lookups: TestLookupCount,
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
+    canvases: HashMap<ViewId, CanvasDeclaration>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
     handlers: Vec<HandlerDeclaration>,
     handlers_by_owner_name: HashMap<(HandlerOwner, String), HandlerId>,
@@ -409,6 +478,22 @@ impl DeclarationIndex {
                         origin: origins.push(span, Some(origin)),
                     })
                     .collect();
+                let events = component
+                    .events
+                    .iter()
+                    .enumerate()
+                    .map(|(index, event)| ComponentEventDeclaration {
+                        declaration: Declaration {
+                            id: ComponentEventId {
+                                component: id,
+                                index: index as u32,
+                            },
+                            origin: origins.push(&event.span, Some(origin)),
+                        },
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                    })
+                    .collect();
                 let states = component
                     .states
                     .iter()
@@ -423,7 +508,9 @@ impl DeclarationIndex {
                     .collect();
                 ComponentDeclarations {
                     declaration: Declaration { id, origin },
+                    output: component.output.clone(),
                     params,
+                    events,
                     slots,
                     states,
                 }
@@ -642,6 +729,7 @@ impl DeclarationIndex {
 
         let mut views = Vec::new();
         let mut views_by_site = HashMap::new();
+        let mut canvases = HashMap::new();
         let mut component_calls_by_view = HashMap::new();
         for (index, component) in document.components.iter().enumerate() {
             index_view_declarations(
@@ -650,6 +738,7 @@ impl DeclarationIndex {
                 origins,
                 &mut views,
                 &mut views_by_site,
+                &mut canvases,
                 &mut component_calls_by_view,
             );
         }
@@ -659,6 +748,7 @@ impl DeclarationIndex {
             origins,
             &mut views,
             &mut views_by_site,
+            &mut canvases,
             &mut component_calls_by_view,
         );
         for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
@@ -668,6 +758,7 @@ impl DeclarationIndex {
                 origins,
                 &mut views,
                 &mut views_by_site,
+                &mut canvases,
                 &mut component_calls_by_view,
             );
         }
@@ -809,6 +900,7 @@ impl DeclarationIndex {
             tests,
             views,
             views_by_site,
+            canvases,
             component_calls_by_view,
             handlers,
             handlers_by_owner_name,
@@ -911,6 +1003,10 @@ impl DeclarationIndex {
         self.components_by_name.get(name).copied()
     }
 
+    pub(crate) fn component_output(&self, id: ComponentId) -> Option<&Type> {
+        self.components.get(id.0 as usize).map(|item| &item.output)
+    }
+
     pub(crate) fn component_param(
         &self,
         component: ComponentId,
@@ -929,6 +1025,29 @@ impl DeclarationIndex {
             .get(id.index as usize)
             .copied()
             .filter(|declaration| declaration.id == id)
+    }
+
+    pub(crate) fn component_event(
+        &self,
+        id: ComponentEventId,
+    ) -> Option<&ComponentEventDeclaration> {
+        self.components
+            .get(id.component.0 as usize)?
+            .events
+            .get(id.index as usize)
+            .filter(|declaration| declaration.declaration.id == id)
+    }
+
+    pub(crate) fn component_event_by_name(
+        &self,
+        component: ComponentId,
+        name: &str,
+    ) -> Option<&ComponentEventDeclaration> {
+        self.components
+            .get(component.0 as usize)?
+            .events
+            .iter()
+            .find(|event| event.name == name)
     }
 
     pub(crate) fn component_state(
@@ -982,6 +1101,28 @@ impl DeclarationIndex {
                 column: span.column,
             })
             .copied()
+    }
+
+    pub(crate) fn canvas(&self, id: ViewId) -> Option<&CanvasDeclaration> {
+        self.canvases
+            .get(&id)
+            .filter(|declaration| declaration.declaration.id == id)
+    }
+
+    pub(crate) fn canvas_event(&self, id: CanvasEventId) -> Option<Declaration<CanvasEventId>> {
+        self.canvas(id.canvas)?
+            .events
+            .get(id.index as usize)
+            .map(|declaration| declaration.declaration)
+            .filter(|declaration| declaration.id == id)
+    }
+
+    pub(crate) fn canvas_route(&self, id: CanvasRouteId) -> Option<Declaration<CanvasRouteId>> {
+        self.canvas(id.canvas)?
+            .routes
+            .get(id.index as usize)
+            .copied()
+            .filter(|declaration| declaration.id == id)
     }
 
     pub(crate) fn component_call_id(&self, view: ViewId) -> Option<ComponentCallId> {
@@ -1536,6 +1677,7 @@ fn index_view_declarations(
     origins: &mut OriginArena,
     views: &mut Vec<Declaration<ViewId>>,
     views_by_site: &mut HashMap<SourceSite, ViewId>,
+    canvases: &mut HashMap<ViewId, CanvasDeclaration>,
     component_calls_by_view: &mut HashMap<ViewId, ComponentCallId>,
 ) {
     let id = ViewId(views.len() as u32);
@@ -1552,6 +1694,81 @@ fn index_view_declarations(
         let call = ComponentCallId(component_calls_by_view.len() as u32);
         component_calls_by_view.insert(id, call);
     }
+    if let ViewNode::Canvas {
+        options,
+        locals,
+        commands,
+        events,
+        ..
+    } = node
+    {
+        let local_declarations = locals
+            .iter()
+            .enumerate()
+            .map(|(index, local)| CanvasLocalDeclaration {
+                declaration: Declaration {
+                    id: CanvasLocalId {
+                        canvas: id,
+                        index: index as u32,
+                    },
+                    origin: origins.push(&local.span, Some(origin)),
+                },
+                name: local.name.clone(),
+                ty: local.ty.clone(),
+            })
+            .collect();
+        let command_declarations = crate::ast::canvas_command_spans(commands)
+            .into_iter()
+            .zip(crate::ast::canvas_command_semantic_keys(commands))
+            .enumerate()
+            .map(|(index, (span, semantic_key))| CanvasCommandDeclaration {
+                declaration: Declaration {
+                    id: CanvasCommandId {
+                        canvas: id,
+                        index: index as u32,
+                    },
+                    origin: origins.push(span, Some(origin)),
+                },
+                semantic_key,
+            })
+            .collect();
+        let event_declarations = events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| CanvasEventDeclaration {
+                declaration: Declaration {
+                    id: CanvasEventId {
+                        canvas: id,
+                        index: index as u32,
+                    },
+                    origin: origins.push(&event.span, Some(origin)),
+                },
+                semantic_key: crate::ast::canvas_event_semantic_key(event),
+            })
+            .collect();
+        let route_declarations = crate::ast::canvas_routes(options, events)
+            .into_iter()
+            .enumerate()
+            .map(|(index, route)| Declaration {
+                id: CanvasRouteId {
+                    canvas: id,
+                    index: index as u32,
+                },
+                origin: origins.push(&route.span, Some(origin)),
+            })
+            .collect();
+        canvases.insert(
+            id,
+            CanvasDeclaration {
+                declaration: Declaration { id, origin },
+                options_semantic_key: crate::ast::canvas_options_semantic_key(options),
+                locals: local_declarations,
+                commands: command_declarations,
+                events: event_declarations,
+                routes: route_declarations,
+            },
+        );
+    }
     for child in view_children(node) {
         index_view_declarations(
             child,
@@ -1559,6 +1776,7 @@ fn index_view_declarations(
             origins,
             views,
             views_by_site,
+            canvases,
             component_calls_by_view,
         );
     }

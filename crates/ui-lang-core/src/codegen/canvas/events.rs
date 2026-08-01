@@ -1,18 +1,18 @@
 use super::*;
 
 pub(in crate::codegen) fn canvas_update_code(
-    options: &CanvasOptions,
-    events: &[CanvasEvent],
+    options: &ResolvedCanvasOptions,
+    events: &[ResolvedCanvasEvent],
     env: &dyn BindingEnvironment,
     canvas_env: &dyn BindingEnvironment,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
     use_cache: bool,
 ) -> Result<String, Error> {
     let capture = options
         .capture
         .as_ref()
-        .map(|value| expr_code(value, env, document, ValueMode::Owned))
+        .map(|value| checked_expr_use_code(program, *value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let action = |message: String, capture: &str| {
@@ -26,7 +26,7 @@ pub(in crate::codegen) fn canvas_update_code(
     if options.enter.is_some() || options.exit.is_some() {
         code.push_str(" let __inside = __cursor.is_over(__bounds); if __inside != __state.inside { __state.inside = __inside;");
         if let Some(route) = &options.enter {
-            let route = route_code(route, "", env, document, message)?;
+            let route = resolved_canvas_route_code(route, &[], env, program, message)?;
             write!(
                 code,
                 " if __inside {{ return {}; }}",
@@ -35,7 +35,7 @@ pub(in crate::codegen) fn canvas_update_code(
             .unwrap();
         }
         if let Some(route) = &options.exit {
-            let route = route_code(route, "", env, document, message)?;
+            let route = resolved_canvas_route_code(route, &[], env, program, message)?;
             write!(
                 code,
                 " if !__inside {{ return {}; }}",
@@ -84,22 +84,22 @@ pub(in crate::codegen) fn canvas_update_code(
             ),
         ] {
             if let Some(route) = route {
-                let route = ordered_route_code(
+                let route = resolved_canvas_route_code(
                     route,
                     &["__point.x as f64", "__point.y as f64"],
                     env,
-                    document,
+                    program,
                     message,
                 )?;
                 write!(code, " {event} => return {},", action(route, "__capture")).unwrap();
             }
         }
         if let Some(route) = &options.move_route {
-            let route = ordered_route_code(
+            let route = resolved_canvas_route_code(
                 route,
                 &["__point.x as f64", "__point.y as f64"],
                 env,
-                document,
+                program,
                 message,
             )?;
             write!(
@@ -110,18 +110,18 @@ pub(in crate::codegen) fn canvas_update_code(
             .unwrap();
         }
         if let Some(route) = &options.scroll {
-            let lines = ordered_route_code(
+            let lines = resolved_canvas_route_code(
                 route,
                 &["__x as f64", "__y as f64", "false"],
                 env,
-                document,
+                program,
                 message,
             )?;
-            let pixels = ordered_route_code(
+            let pixels = resolved_canvas_route_code(
                 route,
                 &["__x as f64", "__y as f64", "true"],
                 env,
-                document,
+                program,
                 message,
             )?;
             write!(
@@ -144,21 +144,25 @@ pub(in crate::codegen) fn canvas_update_code(
         )
         .then_some("__cursor.is_over(__bounds) && ")
         .unwrap_or_default();
-        let payloads = canvas_event_payload_types(&event.source);
         let mut event_env = ScopedBindingEnv::new(canvas_env);
-        for (binding, ty) in event.bindings.iter().zip(payloads) {
+        for binding in &event.bindings {
             event_env.insert(
-                binding.clone(),
+                binding.name.clone(),
                 Binding {
-                    code: binding.clone(),
-                    ty,
+                    code: binding.name.clone(),
+                    ty: binding.ty.clone(),
                     local: false,
                     state: None,
-                    owner: None,
+                    owner: Some(BindingOwner::Local(binding.local)),
                 },
             );
         }
-        let bindings = match event.bindings.as_slice() {
+        let binding_names = event
+            .bindings
+            .iter()
+            .map(|binding| binding.name.as_str())
+            .collect::<Vec<_>>();
+        let bindings = match binding_names.as_slice() {
             [] => String::new(),
             [binding] => format!("let {binding} = __value;"),
             bindings => format!("let ({}) = __value;", bindings.join(", ")),
@@ -166,7 +170,7 @@ pub(in crate::codegen) fn canvas_update_code(
         let consumed_bindings = event
             .bindings
             .iter()
-            .map(|binding| format!("let _ = &{binding};"))
+            .map(|binding| format!("let _ = &{};", binding.name))
             .collect::<String>();
         let mut updates = event
             .updates
@@ -175,7 +179,7 @@ pub(in crate::codegen) fn canvas_update_code(
             .map(|(index, update)| {
                 Ok(format!(
                     "let __next_canvas_state_{index} = {}; __state.{} = __next_canvas_state_{index};",
-                    expr_code(&update.value, &event_env, document, ValueMode::Owned)?,
+                    checked_expr_use_code(program, update.value, &event_env, ValueMode::Owned)?,
                     update.name,
                 ))
             })
@@ -188,15 +192,15 @@ pub(in crate::codegen) fn canvas_update_code(
         }
         let event_capture = if event.capture { "true" } else { "__capture" };
         let result = match &event.action {
-            Some(CanvasEventAction::Route(route)) => {
+            Some(ResolvedCanvasEventAction::Route(route)) => {
                 let route = if event.route_payload {
-                    canvas_event_route_code(&event.source, route, env, document, message)?
+                    canvas_event_route_code(&event.source, route, env, program, message)?
                 } else {
-                    route_code(route, "", &event_env, document, message)?
+                    resolved_canvas_route_code(route, &[], &event_env, program, message)?
                 };
                 action(route, event_capture)
             }
-            Some(CanvasEventAction::Redraw { after_ms }) => {
+            Some(ResolvedCanvasEventAction::Redraw { after_ms }) => {
                 let redraw = after_ms.map_or_else(
                     || "::iced::widget::canvas::Action::request_redraw()".into(),
                     |milliseconds| {
@@ -271,116 +275,164 @@ pub(in crate::codegen) fn canvas_event_filter(source: &SubscriptionSource) -> St
     }
 }
 
-pub(in crate::codegen) fn canvas_event_payload_types(source: &SubscriptionSource) -> Vec<Type> {
-    match source {
-        SubscriptionSource::InputMethod(event) => match event {
-            InputMethodEvent::Opened | InputMethodEvent::Closed => Vec::new(),
-            InputMethodEvent::Preedit => vec![
-                Type::Str,
-                Type::Option(Box::new(Type::I64)),
-                Type::Option(Box::new(Type::I64)),
-            ],
-            InputMethodEvent::Commit => vec![Type::Str],
-        },
-        SubscriptionSource::Keyboard(event) => vec![match event {
-            KeyboardEvent::Press => Type::KeyPress,
-            KeyboardEvent::Release => Type::KeyRelease,
-            KeyboardEvent::Modifiers => Type::KeyModifiers,
-        }],
-        SubscriptionSource::Mouse(event) => match event {
-            MouseEvent::Entered | MouseEvent::Left => Vec::new(),
-            MouseEvent::Moved => vec![Type::F64, Type::F64],
-            MouseEvent::Pressed | MouseEvent::Released => vec![Type::MouseButton],
-            MouseEvent::Wheel => vec![Type::F64, Type::F64, Type::Bool],
-        },
-        SubscriptionSource::Touch(_) => vec![Type::TouchFinger, Type::F64, Type::F64],
-        SubscriptionSource::Window(event) => match event {
-            WindowEvent::Frame
-            | WindowEvent::Closed
-            | WindowEvent::CloseRequested
-            | WindowEvent::Focused
-            | WindowEvent::Unfocused
-            | WindowEvent::FilesHoveredLeft => Vec::new(),
-            WindowEvent::Opened => vec![
-                Type::Option(Box::new(Type::F64)),
-                Type::Option(Box::new(Type::F64)),
-                Type::F64,
-                Type::F64,
-            ],
-            WindowEvent::Moved | WindowEvent::Resized => vec![Type::F64, Type::F64],
-            WindowEvent::Rescaled => vec![Type::F64],
-            WindowEvent::FileHovered | WindowEvent::FileDropped => vec![Type::Str],
-        },
-        _ => unreachable!("parser rejects non-event canvas sources"),
-    }
-}
-
 pub(in crate::codegen) fn canvas_event_route_code(
     source: &SubscriptionSource,
-    route: &Route,
+    route: &ResolvedCanvasRoute,
     env: &dyn BindingEnvironment,
-    document: &Document,
+    program: &LoweredProgram,
     message: &str,
 ) -> Result<String, Error> {
     match source {
         SubscriptionSource::InputMethod(event) => match event {
             InputMethodEvent::Opened | InputMethodEvent::Closed => {
-                route_code(route, "", env, document, message)
+                resolved_canvas_route_code(route, &[], env, program, message)
             }
-            InputMethodEvent::Preedit => ordered_route_code(
+            InputMethodEvent::Preedit => resolved_canvas_route_code(
                 route,
                 &["__value.0", "__value.1", "__value.2"],
                 env,
-                document,
+                program,
                 message,
             ),
-            InputMethodEvent::Commit => route_code(route, "__value", env, document, message),
+            InputMethodEvent::Commit => {
+                resolved_canvas_route_code(route, &["__value"], env, program, message)
+            }
         },
-        SubscriptionSource::Keyboard(_) => route_code(route, "__value", env, document, message),
+        SubscriptionSource::Keyboard(_) => {
+            resolved_canvas_route_code(route, &["__value"], env, program, message)
+        }
         SubscriptionSource::Mouse(event) => match event {
-            MouseEvent::Entered | MouseEvent::Left => route_code(route, "", env, document, message),
-            MouseEvent::Moved => {
-                ordered_route_code(route, &["__value.0", "__value.1"], env, document, message)
+            MouseEvent::Entered | MouseEvent::Left => {
+                resolved_canvas_route_code(route, &[], env, program, message)
             }
+            MouseEvent::Moved => resolved_canvas_route_code(
+                route,
+                &["__value.0", "__value.1"],
+                env,
+                program,
+                message,
+            ),
             MouseEvent::Pressed | MouseEvent::Released => {
-                route_code(route, "__value", env, document, message)
+                resolved_canvas_route_code(route, &["__value"], env, program, message)
             }
-            MouseEvent::Wheel => ordered_route_code(
+            MouseEvent::Wheel => resolved_canvas_route_code(
                 route,
                 &["__value.0", "__value.1", "__value.2"],
                 env,
-                document,
+                program,
                 message,
             ),
         },
-        SubscriptionSource::Touch(_) => ordered_route_code(
+        SubscriptionSource::Touch(_) => resolved_canvas_route_code(
             route,
             &["__value.0", "__value.1", "__value.2"],
             env,
-            document,
+            program,
             message,
         ),
         SubscriptionSource::Window(event) => match event {
-            WindowEvent::Opened => ordered_route_code(
+            WindowEvent::Opened => resolved_canvas_route_code(
                 route,
                 &["__value.0", "__value.1", "__value.2", "__value.3"],
                 env,
-                document,
+                program,
                 message,
             ),
-            WindowEvent::Moved | WindowEvent::Resized => {
-                ordered_route_code(route, &["__value.0", "__value.1"], env, document, message)
-            }
+            WindowEvent::Moved | WindowEvent::Resized => resolved_canvas_route_code(
+                route,
+                &["__value.0", "__value.1"],
+                env,
+                program,
+                message,
+            ),
             WindowEvent::Rescaled | WindowEvent::FileHovered | WindowEvent::FileDropped => {
-                route_code(route, "__value", env, document, message)
+                resolved_canvas_route_code(route, &["__value"], env, program, message)
             }
             WindowEvent::Frame
             | WindowEvent::Closed
             | WindowEvent::CloseRequested
             | WindowEvent::Focused
             | WindowEvent::Unfocused
-            | WindowEvent::FilesHoveredLeft => route_code(route, "", env, document, message),
+            | WindowEvent::FilesHoveredLeft => {
+                resolved_canvas_route_code(route, &[], env, program, message)
+            }
         },
         _ => unreachable!("parser rejects non-event canvas sources"),
+    }
+}
+
+fn resolved_canvas_route_code(
+    route: &ResolvedCanvasRoute,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    let invariant = |message| program.invariant_at_origin(route.origin, message);
+    let mut args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            ResolvedCanvasRouteArg::Expression(expression) => {
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+            }
+            ResolvedCanvasRouteArg::Payload { index, .. } => payloads
+                .get(*index as usize)
+                .map(|payload| (*payload).to_owned())
+                .ok_or_else(|| invariant("canvas route payload index is outside its contract")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match &route.target {
+        ResolvedCanvasRouteTarget::Handler(handler) => {
+            let target = program.try_handler(*handler).ok_or_else(|| {
+                invariant("canvas route references an invalid normalized handler")
+            })?;
+            let variant = match target.owner {
+                HandlerOwner::App => handler_variant(&target.name),
+                HandlerOwner::Component(component) => {
+                    let contract = program.try_component(component).ok_or_else(|| {
+                        invariant("canvas route component handler has no component contract")
+                    })?;
+                    let (active, context) = component_context(env).ok_or_else(|| {
+                        invariant("canvas component route has no component context")
+                    })?;
+                    if active != contract.name {
+                        return Err(invariant("canvas component route context diverged"));
+                    }
+                    args.insert(0, format!("({}).clone()", context.code));
+                    component_handler_variant(&contract.name, &target.name)
+                }
+                HandlerOwner::Preset(_) => {
+                    return Err(invariant("canvas route cannot target a preset handler"));
+                }
+            };
+            if args.is_empty() {
+                Ok(format!("{message}::{variant}"))
+            } else {
+                Ok(format!("{message}::{variant}({})", args.join(", ")))
+            }
+        }
+        ResolvedCanvasRouteTarget::ComponentOutput { component, .. } => {
+            let output = component_output(env)
+                .ok_or_else(|| invariant("canvas component output route has no output callback"))?;
+            if program.try_component(*component).is_none() || args.len() != 1 {
+                return Err(invariant("canvas component output route contract diverged"));
+            }
+            Ok(format!("({})({})", output.code, args[0]))
+        }
+        ResolvedCanvasRouteTarget::ComponentEvent {
+            event: _,
+            name,
+            payloads: expected,
+        } => {
+            let (component, _) = component_context(env)
+                .ok_or_else(|| invariant("canvas named event route has no component context"))?;
+            let callback = component_event(env, component, name)
+                .ok_or_else(|| invariant("canvas named event route has no normalized callback"))?;
+            if args.len() != expected.len() {
+                return Err(invariant("canvas named event route arity diverged"));
+            }
+            Ok(format!("({})({})", callback.code, args.join(", ")))
+        }
     }
 }

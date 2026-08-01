@@ -799,6 +799,10 @@ impl<'a> RenderDocument<'a> {
     pub(in crate::codegen) fn program(&self) -> &'a LoweredProgram {
         self.program
     }
+
+    pub(in crate::codegen) fn hir(&self) -> &'a LoweredProgram {
+        self.program
+    }
 }
 
 impl Deref for RenderDocument<'_> {

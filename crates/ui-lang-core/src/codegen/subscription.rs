@@ -374,7 +374,7 @@ pub(in crate::codegen) fn generate_subscription(
     Ok(())
 }
 
-fn resolved_type_code(
+pub(in crate::codegen) fn resolved_type_code(
     program: &LoweredProgram,
     ty: &ResolvedType,
     span: &Span,

@@ -1,9 +1,10 @@
 use crate::ast::*;
 use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
-    CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner, CheckedPathRoot,
-    CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef, ContextualBuiltin,
+    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
+    CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
+    CheckedLocalId, CheckedLocalOwner, CheckedPathRoot, CheckedProjectionKind,
+    CheckedUnaryOperator, CheckedValueRef, CheckedViewScope, ContextualBuiltin,
     canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
@@ -11,17 +12,22 @@ pub(crate) use crate::check::{
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
-    AppSettingExprId, AppSettingsId, AppStateId, ComponentCallId, ComponentEventId, ComponentId,
-    ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
-    HandlerId, HandlerOwner, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId,
-    RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
+    AppSettingExprId, AppSettingsId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
+    CanvasExpressionId, CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId,
+    ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
+    ExternRef, HandlerId, HandlerOwner, NamedTypeId, NamedWindowId, OriginArena, OriginId,
+    PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
+    TestTargetId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod canvas;
 mod style;
 mod testing;
+
+pub(crate) use canvas::*;
 
 pub(crate) use style::*;
 
@@ -1420,6 +1426,7 @@ pub(crate) struct LoweredProgram {
     settings: ResolvedAppSettings,
     subscriptions: Vec<ResolvedSubscription>,
     tests: Vec<ResolvedTest>,
+    canvases: HashMap<ViewId, ResolvedCanvas>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -2952,6 +2959,37 @@ impl LoweredProgram {
         &self.tests
     }
 
+    #[cfg(test)]
+    pub(crate) fn canvas(&self, id: ViewId) -> Option<&ResolvedCanvas> {
+        self.canvases.get(&id)
+    }
+
+    pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "canvas reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "canvas reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.canvases.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "canvas reached code generation without normalized HIR",
+            )
+        })
+    }
+
     pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
         self.test_mounts.get(&id)
     }
@@ -3176,6 +3214,7 @@ pub(crate) struct Lowerer {
     handlers: Vec<ResolvedHandler>,
     app_handlers: Vec<HandlerId>,
     preset_handlers: Vec<HandlerId>,
+    canvases: HashMap<ViewId, ResolvedCanvas>,
 }
 
 #[derive(Default)]
@@ -3340,10 +3379,15 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
                     "app setting expression binding belongs to another expression use",
                 ));
             }
-            CheckedLocalOwner::View { .. } => {
+            CheckedLocalOwner::View { .. }
+            | CheckedLocalOwner::CanvasState(_)
+            | CheckedLocalOwner::CanvasWidth(_)
+            | CheckedLocalOwner::CanvasHeight(_)
+            | CheckedLocalOwner::CanvasCommandItem(_)
+            | CheckedLocalOwner::CanvasEventBinding { .. } => {
                 return Err(self.lowerer.invariant(
                     self.span,
-                    "app setting expression cannot reference a view local",
+                    "app setting expression cannot reference a view local, including canvas locals",
                 ));
             }
             CheckedLocalOwner::TestTarget(_) => {
@@ -3718,6 +3762,7 @@ impl Lowerer {
             handlers: Vec::new(),
             app_handlers: Vec::new(),
             preset_handlers: Vec::new(),
+            canvases: HashMap::new(),
         }
     }
 
@@ -3790,6 +3835,7 @@ impl Lowerer {
             settings,
             subscriptions,
             tests,
+            canvases: self.canvases,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -5712,11 +5758,7 @@ impl Lowerer {
                 })?)
             }
             Type::Unknown => {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked subscription type remained unknown",
-                ));
+                return Err(Error::new("E196", span, "checked type remained unknown"));
             }
             ty => ResolvedType::Value(ty.clone()),
         })
@@ -5865,14 +5907,21 @@ impl Lowerer {
                 .events
                 .iter()
                 .enumerate()
-                .map(|(index, event)| ComponentEventContract {
-                    id: ComponentEventId {
+                .map(|(index, event)| {
+                    let event_id = ComponentEventId {
                         component: id,
                         index: index as u32,
-                    },
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    origin: self.push_origin(&event.span, Some(origin)),
+                    };
+                    let declaration = self
+                        .declarations
+                        .component_event(event_id)
+                        .expect("indexed component event");
+                    ComponentEventContract {
+                        id: event_id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        origin: declaration.declaration.origin,
+                    }
                 })
                 .collect();
             let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
@@ -7512,6 +7561,16 @@ impl Lowerer {
     ) -> Result<(), Error> {
         self.lower_view_style(node)?;
         match node {
+            ViewNode::Canvas {
+                options,
+                locals,
+                commands,
+                events,
+                span,
+                ..
+            } => {
+                self.lower_canvas(options, locals, commands, events, span, outer_component)?;
+            }
             ViewNode::Component {
                 name,
                 args,
@@ -9417,6 +9476,118 @@ view
     }
 
     #[test]
+    fn malformed_checked_canvas_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidCanvasFacts\n{THEME}view\n  canvas w=120.0 h=80.0\n    circle x=10.0 y=20.0 r=4.0 fill=primary\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Canvas(CanvasExpressionId {
+                canvas: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
+    fn canvas_codegen_ignores_raw_commands_and_theme_token_order_after_lowering() {
+        let source = format!(
+            "app LoweredCanvas\n{THEME}view\n  canvas w=120.0 h=80.0\n    circle x=10.0 y=20.0 r=4.0 fill=primary\n    text \"ready\" x=4.0 y=8.0 color=fg\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-canvas.ice").unwrap();
+
+        let ViewNode::Canvas { commands, .. } = &mut program.document.view else {
+            panic!("fixture root must be a canvas");
+        };
+        let CanvasCommand::Circle { paint, .. } = &mut commands[0] else {
+            panic!("fixture command must be a circle");
+        };
+        paint.fill = Some(BackgroundValue::Color("danger".into()));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 2);
+
+        let actual = crate::codegen::generate(&program, "lowered-canvas.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalizes_canvas_state_commands_events_routes_and_theme_colors() {
+        let source = format!(
+            "app CanvasHir\n{THEME}on released(button)\nview\n  canvas w=fill h=120.0\n    state\n      hits = 0\n    event mouse pressed\n      set hits = hits + 1\n      redraw\n      capture\n    event mouse released as button\n      emit released button\n    text hits x=8.0 y=20.0 color=fg\n    for value in [12.0, 24.0]\n      circle x=value y=40.0 r=4.0 fill=primary\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let canvas = program.canvas(ViewId(0)).unwrap();
+
+        assert_eq!(canvas.states[0].id.index, 0);
+        assert!(matches!(
+            canvas.options.width,
+            Some(ResolvedCanvasLength::Fill)
+        ));
+        assert!(matches!(
+            canvas.options.height,
+            Some(ResolvedCanvasLength::Fixed {
+                source: Type::F64,
+                ..
+            })
+        ));
+        let ResolvedCanvasCommand::Text { id, color, .. } = &canvas.commands[0] else {
+            panic!("first command must be normalized text");
+        };
+        assert_eq!(id.index, 0);
+        assert_eq!(
+            color.base,
+            ResolvedThemeColorBase::Token(program.theme().native_tokens.text)
+        );
+        let ResolvedCanvasCommand::For {
+            id, item, commands, ..
+        } = &canvas.commands[1]
+        else {
+            panic!("second command must be a normalized loop");
+        };
+        assert_eq!(id.index, 1);
+        assert_eq!(item.name, "value");
+        assert_eq!(item.ty, Type::F64);
+        assert!(matches!(
+            commands.as_slice(),
+            [ResolvedCanvasCommand::Circle { id, .. }] if id.index == 2
+        ));
+        assert_eq!(canvas.events.len(), 2);
+        assert_eq!(canvas.events[0].id.index, 0);
+        assert!(matches!(
+            canvas.events[0].action,
+            Some(ResolvedCanvasEventAction::Redraw { after_ms: None })
+        ));
+        let Some(ResolvedCanvasEventAction::Route(route)) = &canvas.events[1].action else {
+            panic!("release event must have a normalized route");
+        };
+        assert_eq!(route.id.index, 0);
+        assert!(matches!(
+            route.target,
+            ResolvedCanvasRouteTarget::Handler(HandlerId(0))
+        ));
+        assert!(matches!(
+            route.args.as_slice(),
+            [ResolvedCanvasRouteArg::Expression(_)]
+        ));
+    }
+
+    #[test]
     fn lowers_component_calls_into_ordered_complete_contracts() {
         let source = format!(
             "app Demo\n{THEME}state\n  draft = \"Draft\"\n  checked = false\non changed(value)\n  draft = value\non toggled(value)\n  checked = value\ncomponent Field(bind value:str, label:str=\"Name\")\n  emits\n    change(str)\n  lifetime mounted\n  state\n    local = \"\"\n  col\n    text label\n    slot Leading?\n    slot Body\ncomponent Shell(bind value:str)\n  emits\n    change(str)\n  state\n    scratch = \"\"\n  Field value<->value\n    Leading:\n      text \"L\"\n    Body:\n      text \"B\"\n    forward\n      change\ncomponent Choice() -> bool\n  checkbox \"Choice\" checked=false -> emit(_)\nview\n  col\n    Field value<->draft #field\n      Body:\n        text \"Body\"\n      events\n        change -> changed _\n    Choice -> toggled _\n"
@@ -10868,6 +11039,34 @@ test stable_flow
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "{STEPS} checked test steps lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit checked Canvas HIR performance contract"]
+    fn performance_contract_four_thousand_canvas_commands_lower_and_emit_linearly() {
+        const COMMANDS: usize = 4_000;
+        let mut source = format!("app CanvasPerf\n{THEME}view\n  canvas w=fill h=600.0\n");
+        for index in 0..COMMANDS {
+            writeln!(
+                source,
+                "    circle x={}.0 y={}.0 r=2.0 fill=primary",
+                index % 1_000,
+                index / 1_000
+            )
+            .unwrap();
+        }
+
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "canvas-perf.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.canvas(ViewId(0)).unwrap().commands.len(), COMMANDS);
+        assert_eq!(generated.matches("Path::circle(").count(), COMMANDS);
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "{COMMANDS} checked Canvas commands lowered and emitted in {elapsed:?}"
         );
     }
 

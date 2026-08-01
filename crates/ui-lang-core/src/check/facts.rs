@@ -4,10 +4,11 @@ use super::expr::{
 };
 use super::*;
 use crate::hir::{
-    AppSettingExprId, AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, ExternRef, HandlerId,
-    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
-    TestId, TestStepId, TestTargetId, ViewId,
+    AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
+    CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
+    ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
+    ExternRef, HandlerId, OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId,
+    SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -104,6 +105,14 @@ pub(crate) enum CheckedLocalOwner {
         index: u32,
     },
     TestTarget(TestTargetId),
+    CanvasState(CanvasLocalId),
+    CanvasWidth(ViewId),
+    CanvasHeight(ViewId),
+    CanvasCommandItem(CanvasCommandId),
+    CanvasEventBinding {
+        event: CanvasEventId,
+        index: u32,
+    },
     AppSettingDaemonWindow,
 }
 
@@ -301,6 +310,7 @@ pub(crate) enum CheckedExprOwner {
         step: TestStepId,
         operand: u32,
     },
+    Canvas(CanvasExpressionId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -534,6 +544,46 @@ pub(crate) struct CheckedRoute {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedCanvasRoute {
+    pub(crate) id: CanvasRouteId,
+    pub(crate) target: CheckedCanvasRouteTarget,
+    pub(crate) args: Vec<CheckedCanvasRouteArg>,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) ordered_payloads: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedCanvasRouteTarget {
+    Handler(HandlerId),
+    ComponentOutput {
+        component: ComponentId,
+        output: Type,
+    },
+    ComponentEvent {
+        event: ComponentEventId,
+        name: String,
+        payloads: Vec<Type>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedCanvasRouteArg {
+    Expression(CheckedExprUseId),
+    Payload,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedCanvas {
+    pub(crate) id: ViewId,
+    pub(crate) states: Vec<CheckedLocalId>,
+    pub(crate) width: CheckedLocalId,
+    pub(crate) height: CheckedLocalId,
+    pub(crate) expression_count: u32,
+    pub(crate) routes: Vec<CheckedCanvasRoute>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTask {
     pub(crate) id: TaskId,
     pub(crate) output: Option<Type>,
@@ -586,6 +636,7 @@ pub(crate) struct CheckedFacts {
     locals: Vec<CheckedLocal>,
     locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
+    canvases: HashMap<ViewId, CheckedCanvas>,
     subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
@@ -748,6 +799,10 @@ impl CheckedFacts {
 
     pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
         &self.subscriptions
+    }
+
+    pub(crate) fn canvas(&self, id: ViewId) -> Option<&CheckedCanvas> {
+        self.canvases.get(&id).filter(|canvas| canvas.id == id)
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -1227,6 +1282,8 @@ pub(super) struct CheckedAnalyses {
     pub(super) view_scope_env_full_clones: usize,
     subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
     test_entries: HashMap<usize, ExprTypeAnalysis>,
+    canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
 }
 
 impl CheckedAnalyses {
@@ -1264,6 +1321,8 @@ impl CheckedAnalyses {
             && self.preset_handlers.is_empty()
             && self.subscriptions.is_empty()
             && self.test_entries.is_empty()
+            && self.canvas_entries.is_empty()
+            && self.canvas_route_inputs.is_empty()
     }
 
     pub(super) fn insert_subscription(
@@ -1328,6 +1387,58 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "test expression was captured more than once",
+                ));
+            }
+        }
+        for (key, analysis) in other.canvas_entries {
+            if self.canvas_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "canvas expression was captured more than once",
+                ));
+            }
+        }
+        for (key, inputs) in other.canvas_route_inputs {
+            if self.canvas_route_inputs.insert(key, inputs).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "canvas route contract was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_canvas(
+        &mut self,
+        canvas: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        for (key, analysis) in analyses.expressions {
+            if self
+                .canvas_entries
+                .insert((canvas, key), analysis)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "canvas expression was captured more than once",
+                ));
+            }
+        }
+        for (key, inputs) in analyses.routes {
+            if self
+                .canvas_route_inputs
+                .insert((canvas, key), inputs)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "canvas route contract was captured more than once",
                 ));
             }
         }
@@ -1531,6 +1642,13 @@ struct ExpressionLowering<'a> {
     span: &'a Span,
 }
 
+#[derive(Default)]
+struct CanvasFactCounters {
+    expression: u32,
+    command: u32,
+    route: u32,
+}
+
 impl<'a> FactsBuilder<'a> {
     fn new(
         document: &'a Document,
@@ -1579,10 +1697,12 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
+                    self.analyses.canvas_entries.len(),
+                    self.analyses.canvas_route_inputs.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -2197,6 +2317,541 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "duplicate checked test expression owner"));
+        }
+        Ok(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_canvas_facts(
+        &mut self,
+        canvas: ViewId,
+        options: &CanvasOptions,
+        locals: &[State],
+        commands: &[CanvasCommand],
+        events: &[CanvasEvent],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let declaration = self
+            .declarations
+            .canvas(canvas)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "canvas has no stable declaration"))?;
+        if declaration.locals.len() != locals.len()
+            || declaration.commands.len() != crate::ast::canvas_command_spans(commands).len()
+            || declaration.events.len() != events.len()
+            || declaration.routes.len() != crate::ast::canvas_routes(options, events).len()
+        {
+            return Err(self.invariant(span, "canvas declaration topology changed"));
+        }
+
+        let mut counters = CanvasFactCounters::default();
+        let mut checked_routes = Vec::with_capacity(declaration.routes.len());
+        for length in [&options.width, &options.height].into_iter().flatten() {
+            if let LengthValue::Fixed(expression) = length {
+                self.push_canvas_expression(
+                    canvas,
+                    &mut counters.expression,
+                    expression,
+                    None,
+                    false,
+                    env,
+                    span,
+                    declaration.declaration.origin,
+                )?;
+            }
+        }
+        for expression in [&options.cache, &options.capture].into_iter().flatten() {
+            self.push_canvas_expression(
+                canvas,
+                &mut counters.expression,
+                expression,
+                None,
+                false,
+                env,
+                span,
+                declaration.declaration.origin,
+            )?;
+        }
+        for route in crate::ast::canvas_routes(options, &[]) {
+            checked_routes.push(self.lower_canvas_route(canvas, route, env, &mut counters)?);
+        }
+
+        let empty = FactEnv::default();
+        let mut state_locals = Vec::with_capacity(locals.len());
+        let mut canvas_env = HandlerFactEnv::new(env);
+        for (index, local) in locals.iter().enumerate() {
+            let local_id = CanvasLocalId {
+                canvas,
+                index: index as u32,
+            };
+            let retained = declaration
+                .locals
+                .get(index)
+                .ok_or_else(|| self.invariant(&local.span, "canvas state has no declaration"))?;
+            if retained.declaration.id != local_id
+                || retained.name != local.name
+                || retained.ty != local.ty
+            {
+                return Err(self.invariant(
+                    &local.span,
+                    "canvas state diverged from its checked declaration",
+                ));
+            }
+            self.push_canvas_expression(
+                canvas,
+                &mut counters.expression,
+                &local.initial,
+                Some(&retained.ty),
+                true,
+                &empty,
+                &local.span,
+                retained.declaration.origin,
+            )?;
+            let checked = self.push_local(
+                &retained.name,
+                retained.ty.clone(),
+                CheckedLocalOwner::CanvasState(local_id),
+                &local.span,
+                declaration.declaration.origin,
+            );
+            canvas_env.insert(
+                retained.name.clone(),
+                CheckedPathRoot::Local(checked),
+                retained.ty.clone(),
+            );
+            state_locals.push(checked);
+        }
+        let width = self.push_local(
+            "canvas_width",
+            Type::F64,
+            CheckedLocalOwner::CanvasWidth(canvas),
+            span,
+            declaration.declaration.origin,
+        );
+        canvas_env.insert(
+            "canvas_width".into(),
+            CheckedPathRoot::Local(width),
+            Type::F64,
+        );
+        let height = self.push_local(
+            "canvas_height",
+            Type::F64,
+            CheckedLocalOwner::CanvasHeight(canvas),
+            span,
+            declaration.declaration.origin,
+        );
+        canvas_env.insert(
+            "canvas_height".into(),
+            CheckedPathRoot::Local(height),
+            Type::F64,
+        );
+
+        for expression in [&options.interaction_expr, &options.interaction_outside]
+            .into_iter()
+            .flatten()
+        {
+            self.push_canvas_expression(
+                canvas,
+                &mut counters.expression,
+                expression,
+                None,
+                false,
+                &canvas_env,
+                span,
+                declaration.declaration.origin,
+            )?;
+        }
+        self.lower_canvas_commands(canvas, commands, &canvas_env, &declaration, &mut counters)?;
+
+        for (event_index, event) in events.iter().enumerate() {
+            let event_id = CanvasEventId {
+                canvas,
+                index: event_index as u32,
+            };
+            let event_declaration = self
+                .declarations
+                .canvas_event(event_id)
+                .ok_or_else(|| self.invariant(&event.span, "canvas event has no declaration"))?;
+            let payloads = native_subscription_payloads(&event.source, false).ok_or_else(|| {
+                self.invariant(&event.span, "canvas event has no native payload contract")
+            })?;
+            let mut event_env = HandlerFactEnv::new(&canvas_env);
+            for (index, (name, ty)) in event.bindings.iter().zip(&payloads).enumerate() {
+                let local = self.push_local(
+                    name,
+                    ty.clone(),
+                    CheckedLocalOwner::CanvasEventBinding {
+                        event: event_id,
+                        index: index as u32,
+                    },
+                    &event.span,
+                    event_declaration.origin,
+                );
+                event_env.insert(name.clone(), CheckedPathRoot::Local(local), ty.clone());
+            }
+            for update in &event.updates {
+                self.push_canvas_expression(
+                    canvas,
+                    &mut counters.expression,
+                    &update.value,
+                    None,
+                    false,
+                    &event_env,
+                    &update.span,
+                    event_declaration.origin,
+                )?;
+            }
+            if let Some(CanvasEventAction::Route(route)) = &event.action {
+                let route_env: &dyn FactEnvironment =
+                    if event.route_payload { env } else { &event_env };
+                let route = self.lower_canvas_route(canvas, route, route_env, &mut counters)?;
+                checked_routes.push(route);
+            }
+        }
+
+        let remaining_expressions = self
+            .analyses
+            .canvas_entries
+            .keys()
+            .filter(|(owner, _)| *owner == canvas)
+            .count();
+        let remaining_routes = self
+            .analyses
+            .canvas_route_inputs
+            .keys()
+            .filter(|(owner, _)| *owner == canvas)
+            .count();
+        if remaining_expressions != 0 || remaining_routes != 0 {
+            let remaining_sources =
+                crate::ast::canvas_expression_roots(options, locals, commands, events)
+                    .into_iter()
+                    .filter(|expression| {
+                        self.analyses
+                            .canvas_entries
+                            .contains_key(&(canvas, super::expr::expr_key(expression)))
+                    })
+                    .map(|expression| format!("{expression:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+            return Err(self.invariant(
+                span,
+                format!(
+                    "canvas left {remaining_expressions} expression and {remaining_routes} route analyses unconsumed: {remaining_sources}"
+                ),
+            ));
+        }
+        if counters.command as usize != declaration.commands.len()
+            || counters.route as usize != declaration.routes.len()
+        {
+            return Err(self.invariant(span, "canvas did not consume its declaration arenas"));
+        }
+        if self
+            .facts
+            .canvases
+            .insert(
+                canvas,
+                CheckedCanvas {
+                    id: canvas,
+                    states: state_locals,
+                    width,
+                    height,
+                    expression_count: counters.expression,
+                    routes: checked_routes,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "canvas facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_canvas_commands(
+        &mut self,
+        canvas: ViewId,
+        commands: &[CanvasCommand],
+        env: &dyn FactEnvironment,
+        declaration: &crate::hir::CanvasDeclaration,
+        counters: &mut CanvasFactCounters,
+    ) -> Result<(), Error> {
+        for command in commands {
+            let command_id = CanvasCommandId {
+                canvas,
+                index: counters.command,
+            };
+            counters.command += 1;
+            let retained = declaration
+                .commands
+                .get(command_id.index as usize)
+                .filter(|value| value.declaration.id == command_id)
+                .ok_or_else(|| {
+                    self.invariant(
+                        crate::ast::canvas_command_span(command),
+                        "canvas command has no declaration",
+                    )
+                })?;
+            let mut direct = Vec::new();
+            for expression in crate::ast::canvas_command_direct_expression_roots(command) {
+                direct.push(self.push_canvas_expression(
+                    canvas,
+                    &mut counters.expression,
+                    expression,
+                    None,
+                    false,
+                    env,
+                    crate::ast::canvas_command_span(command),
+                    retained.declaration.origin,
+                )?);
+            }
+            match command {
+                CanvasCommand::Group { commands, .. } | CanvasCommand::If { commands, .. } => {
+                    self.lower_canvas_commands(canvas, commands, env, declaration, counters)?;
+                }
+                CanvasCommand::For { item, commands, .. } => {
+                    let items = direct.first().copied().ok_or_else(|| {
+                        self.invariant(
+                            crate::ast::canvas_command_span(command),
+                            "canvas for has no checked items",
+                        )
+                    })?;
+                    let Type::List(item_ty) = self.facts.expression_use(items).source.clone()
+                    else {
+                        return Err(self.invariant(
+                            crate::ast::canvas_command_span(command),
+                            "canvas for checked items are not a list",
+                        ));
+                    };
+                    let local = self.push_local(
+                        item,
+                        item_ty.as_ref().clone(),
+                        CheckedLocalOwner::CanvasCommandItem(command_id),
+                        crate::ast::canvas_command_span(command),
+                        retained.declaration.origin,
+                    );
+                    let scoped = LayeredFactEnv {
+                        base: env,
+                        name: item.clone(),
+                        value: (CheckedPathRoot::Local(local), item_ty.as_ref().clone()),
+                    };
+                    self.facts.metrics.scope_env_overlays += 1;
+                    self.lower_canvas_commands(canvas, commands, &scoped, declaration, counters)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_canvas_route(
+        &mut self,
+        canvas: ViewId,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        counters: &mut CanvasFactCounters,
+    ) -> Result<CheckedCanvasRoute, Error> {
+        let id = CanvasRouteId {
+            canvas,
+            index: counters.route,
+        };
+        counters.route += 1;
+        let declaration = self
+            .declarations
+            .canvas_route(id)
+            .ok_or_else(|| self.invariant(&route.span, "canvas route has no declaration"))?;
+        let inputs = self
+            .analyses
+            .canvas_route_inputs
+            .remove(&(canvas, std::ptr::from_ref(route).addr()))
+            .ok_or_else(|| {
+                self.invariant(&route.span, "canvas route has no retained payload contract")
+            })?;
+        let scope = self.facts.view(canvas).scope;
+        let (target, target_params, route_args) = match scope {
+            CheckedViewScope::Component(component) if route.handler == "emit" => {
+                let named = route.args.first().and_then(|argument| {
+                    let RouteArg::Expr(Expr::Path(path)) = argument else {
+                        return None;
+                    };
+                    let [name] = path.as_slice() else {
+                        return None;
+                    };
+                    self.declarations.component_event_by_name(component, name)
+                });
+                if let Some(event) = named {
+                    (
+                        CheckedCanvasRouteTarget::ComponentEvent {
+                            event: event.declaration.id,
+                            name: event.name.clone(),
+                            payloads: event.payloads.clone(),
+                        },
+                        event.payloads.clone(),
+                        &route.args[1..],
+                    )
+                } else {
+                    let output = self
+                        .declarations
+                        .component_output(component)
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.invariant(&route.span, "canvas component output disappeared")
+                        })?;
+                    (
+                        CheckedCanvasRouteTarget::ComponentOutput {
+                            component,
+                            output: output.clone(),
+                        },
+                        vec![output],
+                        route.args.as_slice(),
+                    )
+                }
+            }
+            scope => {
+                let target_owner = match scope {
+                    CheckedViewScope::Component(component) => {
+                        crate::hir::HandlerOwner::Component(component)
+                    }
+                    CheckedViewScope::App | CheckedViewScope::Test(_) => {
+                        crate::hir::HandlerOwner::App
+                    }
+                };
+                let handler = self
+                    .declarations
+                    .handler_id(target_owner, &route.handler)
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "canvas route target disappeared")
+                    })?;
+                (
+                    CheckedCanvasRouteTarget::Handler(handler),
+                    self.declarations.handler(handler).payloads.clone(),
+                    route.args.as_slice(),
+                )
+            }
+        };
+        if target_params.len() != route_args.len() {
+            return Err(self.invariant(&route.span, "canvas route arity changed"));
+        }
+        let mut args = Vec::with_capacity(route_args.len());
+        for (index, (argument, expected)) in route_args.iter().zip(&target_params).enumerate() {
+            match argument {
+                RouteArg::Expr(expression) => {
+                    let expression = self.push_canvas_expression(
+                        canvas,
+                        &mut counters.expression,
+                        expression,
+                        Some(expected),
+                        false,
+                        env,
+                        &route.span,
+                        declaration.origin,
+                    )?;
+                    args.push(CheckedCanvasRouteArg::Expression(expression));
+                }
+                RouteArg::Payload => {
+                    let payload_index = if inputs.ordered {
+                        args.iter()
+                            .filter(|arg| matches!(arg, CheckedCanvasRouteArg::Payload))
+                            .count()
+                    } else {
+                        0
+                    };
+                    let actual = inputs.payloads.get(payload_index).ok_or_else(|| {
+                        self.invariant(&route.span, "canvas route payload has no source")
+                    })?;
+                    if actual != expected {
+                        return Err(self.invariant(
+                            &route.span,
+                            format!("canvas route payload {index} changed type"),
+                        ));
+                    }
+                    args.push(CheckedCanvasRouteArg::Payload);
+                }
+            }
+        }
+        Ok(CheckedCanvasRoute {
+            id,
+            target,
+            args,
+            source_payloads: inputs.payloads,
+            ordered_payloads: inputs.ordered,
+            origin: declaration.origin,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_canvas_expression(
+        &mut self,
+        canvas: ViewId,
+        operand: &mut u32,
+        expression: &Expr,
+        destination: Option<&Type>,
+        initializer: bool,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Canvas(CanvasExpressionId {
+            canvas,
+            index: *operand,
+        });
+        *operand += 1;
+        let analysis = self
+            .analyses
+            .canvas_entries
+            .remove(&(canvas, super::expr::expr_key(expression)))
+            .ok_or_else(|| {
+                self.invariant(span, "missing authoritative canvas expression analysis")
+            })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let inferred = analysis
+            .type_of(expression)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained canvas expression root type"))?;
+        let (source, coercion) = if initializer {
+            initializer_source_context(
+                &inferred,
+                destination.ok_or_else(|| {
+                    self.invariant(span, "canvas initializer has no destination type")
+                })?,
+            )
+        } else {
+            (inferred, CheckedInitializerCoercion::None)
+        };
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+        if self.facts.expression(root).ty != source {
+            return Err(self.invariant(
+                span,
+                "canvas expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: destination.cloned().unwrap_or(source),
+            coercion,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked canvas expression owner"));
         }
         Ok(id)
     }
@@ -4345,6 +5000,17 @@ impl<'a> FactsBuilder<'a> {
                     }
                 }
             },
+            ViewNode::Canvas {
+                options,
+                locals,
+                commands,
+                events,
+                span,
+                ..
+            } => {
+                self.lower_canvas_facts(view, options, locals, commands, events, env, span)?;
+                CheckedViewFlow::None
+            }
             ViewNode::Component {
                 name,
                 args,
@@ -6678,6 +7344,11 @@ view
                 | CheckedLocalOwner::StatementLet(_)
                 | CheckedLocalOwner::TaskTransform { .. }
                 | CheckedLocalOwner::TestTarget(_)
+                | CheckedLocalOwner::CanvasState(_)
+                | CheckedLocalOwner::CanvasWidth(_)
+                | CheckedLocalOwner::CanvasHeight(_)
+                | CheckedLocalOwner::CanvasCommandItem(_)
+                | CheckedLocalOwner::CanvasEventBinding { .. }
                 | CheckedLocalOwner::AppSettingDaemonWindow => None,
             })
             .collect::<Vec<_>>();
@@ -6735,6 +7406,116 @@ view
         assert!(generated.contains("move |(__row, table_row)"));
         assert!(generated.contains("__pane_maximized"));
         assert!(generated.contains("(__size.width as f64)"));
+    }
+
+    #[test]
+    fn canvas_facts_retain_stable_expression_local_command_event_and_route_owners() {
+        let source = r#"app Drawing
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on released(button)
+view
+  canvas w=fill h=120.0 cursor=(cursor_state) cursor-outside=outside
+    state
+      cursor_state = "grab"
+      outside = false
+      hits = 0
+    event mouse pressed as button
+      set cursor_state = "grabbing"
+      set hits = hits + 1
+      redraw
+      capture
+    event mouse released as button
+      set cursor_state = "grab"
+      emit released button
+    text hits x=8.0 y=20.0 color=fg size=14.0
+    for value in [12.0, 24.0]
+      circle x=value y=40.0 r=4.0 fill=fg
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        let canvas = facts.canvases.values().next().expect("checked canvas");
+        assert_eq!(facts.canvases.len(), 1);
+        assert_eq!(canvas.states.len(), 3);
+        assert_eq!(canvas.routes.len(), 1);
+        assert_eq!(
+            facts
+                .expression_uses()
+                .iter()
+                .filter(|expression| matches!(
+                    expression.owner,
+                    CheckedExprOwner::Canvas(CanvasExpressionId { canvas: owner, .. })
+                        if owner == canvas.id
+                ))
+                .count(),
+            canvas.expression_count as usize
+        );
+        for owner in [
+            CheckedLocalOwner::CanvasState(CanvasLocalId {
+                canvas: canvas.id,
+                index: 0,
+            }),
+            CheckedLocalOwner::CanvasWidth(canvas.id),
+            CheckedLocalOwner::CanvasHeight(canvas.id),
+            CheckedLocalOwner::CanvasCommandItem(CanvasCommandId {
+                canvas: canvas.id,
+                index: 1,
+            }),
+            CheckedLocalOwner::CanvasEventBinding {
+                event: CanvasEventId {
+                    canvas: canvas.id,
+                    index: 0,
+                },
+                index: 0,
+            },
+        ] {
+            assert!(facts.local_by_owner(owner).is_some(), "missing {owner:?}");
+        }
+        assert!(matches!(
+            canvas.routes[0].args.as_slice(),
+            [CheckedCanvasRouteArg::Expression(_)]
+        ));
+        assert!(canvas.routes[0].source_payloads.is_empty());
+        assert!(!canvas.routes[0].ordered_payloads);
+    }
+
+    #[test]
+    fn canvas_codegen_uses_checked_expressions_and_rejects_static_contract_mutation() {
+        let source = format!(
+            "app FrozenCanvas\n{THEME}view\n  canvas w=120.0 h=80.0\n    circle x=10.0 y=20.0 r=4.0 fill=primary\n"
+        );
+        let mut expression_mutation = analyze(&source).unwrap();
+        let ViewNode::Canvas { commands, .. } = &mut expression_mutation.document.view else {
+            panic!("fixture root must be a canvas");
+        };
+        let CanvasCommand::Circle { x, .. } = &mut commands[0] else {
+            panic!("fixture command must be a circle");
+        };
+        *x = Expr::F64(99.0);
+        let program = lower::lower(expression_mutation).unwrap();
+        let generated = crate::codegen::generate(&program, "frozen-canvas.ice").unwrap();
+        assert!(generated.contains("::iced::Point::new(10.0 as f32, 20.0 as f32)"));
+        assert!(!generated.contains("::iced::Point::new(99.0 as f32, 20.0 as f32)"));
+
+        let mut static_mutation = analyze(&source).unwrap();
+        let ViewNode::Canvas { commands, .. } = &mut static_mutation.document.view else {
+            panic!("fixture root must be a canvas");
+        };
+        let CanvasCommand::Circle { paint, .. } = &mut commands[0] else {
+            panic!("fixture command must be a circle");
+        };
+        paint.fill = Some(BackgroundValue::Color("fg".into()));
+        let error = lower::lower(static_mutation).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("canvas command has no declaration"));
     }
 
     #[test]
