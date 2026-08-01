@@ -129,6 +129,18 @@ migrate view expressions, handlers, matches, or expression code generation, so
 those emitters remain AST-backed and the full-HIR completion criteria are still
 open.
 
+Initializer typing and fact lowering are linear in the expression tree. A
+single post-order analysis records each concrete expression type, and fact
+lowering consumes that table instead of restarting subtree type checks.
+Context-sensitive builtins share one signature/context model between checking
+and fact construction. That model distinguishes ordinary values, binding-name
+arguments, and expressions evaluated under a binding. Consequently,
+`animation.project` retains its binder as a typed local ID with an owning
+expression use and body-argument scope; reads in the projection body resolve to
+that local rather than to an unresolved source path. Exact query, analyzed-node,
+cache-hit, local, and lowered-expression counters make the linearity and scope
+contracts testable.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;

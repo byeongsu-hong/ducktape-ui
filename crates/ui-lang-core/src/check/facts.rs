@@ -1,4 +1,6 @@
-use super::expr::field_type;
+use super::expr::{
+    BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, analyze_expr_types, field_type,
+};
 use super::*;
 use crate::unqualified_name;
 #[cfg(test)]
@@ -13,6 +15,9 @@ pub(crate) struct CheckedExprUseId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CheckedLocalId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedViewId(u32);
@@ -77,6 +82,15 @@ pub(crate) struct CheckedValue {
     pub(crate) origin: CheckedOriginId,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedLocal {
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+    pub(crate) owner: CheckedExprUseId,
+    pub(crate) body_argument: usize,
+    pub(crate) origin: CheckedOriginId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedViewScope {
     App,
@@ -109,6 +123,7 @@ pub(crate) struct CheckedExprUse {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedPathRoot {
     Value(CheckedValueId),
+    Local(CheckedLocalId),
     EnumVariant(CheckedEnumVariantId),
     Palette(CheckedPaletteId),
 }
@@ -133,6 +148,12 @@ pub(crate) enum CheckedCallTarget {
     Builtin(CheckedBuiltinId),
     Extern(CheckedExternFnId),
     EnumVariant(CheckedEnumVariantId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedCallArgument {
+    Value(CheckedExprId),
+    Binding(CheckedLocalId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,7 +185,7 @@ pub(crate) enum CheckedExprKind {
     },
     Call {
         target: CheckedCallTarget,
-        arguments: Vec<CheckedExprId>,
+        arguments: Vec<CheckedCallArgument>,
     },
     Unary {
         operator: CheckedUnaryOperator,
@@ -187,9 +208,13 @@ pub(crate) struct CheckedExpr {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CheckedFactMetrics {
     pub(crate) values: usize,
+    pub(crate) locals: usize,
     pub(crate) views: usize,
     pub(crate) expression_uses: usize,
     pub(crate) expressions: usize,
+    pub(crate) type_analysis_queries: usize,
+    pub(crate) type_analysis_nodes: usize,
+    pub(crate) type_analysis_cache_hits: usize,
     pub(crate) declaration_lookups: usize,
     pub(crate) builtin_intern_lookups: usize,
 }
@@ -197,6 +222,7 @@ pub(crate) struct CheckedFactMetrics {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CheckedFacts {
     values: Vec<CheckedValue>,
+    locals: Vec<CheckedLocal>,
     views: Vec<CheckedView>,
     expression_uses: Vec<CheckedExprUse>,
     expressions: Vec<CheckedExpr>,
@@ -215,6 +241,15 @@ impl CheckedFacts {
     pub(crate) fn value(&self, id: CheckedValueId) -> &CheckedValue {
         self.record_lookup();
         &self.values[id.0 as usize]
+    }
+
+    pub(crate) fn locals(&self) -> &[CheckedLocal] {
+        &self.locals
+    }
+
+    pub(crate) fn local(&self, id: CheckedLocalId) -> &CheckedLocal {
+        self.record_lookup();
+        &self.locals[id.0 as usize]
     }
 
     pub(crate) fn views(&self) -> &[CheckedView] {
@@ -298,6 +333,16 @@ struct FactsBuilder<'a> {
     enum_variants_by_owner: HashMap<CheckedEnumId, HashMap<String, CheckedEnumVariantId>>,
     palettes_by_name: HashMap<String, CheckedPaletteId>,
     builtins_by_name: HashMap<String, CheckedBuiltinId>,
+}
+
+type FactEnv = HashMap<String, (CheckedPathRoot, Type)>;
+
+#[derive(Clone, Copy)]
+struct ExpressionLowering<'a> {
+    analysis: &'a ExprTypeAnalysis,
+    owner: CheckedExprUseId,
+    origin: CheckedOriginId,
+    span: &'a Span,
 }
 
 impl<'a> FactsBuilder<'a> {
@@ -401,6 +446,7 @@ impl<'a> FactsBuilder<'a> {
             ));
         }
         self.facts.metrics.values = self.facts.values.len();
+        self.facts.metrics.locals = self.facts.locals.len();
         self.facts.metrics.views = self.facts.views.len();
         self.facts.metrics.expression_uses = self.facts.expression_uses.len();
         self.facts.metrics.expressions = self.facts.expressions.len();
@@ -498,7 +544,10 @@ impl<'a> FactsBuilder<'a> {
             .map(|(name, id)| {
                 (
                     name.clone(),
-                    (*id, self.facts.values[id.0 as usize].ty.clone()),
+                    (
+                        CheckedPathRoot::Value(*id),
+                        self.facts.values[id.0 as usize].ty.clone(),
+                    ),
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -554,7 +603,7 @@ impl<'a> FactsBuilder<'a> {
         owner: CheckedValueId,
         expr: &Expr,
         expected: &Type,
-        env: &HashMap<String, (CheckedValueId, Type)>,
+        env: &FactEnv,
         span: &Span,
     ) -> Result<CheckedExprUseId, Error> {
         let origin = self.facts.values[owner.0 as usize].origin;
@@ -562,8 +611,20 @@ impl<'a> FactsBuilder<'a> {
             .iter()
             .map(|(name, (_, ty))| (name.clone(), ty.clone()))
             .collect::<HashMap<_, _>>();
-        let root = self.lower_expr(expr, Some(expected), env, &env_types, origin, span)?;
         let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let analysis = analyze_expr_types(expr, &env_types, self.document, span)?;
+        let analysis_metrics = analysis.metrics();
+        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
+        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(expected), env, lowering)?;
+        debug_assert_eq!(id.0 as usize, self.facts.expression_uses.len());
         self.facts.expression_uses.push(CheckedExprUse {
             owner: CheckedExprOwner::Value(owner),
             root,
@@ -578,113 +639,107 @@ impl<'a> FactsBuilder<'a> {
         &mut self,
         expr: &Expr,
         expected: Option<&Type>,
-        env: &HashMap<String, (CheckedValueId, Type)>,
-        env_types: &HashMap<String, Type>,
-        origin: CheckedOriginId,
-        span: &Span,
+        env: &FactEnv,
+        lowering: ExpressionLowering<'_>,
     ) -> Result<CheckedExprId, Error> {
-        let inferred = expr_type(expr, env_types, self.document, span)?;
+        let inferred =
+            lowering.analysis.type_of(expr).cloned().ok_or_else(|| {
+                self.invariant(lowering.span, "missing post-order expression type")
+            })?;
         let ty = contextual_type(inferred, expected);
-        let kind = match expr {
-            Expr::Bool(value) => CheckedExprKind::Bool(*value),
-            Expr::I64(value) => CheckedExprKind::I64(*value),
-            Expr::F64(value) => CheckedExprKind::F64(*value),
-            Expr::Str(value) => CheckedExprKind::Str(value.clone()),
-            Expr::Bytes(value) => CheckedExprKind::Bytes(value.clone()),
-            Expr::EmptyList => CheckedExprKind::List(Vec::new()),
-            Expr::List(values) => {
-                let expected_element = match &ty {
-                    Type::List(inner) => Some(inner.as_ref()),
-                    _ => None,
-                };
-                let children = values
-                    .iter()
-                    .map(|value| {
-                        self.lower_expr(value, expected_element, env, env_types, origin, span)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                CheckedExprKind::List(children)
-            }
-            Expr::None => CheckedExprKind::None,
-            Expr::Path(path) => self.lower_path(path, env, span)?,
-            Expr::Call { name, args } => {
-                let target = self.resolve_call_target(name, span)?;
-                let expected_args = self.call_argument_types(&target, &ty);
-                let arguments = args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, value)| {
-                        self.lower_expr(
-                            value,
-                            expected_args.get(index).and_then(Option::as_ref),
-                            env,
-                            env_types,
-                            origin,
-                            span,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                CheckedExprKind::Call { target, arguments }
-            }
-            Expr::Unary { op, value } => {
-                let input = expr_type(value, env_types, self.document, span)?;
-                let operator = match op {
-                    UnaryOp::Not => CheckedUnaryOperator::BooleanNot,
-                    UnaryOp::Neg => CheckedUnaryOperator::NumericNegation(input.clone()),
-                };
-                let value = self.lower_expr(value, Some(&input), env, env_types, origin, span)?;
-                CheckedExprKind::Unary { operator, value }
-            }
-            Expr::Binary { left, op, right } => {
-                let left_ty = expr_type(left, env_types, self.document, span)?;
-                let right_ty = expr_type(right, env_types, self.document, span)?;
-                let operator = match op {
-                    BinaryOp::And | BinaryOp::Or => CheckedBinaryOperator::Boolean(*op),
-                    BinaryOp::Eq | BinaryOp::NotEq => CheckedBinaryOperator::Equality {
-                        op: *op,
-                        operand: compatible_operand(&left_ty, &right_ty),
-                    },
-                    BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
-                        CheckedBinaryOperator::Ordering {
+        let kind =
+            match expr {
+                Expr::Bool(value) => CheckedExprKind::Bool(*value),
+                Expr::I64(value) => CheckedExprKind::I64(*value),
+                Expr::F64(value) => CheckedExprKind::F64(*value),
+                Expr::Str(value) => CheckedExprKind::Str(value.clone()),
+                Expr::Bytes(value) => CheckedExprKind::Bytes(value.clone()),
+                Expr::EmptyList => CheckedExprKind::List(Vec::new()),
+                Expr::List(values) => {
+                    let expected_element = match &ty {
+                        Type::List(inner) => Some(inner.as_ref()),
+                        _ => None,
+                    };
+                    let children = values
+                        .iter()
+                        .map(|value| self.lower_expr(value, expected_element, env, lowering))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    CheckedExprKind::List(children)
+                }
+                Expr::None => CheckedExprKind::None,
+                Expr::Path(path) => self.lower_path(path, env, lowering.span)?,
+                Expr::Call { name, args } => {
+                    let target = self.resolve_call_target(name, lowering.span)?;
+                    let arguments = self.lower_call_arguments(&target, args, &ty, env, lowering)?;
+                    CheckedExprKind::Call { target, arguments }
+                }
+                Expr::Unary { op, value } => {
+                    let input = lowering.analysis.type_of(value).cloned().ok_or_else(|| {
+                        self.invariant(lowering.span, "missing unary operand type")
+                    })?;
+                    let operator = match op {
+                        UnaryOp::Not => CheckedUnaryOperator::BooleanNot,
+                        UnaryOp::Neg => CheckedUnaryOperator::NumericNegation(input.clone()),
+                    };
+                    let value = self.lower_expr(value, Some(&input), env, lowering)?;
+                    CheckedExprKind::Unary { operator, value }
+                }
+                Expr::Binary { left, op, right } => {
+                    let left_ty = lowering.analysis.type_of(left).cloned().ok_or_else(|| {
+                        self.invariant(lowering.span, "missing left operand type")
+                    })?;
+                    let right_ty = lowering.analysis.type_of(right).cloned().ok_or_else(|| {
+                        self.invariant(lowering.span, "missing right operand type")
+                    })?;
+                    let operator = match op {
+                        BinaryOp::And | BinaryOp::Or => CheckedBinaryOperator::Boolean(*op),
+                        BinaryOp::Eq | BinaryOp::NotEq => CheckedBinaryOperator::Equality {
                             op: *op,
                             operand: compatible_operand(&left_ty, &right_ty),
+                        },
+                        BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
+                            CheckedBinaryOperator::Ordering {
+                                op: *op,
+                                operand: compatible_operand(&left_ty, &right_ty),
+                            }
                         }
+                        BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Rem => CheckedBinaryOperator::Arithmetic {
+                            op: *op,
+                            operand: compatible_operand(&left_ty, &right_ty),
+                        },
+                    };
+                    let operand = match &operator {
+                        CheckedBinaryOperator::Boolean(_) => Type::Bool,
+                        CheckedBinaryOperator::Equality { operand, .. }
+                        | CheckedBinaryOperator::Ordering { operand, .. }
+                        | CheckedBinaryOperator::Arithmetic { operand, .. } => operand.clone(),
+                    };
+                    let left = self.lower_expr(left, Some(&operand), env, lowering)?;
+                    let right = self.lower_expr(right, Some(&operand), env, lowering)?;
+                    CheckedExprKind::Binary {
+                        operator,
+                        left,
+                        right,
                     }
-                    BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::Rem => CheckedBinaryOperator::Arithmetic {
-                        op: *op,
-                        operand: compatible_operand(&left_ty, &right_ty),
-                    },
-                };
-                let operand = match &operator {
-                    CheckedBinaryOperator::Boolean(_) => Type::Bool,
-                    CheckedBinaryOperator::Equality { operand, .. }
-                    | CheckedBinaryOperator::Ordering { operand, .. }
-                    | CheckedBinaryOperator::Arithmetic { operand, .. } => operand.clone(),
-                };
-                let left = self.lower_expr(left, Some(&operand), env, env_types, origin, span)?;
-                let right = self.lower_expr(right, Some(&operand), env, env_types, origin, span)?;
-                CheckedExprKind::Binary {
-                    operator,
-                    left,
-                    right,
                 }
-            }
-        };
+            };
         let id = CheckedExprId(self.facts.expressions.len() as u32);
-        self.facts
-            .expressions
-            .push(CheckedExpr { ty, kind, origin });
+        self.facts.expressions.push(CheckedExpr {
+            ty,
+            kind,
+            origin: lowering.origin,
+        });
         Ok(id)
     }
 
     fn lower_path(
         &mut self,
         path: &[String],
-        env: &HashMap<String, (CheckedValueId, Type)>,
+        env: &FactEnv,
         span: &Span,
     ) -> Result<CheckedExprKind, Error> {
         if let [contract, palette] = path
@@ -756,10 +811,7 @@ impl<'a> FactsBuilder<'a> {
             });
             input = output;
         }
-        Ok(CheckedExprKind::Path {
-            root: CheckedPathRoot::Value(root),
-            projections,
-        })
+        Ok(CheckedExprKind::Path { root, projections })
     }
 
     fn resolve_call_target(&mut self, name: &str, span: &Span) -> Result<CheckedCallTarget, Error> {
@@ -804,41 +856,118 @@ impl<'a> FactsBuilder<'a> {
             .copied()
     }
 
-    fn call_argument_types(&self, target: &CheckedCallTarget, output: &Type) -> Vec<Option<Type>> {
-        match target {
+    fn lower_call_arguments(
+        &mut self,
+        target: &CheckedCallTarget,
+        args: &[Expr],
+        output: &Type,
+        env: &FactEnv,
+        lowering: ExpressionLowering<'_>,
+    ) -> Result<Vec<CheckedCallArgument>, Error> {
+        let contexts =
+            self.call_argument_contexts(target, output, args, lowering.analysis, lowering.span)?;
+        if contexts.len() != args.len() {
+            return Err(self.invariant(
+                lowering.span,
+                "checked call argument context count does not match its arguments",
+            ));
+        }
+        let mut bindings = HashMap::<usize, (String, CheckedLocalId)>::new();
+        let mut arguments = Vec::with_capacity(args.len());
+        for (index, (argument, context)) in args.iter().zip(contexts).enumerate() {
+            match context {
+                BuiltinArgumentContext::Value { expected } => {
+                    arguments.push(CheckedCallArgument::Value(self.lower_expr(
+                        argument,
+                        expected.as_ref(),
+                        env,
+                        lowering,
+                    )?));
+                }
+                BuiltinArgumentContext::Binding { ty, body } => {
+                    let Expr::Path(path) = argument else {
+                        return Err(
+                            self.invariant(lowering.span, "checked builtin binding is not a path")
+                        );
+                    };
+                    let [name] = path.as_slice() else {
+                        return Err(self.invariant(
+                            lowering.span,
+                            "checked builtin binding is not a local name",
+                        ));
+                    };
+                    let id = CheckedLocalId(self.facts.locals.len() as u32);
+                    self.facts.locals.push(CheckedLocal {
+                        name: name.clone(),
+                        ty,
+                        owner: lowering.owner,
+                        body_argument: body,
+                        origin: lowering.origin,
+                    });
+                    bindings.insert(index, (name.clone(), id));
+                    arguments.push(CheckedCallArgument::Binding(id));
+                }
+                BuiltinArgumentContext::ScopedValue { expected, binding } => {
+                    let (name, local) = bindings.get(&binding).cloned().ok_or_else(|| {
+                        self.invariant(lowering.span, "checked builtin body has no binding fact")
+                    })?;
+                    let mut scoped = env.clone();
+                    let ty = self.facts.locals[local.0 as usize].ty.clone();
+                    scoped.insert(name, (CheckedPathRoot::Local(local), ty));
+                    arguments.push(CheckedCallArgument::Value(self.lower_expr(
+                        argument,
+                        expected.as_ref(),
+                        &scoped,
+                        lowering,
+                    )?));
+                }
+            }
+        }
+        Ok(arguments)
+    }
+
+    fn call_argument_contexts(
+        &self,
+        target: &CheckedCallTarget,
+        output: &Type,
+        args: &[Expr],
+        analysis: &ExprTypeAnalysis,
+        span: &Span,
+    ) -> Result<Vec<BuiltinArgumentContext>, Error> {
+        Ok(match target {
             CheckedCallTarget::Extern(id) => self.document.functions[id.0 as usize]
                 .params
                 .iter()
-                .map(|(_, ty)| Some(ty.clone()))
+                .map(|(_, ty)| BuiltinArgumentContext::Value {
+                    expected: Some(ty.clone()),
+                })
                 .collect(),
             CheckedCallTarget::EnumVariant(id) => self.document.enums[id.owner.0 as usize].variants
                 [id.index as usize]
                 .payload
                 .iter()
                 .cloned()
-                .map(Some)
+                .map(|ty| BuiltinArgumentContext::Value { expected: Some(ty) })
                 .collect(),
-            CheckedCallTarget::Builtin(id) => match self.facts.builtins[id.0 as usize].as_str() {
-                "some" => match output {
-                    Type::Option(inner) => vec![Some(inner.as_ref().clone())],
-                    _ => Vec::new(),
-                },
-                "ok" => match output {
-                    Type::Result(value, _) => vec![Some(value.as_ref().clone())],
-                    _ => Vec::new(),
-                },
-                "err" => match output {
-                    Type::Result(_, error) => vec![Some(error.as_ref().clone())],
-                    _ => Vec::new(),
-                },
-                "mouse.click" => vec![
-                    Some(Type::Point),
-                    Some(Type::MouseButton),
-                    Some(Type::Option(Box::new(Type::MouseClick))),
-                ],
-                _ => Vec::new(),
-            },
-        }
+            CheckedCallTarget::Builtin(id) => {
+                let name = self.facts.builtins[id.0 as usize].as_str();
+                if let Some(builtin) = ContextualBuiltin::from_name(name) {
+                    let inferred = args
+                        .iter()
+                        .map(|argument| {
+                            analysis.type_of(argument).cloned().unwrap_or(Type::Unknown)
+                        })
+                        .collect::<Vec<_>>();
+                    builtin
+                        .argument_contexts(output, &inferred)
+                        .map_err(|message| self.invariant(span, message))?
+                } else {
+                    args.iter()
+                        .map(|_| BuiltinArgumentContext::Value { expected: None })
+                        .collect()
+                }
+            }
+        })
     }
 
     fn index_views(&mut self) {
@@ -1053,6 +1182,14 @@ impl CheckedFacts {
             )
             .unwrap();
         }
+        for (index, local) in self.locals.iter().enumerate() {
+            writeln!(
+                output,
+                "local l{index} {}:{:?} owner=u{} body_arg={} origin=o{}",
+                local.name, local.ty, local.owner.0, local.body_argument, local.origin.0
+            )
+            .unwrap();
+        }
         for (index, expression) in self.expressions.iter().enumerate() {
             let kind = match &expression.kind {
                 CheckedExprKind::Bool(value) => format!("bool {value}"),
@@ -1067,10 +1204,11 @@ impl CheckedFacts {
                 }
                 CheckedExprKind::Call { target, arguments } => match target {
                     CheckedCallTarget::Builtin(id) => format!(
-                        "call builtin:{} {arguments:?}",
-                        self.builtins[id.0 as usize]
+                        "call builtin:{} {}",
+                        self.builtins[id.0 as usize],
+                        format_call_arguments(arguments)
                     ),
-                    _ => format!("call {target:?} {arguments:?}"),
+                    _ => format!("call {target:?} {}", format_call_arguments(arguments)),
                 },
                 CheckedExprKind::Unary { operator, value } => {
                     format!("unary {operator:?} e{}", value.0)
@@ -1098,6 +1236,19 @@ impl CheckedFacts {
         }
         output
     }
+}
+
+#[cfg(test)]
+fn format_call_arguments(arguments: &[CheckedCallArgument]) -> String {
+    let values = arguments
+        .iter()
+        .map(|argument| match argument {
+            CheckedCallArgument::Value(id) => format!("CheckedExprId({})", id.0),
+            CheckedCallArgument::Binding(id) => format!("CheckedLocalId({})", id.0),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
 }
 
 #[cfg(test)]
@@ -1189,9 +1340,13 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
             facts.metrics(),
             CheckedFactMetrics {
                 values: 7,
+                locals: 0,
                 views: 7,
                 expression_uses: 7,
                 expressions: 17,
+                type_analysis_queries: 17,
+                type_analysis_nodes: 17,
+                type_analysis_cache_hits: 0,
                 declaration_lookups: 17,
                 builtin_intern_lookups: 1,
             }
@@ -1268,6 +1423,92 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
     }
 
     #[test]
+    fn animation_projection_records_a_typed_scoped_local() {
+        let source = format!(
+            "app Projection\n{THEME}state\n  progress:animation[f64] = 0.0\nderived\n  projected = animation.project(progress, sample, sample * 2.0)\nview\n  text projected\n"
+        );
+
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        assert_eq!(facts.locals().len(), 1);
+        let local = facts.local(CheckedLocalId(0));
+        assert_eq!(local.name, "sample");
+        assert_eq!(local.ty, Type::F64);
+        assert_eq!(local.owner, CheckedExprUseId(1));
+        assert_eq!(local.body_argument, 2);
+
+        let projected = facts
+            .values()
+            .iter()
+            .find(|value| value.name == "projected")
+            .unwrap();
+        let root = facts.expression_use(projected.initializer.unwrap()).root;
+        let CheckedExprKind::Call { arguments, .. } = &facts.expression(root).kind else {
+            panic!("projection initializer must be a checked call");
+        };
+        assert!(matches!(
+            arguments.as_slice(),
+            [
+                CheckedCallArgument::Value(_),
+                CheckedCallArgument::Binding(CheckedLocalId(0)),
+                CheckedCallArgument::Value(_)
+            ]
+        ));
+        let CheckedCallArgument::Value(body) = arguments[2] else {
+            unreachable!();
+        };
+        let CheckedExprKind::Binary { left, .. } = facts.expression(body).kind else {
+            panic!("projection body must retain its checked binary expression");
+        };
+        assert!(matches!(
+            facts.expression(left).kind,
+            CheckedExprKind::Path {
+                root: CheckedPathRoot::Local(CheckedLocalId(0)),
+                ..
+            }
+        ));
+        assert_eq!(facts.metrics().locals, 1);
+        assert_eq!(facts.metrics().type_analysis_nodes, 6);
+        assert_eq!(facts.metrics().expressions, 6);
+    }
+
+    #[test]
+    fn contextual_builtin_arguments_receive_the_declared_default_types() {
+        let source = format!(
+            "app Defaults\n{THEME}component Context(items:[str]=[], selected:str?=none, nested:str?=some(\"ready\"), success:result[str,str]=ok(\"yes\"), failure:result[str,str]=err(\"no\"))\n  text \"defaults\"\nview\n  Context\n"
+        );
+
+        let program = lower::lower(analyze(&source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        for (name, expected) in [
+            ("items", Type::List(Box::new(Type::Str))),
+            ("selected", Type::Option(Box::new(Type::Str))),
+            ("nested", Type::Option(Box::new(Type::Str))),
+            (
+                "success",
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+            ),
+            (
+                "failure",
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+            ),
+        ] {
+            let value = facts
+                .values()
+                .iter()
+                .find(|value| value.name == name)
+                .unwrap();
+            let expression =
+                facts.expression(facts.expression_use(value.initializer.unwrap()).root);
+            assert_eq!(expression.ty, expected, "{name}");
+        }
+        assert_eq!(
+            facts.metrics().type_analysis_nodes,
+            facts.metrics().expressions
+        );
+    }
+
+    #[test]
     #[ignore = "explicit large checked-fact performance contract"]
     fn performance_contract_ten_thousand_fact_lookups_are_direct_arena_accesses() {
         const VALUES: usize = 10_000;
@@ -1283,6 +1524,9 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
         let facts = program.checked_facts();
         assert_eq!(facts.metrics().values, VALUES);
         assert_eq!(facts.metrics().expressions, VALUES);
+        assert_eq!(facts.metrics().type_analysis_queries, VALUES);
+        assert_eq!(facts.metrics().type_analysis_nodes, VALUES);
+        assert_eq!(facts.metrics().type_analysis_cache_hits, 0);
         assert_eq!(facts.metrics().declaration_lookups, VALUES);
         facts.reset_lookup_count();
         for index in 0..VALUES {
@@ -1300,6 +1544,40 @@ view w6 text App parent=Some(CheckedViewId(4)) children=[] origin=o13
         assert!(
             elapsed.as_secs_f64() < 8.0,
             "10k checked value facts built and lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit deep linear checked-expression performance contract"]
+    fn performance_contract_deep_expression_is_analyzed_once_per_node() {
+        const TERMS: usize = 128;
+        let (metrics, elapsed) = std::thread::Builder::new()
+            .name("deep-expression-facts".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut source = format!("app Deep\n{THEME}state\n  value:i64 = 1");
+                for _ in 1..TERMS {
+                    source.push_str(" + 1");
+                }
+                source.push_str("\nview\n  text value\n");
+                let started = Instant::now();
+                let program = lower::lower(analyze(&source).unwrap()).unwrap();
+                (program.checked_facts().metrics(), started.elapsed())
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+
+        let nodes = TERMS * 2 - 1;
+        assert_eq!(metrics.values, 1);
+        assert_eq!(metrics.expression_uses, 1);
+        assert_eq!(metrics.expressions, nodes);
+        assert_eq!(metrics.type_analysis_queries, nodes);
+        assert_eq!(metrics.type_analysis_nodes, nodes);
+        assert_eq!(metrics.type_analysis_cache_hits, 0);
+        assert!(
+            elapsed.as_secs_f64() < 8.0,
+            "128-term expression facts built and lowered in {elapsed:?}"
         );
     }
 }

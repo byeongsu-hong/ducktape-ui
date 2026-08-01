@@ -1,7 +1,178 @@
 use super::*;
 use crate::unqualified_name;
+use std::cell::RefCell;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ExprTypeAnalysisMetrics {
+    pub(crate) queries: usize,
+    pub(crate) nodes: usize,
+    pub(crate) cache_hits: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExprTypeAnalysis {
+    types: HashMap<usize, Type>,
+    metrics: ExprTypeAnalysisMetrics,
+}
+
+impl ExprTypeAnalysis {
+    pub(crate) fn type_of(&self, expr: &Expr) -> Option<&Type> {
+        self.types.get(&expr_key(expr))
+    }
+
+    pub(crate) fn metrics(&self) -> ExprTypeAnalysisMetrics {
+        self.metrics
+    }
+}
+
+#[derive(Default)]
+struct ActiveExprTypeAnalysis {
+    types: HashMap<usize, Type>,
+    queries: usize,
+    cache_hits: usize,
+}
+
+thread_local! {
+    static ACTIVE_EXPR_TYPE_ANALYSIS: RefCell<Option<ActiveExprTypeAnalysis>> = const { RefCell::new(None) };
+}
+
+fn expr_key(expr: &Expr) -> usize {
+    std::ptr::from_ref(expr).addr()
+}
+
+pub(crate) fn analyze_expr_types(
+    expr: &Expr,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+) -> Result<ExprTypeAnalysis, Error> {
+    ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        let mut active = active.borrow_mut();
+        assert!(
+            active.is_none(),
+            "expression type analysis must not be nested"
+        );
+        *active = Some(ActiveExprTypeAnalysis::default());
+    });
+
+    let result = expr_type(expr, env, document, span);
+    let result = result.and_then(|_| complete_expr_type_analysis(expr, env, document, span));
+    let active = ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        active
+            .borrow_mut()
+            .take()
+            .expect("expression type analysis must remain active")
+    });
+    result?;
+    Ok(ExprTypeAnalysis {
+        metrics: ExprTypeAnalysisMetrics {
+            queries: active.queries,
+            nodes: active.types.len(),
+            cache_hits: active.cache_hits,
+        },
+        types: active.types,
+    })
+}
+
+fn complete_expr_type_analysis(
+    expr: &Expr,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+) -> Result<(), Error> {
+    match expr {
+        Expr::List(values) => {
+            for value in values {
+                complete_expr_type_analysis(value, env, document, span)?;
+            }
+        }
+        Expr::Call { name, args }
+            if ContextualBuiltin::from_name(unqualified_name(name))
+                == Some(ContextualBuiltin::AnimationProject) =>
+        {
+            complete_expr_type_analysis(&args[0], env, document, span)?;
+            let inner = active_expr_type(&args[0])
+                .and_then(|ty| match ty {
+                    Type::Animation(inner) => Some(*inner),
+                    _ => None,
+                })
+                .ok_or_else(|| Error::new("E196", span, "missing animation binding type"))?;
+            let Expr::Path(binding) = &args[1] else {
+                return Err(Error::new("E196", span, "missing animation binding name"));
+            };
+            let mut scoped = env.clone();
+            scoped.insert(binding[0].clone(), inner);
+            complete_expr_type_analysis(&args[2], &scoped, document, span)?;
+            if let Some(at) = args.get(3) {
+                complete_expr_type_analysis(at, env, document, span)?;
+            }
+        }
+        Expr::Call { name, args } if unqualified_name(name) == "provided" => {}
+        Expr::Call { args, .. } => {
+            for argument in args {
+                complete_expr_type_analysis(argument, env, document, span)?;
+            }
+        }
+        Expr::Unary { value, .. } => {
+            complete_expr_type_analysis(value, env, document, span)?;
+        }
+        Expr::Binary { left, right, .. } => {
+            complete_expr_type_analysis(left, env, document, span)?;
+            complete_expr_type_analysis(right, env, document, span)?;
+        }
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None
+        | Expr::Path(_) => {}
+    }
+
+    if active_expr_type(expr).is_none() {
+        expr_type(expr, env, document, span)?;
+    }
+    Ok(())
+}
+
+fn active_expr_type(expr: &Expr) -> Option<Type> {
+    ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .and_then(|active| active.types.get(&expr_key(expr)).cloned())
+    })
+}
 
 pub(crate) fn expr_type(
+    expr: &Expr,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+) -> Result<Type, Error> {
+    let key = expr_key(expr);
+    if let Some(cached) = ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut()?;
+        active.queries += 1;
+        let cached = active.types.get(&key)?.clone();
+        active.cache_hits += 1;
+        Some(cached)
+    }) {
+        return Ok(cached);
+    }
+
+    let ty = expr_type_uncached(expr, env, document, span)?;
+    ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            active.types.insert(key, ty.clone());
+        }
+    });
+    Ok(ty)
+}
+
+fn expr_type_uncached(
     expr: &Expr,
     env: &HashMap<String, Type>,
     document: &Document,
@@ -121,6 +292,9 @@ pub(crate) fn expr_type(
                 return Ok(function.output.clone());
             }
             let name = unqualified_name(name);
+            if let Some(builtin) = ContextualBuiltin::from_name(name) {
+                return check_contextual_builtin(builtin, args, env, document, span);
+            }
             match name {
                 "color.default" | "color.black" | "color.white" | "color.transparent" => {
                     check_builtin_args(name, args, &[], env, document, span)?;
@@ -956,41 +1130,6 @@ pub(crate) fn expr_type(
                     animation_inner(&args[0], env, document, span)?;
                     Ok(Type::Bool)
                 }
-                "animation.interpolate" => {
-                    check_animation_instant(name, args, 3, true, env, document, span)?;
-                    require_type(
-                        &animation_inner(&args[0], env, document, span)?,
-                        &Type::Bool,
-                        span,
-                    )?;
-                    let output = expr_type(&args[1], env, document, span)?;
-                    let output = if output == Type::F64 {
-                        Type::F64
-                    } else {
-                        let optional = Type::Option(Box::new(Type::F64));
-                        require_type(&output, &optional, span).map_err(|_| {
-                            Error::new(
-                                "E152",
-                                span,
-                                "animation.interpolate values must be f64 or f64?",
-                            )
-                        })?;
-                        optional
-                    };
-                    require_type(&expr_type(&args[2], env, document, span)?, &output, span)?;
-                    if output == Type::F64 {
-                        for value in &args[1..=2] {
-                            require_f32_literal_range(
-                                value,
-                                f64::NEG_INFINITY,
-                                None,
-                                "animation interpolation value",
-                                span,
-                            )?;
-                        }
-                    }
-                    Ok(output)
-                }
                 "animation.remaining" => {
                     check_animation_instant(name, args, 1, true, env, document, span)?;
                     require_type(
@@ -999,44 +1138,6 @@ pub(crate) fn expr_type(
                         span,
                     )?;
                     Ok(Type::F64)
-                }
-                "animation.project" => {
-                    check_animation_instant(name, args, 3, true, env, document, span)?;
-                    let inner = animation_inner(&args[0], env, document, span)?;
-                    let Expr::Path(binding) = &args[1] else {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            "animation.project second argument must be a binding name",
-                        ));
-                    };
-                    if binding.len() != 1 {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            "animation.project second argument must be a binding name",
-                        ));
-                    }
-                    let mut projection_env = env.clone();
-                    projection_env.insert(binding[0].clone(), inner);
-                    let output = expr_type(&args[2], &projection_env, document, span)?;
-                    if output != Type::F64 && output != Type::Option(Box::new(Type::F64)) {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            "animation.project expression must produce f64 or f64?",
-                        ));
-                    }
-                    if output == Type::F64 {
-                        require_f32_literal_range(
-                            &args[2],
-                            f64::NEG_INFINITY,
-                            None,
-                            "animation projection value",
-                            span,
-                        )?;
-                    }
-                    Ok(output)
                 }
                 "pixels" => {
                     check_f32_args(name, args, &[Type::F64], env, document, span)?;
@@ -1612,21 +1713,6 @@ pub(crate) fn expr_type(
                     )?;
                     Ok(Type::MouseCursor)
                 }
-                "mouse.click" => {
-                    check_builtin_args(
-                        name,
-                        args,
-                        &[
-                            Type::Point,
-                            Type::MouseButton,
-                            Type::Option(Box::new(Type::MouseClick)),
-                        ],
-                        env,
-                        document,
-                        span,
-                    )?;
-                    Ok(Type::MouseClick)
-                }
                 "touch.finger" => {
                     let [Expr::Str(value)] = args.as_slice() else {
                         return Err(Error::new(
@@ -1829,32 +1915,6 @@ pub(crate) fn expr_type(
                     }
                     require_type(&expr_type(&args[0], env, document, span)?, &Type::Str, span)?;
                     Ok(Type::Str)
-                }
-                "some" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "some expects one argument"));
-                    }
-                    Ok(Type::Option(Box::new(expr_type(
-                        &args[0], env, document, span,
-                    )?)))
-                }
-                "ok" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "ok expects one argument"));
-                    }
-                    Ok(Type::Result(
-                        Box::new(expr_type(&args[0], env, document, span)?),
-                        Box::new(Type::Unknown),
-                    ))
-                }
-                "err" => {
-                    if args.len() != 1 {
-                        return Err(Error::new("E152", span, "err expects one argument"));
-                    }
-                    Ok(Type::Result(
-                        Box::new(Type::Unknown),
-                        Box::new(expr_type(&args[0], env, document, span)?),
-                    ))
                 }
                 "markdown" => {
                     if args.len() != 1 {
@@ -2197,6 +2257,129 @@ pub(crate) fn expr_type(
     }
 }
 
+fn check_contextual_builtin(
+    builtin: ContextualBuiltin,
+    args: &[Expr],
+    env: &HashMap<String, Type>,
+    document: &Document,
+    span: &Span,
+) -> Result<Type, Error> {
+    match builtin {
+        ContextualBuiltin::Some | ContextualBuiltin::Ok | ContextualBuiltin::Err => {
+            if args.len() != 1 {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    format!(
+                        "{} expects one argument",
+                        match builtin {
+                            ContextualBuiltin::Some => "some",
+                            ContextualBuiltin::Ok => "ok",
+                            ContextualBuiltin::Err => "err",
+                            _ => unreachable!(),
+                        }
+                    ),
+                ));
+            }
+            let argument = expr_type(&args[0], env, document, span)?;
+            Ok(match builtin {
+                ContextualBuiltin::Some => Type::Option(Box::new(argument)),
+                ContextualBuiltin::Ok => Type::Result(Box::new(argument), Box::new(Type::Unknown)),
+                ContextualBuiltin::Err => Type::Result(Box::new(Type::Unknown), Box::new(argument)),
+                _ => unreachable!(),
+            })
+        }
+        ContextualBuiltin::MouseClick => {
+            check_builtin_args(
+                "mouse.click",
+                args,
+                &[
+                    Type::Point,
+                    Type::MouseButton,
+                    Type::Option(Box::new(Type::MouseClick)),
+                ],
+                env,
+                document,
+                span,
+            )?;
+            Ok(Type::MouseClick)
+        }
+        ContextualBuiltin::AnimationInterpolate => {
+            check_animation_instant("animation.interpolate", args, 3, true, env, document, span)?;
+            require_type(
+                &animation_inner(&args[0], env, document, span)?,
+                &Type::Bool,
+                span,
+            )?;
+            let output = expr_type(&args[1], env, document, span)?;
+            let output = if output == Type::F64 {
+                Type::F64
+            } else {
+                let optional = Type::Option(Box::new(Type::F64));
+                require_type(&output, &optional, span).map_err(|_| {
+                    Error::new(
+                        "E152",
+                        span,
+                        "animation.interpolate values must be f64 or f64?",
+                    )
+                })?;
+                optional
+            };
+            require_type(&expr_type(&args[2], env, document, span)?, &output, span)?;
+            if output == Type::F64 {
+                for value in &args[1..=2] {
+                    require_f32_literal_range(
+                        value,
+                        f64::NEG_INFINITY,
+                        None,
+                        "animation interpolation value",
+                        span,
+                    )?;
+                }
+            }
+            Ok(output)
+        }
+        ContextualBuiltin::AnimationProject => {
+            check_animation_instant("animation.project", args, 3, true, env, document, span)?;
+            let inner = animation_inner(&args[0], env, document, span)?;
+            let Expr::Path(binding) = &args[1] else {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    "animation.project second argument must be a binding name",
+                ));
+            };
+            if binding.len() != 1 {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    "animation.project second argument must be a binding name",
+                ));
+            }
+            let mut projection_env = env.clone();
+            projection_env.insert(binding[0].clone(), inner);
+            let output = expr_type(&args[2], &projection_env, document, span)?;
+            if output != Type::F64 && output != Type::Option(Box::new(Type::F64)) {
+                return Err(Error::new(
+                    "E152",
+                    span,
+                    "animation.project expression must produce f64 or f64?",
+                ));
+            }
+            if output == Type::F64 {
+                require_f32_literal_range(
+                    &args[2],
+                    f64::NEG_INFINITY,
+                    None,
+                    "animation projection value",
+                    span,
+                )?;
+            }
+            Ok(output)
+        }
+    }
+}
+
 fn ui_enum_variant<'a>(
     document: &'a Document,
     enum_name: &str,
@@ -2224,9 +2407,11 @@ pub(in crate::check) fn contains_ui_enum(ty: &Type, document: &Document) -> bool
 }
 
 mod fields;
+mod signature;
 mod validation;
 
 pub(super) use fields::*;
+pub(super) use signature::*;
 pub(super) use validation::*;
 
 fn constant_i64(expr: &Expr) -> Option<i64> {

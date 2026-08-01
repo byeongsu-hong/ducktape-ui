@@ -696,6 +696,54 @@ palette app for AppTheme
     }
 
     #[test]
+    fn fingerprints_contextually_typed_component_defaults() {
+        let checked = analyze(
+            r#"app Defaults
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #336699
+  danger #cc0000
+component Context(items:[str]=[], selected:str?=none, nested:str?=some("ready"), success:result[str,str]=ok("yes"), failure:result[str,str]=err("no"))
+  text "defaults"
+view
+  Context
+"#,
+        )
+        .unwrap();
+
+        let api = ApiSurface::from_checked(&checked);
+        let component = &api.components[0];
+        let default = |name: &str| {
+            component
+                .props
+                .iter()
+                .find(|prop| prop.name == name)
+                .and_then(|prop| prop.default.as_ref())
+                .unwrap()
+        };
+        assert_eq!(default("items"), &ApiExpression::EmptyList);
+        assert_eq!(default("selected"), &ApiExpression::None);
+        assert!(matches!(
+            default("nested"),
+            ApiExpression::Call { name, .. } if name == "some"
+        ));
+        assert!(matches!(
+            default("success"),
+            ApiExpression::Call { name, .. } if name == "ok"
+        ));
+        assert!(matches!(
+            default("failure"),
+            ApiExpression::Call { name, .. } if name == "err"
+        ));
+    }
+
+    #[test]
     fn reports_imported_interface_failures_at_the_physical_source() {
         let temp = TempDir::new().unwrap();
         let imported = temp.path().join("broken.ice");
