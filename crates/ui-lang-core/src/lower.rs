@@ -3,9 +3,10 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedLocalId, CheckedLocalOwner, CheckedMedia, CheckedPathRoot, CheckedProjectionKind,
-    CheckedUnaryOperator, CheckedValueRef, CheckedViewScope, ContextualBuiltin,
-    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMedia,
+    CheckedPathRoot, CheckedProjectionKind, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable,
+    resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
@@ -15,23 +16,28 @@ pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
     CanvasExpressionId, CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId,
     ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
-    ExternRef, HandlerId, HandlerOwner, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena,
-    OriginId, PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
-    TestStepId, TestTargetId, ViewId,
+    ExternRef, HandlerId, HandlerOwner, InteractionExpressionId, InteractionRouteId,
+    MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId,
+    RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId,
+    TooltipExpressionId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod canvas;
+mod interaction;
 mod media;
 mod style;
 mod testing;
+mod tooltip;
 
 pub(crate) use canvas::*;
+pub(crate) use interaction::*;
 pub(crate) use media::*;
 
 pub(crate) use style::*;
+pub(crate) use tooltip::*;
 
 pub(crate) type ResolvedExpressionId = CheckedExprUseId;
 
@@ -1430,6 +1436,8 @@ pub(crate) struct LoweredProgram {
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    tooltips: HashMap<ViewId, ResolvedTooltip>,
+    interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -2972,6 +2980,16 @@ impl LoweredProgram {
         self.media.get(&id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn tooltip(&self, id: ViewId) -> Option<&ResolvedTooltip> {
+        self.tooltips.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
+        self.interaction_widgets.get(&id)
+    }
+
     pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
         let span = node.span();
         let id = self.declarations.view_id(span).ok_or_else(|| {
@@ -3020,6 +3038,92 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "media reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_tooltip_for(&self, node: &ViewNode) -> Result<&ResolvedTooltip, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.tooltips.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "tooltip reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_mouse_area_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedMouseArea, Error> {
+        let interaction = self.resolved_interaction_for(node, "mouse area")?;
+        let ResolvedInteractionWidget::MouseArea(mouse) = interaction else {
+            return Err(Error::new(
+                "E196",
+                node.span(),
+                "mouse area reached code generation with the wrong normalized kind",
+            ));
+        };
+        Ok(mouse)
+    }
+
+    pub(crate) fn resolved_resize_handle_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedResizeHandle, Error> {
+        let interaction = self.resolved_interaction_for(node, "resize handle")?;
+        let ResolvedInteractionWidget::ResizeHandle(handle) = interaction else {
+            return Err(Error::new(
+                "E196",
+                node.span(),
+                "resize handle reached code generation with the wrong normalized kind",
+            ));
+        };
+        Ok(handle)
+    }
+
+    fn resolved_interaction_for(
+        &self,
+        node: &ViewNode,
+        family: &str,
+    ) -> Result<&ResolvedInteractionWidget, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                format!("{family} reached code generation without a shared view ID"),
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                format!("{family} reached code generation with a mismatched checked view ID"),
+            ));
+        }
+        self.interaction_widgets.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                format!("{family} reached code generation without normalized HIR"),
             )
         })
     }
@@ -3250,6 +3354,8 @@ pub(crate) struct Lowerer {
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
     media: HashMap<ViewId, ResolvedMedia>,
+    tooltips: HashMap<ViewId, ResolvedTooltip>,
+    interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
 #[derive(Default)]
@@ -3960,6 +4066,8 @@ impl Lowerer {
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
             media: HashMap::new(),
+            tooltips: HashMap::new(),
+            interaction_widgets: HashMap::new(),
         }
     }
 
@@ -4034,6 +4142,8 @@ impl Lowerer {
             tests,
             canvases: self.canvases,
             media: self.media,
+            tooltips: self.tooltips,
+            interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -7768,6 +7878,35 @@ impl Lowerer {
             } => {
                 self.lower_media(*kind, source, options, span, outer_component)?;
             }
+            ViewNode::Tooltip {
+                content,
+                tip,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_tooltip(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+                self.lower_view(tip, outer_component)?;
+            }
+            ViewNode::MouseArea {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_mouse_area(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
+            ViewNode::ResizeHandle {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_resize_handle(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -7817,8 +7956,6 @@ impl Lowerer {
                 content: Some(content),
                 ..
             }
-            | ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
             | ViewNode::Container { content, .. }
             | ViewNode::Theme { content, .. }
             | ViewNode::Float { content, .. }
@@ -7827,10 +7964,6 @@ impl Lowerer {
             | ViewNode::KeyedColumn { child: content, .. }
             | ViewNode::Lazy { child: content, .. } => {
                 self.lower_view(content, outer_component)?;
-            }
-            ViewNode::Tooltip { content, tip, .. } => {
-                self.lower_view(content, outer_component)?;
-                self.lower_view(tip, outer_component)?;
             }
             ViewNode::Overlay { content, layer, .. } => {
                 self.lower_view(content, outer_component)?;
@@ -9730,6 +9863,53 @@ view
     }
 
     #[test]
+    fn malformed_checked_tooltip_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidTooltipFacts\n{THEME}view\n  tooltip gap=2.0\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Tooltip(TooltipExpressionId {
+                tooltip: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
+    fn malformed_checked_interaction_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidInteractionFacts\n{THEME}state\n  active = true\non pressed(flag)\nview\n  mouse press=pressed(active)\n    text \"Pointer\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -9799,6 +9979,229 @@ view
         let actual = crate::codegen::generate(&program, "lowered-media.ice").unwrap();
         assert_eq!(actual, expected);
         assert!(!actual.contains("poisoned.png"));
+    }
+
+    #[test]
+    fn tooltip_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedTooltip\n{THEME}state\n  gap = 2.0\nview\n  tooltip position=cursor gap=gap bg=primary\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-tooltip.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.gap = Expr::F64(99.0);
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-tooltip.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("bounded_table_metric(99.0"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.position = TooltipPosition::Top;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn tooltip_codegen_ignores_raw_options_and_theme_token_order_after_lowering() {
+        let source = format!(
+            "app LoweredTooltip\n{THEME}state\n  gap = 2.0\nview\n  tooltip position=cursor gap=gap bg=primary text=fg\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-tooltip.ice").unwrap();
+
+        let ViewNode::Tooltip { options, .. } = &mut program.document.view else {
+            panic!("fixture root must be tooltip");
+        };
+        options.position = TooltipPosition::Top;
+        options.gap = Expr::F64(99.0);
+        options.background = Some(BackgroundValue::Color("danger".into()));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+
+        let actual = crate::codegen::generate(&program, "lowered-tooltip.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("bounded_table_metric(99.0"));
+    }
+
+    #[test]
+    fn normalizes_tooltip_options_colors_styles_and_expression_owners() {
+        let source = format!(
+            "app TooltipHir\nextern crate::backend\n  box-style dynamic_tooltip(active:bool)\n{THEME}state\n  active = true\nview\n  tooltip position=cursor gap=2.0 p=5.0 delay=100 snap=false style=dynamic_tooltip(active) bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary/75 border-w=1.0 r=5.0 r-tl=2.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=8.0 px-snap=true\n    text \"Hover\"\n    text \"Tip\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let tooltip = program.tooltip(ViewId(0)).unwrap();
+
+        assert_eq!(tooltip.id, ViewId(0));
+        assert_eq!(tooltip.position, ResolvedTooltipPosition::FollowCursor);
+        let Some(ResolvedTooltipBaseStyle::Custom(style)) = &tooltip.base_style else {
+            panic!("fixture must normalize a custom tooltip style");
+        };
+        assert_eq!(
+            program.extern_function(style.function).name,
+            "dynamic_tooltip"
+        );
+        assert_eq!(style.arguments.len(), 1);
+        let Some(ResolvedTooltipBackground::Linear { stops, .. }) = &tooltip.background else {
+            panic!("fixture must normalize a linear background");
+        };
+        assert_eq!(stops.len(), 2);
+        assert!(matches!(
+            tooltip.text_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 1, .. }),
+                opacity: None,
+            })
+        ));
+        assert!(matches!(
+            tooltip.border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                opacity: Some(75),
+            })
+        ));
+        assert_eq!(
+            program
+                .facts
+                .expression_use_by_owner(CheckedExprOwner::Tooltip(TooltipExpressionId {
+                    tooltip: ViewId(0),
+                    index: 0,
+                })),
+            Some(tooltip.gap)
+        );
+    }
+
+    #[test]
+    fn interaction_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedInteraction\n{THEME}state\n  active = true\non pressed(flag)\non moved(x, y)\nview\n  mouse press=pressed(active) move=moved cursor=pointer\n    text \"Pointer\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-interaction.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::MouseArea { options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be a mouse area");
+        };
+        let RouteArg::Expr(argument) = &mut options.press.as_mut().unwrap().args[0] else {
+            panic!("fixture press route must have an expression");
+        };
+        *argument = Expr::Bool(false);
+        let actual = crate::codegen::generate(
+            &lower(changed_expressions).unwrap(),
+            "checked-interaction.ice",
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::MouseArea { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a mouse area");
+        };
+        options.interaction = Some(MouseInteraction::Crosshair);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn interaction_codegen_ignores_raw_routes_and_options_after_lowering() {
+        let source = format!(
+            "app LoweredInteraction\n{THEME}state\n  active = true\non pressed(flag)\non moved(x, y)\non resized(dx, dy)\nview\n  col\n    mouse press=pressed(active) move=moved cursor=pointer\n      text \"Pointer\"\n    resize-handle drag=resized cursor=resize-horizontal\n      text \"Resize\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-interaction.ice").unwrap();
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a column");
+        };
+        let ViewNode::MouseArea { options, .. } = &mut children[0] else {
+            panic!("first child must be a mouse area");
+        };
+        options.interaction = Some(MouseInteraction::Crosshair);
+        let press = options.press.as_mut().unwrap();
+        press.handler = "poisoned".into();
+        press.args.clear();
+        let ViewNode::ResizeHandle { options, .. } = &mut children[1] else {
+            panic!("second child must be a resize handle");
+        };
+        options.interaction = Some(MouseInteraction::Wait);
+        options.drag.as_mut().unwrap().handler = "poisoned".into();
+
+        let actual = crate::codegen::generate(&program, "lowered-interaction.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("Poisoned"));
+    }
+
+    #[test]
+    fn normalizes_mouse_area_resize_handle_routes_payloads_and_interactions() {
+        let source = format!(
+            "app InteractionHir\n{THEME}state\n  active = true\non pressed(flag)\non moved(x, y)\non scrolled(x, y, pixels)\non resized(dx, dy)\nview\n  col\n    mouse press=pressed(active) move=moved scroll=scrolled cursor=pointer\n      text \"Pointer\"\n    resize-handle drag=resized cursor=resize-horizontal\n      text \"Resize\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let Some(ResolvedInteractionWidget::MouseArea(mouse)) =
+            program.interaction_widget(ViewId(1))
+        else {
+            panic!("first interaction must be a mouse area");
+        };
+        assert_eq!(mouse.interaction, Some(MouseInteraction::Pointer));
+        let press = mouse.press.as_ref().unwrap();
+        assert!(matches!(
+            press.args.as_slice(),
+            [ResolvedInteractionRouteArg::Expression(_)]
+        ));
+        let moved = mouse.move_route.as_ref().unwrap();
+        assert!(moved.ordered_payloads);
+        assert_eq!(moved.source_payloads, [Type::F64, Type::F64]);
+        assert!(matches!(
+            moved.args.as_slice(),
+            [
+                ResolvedInteractionRouteArg::Payload { index: 0, .. },
+                ResolvedInteractionRouteArg::Payload { index: 1, .. }
+            ]
+        ));
+        let scrolled = mouse.scroll.as_ref().unwrap();
+        assert_eq!(scrolled.source_payloads, [Type::F64, Type::F64, Type::Bool]);
+
+        let Some(ResolvedInteractionWidget::ResizeHandle(handle)) =
+            program.interaction_widget(ViewId(3))
+        else {
+            panic!("second interaction must be a resize handle");
+        };
+        assert_eq!(
+            handle.interaction,
+            Some(MouseInteraction::ResizingHorizontally)
+        );
+        let drag = handle.drag.as_ref().unwrap();
+        assert_eq!(
+            drag.id,
+            InteractionRouteId {
+                widget: ViewId(3),
+                index: 0,
+            }
+        );
+        assert!(drag.ordered_payloads);
+        assert_eq!(drag.source_payloads, [Type::F64, Type::F64]);
     }
 
     #[test]
@@ -9889,6 +10292,64 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized media nodes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized tooltip lowering and emission performance contract"]
+    fn performance_contract_four_thousand_tooltips_lower_and_emit_under_two_seconds() {
+        const TOOLTIPS: usize = 4_000;
+        let mut source = format!("app TooltipScale\n{THEME}view\n  col\n");
+        for index in 0..TOOLTIPS {
+            writeln!(
+                source,
+                "    tooltip position=cursor gap=2.0 p=5.0 delay=100 bg=primary\n      text \"Hover {index}\"\n      text \"Tip {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "tooltip-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.tooltips.len(), TOOLTIPS);
+        assert_eq!(
+            generated.matches("::iced::widget::tooltip(").count(),
+            TOOLTIPS
+        );
+        eprintln!("4k normalized tooltips lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized tooltips lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized interaction-widget lowering and emission performance contract"]
+    fn performance_contract_four_thousand_interaction_widgets_lower_and_emit_under_two_seconds() {
+        const WIDGETS: usize = 4_000;
+        let mut source = format!("app InteractionScale\n{THEME}on moved(x, y)\nview\n  col\n");
+        for index in 0..WIDGETS {
+            writeln!(
+                source,
+                "    mouse move=moved cursor=pointer\n      text \"Pointer {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "interaction-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.interaction_widgets.len(), WIDGETS);
+        assert_eq!(
+            generated.matches("::iced::widget::mouse_area(").count(),
+            WIDGETS
+        );
+        eprintln!("4k normalized interaction widgets lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized interaction widgets lowered and emitted in {elapsed:?}"
         );
     }
 

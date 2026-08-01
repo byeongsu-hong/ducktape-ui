@@ -75,6 +75,91 @@ pub(in crate::codegen) fn resolved_route_code(
     }
 }
 
+pub(in crate::codegen) fn resolved_interaction_route_code(
+    route: &ResolvedInteractionRoute,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    let invariant = |message| program.invariant_at_origin(route.origin, message);
+    let mut args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            ResolvedInteractionRouteArg::Expression(expression) => {
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+            }
+            ResolvedInteractionRouteArg::Payload { index, .. } => payloads
+                .get(*index as usize)
+                .map(|payload| (*payload).to_owned())
+                .ok_or_else(|| {
+                    invariant("interaction route payload index is outside its contract")
+                }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match &route.target {
+        ResolvedInteractionRouteTarget::TargetHandler(handler) => {
+            let target = program.try_handler(*handler).ok_or_else(|| {
+                invariant("interaction route references an invalid normalized handler")
+            })?;
+            let variant = match target.owner {
+                HandlerOwner::App => handler_variant(&target.name),
+                HandlerOwner::Component(component) => {
+                    let contract = program.try_component(component).ok_or_else(|| {
+                        invariant("interaction route component handler has no component contract")
+                    })?;
+                    let (active, context) = component_context(env).ok_or_else(|| {
+                        invariant("interaction component route has no component context")
+                    })?;
+                    if active != contract.name {
+                        return Err(invariant("interaction component route context diverged"));
+                    }
+                    args.insert(0, format!("({}).clone()", context.code));
+                    component_handler_variant(&contract.name, &target.name)
+                }
+                HandlerOwner::Preset(_) => {
+                    return Err(invariant(
+                        "interaction route cannot target a preset handler",
+                    ));
+                }
+            };
+            if args.is_empty() {
+                Ok(format!("{message}::{variant}"))
+            } else {
+                Ok(format!("{message}::{variant}({})", args.join(", ")))
+            }
+        }
+        ResolvedInteractionRouteTarget::OutputCallback { component, .. } => {
+            let output = component_output(env).ok_or_else(|| {
+                invariant("interaction component output route has no output callback")
+            })?;
+            if program.try_component(*component).is_none() || args.len() != 1 {
+                return Err(invariant(
+                    "interaction component output route contract diverged",
+                ));
+            }
+            Ok(format!("({})({})", output.code, args[0]))
+        }
+        ResolvedInteractionRouteTarget::NamedEvent {
+            event: _,
+            name,
+            payloads: expected,
+        } => {
+            let (component, _) = component_context(env).ok_or_else(|| {
+                invariant("interaction named event route has no component context")
+            })?;
+            let callback = component_event(env, component, name).ok_or_else(|| {
+                invariant("interaction named event route has no normalized callback")
+            })?;
+            if args.len() != expected.len() {
+                return Err(invariant("interaction named event route arity diverged"));
+            }
+            Ok(format!("({})({})", callback.code, args.join(", ")))
+        }
+    }
+}
+
 pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> {
     match field {
         "kind" => Some(Type::Str),
@@ -269,6 +354,105 @@ pub(in crate::codegen) fn route_callback_with_code(
             .collect::<String>();
         Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
     }
+}
+
+pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
+    route: &ResolvedInteractionRoute,
+    pattern: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    render: impl FnOnce(&HashMap<String, Binding>) -> Result<String, Error>,
+) -> Result<String, Error> {
+    let invariant = |message| program.invariant_at_origin(route.origin, message);
+    let (component, captures_context) = match &route.target {
+        ResolvedInteractionRouteTarget::TargetHandler(handler) => {
+            let target = program.try_handler(*handler).ok_or_else(|| {
+                invariant("interaction callback references an invalid handler ID")
+            })?;
+            match target.owner {
+                HandlerOwner::App => (None, false),
+                HandlerOwner::Component(component) => (Some(component), true),
+                HandlerOwner::Preset(_) => {
+                    return Err(invariant(
+                        "interaction callback cannot target a preset handler",
+                    ));
+                }
+            }
+        }
+        ResolvedInteractionRouteTarget::OutputCallback { component, .. } => {
+            (Some(*component), false)
+        }
+        ResolvedInteractionRouteTarget::NamedEvent { event, .. } => (Some(event.component), false),
+    };
+    let component_context = component
+        .map(|component| {
+            let contract = program.try_component(component).ok_or_else(|| {
+                invariant("interaction callback component ID is outside its arena")
+            })?;
+            let (active, context) = component_context(env).ok_or_else(|| {
+                invariant("interaction callback has no component emission context")
+            })?;
+            if active != contract.name {
+                return Err(invariant("interaction callback component context diverged"));
+            }
+            Ok((contract.name.clone(), context.code.clone()))
+        })
+        .transpose()?;
+    let local = captures_context.then_some(component_context).flatten();
+    let mut captures = Vec::<(String, String)>::new();
+    if let Some((_, scope)) = &local {
+        captures.push((scope.clone(), "__route_scope".into()));
+    }
+    let mut state_scopes = component_state_scopes(env);
+    state_scopes.sort();
+    state_scopes.dedup();
+    for scope in state_scopes {
+        if !captures.iter().any(|(captured, _)| captured == &scope) {
+            captures.push((scope, format!("__route_state_scope_{}", captures.len())));
+        }
+    }
+    let mut callback_env = env.snapshot();
+    if let Some((component, _)) = &local {
+        callback_env
+            .get_mut(&component_context_key(component))
+            .ok_or_else(|| invariant("interaction callback lost its component context binding"))?
+            .code = "__route_scope".into();
+    }
+    for entry in callback_env.values_mut() {
+        for (scope, alias) in &captures {
+            entry.code = entry.code.replace(scope, alias);
+            if let Some(StateBinding::Component {
+                scope: state_scope, ..
+            }) = &mut entry.state
+                && state_scope == scope
+            {
+                *state_scope = alias.clone();
+            }
+        }
+    }
+    let body = render(&callback_env)?;
+    if captures.is_empty() {
+        Ok(format!("move |{pattern}| {body}"))
+    } else {
+        let captures = captures
+            .iter()
+            .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
+            .collect::<String>();
+        Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
+    }
+}
+
+pub(in crate::codegen) fn resolved_interaction_route_callback_code(
+    route: &ResolvedInteractionRoute,
+    pattern: &str,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    resolved_interaction_route_callback_with_code(route, pattern, env, program, |callback_env| {
+        resolved_interaction_route_code(route, payloads, callback_env, program, message)
+    })
 }
 
 pub(in crate::codegen) fn route_callback_code(

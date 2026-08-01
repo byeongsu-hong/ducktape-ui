@@ -23,155 +23,24 @@ pub(in crate::codegen) fn render_media(
             let resolved = hir.resolved_media_for(node)?;
             render_resolved_media(resolved, hir, env, scope)
         }
-        ViewNode::Tooltip {
-            options,
-            content,
-            tip,
-            ..
-        } => {
+        ViewNode::Tooltip { content, tip, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
             let tip = render_node(tip, document, message, env, &child_scope, slot)?;
-            let position = match options.position {
-                TooltipPosition::Top => "Top",
-                TooltipPosition::Bottom => "Bottom",
-                TooltipPosition::Left => "Left",
-                TooltipPosition::Right => "Right",
-                TooltipPosition::FollowCursor => "FollowCursor",
-            };
-            let gap = expr_code(&options.gap, env, document, ValueMode::Owned)?;
-            let padding = expr_code(&options.padding, env, document, ValueMode::Owned)?;
-            let delay = expr_code(&options.delay_ms, env, document, ValueMode::Owned)?;
-            let snap = expr_code(&options.snap, env, document, ValueMode::Owned)?;
-            let mut code = format!(
-                "{{ let __tooltip_content: __IceElement<'_, {message}> = {content}; let __tooltip_tip: __IceElement<'_, {message}> = {tip}; ::iced::widget::tooltip(__tooltip_content, __tooltip_tip, ::iced::widget::tooltip::Position::{position}).gap(::ui_lang_runtime::bounded_table_metric({gap}, 1)).padding(::ui_lang_runtime::bounded_table_metric({padding}, 1)).delay(::std::time::Duration::from_millis(u64::try_from({delay}).unwrap_or(0))).snap_within_viewport({snap})"
-            );
-            append_tooltip_style(&mut code, options, env, document)?;
-            code.push_str(".into() }");
-            Ok(code)
+            let hir = document.hir();
+            let resolved = hir.resolved_tooltip_for(node)?;
+            render_resolved_tooltip(resolved, hir, message, env, content, tip)
         }
-        ViewNode::MouseArea {
-            options, content, ..
-        } => {
+        ViewNode::MouseArea { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
-            );
-            for (route, method) in [
-                (&options.press, "on_press"),
-                (&options.release, "on_release"),
-                (&options.double_click, "on_double_click"),
-                (&options.right_press, "on_right_press"),
-                (&options.right_release, "on_right_release"),
-                (&options.middle_press, "on_middle_press"),
-                (&options.middle_release, "on_middle_release"),
-                (&options.enter, "on_enter"),
-                (&options.exit, "on_exit"),
-            ] {
-                if let Some(route) = route {
-                    write!(
-                        code,
-                        ".{method}({})",
-                        route_code(route, "", env, document, message)?
-                    )
-                    .unwrap();
-                }
-            }
-            if let Some(route) = &options.move_route {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__point",
-                    &["__point.x as f64", "__point.y as f64"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_move({callback})").unwrap();
-            }
-            if let Some(route) = &options.scroll {
-                let callback = route_callback_with_code(
-                    route,
-                    "__delta",
-                    env,
-                    document,
-                    |callback_env| {
-                        let lines = ordered_route_code(
-                            route,
-                            &["__x as f64", "__y as f64", "false"],
-                            callback_env,
-                            document,
-                            message,
-                        )?;
-                        let pixels = ordered_route_code(
-                            route,
-                            &["__x as f64", "__y as f64", "true"],
-                            callback_env,
-                            document,
-                            message,
-                        )?;
-                        Ok(format!(
-                            "match __delta {{ ::iced::mouse::ScrollDelta::Lines {{ x: __x, y: __y }} => {lines}, ::iced::mouse::ScrollDelta::Pixels {{ x: __x, y: __y }} => {pixels} }}"
-                        ))
-                    },
-                )?;
-                write!(code, ".on_scroll({callback})").unwrap();
-            }
-            if let Some(interaction) = options.interaction {
-                write!(
-                    code,
-                    ".interaction(::iced::mouse::Interaction::{})",
-                    mouse_interaction_code(interaction)
-                )
-                .unwrap();
-            } else if let Some(interaction) = &options.interaction_expr {
-                write!(
-                    code,
-                    ".interaction({})",
-                    expr_code(interaction, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let hir = document.hir();
+            let resolved = hir.resolved_mouse_area_for(node)?;
+            render_resolved_mouse_area(resolved, hir, message, env, content)
         }
-        ViewNode::ResizeHandle {
-            options, content, ..
-        } => {
+        ViewNode::ResizeHandle { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __resize_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::resize_handle(__resize_content)"
-            );
-            if let Some(route) = &options.drag {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__dx, __dy",
-                    &["__dx", "__dy"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_drag({callback})").unwrap();
-            }
-            for (route, method) in [
-                (&options.press, "on_press"),
-                (&options.release, "on_release"),
-            ] {
-                if let Some(route) = route {
-                    write!(
-                        code,
-                        ".{method}({})",
-                        route_code(route, "", env, document, message)?
-                    )
-                    .unwrap();
-                }
-            }
-            if let Some(interaction) = options.interaction {
-                write!(
-                    code,
-                    ".interaction(::iced::mouse::Interaction::{})",
-                    mouse_interaction_code(interaction)
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let hir = document.hir();
+            let resolved = hir.resolved_resize_handle_for(node)?;
+            render_resolved_resize_handle(resolved, hir, message, env, content)
         }
         ViewNode::Canvas { .. } => {
             let hir = document.hir();
@@ -182,6 +51,361 @@ pub(in crate::codegen) fn render_media(
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
     Ok(Some(rendered))
+}
+
+fn render_resolved_mouse_area(
+    mouse: &ResolvedMouseArea,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let mut code = format!(
+        "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
+    );
+    for (route, method) in [
+        (&mouse.press, "on_press"),
+        (&mouse.release, "on_release"),
+        (&mouse.double_click, "on_double_click"),
+        (&mouse.right_press, "on_right_press"),
+        (&mouse.right_release, "on_right_release"),
+        (&mouse.middle_press, "on_middle_press"),
+        (&mouse.middle_release, "on_middle_release"),
+        (&mouse.enter, "on_enter"),
+        (&mouse.exit, "on_exit"),
+    ] {
+        if let Some(route) = route {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_interaction_route_code(route, &[], env, program, message)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(route) = &mouse.move_route {
+        let callback = resolved_interaction_route_callback_code(
+            route,
+            "__point",
+            &["__point.x as f64", "__point.y as f64"],
+            env,
+            program,
+            message,
+        )?;
+        write!(code, ".on_move({callback})").unwrap();
+    }
+    if let Some(route) = &mouse.scroll {
+        let callback = resolved_interaction_route_callback_with_code(
+            route,
+            "__delta",
+            env,
+            program,
+            |callback_env| {
+                let lines = resolved_interaction_route_code(
+                    route,
+                    &["__x as f64", "__y as f64", "false"],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                let pixels = resolved_interaction_route_code(
+                    route,
+                    &["__x as f64", "__y as f64", "true"],
+                    callback_env,
+                    program,
+                    message,
+                )?;
+                Ok(format!(
+                    "match __delta {{ ::iced::mouse::ScrollDelta::Lines {{ x: __x, y: __y }} => {lines}, ::iced::mouse::ScrollDelta::Pixels {{ x: __x, y: __y }} => {pixels} }}"
+                ))
+            },
+        )?;
+        write!(code, ".on_scroll({callback})").unwrap();
+    }
+    if let Some(interaction) = mouse.interaction {
+        write!(
+            code,
+            ".interaction(::iced::mouse::Interaction::{})",
+            mouse_interaction_code(interaction)
+        )
+        .unwrap();
+    } else if let Some(interaction) = mouse.interaction_expression {
+        write!(
+            code,
+            ".interaction({})",
+            checked_expr_use_code(program, interaction, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    Ok(format!("{code}.into() }}"))
+}
+
+fn render_resolved_resize_handle(
+    handle: &ResolvedResizeHandle,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let mut code = format!(
+        "{{ let __resize_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::resize_handle(__resize_content)"
+    );
+    if let Some(route) = &handle.drag {
+        let callback = resolved_interaction_route_callback_code(
+            route,
+            "__dx, __dy",
+            &["__dx", "__dy"],
+            env,
+            program,
+            message,
+        )?;
+        write!(code, ".on_drag({callback})").unwrap();
+    }
+    for (route, method) in [(&handle.press, "on_press"), (&handle.release, "on_release")] {
+        if let Some(route) = route {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_interaction_route_code(route, &[], env, program, message)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(interaction) = handle.interaction {
+        write!(
+            code,
+            ".interaction(::iced::mouse::Interaction::{})",
+            mouse_interaction_code(interaction)
+        )
+        .unwrap();
+    }
+    Ok(format!("{code}.into() }}"))
+}
+
+fn render_resolved_tooltip(
+    tooltip: &ResolvedTooltip,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+    tip: String,
+) -> Result<String, Error> {
+    let position = match tooltip.position {
+        ResolvedTooltipPosition::Top => "Top",
+        ResolvedTooltipPosition::Bottom => "Bottom",
+        ResolvedTooltipPosition::Left => "Left",
+        ResolvedTooltipPosition::Right => "Right",
+        ResolvedTooltipPosition::FollowCursor => "FollowCursor",
+    };
+    let gap = checked_expr_use_code(program, tooltip.gap, env, ValueMode::Owned)?;
+    let padding = checked_expr_use_code(program, tooltip.padding, env, ValueMode::Owned)?;
+    let delay = checked_expr_use_code(program, tooltip.delay_ms, env, ValueMode::Owned)?;
+    let snap = checked_expr_use_code(program, tooltip.snap, env, ValueMode::Owned)?;
+    let mut code = format!(
+        "{{ let __tooltip_content: __IceElement<'_, {message}> = {content}; let __tooltip_tip: __IceElement<'_, {message}> = {tip}; ::iced::widget::tooltip(__tooltip_content, __tooltip_tip, ::iced::widget::tooltip::Position::{position}).gap(::ui_lang_runtime::bounded_table_metric({gap}, 1)).padding(::ui_lang_runtime::bounded_table_metric({padding}, 1)).delay(::std::time::Duration::from_millis(u64::try_from({delay}).unwrap_or(0))).snap_within_viewport({snap})"
+    );
+    append_resolved_tooltip_style(&mut code, tooltip, program, env)?;
+    code.push_str(".into() }");
+    Ok(code)
+}
+
+fn append_resolved_tooltip_style(
+    code: &mut String,
+    tooltip: &ResolvedTooltip,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<(), Error> {
+    let radius = resolved_tooltip_radius(&tooltip.radius, program, env)?;
+    if tooltip.base_style.is_none()
+        && tooltip.background.is_none()
+        && tooltip.text_color.is_none()
+        && tooltip.border_color.is_none()
+        && tooltip.border_width.is_none()
+        && radius.is_none()
+        && tooltip.shadow_color.is_none()
+        && tooltip.shadow_x.is_none()
+        && tooltip.shadow_y.is_none()
+        && tooltip.shadow_blur.is_none()
+        && tooltip.pixel_snap.is_none()
+    {
+        return Ok(());
+    }
+    match &tooltip.base_style {
+        Some(ResolvedTooltipBaseStyle::Custom(style)) => {
+            let function = program.extern_function(style.function);
+            let arguments = style
+                .arguments
+                .iter()
+                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .collect::<Result<Vec<_>, _>>()?;
+            let suffix = if arguments.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", arguments.join(", "))
+            };
+            write!(
+                code,
+                ".style(move |__theme| {{ let mut __style = {}(__theme{suffix});",
+                function.rust_path
+            )
+            .unwrap();
+        }
+        preset => {
+            let preset = match preset {
+                None
+                | Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Transparent)) => {
+                    "transparent"
+                }
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Rounded)) => {
+                    "rounded_box"
+                }
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Bordered)) => {
+                    "bordered_box"
+                }
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Dark)) => "dark",
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Primary)) => "primary",
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Secondary)) => {
+                    "secondary"
+                }
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Success)) => "success",
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Warning)) => "warning",
+                Some(ResolvedTooltipBaseStyle::Preset(ResolvedTooltipPreset::Danger)) => "danger",
+                Some(ResolvedTooltipBaseStyle::Custom(_)) => unreachable!(),
+            };
+            write!(
+                code,
+                ".style(move |__theme| {{ let mut __style = ::iced::widget::container::{preset}(__theme);"
+            )
+            .unwrap();
+        }
+    }
+    if let Some(background) = &tooltip.background {
+        write!(
+            code,
+            " __style.background = Some({});",
+            resolved_tooltip_background(background, program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(text) = &tooltip.text_color {
+        write!(
+            code,
+            " __style.text_color = Some({});",
+            resolved_theme_color(text)
+        )
+        .unwrap();
+    }
+    if let Some(border) = &tooltip.border_color {
+        write!(
+            code,
+            " __style.border.color = {};",
+            resolved_theme_color(border)
+        )
+        .unwrap();
+    }
+    if let Some(width) = tooltip.border_width {
+        write!(
+            code,
+            " __style.border.width = {} as f32;",
+            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(radius) = radius {
+        write!(code, " __style.border.radius = {radius};").unwrap();
+    }
+    if let Some(shadow) = &tooltip.shadow_color {
+        write!(
+            code,
+            " __style.shadow.color = {};",
+            resolved_theme_color(shadow)
+        )
+        .unwrap();
+    }
+    for (value, field) in [
+        (tooltip.shadow_x, "__style.shadow.offset.x"),
+        (tooltip.shadow_y, "__style.shadow.offset.y"),
+        (tooltip.shadow_blur, "__style.shadow.blur_radius"),
+    ] {
+        if let Some(value) = value {
+            write!(
+                code,
+                " {field} = {} as f32;",
+                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(pixel_snap) = tooltip.pixel_snap {
+        write!(
+            code,
+            " __style.snap = {};",
+            checked_expr_use_code(program, pixel_snap, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    code.push_str(" __style })");
+    Ok(())
+}
+
+fn resolved_tooltip_background(
+    background: &ResolvedTooltipBackground,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match background {
+        ResolvedTooltipBackground::Color(color) => {
+            format!("::iced::Background::Color({})", resolved_theme_color(color))
+        }
+        ResolvedTooltipBackground::Linear { angle, stops } => {
+            let angle = checked_expr_use_code(program, *angle, env, ValueMode::Owned)?;
+            let mut code =
+                format!("::iced::Background::from(::iced::gradient::Linear::new({angle} as f32)");
+            for stop in stops {
+                let offset = checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?;
+                write!(
+                    code,
+                    ".add_stop({offset} as f32, {})",
+                    resolved_theme_color(&stop.color)
+                )
+                .unwrap();
+            }
+            code.push(')');
+            code
+        }
+    })
+}
+
+fn resolved_tooltip_radius(
+    radius: &ResolvedTooltipRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if radius.all.is_none()
+        && radius.top_left.is_none()
+        && radius.top_right.is_none()
+        && radius.bottom_right.is_none()
+        && radius.bottom_left.is_none()
+    {
+        return Ok(None);
+    }
+    let all = radius
+        .all
+        .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .transpose()?
+        .unwrap_or_else(|| "0.0".into());
+    let corner = |value: Option<ResolvedExpressionId>| {
+        value
+            .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let top_left = corner(radius.top_left)?.unwrap_or_else(|| all.clone());
+    let top_right = corner(radius.top_right)?.unwrap_or_else(|| all.clone());
+    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| all.clone());
+    let bottom_left = corner(radius.bottom_left)?.unwrap_or(all);
+    Ok(Some(format!(
+        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
+    )))
 }
 
 fn render_resolved_media(

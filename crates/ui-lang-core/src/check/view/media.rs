@@ -156,6 +156,7 @@ pub(in crate::check) fn infer_media_group(
             tip,
             span,
         } => {
+            let tooltip_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             for (value, label) in [
                 (&options.gap, "tooltip gap"),
@@ -224,6 +225,7 @@ pub(in crate::check) fn infer_media_group(
                     extern_function(document, &style.function, ExternKind::ContainerStyle, span)?;
                 check_call_args(function, &style.args, env, document, span)?;
             }
+            retain_tooltip_analyses(span, tooltip_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
             infer_view(tip, env, document, signatures, ids)?;
         }
@@ -233,6 +235,7 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             if let Some(interaction) = &options.interaction_expr {
                 require_type(
@@ -277,6 +280,7 @@ pub(in crate::check) fn infer_media_group(
                     "mouse scroll",
                 )?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::ResizeHandle {
@@ -285,6 +289,7 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             if let Some(route) = &options.drag {
                 infer_ordered_payload_route(
@@ -299,6 +304,7 @@ pub(in crate::check) fn infer_media_group(
             for route in [&options.press, &options.release].into_iter().flatten() {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Canvas {

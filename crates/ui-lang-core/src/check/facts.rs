@@ -7,8 +7,9 @@ use crate::hir::{
     AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
     CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
     ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, HandlerId, MediaExpressionId, OriginArena, OriginId, PaletteId, RouteId,
-    StatementId, StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, ViewId,
+    ExternRef, HandlerId, InteractionExpressionId, InteractionRouteId, MediaExpressionId,
+    OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
+    TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -312,6 +313,8 @@ pub(crate) enum CheckedExprOwner {
     },
     Canvas(CanvasExpressionId),
     Media(MediaExpressionId),
+    Tooltip(TooltipExpressionId),
+    Interaction(InteractionExpressionId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -593,6 +596,40 @@ pub(crate) struct CheckedMedia {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedTooltip {
+    pub(crate) id: ViewId,
+    pub(crate) expression_count: u32,
+    pub(crate) semantic_key: String,
+    pub(crate) style: Option<ExternFnId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedInteractionKind {
+    MouseArea,
+    ResizeHandle,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedInteractionRoute {
+    pub(crate) id: InteractionRouteId,
+    pub(crate) target: CheckedCanvasRouteTarget,
+    pub(crate) args: Vec<CheckedCanvasRouteArg>,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) ordered_payloads: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedInteraction {
+    pub(crate) id: ViewId,
+    pub(crate) kind: CheckedInteractionKind,
+    pub(crate) semantic_key: String,
+    pub(crate) expression_count: u32,
+    pub(crate) interaction_expression: Option<CheckedExprUseId>,
+    pub(crate) routes: Vec<CheckedInteractionRoute>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTask {
     pub(crate) id: TaskId,
     pub(crate) output: Option<Type>,
@@ -647,6 +684,8 @@ pub(crate) struct CheckedFacts {
     views: Vec<CheckedView>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
+    tooltips: HashMap<ViewId, CheckedTooltip>,
+    interactions: HashMap<ViewId, CheckedInteraction>,
     subscriptions: Vec<CheckedSubscription>,
     expression_uses: Vec<CheckedExprUse>,
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
@@ -817,6 +856,16 @@ impl CheckedFacts {
 
     pub(crate) fn media(&self, id: ViewId) -> Option<&CheckedMedia> {
         self.media.get(&id).filter(|media| media.id == id)
+    }
+
+    pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
+        self.tooltips.get(&id).filter(|tooltip| tooltip.id == id)
+    }
+
+    pub(crate) fn interaction(&self, id: ViewId) -> Option<&CheckedInteraction> {
+        self.interactions
+            .get(&id)
+            .filter(|interaction| interaction.id == id)
     }
 
     pub(crate) fn expression_use(&self, id: CheckedExprUseId) -> &CheckedExprUse {
@@ -1299,6 +1348,9 @@ pub(super) struct CheckedAnalyses {
     canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
     media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    interaction_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    interaction_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
 }
 
 impl CheckedAnalyses {
@@ -1339,6 +1391,9 @@ impl CheckedAnalyses {
             && self.canvas_entries.is_empty()
             && self.canvas_route_inputs.is_empty()
             && self.media_entries.is_empty()
+            && self.tooltip_entries.is_empty()
+            && self.interaction_entries.is_empty()
+            && self.interaction_route_inputs.is_empty()
     }
 
     pub(super) fn insert_subscription(
@@ -1433,6 +1488,33 @@ impl CheckedAnalyses {
                 ));
             }
         }
+        for (key, analysis) in other.tooltip_entries {
+            if self.tooltip_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "tooltip expression was captured more than once",
+                ));
+            }
+        }
+        for (key, analysis) in other.interaction_entries {
+            if self.interaction_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "interaction expression was captured more than once",
+                ));
+            }
+        }
+        for (key, inputs) in other.interaction_route_inputs {
+            if self.interaction_route_inputs.insert(key, inputs).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "interaction route contract was captured more than once",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1488,6 +1570,68 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "media expression was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_tooltip(
+        &mut self,
+        tooltip: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "tooltip expression capture unexpectedly retained routes",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self
+                .tooltip_entries
+                .insert((tooltip, key), analysis)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "tooltip expression was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_interaction(
+        &mut self,
+        widget: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        for (key, analysis) in analyses.expressions {
+            if self
+                .interaction_entries
+                .insert((widget, key), analysis)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "interaction expression was captured more than once",
+                ));
+            }
+        }
+        for (key, inputs) in analyses.routes {
+            if self
+                .interaction_route_inputs
+                .insert((widget, key), inputs)
+                .is_some()
+            {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "interaction route contract was captured more than once",
                 ));
             }
         }
@@ -1746,13 +1890,16 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, interaction_expressions={}, interaction_routes={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
                     self.analyses.canvas_entries.len(),
                     self.analyses.canvas_route_inputs.len(),
                     self.analyses.media_entries.len(),
+                    self.analyses.tooltip_entries.len(),
+                    self.analyses.interaction_entries.len(),
+                    self.analyses.interaction_route_inputs.len(),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -2476,6 +2623,392 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(span, "media facts were produced more than once"));
         }
         Ok(())
+    }
+
+    fn lower_tooltip_facts(
+        &mut self,
+        tooltip: ViewId,
+        options: &TooltipOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(tooltip).origin;
+        let roots = crate::ast::tooltip_expression_roots(options);
+        for (index, expression) in roots.iter().enumerate() {
+            let owner = CheckedExprOwner::Tooltip(TooltipExpressionId {
+                tooltip,
+                index: index as u32,
+            });
+            let analysis = self
+                .analyses
+                .tooltip_entries
+                .remove(&(tooltip, super::expr::expr_key(expression)))
+                .ok_or_else(|| {
+                    self.invariant(span, "missing authoritative tooltip expression analysis")
+                })?;
+            let metrics = analysis.metrics();
+            self.facts.metrics.view_analysis_passes += 1;
+            self.facts.metrics.type_analysis_queries += metrics.queries;
+            self.facts.metrics.type_analysis_nodes += metrics.nodes;
+            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
+                self.invariant(span, "missing retained tooltip expression root type")
+            })?;
+            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+            let origin = self.origins.push(span, Some(parent));
+            let lowering = ExpressionLowering {
+                analysis: &analysis,
+                owner: id,
+                origin,
+                span,
+            };
+            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+            if self.facts.expression(root).ty != source {
+                return Err(self.invariant(
+                    span,
+                    "tooltip expression source type does not match its checked root",
+                ));
+            }
+            self.facts.expression_uses.push(CheckedExprUse {
+                owner,
+                root,
+                source: source.clone(),
+                destination: source,
+                coercion: CheckedInitializerCoercion::None,
+                origin,
+            });
+            if self
+                .facts
+                .expression_uses_by_owner
+                .insert(owner, id)
+                .is_some()
+            {
+                return Err(self.invariant(span, "duplicate checked tooltip expression owner"));
+            }
+        }
+        let remaining = self
+            .analyses
+            .tooltip_entries
+            .keys()
+            .filter(|(owner, _)| *owner == tooltip)
+            .count();
+        if remaining != 0 {
+            return Err(self.invariant(
+                span,
+                format!("tooltip left {remaining} expression analyses unconsumed"),
+            ));
+        }
+        let style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ContainerStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "tooltip style extern disappeared"))
+            })
+            .transpose()?;
+        if self
+            .facts
+            .tooltips
+            .insert(
+                tooltip,
+                CheckedTooltip {
+                    id: tooltip,
+                    expression_count: roots.len() as u32,
+                    semantic_key: crate::ast::tooltip_semantic_key(options),
+                    style,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "tooltip facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_interaction_facts(
+        &mut self,
+        widget: ViewId,
+        kind: CheckedInteractionKind,
+        semantic_key: String,
+        interaction_expression: Option<&Expr>,
+        routes: Vec<&Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(widget).origin;
+        let mut expression_count = 0u32;
+        let interaction_expression = interaction_expression
+            .map(|expression| {
+                self.push_interaction_expression(
+                    widget,
+                    &mut expression_count,
+                    expression,
+                    &Type::MouseInteraction,
+                    env,
+                    span,
+                    parent,
+                )
+            })
+            .transpose()?;
+        let mut checked_routes = Vec::with_capacity(routes.len());
+        for (index, route) in routes.into_iter().enumerate() {
+            checked_routes.push(self.lower_interaction_route(
+                widget,
+                index as u32,
+                route,
+                env,
+                &mut expression_count,
+                parent,
+            )?);
+        }
+        let remaining_expressions = self
+            .analyses
+            .interaction_entries
+            .keys()
+            .filter(|(owner, _)| *owner == widget)
+            .count();
+        let remaining_routes = self
+            .analyses
+            .interaction_route_inputs
+            .keys()
+            .filter(|(owner, _)| *owner == widget)
+            .count();
+        if remaining_expressions != 0 || remaining_routes != 0 {
+            return Err(self.invariant(
+                span,
+                format!(
+                    "interaction widget left {remaining_expressions} expression and {remaining_routes} route analyses unconsumed"
+                ),
+            ));
+        }
+        if self
+            .facts
+            .interactions
+            .insert(
+                widget,
+                CheckedInteraction {
+                    id: widget,
+                    kind,
+                    semantic_key,
+                    expression_count,
+                    interaction_expression,
+                    routes: checked_routes,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "interaction facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_interaction_route(
+        &mut self,
+        widget: ViewId,
+        index: u32,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        expression_count: &mut u32,
+        parent: OriginId,
+    ) -> Result<CheckedInteractionRoute, Error> {
+        let id = InteractionRouteId { widget, index };
+        let inputs = self
+            .analyses
+            .interaction_route_inputs
+            .remove(&(widget, std::ptr::from_ref(route).addr()))
+            .ok_or_else(|| {
+                self.invariant(
+                    &route.span,
+                    "interaction route has no retained payload contract",
+                )
+            })?;
+        let scope = self.facts.view(widget).scope;
+        let (target, target_params, route_args) = match scope {
+            CheckedViewScope::Component(component) if route.handler == "emit" => {
+                let named = route.args.first().and_then(|argument| {
+                    let RouteArg::Expr(Expr::Path(path)) = argument else {
+                        return None;
+                    };
+                    let [name] = path.as_slice() else {
+                        return None;
+                    };
+                    self.declarations.component_event_by_name(component, name)
+                });
+                if let Some(event) = named {
+                    (
+                        CheckedCanvasRouteTarget::ComponentEvent {
+                            event: event.declaration.id,
+                            name: event.name.clone(),
+                            payloads: event.payloads.clone(),
+                        },
+                        event.payloads.clone(),
+                        &route.args[1..],
+                    )
+                } else {
+                    let output = self
+                        .declarations
+                        .component_output(component)
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.invariant(&route.span, "interaction component output disappeared")
+                        })?;
+                    (
+                        CheckedCanvasRouteTarget::ComponentOutput {
+                            component,
+                            output: output.clone(),
+                        },
+                        vec![output],
+                        route.args.as_slice(),
+                    )
+                }
+            }
+            scope => {
+                let target_owner = match scope {
+                    CheckedViewScope::Component(component) => {
+                        crate::hir::HandlerOwner::Component(component)
+                    }
+                    CheckedViewScope::App | CheckedViewScope::Test(_) => {
+                        crate::hir::HandlerOwner::App
+                    }
+                };
+                let handler = self
+                    .declarations
+                    .handler_id(target_owner, &route.handler)
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "interaction route target disappeared")
+                    })?;
+                (
+                    CheckedCanvasRouteTarget::Handler(handler),
+                    self.declarations.handler(handler).payloads.clone(),
+                    route.args.as_slice(),
+                )
+            }
+        };
+        if target_params.len() != route_args.len() {
+            return Err(self.invariant(&route.span, "interaction route arity changed"));
+        }
+        let origin = self.origins.push(&route.span, Some(parent));
+        let mut args = Vec::with_capacity(route_args.len());
+        for (argument_index, (argument, expected)) in
+            route_args.iter().zip(&target_params).enumerate()
+        {
+            match argument {
+                RouteArg::Expr(expression) => {
+                    let expression = self.push_interaction_expression(
+                        widget,
+                        expression_count,
+                        expression,
+                        expected,
+                        env,
+                        &route.span,
+                        origin,
+                    )?;
+                    args.push(CheckedCanvasRouteArg::Expression(expression));
+                }
+                RouteArg::Payload => {
+                    let payload_index = if inputs.ordered {
+                        args.iter()
+                            .filter(|arg| matches!(arg, CheckedCanvasRouteArg::Payload))
+                            .count()
+                    } else {
+                        0
+                    };
+                    let actual = inputs.payloads.get(payload_index).ok_or_else(|| {
+                        self.invariant(&route.span, "interaction route payload has no source")
+                    })?;
+                    if actual != expected {
+                        return Err(self.invariant(
+                            &route.span,
+                            format!("interaction route payload {argument_index} changed type"),
+                        ));
+                    }
+                    args.push(CheckedCanvasRouteArg::Payload);
+                }
+            }
+        }
+        Ok(CheckedInteractionRoute {
+            id,
+            target,
+            args,
+            source_payloads: inputs.payloads,
+            ordered_payloads: inputs.ordered,
+            origin,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_interaction_expression(
+        &mut self,
+        widget: ViewId,
+        index: &mut u32,
+        expression: &Expr,
+        destination: &Type,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+            widget,
+            index: *index,
+        });
+        *index += 1;
+        let analysis = self
+            .analyses
+            .interaction_entries
+            .remove(&(widget, super::expr::expr_key(expression)))
+            .ok_or_else(|| {
+                self.invariant(
+                    span,
+                    "missing authoritative interaction expression analysis",
+                )
+            })?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let source = analysis.type_of(expression).cloned().ok_or_else(|| {
+            self.invariant(span, "missing retained interaction expression root type")
+        })?;
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+        if self.facts.expression(root).ty != source {
+            return Err(self.invariant(
+                span,
+                "interaction expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source,
+            destination: destination.clone(),
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked interaction expression owner"));
+        }
+        Ok(id)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5178,6 +5711,54 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_media_facts(view, *kind, source, options, env, span)?;
                 CheckedViewFlow::None
             }
+            ViewNode::Tooltip {
+                options,
+                content,
+                tip,
+                span,
+                ..
+            } => {
+                self.lower_tooltip_facts(view, options, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
+                self.lower_view_expression_tree(tip, env)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::MouseArea {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_interaction_facts(
+                    view,
+                    CheckedInteractionKind::MouseArea,
+                    crate::ast::mouse_area_semantic_key(options),
+                    options.interaction_expr.as_ref(),
+                    crate::ast::mouse_area_routes(options),
+                    env,
+                    span,
+                )?;
+                self.lower_view_expression_tree(content, env)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::ResizeHandle {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_interaction_facts(
+                    view,
+                    CheckedInteractionKind::ResizeHandle,
+                    crate::ast::resize_handle_semantic_key(options),
+                    None,
+                    crate::ast::resize_handle_routes(options),
+                    env,
+                    span,
+                )?;
+                self.lower_view_expression_tree(content, env)?;
+                CheckedViewFlow::None
+            }
             ViewNode::Component {
                 name,
                 args,
@@ -7707,6 +8288,140 @@ view
                 "missing media expression {index}"
             );
         }
+    }
+
+    #[test]
+    fn tooltip_facts_retain_stable_expression_owners_and_static_contract() {
+        let source = r#"app TooltipFacts
+extern crate::backend
+  box-style dynamic_tooltip(active:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+view
+  tooltip position=cursor gap=2.0 p=5.0 delay=100 snap=false style=dynamic_tooltip(active) bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary/75 border-w=1.0 r=5.0 r-tl=2.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=8.0 px-snap=true
+    text "Hover"
+    text "Tip"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
+        let ViewNode::Tooltip { options, .. } = &program.document().view else {
+            panic!("fixture root must be a tooltip");
+        };
+        assert_eq!(checked.id, ViewId(0));
+        assert_eq!(
+            checked.expression_count as usize,
+            crate::ast::tooltip_expression_roots(options).len()
+        );
+        assert_eq!(checked.style, Some(ExternFnId(0)));
+        assert_eq!(
+            checked.semantic_key,
+            crate::ast::tooltip_semantic_key(options)
+        );
+        for index in 0..checked.expression_count {
+            assert!(
+                program
+                    .checked_facts()
+                    .expression_use_by_owner(CheckedExprOwner::Tooltip(TooltipExpressionId {
+                        tooltip: checked.id,
+                        index,
+                    }))
+                    .is_some(),
+                "missing tooltip expression {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn interaction_facts_retain_routes_expressions_and_static_contracts() {
+        let source = r#"app InteractionFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = true
+on pressed(flag)
+on moved(x, y)
+on scrolled(x, y, pixels)
+on resized(dx, dy)
+view
+  col
+    mouse press=pressed(active) move=moved scroll=scrolled cursor=pointer
+      text "Pointer"
+    resize-handle drag=resized cursor=resize-horizontal
+      text "Resize"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let facts = program.checked_facts();
+        assert_eq!(facts.interactions.len(), 2);
+
+        let mouse = facts.interaction(ViewId(1)).expect("checked mouse area");
+        assert_eq!(mouse.kind, CheckedInteractionKind::MouseArea);
+        assert_eq!(mouse.expression_count, 1);
+        assert_eq!(mouse.routes.len(), 3);
+        assert_eq!(
+            mouse.routes[0].id,
+            InteractionRouteId {
+                widget: mouse.id,
+                index: 0,
+            }
+        );
+        assert!(matches!(
+            mouse.routes[0].args.as_slice(),
+            [CheckedCanvasRouteArg::Expression(_)]
+        ));
+        assert!(mouse.routes[0].source_payloads.is_empty());
+        assert!(!mouse.routes[0].ordered_payloads);
+        assert!(matches!(
+            mouse.routes[1].args.as_slice(),
+            [
+                CheckedCanvasRouteArg::Payload,
+                CheckedCanvasRouteArg::Payload
+            ]
+        ));
+        assert_eq!(mouse.routes[1].source_payloads, [Type::F64, Type::F64]);
+        assert!(mouse.routes[1].ordered_payloads);
+        assert!(
+            facts
+                .expression_use_by_owner(CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: mouse.id,
+                    index: 0,
+                }))
+                .is_some()
+        );
+
+        let resize = facts.interaction(ViewId(3)).expect("checked resize handle");
+        assert_eq!(resize.kind, CheckedInteractionKind::ResizeHandle);
+        assert_eq!(resize.expression_count, 0);
+        assert_eq!(resize.routes.len(), 1);
+        assert_eq!(resize.routes[0].source_payloads, [Type::F64, Type::F64]);
+        assert!(resize.routes[0].ordered_payloads);
+        assert_eq!(
+            mouse.semantic_key,
+            crate::ast::mouse_area_semantic_key(match &program.document().view {
+                ViewNode::Layout { children, .. } => match &children[0] {
+                    ViewNode::MouseArea { options, .. } => options,
+                    _ => panic!("first child must be a mouse area"),
+                },
+                _ => panic!("fixture root must be a column"),
+            })
+        );
     }
 
     #[test]

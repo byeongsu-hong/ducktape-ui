@@ -90,6 +90,24 @@ pub(crate) struct MediaExpressionId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct TooltipExpressionId {
+    pub(crate) tooltip: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct InteractionExpressionId {
+    pub(crate) widget: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct InteractionRouteId {
+    pub(crate) widget: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NamedTypeId {
     Struct(StructId),
     Enum(EnumId),

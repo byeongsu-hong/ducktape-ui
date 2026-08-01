@@ -393,9 +393,9 @@ text/background colors and gradient stops carry token IDs and optional opacity.
 Structured tests cover dynamic palettes, app and nested factories, ordered
 alpha palettes, token opacity, gradients, invalid post-check mutations, and
 namespaced factory/recipe physical origins. Direct expression-bearing native
-widget style blocks and other non-Canvas/non-Media view color fields remain in the later
-expression/view HIR slice; their presence is not counted as a completed
-AST-free style migration.
+widget style blocks and other non-Canvas/non-Media/non-Tooltip view color fields
+remain in the later expression/view HIR slice; their presence is not counted as
+a completed AST-free style migration.
 
 Initializer HIR coverage includes app state, derived values, component
 defaults, and component state, with explicit list/combo, string/content, and
@@ -428,7 +428,8 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
-Expression-bearing widget options other than the completed Media family remain outside this slice.
+Expression-bearing widget options outside the completed Media, Tooltip,
+MouseArea, and ResizeHandle families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -491,7 +492,8 @@ handler injection, wrong-role/cycle/wrong-kind/same-signature identity swap,
 invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
-Remaining non-Media expression-bearing widget options remain open HIR slices.
+Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
+and ResizeHandle remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -522,6 +524,27 @@ Structural snapshots, malformed IDs, post-check expression/static mutation,
 post-lowering AST/theme poisoning, existing full Media generation fixtures, and
 an ignored 4,000-node lower+emit contract under two seconds provide the
 evidence.
+
+Tooltip has a complete private HIR boundary. Stable Tooltip expression owners
+retain geometry, delay/snap behavior, custom-style arguments, gradients,
+borders, radii, shadows, and pixel snapping. Static semantic keys and exact
+extern IDs freeze position, option presence, style topology, color spellings,
+and custom container-style identity. Lowering resolves colors to theme-token
+IDs and production emission consumes only `ResolvedTooltip` plus checked
+expression IDs. Structural snapshots, malformed IDs, post-check expression and
+static mutation, post-lowering option/theme poisoning, the full graphics
+fixture, and an ignored 4,000-node lower+emit contract cover this boundary.
+
+MouseArea and ResizeHandle have complete private HIR boundaries. Stable route
+and interaction-expression IDs retain app/component handler targets, component
+outputs, named events, expression arguments, ordered payload indices/types,
+cursor values, and source origins. Lowering revalidates route topology, exact
+target identity and scope, expression DAGs, payload contracts, callback capture
+context, and complete arena consumption. Production emission consumes only
+`ResolvedMouseArea`, `ResolvedResizeHandle`, resolved routes, and checked
+expressions. App and component generation tests, raw mutation poisoning,
+malformed IDs, structural snapshots, and an ignored 4,000-node lower+emit
+contract provide the evidence.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
