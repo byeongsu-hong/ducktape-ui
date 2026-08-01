@@ -1,5 +1,5 @@
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 macro_rules! arena_id {
@@ -1174,26 +1174,21 @@ pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
     }
 }
 
-pub(crate) fn pane_grid_is_dynamic(document: &Document, name: &str) -> bool {
-    fn find(node: &ViewNode, name: &str) -> bool {
-        matches!(
-            node,
-            ViewNode::PaneGrid {
-                name: candidate,
-                templates,
-                ..
-            } if candidate == name && !templates.is_empty()
-        ) || view_children(node)
-            .into_iter()
-            .any(|child| find(child, name))
+pub(crate) fn dynamic_pane_grids(document: &Document) -> HashSet<String> {
+    let mut dynamic = HashSet::new();
+    let mut pending = vec![&document.view];
+    pending.extend(document.tests.iter().filter_map(|test| test.mount.as_ref()));
+    while let Some(node) = pending.pop() {
+        if let ViewNode::PaneGrid {
+            name, templates, ..
+        } = node
+            && !templates.is_empty()
+        {
+            dynamic.insert(name.clone());
+        }
+        pending.extend(view_children(node));
     }
-
-    find(&document.view, name)
-        || document
-            .tests
-            .iter()
-            .filter_map(|test| test.mount.as_ref())
-            .any(|root| find(root, name))
+    dynamic
 }
 
 pub(crate) fn statement_semantic_key(statement: &Statement) -> String {

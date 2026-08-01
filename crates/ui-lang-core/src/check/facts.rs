@@ -954,6 +954,7 @@ struct FactsBuilder<'a> {
     facts: CheckedFacts,
     values_by_scope: HashMap<ValueScope, HashMap<String, CheckedValueId>>,
     builtins_by_name: HashMap<String, CheckedBuiltinId>,
+    dynamic_pane_grids: std::collections::HashSet<String>,
     analyses: CheckedAnalyses,
 }
 
@@ -1126,6 +1127,7 @@ impl<'a> FactsBuilder<'a> {
             facts,
             values_by_scope: HashMap::new(),
             builtins_by_name: HashMap::new(),
+            dynamic_pane_grids: crate::hir::dynamic_pane_grids(document),
             analyses,
         }
     }
@@ -2086,9 +2088,7 @@ impl<'a> FactsBuilder<'a> {
             _ => None,
         };
         let pane_grid_dynamic = match statement {
-            Statement::PaneOperation { grid, .. } => {
-                Some(crate::hir::pane_grid_is_dynamic(self.document, grid))
-            }
+            Statement::PaneOperation { grid, .. } => Some(self.dynamic_pane_grids.contains(grid)),
             _ => None,
         };
         if statement_id.0 as usize >= self.facts.statements.len() {
