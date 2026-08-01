@@ -166,12 +166,13 @@ widget options remain later slices, so the full-HIR completion criteria remain
 open.
 
 An integration ratchet inventories every remaining backend escape through
-`LoweredProgram::document`, checker calls, type or extern re-resolution, raw
-expression fallback, and source-AST `Document`, `Expr`, `Route`, or statement
-inputs. The inventory is exact: a migrated slice must delete its entries and
-shrink the checked ledger, while adding or restoring a semantic backdoor fails
-the workspace tests. This is migration evidence, not a completion claim; the
-ledger must be empty before the boundary is complete.
+`LoweredProgram::document`, the `RenderDocument` raw-document wrapper, checker
+calls, type or extern re-resolution, raw expression fallback, and source-AST
+`Document`, `Expr`, `Route`, or statement inputs. The inventory is exact: a
+migrated slice must delete its entries and shrink the checked ledger, while
+adding or restoring a semantic backdoor fails the workspace tests. This is
+migration evidence, not a completion claim; the ledger must be empty before
+the boundary is complete.
 
 Initializer typing and fact lowering are linear in the expression tree. The
 checker performs one authoritative post-order analysis for each initializer and

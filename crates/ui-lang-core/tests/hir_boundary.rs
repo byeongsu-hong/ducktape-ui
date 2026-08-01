@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 const BACKDOORS: &[(&str, &str)] = &[
     ("source AST dependency", "crate::ast::"),
     ("checked-document escape", "program.document()"),
+    ("raw document wrapper", "RenderDocument"),
     ("checker dependency", "crate::check"),
     ("checked-facts escape", "checked_facts()"),
     ("declaration-index escape", "declarations()"),
@@ -25,6 +26,23 @@ src/codegen/expr.rs 1
 src/codegen/statement/view_fn.rs 1
 src/codegen/style/model.rs 1
 src/codegen/testing.rs 3
+src/codegen.rs 3
+[raw document wrapper]
+src/codegen/expr/children.rs 1
+src/codegen/statement/view_fn.rs 1
+src/codegen/style/model.rs 1
+src/codegen/testing.rs 1
+src/codegen/view/container.rs 3
+src/codegen/view/content.rs 1
+src/codegen/view/controls.rs 1
+src/codegen/view/documents.rs 1
+src/codegen/view/foundation.rs 1
+src/codegen/view/layout.rs 3
+src/codegen/view/media.rs 1
+src/codegen/view/pane.rs 3
+src/codegen/view/structure.rs 1
+src/codegen/view/table.rs 2
+src/codegen/view.rs 4
 src/codegen.rs 3
 [checker dependency]
 src/codegen/expr.rs 4
