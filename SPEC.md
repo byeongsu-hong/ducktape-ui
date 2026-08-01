@@ -226,6 +226,18 @@ repeat scope, match, binding, or slot resolution. Handler, task, canvas,
 settings, test, and expression-bearing widget-option families remain later
 vertical slices.
 
+Application subscriptions are also a completed vertical HIR slice. Lowering
+freezes the checked app/daemon kind and converts every native, timer, event,
+stream, recipe, and extern-subscription source into a private
+`ResolvedSubscription`. Extern signatures use stable declaration IDs and
+resolved types; conditions, contexts, identities, and source arguments retain
+typed expression-use IDs; source and delivered payloads plus routes are fixed
+before emission. Lowering rejects changed raw topology, invalid expression
+ownership or graph structure, mismatched intrinsic/extern contracts, and
+invalid route payloads with source-mapped `E196`. The subscription backend
+consumes only these resolved records and performs no checker or declaration
+lookup.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

@@ -807,8 +807,8 @@ pub(crate) use facts::{
     CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
     CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedPathRoot, CheckedProjection,
     CheckedProjectionKind, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
-    CheckedSubscriptionExprRole, CheckedSubscriptionRoute, CheckedSubscriptionSource,
-    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedUnaryOperator, CheckedValueRef,
+    CheckedView, CheckedViewFlow, SubscriptionExpressionContract,
 };
 pub(crate) use handler::task_flow_type;
 
