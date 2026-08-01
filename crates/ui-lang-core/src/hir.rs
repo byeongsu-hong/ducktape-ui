@@ -28,6 +28,12 @@ arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExternRef {
+    pub(crate) id: ExternFnId,
+    pub(crate) name: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AppSettingExprId {
     Title,
@@ -256,6 +262,7 @@ pub(crate) struct HandlerDeclaration {
     pub(crate) owner: HandlerOwner,
     pub(crate) name: String,
     pub(crate) statement_roots: Vec<StatementId>,
+    pub(crate) payloads: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -1056,6 +1063,65 @@ impl DeclarationIndex {
     pub(crate) fn subscription(&self, index: usize) -> Declaration<SubscriptionId> {
         self.subscriptions[index]
     }
+
+    pub(crate) fn finalize_checked_handlers(
+        &mut self,
+        document: &Document,
+    ) -> Result<(), crate::Error> {
+        let mut expected = Vec::new();
+        expected.extend(document.handlers.iter().map(|handler| {
+            (
+                HandlerOwner::App,
+                handler.name.clone(),
+                handler
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect::<Vec<_>>(),
+                handler.span.clone(),
+            )
+        }));
+        for (index, component) in document.components.iter().enumerate() {
+            expected.extend(component.handlers.iter().map(|handler| {
+                (
+                    HandlerOwner::Component(ComponentId(index as u32)),
+                    handler.name.clone(),
+                    handler
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect::<Vec<_>>(),
+                    handler.span.clone(),
+                )
+            }));
+        }
+        expected.extend(document.presets.iter().enumerate().map(|(index, preset)| {
+            (
+                HandlerOwner::Preset(index as u32),
+                format!("preset {}", preset.name),
+                Vec::new(),
+                preset.span.clone(),
+            )
+        }));
+        if self.handlers.len() != expected.len() {
+            return Err(crate::Error::new(
+                "E196",
+                &Span::line(1),
+                "checked handler declarations changed during semantic analysis",
+            ));
+        }
+        for (declaration, (owner, name, payloads, span)) in self.handlers.iter_mut().zip(expected) {
+            if declaration.owner != owner || declaration.name != name {
+                return Err(crate::Error::new(
+                    "E196",
+                    &span,
+                    "checked handler identity changed during semantic analysis",
+                ));
+            }
+            declaration.payloads = payloads;
+        }
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1096,6 +1162,11 @@ fn index_handler_declaration(
         owner,
         name: handler.name.clone(),
         statement_roots,
+        payloads: handler
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
     });
 }
 

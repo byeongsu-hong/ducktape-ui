@@ -5,7 +5,7 @@ use super::expr::{
 use super::*;
 use crate::hir::{
     AppSettingExprId, AppStateId, ComponentCallId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, HandlerId,
+    ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId, ExternRef, HandlerId,
     OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId, SubscriptionId, TaskId,
     TestId, ViewId,
 };
@@ -145,26 +145,26 @@ pub(crate) enum CheckedSubscriptionSource {
         milliseconds: u64,
     },
     Repeat {
-        function: ExternFnId,
+        function: ExternRef,
         milliseconds: u64,
     },
     Run {
-        function: ExternFnId,
+        function: ExternRef,
         arguments: Vec<CheckedExprUseId>,
     },
     Recipe {
-        function: ExternFnId,
+        function: ExternRef,
         arguments: Vec<CheckedExprUseId>,
     },
     Events {
         identity: CheckedExprUseId,
-        filter: ExternFnId,
+        filter: ExternRef,
     },
     Event {
         raw: bool,
     },
     Extern {
-        function: ExternFnId,
+        function: ExternRef,
         arguments: Vec<CheckedExprUseId>,
     },
     InputMethod(InputMethodEvent),
@@ -178,6 +178,7 @@ pub(crate) enum CheckedSubscriptionSource {
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedSubscriptionRoute {
     pub(crate) handler: HandlerId,
+    pub(crate) handler_name: String,
     pub(crate) payloads: Vec<u32>,
 }
 
@@ -187,7 +188,7 @@ pub(crate) struct CheckedSubscription {
     pub(crate) source: CheckedSubscriptionSource,
     pub(crate) source_payloads: Vec<Type>,
     pub(crate) delivered_payloads: Vec<Type>,
-    pub(crate) filter: Option<ExternFnId>,
+    pub(crate) filter: Option<ExternRef>,
     pub(crate) context: Option<CheckedExprUseId>,
     pub(crate) condition: Option<CheckedExprUseId>,
     pub(crate) window_id: bool,
@@ -326,23 +327,23 @@ pub(crate) enum CheckedSubscriptionSourceAnalysis {
         milliseconds: u64,
     },
     Repeat {
-        function: ExternFnId,
+        function: ExternRef,
         milliseconds: u64,
     },
     Run {
-        function: ExternFnId,
+        function: ExternRef,
     },
     Recipe {
-        function: ExternFnId,
+        function: ExternRef,
     },
     Events {
-        filter: ExternFnId,
+        filter: ExternRef,
     },
     Event {
         raw: bool,
     },
     Extern {
-        function: ExternFnId,
+        function: ExternRef,
     },
     InputMethod(InputMethodEvent),
     Keyboard(KeyboardEvent),
@@ -357,8 +358,9 @@ pub(crate) struct CheckedSubscriptionAnalysis {
     pub(crate) source: CheckedSubscriptionSourceAnalysis,
     pub(crate) source_payloads: Vec<Type>,
     pub(crate) delivered_payloads: Vec<Type>,
-    pub(crate) filter: Option<ExternFnId>,
+    pub(crate) filter: Option<ExternRef>,
     pub(crate) route_handler: HandlerId,
+    pub(crate) route_handler_name: String,
     pub(crate) route_payloads: Vec<u32>,
 }
 
@@ -723,21 +725,29 @@ impl CheckedFacts {
         self.expression_uses.get(id.0 as usize)
     }
 
-    pub(crate) fn validate_expression_use(
+    pub(crate) fn checked_expression_use(
         &self,
         id: CheckedExprUseId,
         span: &Span,
-    ) -> Result<Vec<ExternFnId>, Error> {
-        let expression_use = self.expression_uses.get(id.0 as usize).ok_or_else(|| {
+    ) -> Result<&CheckedExprUse, Error> {
+        self.expression_uses.get(id.0 as usize).ok_or_else(|| {
             Error::new(
                 "E196",
                 span,
                 "checked expression references an invalid expression-use ID",
             )
-        })?;
+        })
+    }
+
+    pub(crate) fn validate_expression_use(
+        &self,
+        id: CheckedExprUseId,
+        declarations: &DeclarationIndex,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let expression_use = self.checked_expression_use(id, span)?;
         let mut pending = vec![expression_use.root];
         let mut visited = std::collections::HashSet::new();
-        let mut externs = Vec::new();
         while let Some(id) = pending.pop() {
             if !visited.insert(id) {
                 continue;
@@ -762,8 +772,55 @@ impl CheckedFacts {
                                 ));
                             }
                         }
-                        CheckedCallTarget::Extern(id) => externs.push(*id),
-                        CheckedCallTarget::EnumVariant(_) => {}
+                        CheckedCallTarget::Extern(id) => {
+                            declarations.checked_extern_decl(*id, span)?;
+                        }
+                        CheckedCallTarget::EnumVariant(id) => {
+                            let variant =
+                                declarations.try_enum_variant_decl(*id).ok_or_else(|| {
+                                    Error::new(
+                                        "E196",
+                                        span,
+                                        "checked expression references an invalid enum variant ID",
+                                    )
+                                })?;
+                            let owner = declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                                Error::new(
+                                    "E196",
+                                    span,
+                                    "checked expression references an invalid enum owner ID",
+                                )
+                            })?;
+                            if expression.ty != Type::Named(owner.name.clone()) {
+                                return Err(Error::new(
+                                    "E196",
+                                    span,
+                                    "checked enum constructor has a mismatched result type",
+                                ));
+                            }
+                            let [CheckedCallArgument::Value(argument)] = arguments.as_slice()
+                            else {
+                                return Err(Error::new(
+                                    "E196",
+                                    span,
+                                    "checked enum constructor has a mismatched payload shape",
+                                ));
+                            };
+                            let argument = self.expressions.get(argument.0 as usize).ok_or_else(|| {
+                                Error::new(
+                                    "E196",
+                                    span,
+                                    "checked enum constructor references an invalid payload expression ID",
+                                )
+                            })?;
+                            if variant.payload.as_ref() != Some(&argument.ty) {
+                                return Err(Error::new(
+                                    "E196",
+                                    span,
+                                    "checked enum constructor has a mismatched payload type",
+                                ));
+                            }
+                        }
                     }
                     for argument in arguments {
                         match argument {
@@ -786,35 +843,126 @@ impl CheckedFacts {
                     pending.push(*left);
                     pending.push(*right);
                 }
-                CheckedExprKind::Path {
-                    root: CheckedPathRoot::Local(id),
-                    ..
-                } if self.locals.get(id.0 as usize).is_none() => {
-                    return Err(Error::new(
-                        "E196",
-                        span,
-                        "checked expression references an invalid local ID",
-                    ));
+                CheckedExprKind::SlotProvided(id) => {
+                    if declarations.try_component_slot(*id).is_none() {
+                        return Err(Error::new(
+                            "E196",
+                            span,
+                            "checked expression references an invalid component slot ID",
+                        ));
+                    }
+                    if expression.ty != Type::Bool {
+                        return Err(Error::new(
+                            "E196",
+                            span,
+                            "checked provided-slot expression has a non-boolean type",
+                        ));
+                    }
                 }
-                CheckedExprKind::Path {
-                    root: CheckedPathRoot::Value(value),
-                    ..
-                } if self
-                    .values_by_ref
-                    .get(value)
-                    .and_then(|id| self.values.get(id.0 as usize))
-                    .is_none() =>
-                {
-                    return Err(Error::new(
-                        "E196",
-                        span,
-                        "checked expression references an invalid value ID",
-                    ));
+                CheckedExprKind::Path { root, projections } => {
+                    match root {
+                        CheckedPathRoot::Local(id) if self.locals.get(id.0 as usize).is_none() => {
+                            return Err(Error::new(
+                                "E196",
+                                span,
+                                "checked expression references an invalid local ID",
+                            ));
+                        }
+                        CheckedPathRoot::Value(value)
+                            if self
+                                .values_by_ref
+                                .get(value)
+                                .and_then(|id| self.values.get(id.0 as usize))
+                                .is_none() =>
+                        {
+                            return Err(Error::new(
+                                "E196",
+                                span,
+                                "checked expression references an invalid value ID",
+                            ));
+                        }
+                        CheckedPathRoot::EnumVariant(id) => {
+                            let variant =
+                                declarations.try_enum_variant_decl(*id).ok_or_else(|| {
+                                    Error::new(
+                                        "E196",
+                                        span,
+                                        "checked expression references an invalid enum variant ID",
+                                    )
+                                })?;
+                            let owner = declarations.try_enum_decl(id.owner).ok_or_else(|| {
+                                Error::new(
+                                    "E196",
+                                    span,
+                                    "checked expression references an invalid enum owner ID",
+                                )
+                            })?;
+                            if variant.payload.is_some()
+                                || expression.ty != Type::Named(owner.name.clone())
+                            {
+                                return Err(Error::new(
+                                    "E196",
+                                    span,
+                                    "checked enum value has a mismatched declaration contract",
+                                ));
+                            }
+                        }
+                        CheckedPathRoot::Palette(id)
+                            if declarations.palette_name(*id).is_none() =>
+                        {
+                            return Err(Error::new(
+                                "E196",
+                                span,
+                                "checked expression references an invalid palette ID",
+                            ));
+                        }
+                        _ => {}
+                    }
+                    for projection in projections {
+                        if let CheckedProjectionKind::Struct(id) = projection.kind {
+                            let field =
+                                declarations.try_struct_field_decl(id).ok_or_else(|| {
+                                    Error::new(
+                                        "E196",
+                                        span,
+                                        "checked expression references an invalid struct field ID",
+                                    )
+                                })?;
+                            let owner =
+                                declarations.try_struct_decl(id.owner).ok_or_else(|| {
+                                    Error::new(
+                                        "E196",
+                                        span,
+                                        "checked expression references an invalid struct owner ID",
+                                    )
+                                })?;
+                            if projection.input != Type::Named(owner.name.clone())
+                                || projection.field != field.name
+                                || projection.output != field.ty
+                            {
+                                return Err(Error::new(
+                                    "E196",
+                                    span,
+                                    "checked struct projection has a mismatched declaration contract",
+                                ));
+                            }
+                        }
+                    }
+                    if projections
+                        .last()
+                        .is_some_and(|projection| projection.output != expression.ty)
+                    {
+                        return Err(Error::new(
+                            "E196",
+                            span,
+                            "checked projection result disagrees with its expression type",
+                        ));
+                    }
                 }
                 _ => {}
             }
         }
-        Ok(externs)
+        Ok(())
     }
 
     pub(crate) fn expression_use_by_owner(
@@ -3428,7 +3576,7 @@ impl<'a> FactsBuilder<'a> {
                     arguments: self.lower_subscription_arguments(
                         declaration,
                         args,
-                        function,
+                        function.id,
                         &env,
                         &subscription.span,
                     )?,
@@ -3441,7 +3589,7 @@ impl<'a> FactsBuilder<'a> {
                     arguments: self.lower_subscription_arguments(
                         declaration,
                         args,
-                        function,
+                        function.id,
                         &env,
                         &subscription.span,
                     )?,
@@ -3472,7 +3620,7 @@ impl<'a> FactsBuilder<'a> {
                     arguments: self.lower_subscription_arguments(
                         declaration,
                         args,
-                        function,
+                        function.id,
                         &env,
                         &subscription.span,
                     )?,
@@ -3519,6 +3667,7 @@ impl<'a> FactsBuilder<'a> {
                 status: subscription.status,
                 route: CheckedSubscriptionRoute {
                     handler: analysis.route_handler,
+                    handler_name: analysis.route_handler_name,
                     payloads: analysis.route_payloads,
                 },
                 span: subscription.span.clone(),
@@ -5330,16 +5479,16 @@ view
         assert!(matches!(
             &subscriptions[0].source,
             CheckedSubscriptionSource::Run {
-                function: ExternFnId(0),
+                function,
                 arguments,
-            } if arguments.len() == 1
+            } if function.id == ExternFnId(0) && arguments.len() == 1
         ));
         assert_eq!(subscriptions[0].source_payloads, vec![Type::I64]);
         assert_eq!(
             subscriptions[0].delivered_payloads,
             vec![Type::I64, Type::I64]
         );
-        assert_eq!(subscriptions[0].filter, Some(ExternFnId(3)));
+        assert_eq!(subscriptions[0].filter.as_ref().unwrap().id, ExternFnId(3));
         assert!(subscriptions[0].context.is_some());
         assert!(subscriptions[0].condition.is_some());
         assert_eq!(subscriptions[0].route.handler, HandlerId(0));
@@ -5347,16 +5496,16 @@ view
         assert!(matches!(
             &subscriptions[1].source,
             CheckedSubscriptionSource::Recipe {
-                function: ExternFnId(1),
+                function,
                 arguments,
-            } if arguments.len() == 1
+            } if function.id == ExternFnId(1) && arguments.len() == 1
         ));
         assert!(matches!(
-            subscriptions[2].source,
+            &subscriptions[2].source,
             CheckedSubscriptionSource::Events {
-                filter: ExternFnId(2),
+                filter,
                 ..
-            }
+            } if filter.id == ExternFnId(2)
         ));
         assert_eq!(facts.metrics().subscription_analysis_passes, 5);
 
@@ -5424,7 +5573,7 @@ view
         else {
             unreachable!();
         };
-        *function = ExternFnId(u32::MAX);
+        function.id = ExternFnId(u32::MAX);
         let program = lower::lower(invalid_source).unwrap();
         let error = crate::codegen::generate(&program, "invalid-source-id.ice").unwrap_err();
         assert_eq!(error.code, "E196");
@@ -5433,12 +5582,84 @@ view
 
         let mut invalid_filter = analyze(&source).unwrap();
         let span = invalid_filter.facts.subscriptions[0].span.clone();
-        invalid_filter.facts.subscriptions[0].filter = Some(ExternFnId(u32::MAX));
+        invalid_filter.facts.subscriptions[0]
+            .filter
+            .as_mut()
+            .unwrap()
+            .id = ExternFnId(u32::MAX);
         let program = lower::lower(invalid_filter).unwrap();
         let error = crate::codegen::generate(&program, "invalid-filter-id.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (span.line, span.column));
         assert!(error.message.contains("invalid extern declaration ID"));
+    }
+
+    #[test]
+    fn same_arena_subscription_extern_ids_must_match_the_checked_contract() {
+        let source = format!(
+            "app WrongSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  sync positive(value:i64) -> i64?\n  stream wrong_arity() -> i64\n  stream wrong_param(seed:str) -> i64\n  stream wrong_output(seed:i64) -> str\n  sync wrong_filter_param(value:str) -> i64?\n  sync wrong_filter_output(value:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
+        );
+
+        fn extern_ref(checked: &crate::CheckedDocument, name: &str) -> ExternRef {
+            let declaration = checked.declarations.extern_decl_by_name(name).unwrap();
+            ExternRef {
+                id: declaration.declaration.id,
+                name: declaration.name.clone(),
+            }
+        }
+
+        fn replace_source(checked: &mut crate::CheckedDocument, name: &str) {
+            let replacement = extern_ref(checked, name);
+            let CheckedSubscriptionSource::Run { function, .. } =
+                &mut checked.facts.subscriptions[0].source
+            else {
+                unreachable!();
+            };
+            *function = replacement;
+        }
+
+        fn replace_filter(checked: &mut crate::CheckedDocument, name: &str) {
+            let replacement = extern_ref(checked, name);
+            checked.facts.subscriptions[0].filter = Some(replacement);
+        }
+
+        fn assert_contract_error(checked: crate::CheckedDocument, needle: &str) {
+            let span = checked.facts.subscriptions[0].span.clone();
+            let program = lower::lower(checked).unwrap();
+            let error =
+                crate::codegen::generate(&program, "wrong-extern-contract.ice").unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!((error.line, error.column), (span.line, span.column));
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut wrong_kind = analyze(&source).unwrap();
+        replace_source(&mut wrong_kind, "positive");
+        assert_contract_error(wrong_kind, "declaration contract");
+
+        let mut wrong_arity = analyze(&source).unwrap();
+        replace_source(&mut wrong_arity, "wrong_arity");
+        assert_contract_error(wrong_arity, "mismatched arity");
+
+        let mut wrong_param = analyze(&source).unwrap();
+        replace_source(&mut wrong_param, "wrong_param");
+        assert_contract_error(wrong_param, "parameter type");
+
+        let mut wrong_output = analyze(&source).unwrap();
+        replace_source(&mut wrong_output, "wrong_output");
+        assert_contract_error(wrong_output, "output contract");
+
+        let mut wrong_filter_kind = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_kind, "numbers");
+        assert_contract_error(wrong_filter_kind, "declaration contract");
+
+        let mut wrong_filter_param = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_param, "wrong_filter_param");
+        assert_contract_error(wrong_filter_param, "filter has mismatched parameter");
+
+        let mut wrong_filter_output = analyze(&source).unwrap();
+        replace_filter(&mut wrong_filter_output, "wrong_filter_output");
+        assert_contract_error(wrong_filter_output, "non-optional output");
     }
 
     #[test]
@@ -5454,6 +5675,23 @@ view
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (span.line, span.column));
         assert!(error.message.contains("invalid handler declaration ID"));
+    }
+
+    #[test]
+    fn same_arena_subscription_handler_id_must_match_the_payload_contract() {
+        let source = format!(
+            "app WrongSubscriptionHandler\n{THEME}on tick(now)\non theme(label)\nsubscribe\n  every 10ms -> tick _\n  system theme -> theme _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let replacement = checked.declarations.handler_id("theme").unwrap();
+        let span = checked.facts.subscriptions[0].span.clone();
+        checked.facts.subscriptions[0].route.handler = replacement;
+        checked.facts.subscriptions[0].route.handler_name = "theme".into();
+        let program = lower::lower(checked).unwrap();
+        let error = crate::codegen::generate(&program, "wrong-handler-contract.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!((error.line, error.column), (span.line, span.column));
+        assert!(error.message.contains("handler payload contract"));
     }
 
     #[test]
@@ -5484,6 +5722,112 @@ view
     }
 
     #[test]
+    fn invalid_subscription_expression_descendant_ids_are_e196_invariants() {
+        let source = format!(
+            r#"app InvalidSubscriptionDescendants
+enum Mode
+  idle
+  loaded(str)
+extern crate::backend
+  User(name:str)
+  sync load_user() -> User
+  stream modes(value:Mode) -> i64
+  stream labels(value:str) -> i64
+  stream palettes(value:palette[AppTheme]) -> i64
+{THEME}state
+  user:User = load_user()
+on tick(value)
+subscribe
+  run modes(Mode.loaded("ready")) -> tick _
+  run modes(Mode.idle) -> tick _
+  run labels(user.name) -> tick _
+  run palettes(AppTheme.app) -> tick _
+view
+  text "ready"
+"#
+        );
+        let checked = analyze(&source).unwrap();
+
+        fn argument_root(checked: &crate::CheckedDocument, subscription: usize) -> CheckedExprId {
+            let CheckedSubscriptionSource::Run { arguments, .. } =
+                &checked.facts.subscriptions[subscription].source
+            else {
+                unreachable!();
+            };
+            checked.facts.expression_uses[arguments[0].0 as usize].root
+        }
+
+        fn assert_e196(checked: crate::CheckedDocument, subscription: usize, needle: &str) {
+            let span = checked.facts.subscriptions[subscription].span.clone();
+            let program = lower::lower(checked).unwrap();
+            let error =
+                crate::codegen::generate(&program, "invalid-descendant-id.ice").unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!((error.line, error.column), (span.line, span.column));
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+
+        let mut enum_call = checked.clone();
+        let root = argument_root(&enum_call, 0);
+        let CheckedExprKind::Call { target, .. } =
+            &mut enum_call.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *target = CheckedCallTarget::EnumVariant(crate::hir::EnumVariantId {
+            owner: crate::hir::EnumId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(enum_call, 0, "invalid enum variant ID");
+
+        let mut enum_path = checked.clone();
+        let root = argument_root(&enum_path, 1);
+        let CheckedExprKind::Path { root, .. } =
+            &mut enum_path.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *root = CheckedPathRoot::EnumVariant(crate::hir::EnumVariantId {
+            owner: crate::hir::EnumId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(enum_path, 1, "invalid enum variant ID");
+
+        let mut struct_projection = checked.clone();
+        let root = argument_root(&struct_projection, 2);
+        let CheckedExprKind::Path { projections, .. } =
+            &mut struct_projection.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        projections[0].kind = CheckedProjectionKind::Struct(crate::hir::StructFieldId {
+            owner: crate::hir::StructId(u32::MAX),
+            index: 0,
+        });
+        assert_e196(struct_projection, 2, "invalid struct field ID");
+
+        let mut palette = checked.clone();
+        let root = argument_root(&palette, 3);
+        let CheckedExprKind::Path { root, .. } =
+            &mut palette.facts.expressions[root.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        *root = CheckedPathRoot::Palette(PaletteId(u32::MAX));
+        assert_e196(palette, 3, "invalid palette ID");
+
+        let mut slot = checked;
+        let root = argument_root(&slot, 1);
+        slot.facts.expressions[root.0 as usize].kind =
+            CheckedExprKind::SlotProvided(ComponentSlotId {
+                component: ComponentId(u32::MAX),
+                index: 0,
+            });
+        slot.facts.expressions[root.0 as usize].ty = Type::Bool;
+        assert_e196(slot, 1, "invalid component slot ID");
+    }
+
+    #[test]
     fn malformed_subscription_payload_hir_is_an_e196_invariant() {
         let source = format!(
             "app MalformedSubscription\n{THEME}on tick(now)\nsubscribe\n  every 10ms -> tick _\nview\n  text \"ready\"\n"
@@ -5493,7 +5837,7 @@ view
         let program = lower::lower(checked).unwrap();
         let error = crate::codegen::generate(&program, "malformed-subscription.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("payload shape disagrees"));
+        assert!(error.message.contains("payload"));
     }
 
     #[test]
@@ -5632,6 +5976,7 @@ view
                     delivered_payloads: vec![Type::Instant],
                     filter: None,
                     route_handler: missing_declarations.handler_id("tick").unwrap(),
+                    route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },
             )
@@ -5665,6 +6010,7 @@ view
                     delivered_payloads: vec![Type::Instant],
                     filter: None,
                     route_handler: extra_declarations.handler_id("tick").unwrap(),
+                    route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },
             )

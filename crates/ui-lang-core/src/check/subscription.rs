@@ -191,7 +191,7 @@ pub(in crate::check) fn infer_subscriptions(
                 };
                 (
                     facts::CheckedSubscriptionSourceAnalysis::Repeat {
-                        function: source.declaration.id,
+                        function: checked_extern_ref(source),
                         milliseconds: *milliseconds,
                     },
                     vec![source.error.as_ref().map_or_else(
@@ -232,7 +232,7 @@ pub(in crate::check) fn infer_subscriptions(
                 }
                 (
                     facts::CheckedSubscriptionSourceAnalysis::Run {
-                        function: source.declaration.id,
+                        function: checked_extern_ref(source),
                     },
                     vec![source.error.as_ref().map_or_else(
                         || source.output.clone(),
@@ -260,7 +260,7 @@ pub(in crate::check) fn infer_subscriptions(
                 )?;
                 (
                     facts::CheckedSubscriptionSourceAnalysis::Recipe {
-                        function: source.declaration.id,
+                        function: checked_extern_ref(source),
                     },
                     vec![source.output.clone()],
                 )
@@ -293,7 +293,7 @@ pub(in crate::check) fn infer_subscriptions(
                 }
                 (
                     facts::CheckedSubscriptionSourceAnalysis::Events {
-                        filter: source.declaration.id,
+                        filter: checked_extern_ref(source),
                     },
                     vec![source.output.clone()],
                 )
@@ -316,7 +316,7 @@ pub(in crate::check) fn infer_subscriptions(
                 )?;
                 (
                     facts::CheckedSubscriptionSourceAnalysis::Extern {
-                        function: source.declaration.id,
+                        function: checked_extern_ref(source),
                     },
                     vec![source.output.clone()],
                 )
@@ -388,7 +388,7 @@ pub(in crate::check) fn infer_subscriptions(
                 ));
             };
             payloads = vec![(**output).clone()];
-            filter_id = Some(function.declaration.id);
+            filter_id = Some(checked_extern_ref(function));
         }
         if let Some(context) = &subscription.context {
             let context_ty = retain_subscription_expression(
@@ -453,11 +453,19 @@ pub(in crate::check) fn infer_subscriptions(
                 delivered_payloads: payloads,
                 filter: filter_id,
                 route_handler,
+                route_handler_name: subscription.route.handler.clone(),
                 route_payloads: (0..subscription.route.args.len() as u32).collect(),
             },
         )?;
     }
     Ok(())
+}
+
+fn checked_extern_ref(declaration: &crate::hir::ExternDeclaration) -> crate::hir::ExternRef {
+    crate::hir::ExternRef {
+        id: declaration.declaration.id,
+        name: declaration.name.clone(),
+    }
 }
 
 fn subscription_extern_function<'a>(

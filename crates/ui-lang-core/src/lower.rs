@@ -1,20 +1,20 @@
 use crate::ast::*;
 use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner,
-    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
-    CheckedPathRoot, CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef,
-    ContextualBuiltin, canonical_builtin_type, field_type, resolve_erased_type,
+    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
+    CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner, CheckedPathRoot,
+    CheckedProjectionKind, CheckedUnaryOperator, CheckedValueRef, ContextualBuiltin,
+    canonical_builtin_type, field_type, resolve_erased_type,
 };
 pub(crate) use crate::check::{
-    CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedSubscription, CheckedSubscriptionRoute, CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppSettingExprId, AppSettingsId, AppStateId, ComponentCallId, ComponentEventId, ComponentId,
-    ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, HandlerId,
-    HandlerOwner, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId, RunSiteId, StatementId,
-    TaskId,
+    ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
+    HandlerId, HandlerOwner, NamedWindowId, OriginArena, OriginId, PaletteId, RouteId, RunSiteId,
+    StatementId, TaskId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
@@ -915,6 +915,7 @@ struct CallSite {
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
+    daemon: bool,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
@@ -2939,8 +2940,10 @@ impl Lowerer {
                 "style lowering completed without a normalized theme program",
             )
         })?;
+        let daemon = self.document.daemon;
         Ok(LoweredProgram {
             document: self.document,
+            daemon,
             facts: self.facts,
             declarations: self.declarations,
             settings,
