@@ -1,6 +1,6 @@
 use super::expr::{
-    BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, analyze_expr_types, field_type,
-    resolve_erased_type, unify_type_evidence,
+    BuiltinArgumentContext, ContextualBuiltin, ExprTypeAnalysis, field_type, resolve_erased_type,
+    unify_type_evidence,
 };
 use super::*;
 use crate::hir::{
@@ -342,6 +342,35 @@ pub(crate) struct CheckedExpr {
 pub(crate) struct CheckedHandler {
     pub(crate) id: HandlerId,
     pub(crate) params: Vec<CheckedLocalId>,
+    pub(crate) param_names: Vec<String>,
+    pub(crate) param_types: Vec<Type>,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedStatement {
+    pub(crate) id: StatementId,
+    pub(crate) semantic_key: String,
+    pub(crate) operation: Option<crate::hir::HandlerOperationContract>,
+    pub(crate) writable_targets: Vec<CheckedValueRef>,
+    pub(crate) operand_count: u32,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedRouteArgKind {
+    Expression,
+    Payload,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedRoute {
+    pub(crate) id: RouteId,
+    pub(crate) target: HandlerId,
+    pub(crate) target_owner: crate::hir::HandlerOwner,
+    pub(crate) args: Vec<CheckedRouteArgKind>,
+    pub(crate) source_payloads: Vec<Type>,
+    pub(crate) ordered_payloads: bool,
     pub(crate) origin: OriginId,
 }
 
@@ -350,8 +379,15 @@ pub(crate) struct CheckedTask {
     pub(crate) id: TaskId,
     pub(crate) output: Option<Type>,
     pub(crate) error: Option<Type>,
+    pub(crate) target: Option<CheckedEffectTarget>,
     pub(crate) is_final: bool,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedEffectTarget {
+    Builtin(String),
+    Extern(ExternFnId),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -366,10 +402,10 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) type_analysis_cache_hits: usize,
     pub(crate) initializer_analysis_passes: usize,
     pub(crate) view_analysis_passes: usize,
-    pub(crate) handler_analysis_passes: usize,
-    /// A handler expression is analyzed once and then moved into checked HIR.
-    /// Any non-zero value would mean a later phase asked the type checker again.
-    pub(crate) handler_type_rechecks: usize,
+    /// Final checker analyses consumed directly while constructing handler HIR.
+    pub(crate) handler_authoritative_analyses: usize,
+    /// Final checker queries whose roots are nested inside an authoritative HIR operand.
+    pub(crate) handler_auxiliary_analyses: usize,
     pub(crate) type_scope_env_overlays: usize,
     pub(crate) type_scope_env_full_clones: usize,
     pub(crate) declaration_lookups: usize,
@@ -395,7 +431,9 @@ pub(crate) struct CheckedFacts {
         HashMap<(ComponentCallId, ComponentParamId), CheckedComponentArgumentSource>,
     expressions: Vec<CheckedExpr>,
     handlers: Vec<CheckedHandler>,
+    statements: Vec<Option<CheckedStatement>>,
     tasks: Vec<Option<CheckedTask>>,
+    routes: Vec<Option<CheckedRoute>>,
     builtins: Vec<String>,
     metrics: CheckedFactMetrics,
     #[cfg(test)]
@@ -403,6 +441,30 @@ pub(crate) struct CheckedFacts {
 }
 
 impl CheckedFacts {
+    #[cfg(test)]
+    pub(crate) fn corrupt_handler_param_local(
+        &mut self,
+        handler: HandlerId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.handlers[handler.0 as usize].params[index] = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_expression_use_root(&mut self, owner: CheckedExprOwner, raw: u32) {
+        let id = self.expression_uses_by_owner[&owner];
+        self.expression_uses[id.0 as usize].root = CheckedExprId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_task_extern_target(&mut self, task: TaskId, raw: u32) {
+        self.tasks[task.0 as usize]
+            .as_mut()
+            .expect("test task exists")
+            .target = Some(CheckedEffectTarget::Extern(ExternFnId(raw)));
+    }
+
     pub(crate) fn values(&self) -> &[CheckedValue] {
         &self.values
     }
@@ -416,6 +478,12 @@ impl CheckedFacts {
         self.value(self.values_by_ref[&value_ref])
     }
 
+    pub(crate) fn try_value_by_ref(&self, value_ref: CheckedValueRef) -> Option<&CheckedValue> {
+        self.record_lookup();
+        let id = self.values_by_ref.get(&value_ref)?;
+        self.values.get(id.0 as usize)
+    }
+
     pub(crate) fn locals(&self) -> &[CheckedLocal] {
         &self.locals
     }
@@ -423,6 +491,11 @@ impl CheckedFacts {
     pub(crate) fn local(&self, id: CheckedLocalId) -> &CheckedLocal {
         self.record_lookup();
         &self.locals[id.0 as usize]
+    }
+
+    pub(crate) fn try_local(&self, id: CheckedLocalId) -> Option<&CheckedLocal> {
+        self.record_lookup();
+        self.locals.get(id.0 as usize)
     }
 
     pub(crate) fn daemon_window_local(&self) -> Option<CheckedLocalId> {
@@ -458,6 +531,11 @@ impl CheckedFacts {
         &self.expression_uses[id.0 as usize]
     }
 
+    pub(crate) fn try_expression_use(&self, id: CheckedExprUseId) -> Option<&CheckedExprUse> {
+        self.record_lookup();
+        self.expression_uses.get(id.0 as usize)
+    }
+
     pub(crate) fn expression_use_by_owner(
         &self,
         owner: CheckedExprOwner,
@@ -478,6 +556,11 @@ impl CheckedFacts {
         &self.expressions[id.0 as usize]
     }
 
+    pub(crate) fn try_expression(&self, id: CheckedExprId) -> Option<&CheckedExpr> {
+        self.record_lookup();
+        self.expressions.get(id.0 as usize)
+    }
+
     pub(crate) fn builtin(&self, id: CheckedBuiltinId) -> &str {
         self.record_lookup();
         &self.builtins[id.0 as usize]
@@ -488,11 +571,45 @@ impl CheckedFacts {
         &self.handlers[id.0 as usize]
     }
 
+    pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&CheckedHandler> {
+        self.record_lookup();
+        self.handlers.get(id.0 as usize)
+    }
+
+    pub(crate) fn statement(&self, id: StatementId) -> &CheckedStatement {
+        self.record_lookup();
+        self.statements[id.0 as usize]
+            .as_ref()
+            .expect("checked statement arena must be complete")
+    }
+
+    pub(crate) fn try_statement(&self, id: StatementId) -> Option<&CheckedStatement> {
+        self.record_lookup();
+        self.statements.get(id.0 as usize)?.as_ref()
+    }
+
+    pub(crate) fn route(&self, id: RouteId) -> &CheckedRoute {
+        self.record_lookup();
+        self.routes[id.0 as usize]
+            .as_ref()
+            .expect("checked route arena must be complete")
+    }
+
+    pub(crate) fn try_route(&self, id: RouteId) -> Option<&CheckedRoute> {
+        self.record_lookup();
+        self.routes.get(id.0 as usize)?.as_ref()
+    }
+
     pub(crate) fn task(&self, id: TaskId) -> &CheckedTask {
         self.record_lookup();
         self.tasks[id.0 as usize]
             .as_ref()
             .expect("checked task arena must be complete")
+    }
+
+    pub(crate) fn try_task(&self, id: TaskId) -> Option<&CheckedTask> {
+        self.record_lookup();
+        self.tasks.get(id.0 as usize)?.as_ref()
     }
 
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
@@ -530,6 +647,9 @@ pub(in crate::check) fn build(
 #[derive(Debug, Default)]
 pub(super) struct CheckedAnalyses {
     entries: HashMap<CheckedExprOwner, ExprTypeAnalysis>,
+    handler_entries: HashMap<usize, ExprTypeAnalysis>,
+    handler_route_inputs: HashMap<usize, super::expr::CapturedRouteInputs>,
+    preset_handlers: Vec<Handler>,
     pub(super) view_scope_env_overlays: usize,
     pub(super) view_scope_env_full_clones: usize,
 }
@@ -564,6 +684,9 @@ impl CheckedAnalyses {
 
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
+            && self.handler_entries.is_empty()
+            && self.handler_route_inputs.is_empty()
+            && self.preset_handlers.is_empty()
     }
 
     pub(super) fn extend(&mut self, other: Self) -> Result<(), Error> {
@@ -572,7 +695,45 @@ impl CheckedAnalyses {
         for (owner, analysis) in other.entries {
             self.insert_expression(owner, analysis)?;
         }
+        for (key, analysis) in other.handler_entries {
+            if self.handler_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "handler expression was captured more than once",
+                ));
+            }
+        }
+        for (key, route) in other.handler_route_inputs {
+            if self.handler_route_inputs.insert(key, route).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "handler route input contract was captured more than once",
+                ));
+            }
+        }
+        if !other.preset_handlers.is_empty() {
+            if !self.preset_handlers.is_empty() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "preset handler analysis was retained more than once",
+                ));
+            }
+            self.preset_handlers = other.preset_handlers;
+        }
         Ok(())
+    }
+
+    pub(super) fn retain_handlers(
+        &mut self,
+        analyses: super::expr::HandlerAnalyses,
+        preset_handlers: Vec<Handler>,
+    ) {
+        self.handler_entries = analyses.expressions;
+        self.handler_route_inputs = analyses.routes;
+        self.preset_handlers = preset_handlers;
     }
 }
 
@@ -765,8 +926,19 @@ impl<'a> FactsBuilder<'a> {
         self.index_views()?;
         self.lower_view_expressions()?;
         self.lower_handler_expressions()?;
+        self.facts.metrics.handler_auxiliary_analyses = self.analyses.handler_entries.len();
+        self.analyses.handler_entries.clear();
         if !self.analyses.is_empty() {
-            return Err(self.invariant(&Span::line(1), "checked analyses were not consumed"));
+            return Err(self.invariant(
+                &Span::line(1),
+                format!(
+                    "checked analyses were not consumed (expressions={}, handler_expressions={}, handler_routes={}, presets={})",
+                    self.analyses.entries.len(),
+                    self.analyses.handler_entries.len(),
+                    self.analyses.handler_route_inputs.len(),
+                    self.analyses.preset_handlers.len(),
+                ),
+            ));
         }
         if let Some(expression) = self
             .facts
@@ -967,22 +1139,23 @@ impl<'a> FactsBuilder<'a> {
     }
 
     fn lower_handler_expressions(&mut self) -> Result<(), Error> {
+        self.facts.statements = vec![None; self.declarations.statement_count()];
         self.facts.tasks = vec![None; self.declarations.task_count()];
+        self.facts.routes = vec![None; self.declarations.route_count()];
         let mut handler_index = 0usize;
         let app_env = (!self.document.handlers.is_empty() || !self.document.presets.is_empty())
             .then(|| self.fact_env(ValueScope::App));
 
-        for index in 0..self.document.handlers.len() {
-            let handler = self.document.handlers[index].clone();
+        let document = self.document;
+        for handler in &document.handlers {
             self.lower_handler(
                 handler_index,
-                &handler,
+                handler,
                 app_env.as_ref().expect("app handler environment exists"),
             )?;
             handler_index += 1;
         }
-        for component_index in 0..self.document.components.len() {
-            let component = self.document.components[component_index].clone();
+        for (component_index, component) in document.components.iter().enumerate() {
             let component_id = self.declarations.component(component_index).id;
             if component.handlers.is_empty() {
                 continue;
@@ -1008,14 +1181,8 @@ impl<'a> FactsBuilder<'a> {
                 handler_index += 1;
             }
         }
-        for preset_index in 0..self.document.presets.len() {
-            let preset = self.document.presets[preset_index].clone();
-            let handler = Handler {
-                name: format!("preset {}", preset.name),
-                params: Vec::new(),
-                statements: preset.statements,
-                span: preset.span,
-            };
+        let preset_handlers = std::mem::take(&mut self.analyses.preset_handlers);
+        for handler in preset_handlers {
             self.lower_handler(
                 handler_index,
                 &handler,
@@ -1034,6 +1201,18 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!("checked task arena retained an unconsumed task {task}"),
+            ));
+        }
+        if let Some(statement) = self.facts.statements.iter().position(Option::is_none) {
+            return Err(self.invariant(
+                &Span::line(1),
+                format!("checked statement arena retained an unconsumed statement {statement}"),
+            ));
+        }
+        if let Some(route) = self.facts.routes.iter().position(Option::is_none) {
+            return Err(self.invariant(
+                &Span::line(1),
+                format!("checked route arena retained an unconsumed route {route}"),
             ));
         }
         Ok(())
@@ -1082,6 +1261,16 @@ impl<'a> FactsBuilder<'a> {
         self.facts.handlers.push(CheckedHandler {
             id: handler_id,
             params,
+            param_names: handler
+                .params
+                .iter()
+                .map(|param| param.name.clone())
+                .collect(),
+            param_types: handler
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
             origin: declaration.declaration.origin,
         });
         if declaration.statement_roots.len() != handler.statements.len() {
@@ -1132,13 +1321,19 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
     ) -> Result<CheckedExprUseId, Error> {
-        let analysis = analyze_expr_types(expr, env, self.document, span)?;
-        self.analyses.insert_expression(owner, analysis)?;
-        let analysis = self.analyses.remove(owner).ok_or_else(|| {
-            self.invariant(span, "missing authoritative handler expression analysis")
-        })?;
+        let analysis = self
+            .analyses
+            .handler_entries
+            .remove(&super::expr::expr_key(expr))
+            .or_else(|| self.analyses.remove(owner))
+            .ok_or_else(|| {
+                self.invariant(
+                    span,
+                    format!("missing authoritative handler expression analysis for {owner:?}"),
+                )
+            })?;
         let metrics = analysis.metrics();
-        self.facts.metrics.handler_analysis_passes += 1;
+        self.facts.metrics.handler_authoritative_analyses += 1;
         self.facts.metrics.type_analysis_queries += metrics.queries;
         self.facts.metrics.type_analysis_nodes += metrics.nodes;
         self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
@@ -1225,6 +1420,24 @@ impl<'a> FactsBuilder<'a> {
         route_id: RouteId,
         env: &dyn FactEnvironment,
     ) -> Result<(), Error> {
+        let inputs = self
+            .analyses
+            .handler_route_inputs
+            .remove(&std::ptr::from_ref(route).addr())
+            .ok_or_else(|| {
+                self.invariant(&route.span, "missing authoritative route payload contract")
+            })?;
+        let declaration = self.declarations.route(route_id);
+        let handler = self.declarations.statement(declaration.statement).handler;
+        let source_owner = self.declarations.handler(handler).owner;
+        let target_owner = match source_owner {
+            crate::hir::HandlerOwner::Preset(_) => crate::hir::HandlerOwner::App,
+            owner => owner,
+        };
+        let target = self
+            .declarations
+            .handler_id(target_owner, &route.handler)
+            .ok_or_else(|| self.invariant(&route.span, "route target has no checked handler ID"))?;
         for (index, arg) in route.args.iter().enumerate() {
             let RouteArg::Expr(expr) = arg else {
                 continue;
@@ -1241,7 +1454,58 @@ impl<'a> FactsBuilder<'a> {
                 self.declarations.route(route_id).declaration.origin,
             )?;
         }
+        if route_id.0 as usize >= self.facts.routes.len() {
+            return Err(self.invariant(&route.span, "checked route ID is outside its arena"));
+        }
+        let slot = &mut self.facts.routes[route_id.0 as usize];
+        if slot.is_some() {
+            return Err(self.invariant(&route.span, "checked route was produced more than once"));
+        }
+        *slot = Some(CheckedRoute {
+            id: route_id,
+            target,
+            target_owner,
+            args: route
+                .args
+                .iter()
+                .map(|arg| match arg {
+                    RouteArg::Expr(_) => CheckedRouteArgKind::Expression,
+                    RouteArg::Payload => CheckedRouteArgKind::Payload,
+                })
+                .collect(),
+            source_payloads: inputs.payloads,
+            ordered_payloads: inputs.ordered,
+            origin: declaration.declaration.origin,
+        });
         Ok(())
+    }
+
+    fn checked_writable_targets(
+        &self,
+        statement: &Statement,
+        env: &dyn FactEnvironment,
+    ) -> Result<Vec<CheckedValueRef>, Error> {
+        let names: Vec<&str> = match statement {
+            Statement::Assign { target, .. }
+            | Statement::MarkdownAppend { target, .. }
+            | Statement::ComboPush { target, .. }
+            | Statement::DebugStart { target, .. }
+            | Statement::DebugFinish { target, .. } => vec![target],
+            Statement::Abortable { handle, .. } | Statement::Abort { handle, .. } => vec![handle],
+            _ => Vec::new(),
+        };
+        names
+            .into_iter()
+            .map(|name| {
+                let Some((CheckedPathRoot::Value(value), _)) = env.get(name) else {
+                    return Err(self.invariant(
+                        statement.span(),
+                        "writable handler target has no checked state ID",
+                    ));
+                };
+                Ok(*value)
+            })
+            .collect()
     }
 
     fn lower_handler_statement(
@@ -1251,6 +1515,7 @@ impl<'a> FactsBuilder<'a> {
         env: &mut HandlerFactEnv<'_>,
     ) -> Result<(), Error> {
         let declaration = self.declarations.statement(statement_id).clone();
+        let writable_targets = self.checked_writable_targets(statement, env)?;
         let mut operand = 0u32;
         let mut routes = declaration.routes.iter().copied();
         match statement {
@@ -1363,7 +1628,7 @@ impl<'a> FactsBuilder<'a> {
                 let task = declaration.task.ok_or_else(|| {
                     self.invariant(span, "run statement has no checked task declaration")
                 })?;
-                let (output, error_ty, expected) =
+                let (output, error_ty, expected, target) =
                     self.effect_contract(*kind, function, args, span)?;
                 let mut task_operand = 0;
                 for (index, arg) in args.iter().enumerate() {
@@ -1383,6 +1648,7 @@ impl<'a> FactsBuilder<'a> {
                     declaration.is_final,
                     span,
                 )?;
+                self.set_checked_task_target(task, target, span)?;
                 let success_id = routes
                     .next()
                     .ok_or_else(|| self.invariant(span, "run success route has no declaration"))?;
@@ -1426,6 +1692,11 @@ impl<'a> FactsBuilder<'a> {
                     Some(action.output),
                     action.error,
                     declaration.is_final,
+                    span,
+                )?;
+                self.set_checked_task_target(
+                    task,
+                    CheckedEffectTarget::Extern(action.declaration.id),
                     span,
                 )?;
                 for route in std::iter::once(progress)
@@ -1573,6 +1844,27 @@ impl<'a> FactsBuilder<'a> {
                 "statement left a checked route declaration unconsumed",
             ));
         }
+        if statement_id.0 as usize >= self.facts.statements.len() {
+            return Err(self.invariant(
+                statement.span(),
+                "checked statement ID is outside its arena",
+            ));
+        }
+        let slot = &mut self.facts.statements[statement_id.0 as usize];
+        if slot.is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "checked statement was produced more than once",
+            ));
+        }
+        *slot = Some(CheckedStatement {
+            id: statement_id,
+            semantic_key: crate::hir::statement_semantic_key(statement),
+            operation: crate::hir::handler_operation_contract(statement),
+            writable_targets,
+            operand_count: operand,
+            origin: declaration.declaration.origin,
+        });
         Ok(())
     }
 
@@ -1604,9 +1896,32 @@ impl<'a> FactsBuilder<'a> {
             id: task,
             output,
             error,
+            target: None,
             is_final,
             origin: declaration.declaration.origin,
         });
+        Ok(())
+    }
+
+    fn set_checked_task_target(
+        &mut self,
+        task: TaskId,
+        target: CheckedEffectTarget,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let checked = self
+            .facts
+            .tasks
+            .get_mut(task.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| Error::new("E196", span, "effect task has no checked task fact"))?;
+        if checked.target.replace(target).is_some() {
+            return Err(Error::new(
+                "E196",
+                span,
+                "effect task target was resolved more than once",
+            ));
+        }
         Ok(())
     }
 
@@ -1616,7 +1931,7 @@ impl<'a> FactsBuilder<'a> {
         function: &str,
         args: &[Expr],
         span: &Span,
-    ) -> Result<(Type, Option<Type>, Vec<Type>), Error> {
+    ) -> Result<(Type, Option<Type>, Vec<Type>, CheckedEffectTarget), Error> {
         if let Some((output, error)) =
             super::handler::builtin_task_type(kind, function, args, span)?
         {
@@ -1625,7 +1940,12 @@ impl<'a> FactsBuilder<'a> {
                 "__ice_image_allocate" => vec![Type::Image],
                 _ => Vec::new(),
             };
-            return Ok((output, error, expected));
+            return Ok((
+                output,
+                error,
+                expected,
+                CheckedEffectTarget::Builtin(function.to_owned()),
+            ));
         }
         let action = self
             .declarations
@@ -1638,6 +1958,7 @@ impl<'a> FactsBuilder<'a> {
             action.output.clone(),
             action.error.clone(),
             action.params.iter().map(|(_, ty)| ty.clone()).collect(),
+            CheckedEffectTarget::Extern(action.declaration.id),
         ))
     }
 
@@ -1798,39 +2119,37 @@ impl<'a> FactsBuilder<'a> {
         task: TaskId,
         env: &dyn FactEnvironment,
     ) -> Result<(Type, Option<Type>), Error> {
-        let (output, error) = match source {
+        let (output, error, target) = match source {
             TaskSource::Done { value, span } => {
                 let mut operand = 0;
                 let value = self.task_operand(task, &mut operand, value, None, env, span)?;
-                (self.facts.expression_use(value).source.clone(), None)
+                (self.facts.expression_use(value).source.clone(), None, None)
             }
-            TaskSource::None { output, .. } => (output.clone(), None),
+            TaskSource::None { output, .. } => (output.clone(), None, None),
             TaskSource::Effect {
                 kind,
                 function,
                 args,
                 span,
             } => {
-                let (output, error, expected) =
+                let (output, error, expected, target) =
                     self.effect_contract(*kind, function, args, span)?;
                 let mut operand = 0;
                 for (index, arg) in args.iter().enumerate() {
                     self.task_operand(task, &mut operand, arg, expected.get(index), env, span)?;
                 }
-                (output, error)
+                (output, error, Some(target))
             }
         };
-        self.record_checked_task(
-            Some(task),
-            Some(output.clone()),
-            error.clone(),
-            false,
-            match source {
-                TaskSource::Effect { span, .. }
-                | TaskSource::Done { span, .. }
-                | TaskSource::None { span, .. } => span,
-            },
-        )?;
+        let span = match source {
+            TaskSource::Effect { span, .. }
+            | TaskSource::Done { span, .. }
+            | TaskSource::None { span, .. } => span,
+        };
+        self.record_checked_task(Some(task), Some(output.clone()), error.clone(), false, span)?;
+        if let Some(target) = target {
+            self.set_checked_task_target(task, target, span)?;
+        }
         Ok((output, error))
     }
 
@@ -3604,8 +3923,8 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 type_analysis_cache_hits: 0,
                 initializer_analysis_passes: 7,
                 view_analysis_passes: 1,
-                handler_analysis_passes: 0,
-                handler_type_rechecks: 0,
+                handler_authoritative_analyses: 0,
+                handler_auxiliary_analyses: 0,
                 type_scope_env_overlays: 0,
                 type_scope_env_full_clones: 0,
                 declaration_lookups: 18,
@@ -3803,16 +4122,14 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
         )
         .unwrap();
         let mut duplicate = CheckedAnalyses::default();
+        let owner = CheckedExprOwner::HandlerStatement {
+            statement,
+            operand: 0,
+        };
         duplicate
-            .insert_expression(
-                CheckedExprOwner::HandlerStatement {
-                    statement,
-                    operand: 0,
-                },
-                analysis,
-            )
+            .insert_expression(owner, analysis.clone())
             .unwrap();
-        let error = build(&document, &declarations, &mut origins, duplicate).unwrap_err();
+        let error = duplicate.insert_expression(owner, analysis).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("analyzed more than once"));
 
@@ -3837,7 +4154,11 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
             .unwrap();
         let error = build(&document, &declarations, &mut origins, mismatched).unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("checked analyses were not consumed"));
+        assert!(
+            error
+                .message
+                .contains("missing authoritative handler expression")
+        );
     }
 
     #[test]

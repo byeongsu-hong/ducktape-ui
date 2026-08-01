@@ -137,6 +137,7 @@ pub(crate) enum ResolvedStatementKind {
     Let {
         local: crate::check::CheckedLocalId,
         name: String,
+        ty: Type,
         value: CheckedExprUseId,
     },
     Assign {
@@ -270,6 +271,7 @@ pub(crate) enum ResolvedTaskTransform {
         local: crate::check::CheckedLocalId,
         binding: String,
         input: Type,
+        input_fallible: bool,
         value: CheckedExprUseId,
     },
     Then {
@@ -329,6 +331,61 @@ pub(crate) enum ResolvedRouteTarget {
 pub(crate) enum ResolvedRouteArg {
     Expression(CheckedExprUseId),
     Payload { index: u32, ty: Type },
+}
+
+/// Backend-neutral typed route argument lowering shared by handler effects and
+/// route-bearing surfaces such as Canvas. Statement/task arena ownership is
+/// deliberately outside this contract.
+pub(crate) struct TypedRouteInputs<'a> {
+    pub(crate) source_payloads: &'a [Type],
+    pub(crate) ordered: bool,
+}
+
+pub(crate) fn lower_typed_route_arguments(
+    route: &Route,
+    target_params: &[Type],
+    inputs: TypedRouteInputs<'_>,
+    mut expression: impl FnMut(usize) -> Result<CheckedExprUseId, Error>,
+) -> Result<Vec<ResolvedRouteArg>, Error> {
+    if route.args.len() != target_params.len() {
+        return Err(Error::new(
+            "E196",
+            &route.span,
+            "route argument count diverged from its checked target contract",
+        ));
+    }
+    let mut payload_index = 0usize;
+    route
+        .args
+        .iter()
+        .zip(target_params)
+        .enumerate()
+        .map(|(argument, (raw, target))| match raw {
+            RouteArg::Expr(_) => expression(argument).map(ResolvedRouteArg::Expression),
+            RouteArg::Payload => {
+                let source_index = if inputs.ordered { payload_index } else { 0 };
+                let source = inputs.source_payloads.get(source_index).ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        &route.span,
+                        "route payload has no typed source contract",
+                    )
+                })?;
+                if source != target {
+                    return Err(Error::new(
+                        "E196",
+                        &route.span,
+                        "route payload type diverged from its checked target parameter",
+                    ));
+                }
+                payload_index += 1;
+                Ok(ResolvedRouteArg::Payload {
+                    index: source_index as u32,
+                    ty: target.clone(),
+                })
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -689,6 +746,288 @@ pub(crate) struct LoweredProgram {
 }
 
 impl LoweredProgram {
+    pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
+        fn validate_route(
+            program: &LoweredProgram,
+            route: &ResolvedRoute,
+            statement: StatementId,
+        ) -> Result<(), Error> {
+            let declaration = program.declarations.try_route(route.id).ok_or_else(|| {
+                program.invariant_at_origin(route.origin, "route ID is outside its arena")
+            })?;
+            if declaration.statement != statement {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route ID belongs to a different statement",
+                ));
+            }
+            let (handler, owner, name) = match &route.target {
+                ResolvedRouteTarget::App { handler, name } => {
+                    (*handler, HandlerOwner::App, name.as_str())
+                }
+                ResolvedRouteTarget::Component {
+                    component,
+                    handler,
+                    name,
+                } => (*handler, HandlerOwner::Component(*component), name.as_str()),
+            };
+            let target = program.try_handler(handler).ok_or_else(|| {
+                program.invariant_at_origin(
+                    route.origin,
+                    "route target handler ID is outside its arena",
+                )
+            })?;
+            if target.owner != owner || target.name != name {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route target ID belongs to a different handler",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_task(
+            program: &LoweredProgram,
+            task: TaskId,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let declaration = program.declarations.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(statement.origin, "task ID is outside its arena")
+            })?;
+            if declaration.statement != statement.id {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task ID belongs to a different statement",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_effect(
+            program: &LoweredProgram,
+            target: &ResolvedEffectTarget,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedEffectTarget::Extern(id) = target
+                && program.declarations.try_extern_decl(*id).is_none()
+            {
+                return Err(program
+                    .invariant_at_origin(origin, "effect extern target ID is outside its arena"));
+            }
+            Ok(())
+        }
+
+        fn validate_widget_operation(
+            program: &LoweredProgram,
+            operation: &ResolvedWidgetOperation,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedWidgetOperation::Find {
+                selector: ResolvedWidgetSelector::Extern { target, .. },
+                ..
+            } = operation
+                && program.declarations.try_extern_decl(*target).is_none()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "widget selector extern target ID is outside its arena",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_window_operation(
+            program: &LoweredProgram,
+            operation: &ResolvedWindowOperation,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedWindowOperation::Callback { target, .. } = operation
+                && program.declarations.try_extern_decl(*target).is_none()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "window callback extern target ID is outside its arena",
+                ));
+            }
+            Ok(())
+        }
+
+        fn visit(
+            program: &LoweredProgram,
+            handler: &ResolvedHandler,
+            statement: &ResolvedStatement,
+            parent: Option<StatementId>,
+        ) -> Result<(), Error> {
+            let declaration = program
+                .declarations
+                .try_statement(statement.id)
+                .ok_or_else(|| {
+                    program
+                        .invariant_at_origin(statement.origin, "statement ID is outside its arena")
+                })?;
+            if declaration.handler != handler.id || declaration.parent != parent {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement ID belongs to a different handler or parent",
+                ));
+            }
+            if let Some(task) = statement.task {
+                validate_task(program, task, statement)?;
+            }
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => {
+                    validate_effect(program, &run.target, statement.origin)?;
+                    validate_route(program, &run.success, statement.id)?;
+                    if let Some(route) = &run.error {
+                        validate_route(program, route, statement.id)?;
+                    }
+                    if let Some(site) = run.site {
+                        let declaration =
+                            program.declarations.try_run_site(site).ok_or_else(|| {
+                                program.invariant_at_origin(
+                                    statement.origin,
+                                    "run-site ID is outside its arena",
+                                )
+                            })?;
+                        if declaration.statement != statement.id {
+                            return Err(program.invariant_at_origin(
+                                statement.origin,
+                                "run-site ID belongs to a different statement",
+                            ));
+                        }
+                    }
+                }
+                ResolvedStatementKind::Sip(sip) => {
+                    if program.declarations.try_extern_decl(sip.target).is_none() {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "sip extern target ID is outside its arena",
+                        ));
+                    }
+                    for route in std::iter::once(&sip.progress)
+                        .chain(std::iter::once(&sip.success))
+                        .chain(sip.error.iter())
+                    {
+                        validate_route(program, route, statement.id)?;
+                    }
+                }
+                ResolvedStatementKind::TaskFlow(flow) => {
+                    let source_task = match &flow.source {
+                        ResolvedTaskSource::Effect { task, .. }
+                        | ResolvedTaskSource::Done { task, .. }
+                        | ResolvedTaskSource::None { task, .. } => *task,
+                    };
+                    if let ResolvedTaskSource::Effect { target, .. } = &flow.source {
+                        validate_effect(program, target, statement.origin)?;
+                    }
+                    validate_task(program, source_task, statement)?;
+                    for transform in &flow.transforms {
+                        let task = match transform {
+                            ResolvedTaskTransform::Map { task, .. }
+                            | ResolvedTaskTransform::Then { task, .. }
+                            | ResolvedTaskTransform::AndThen { task, .. }
+                            | ResolvedTaskTransform::MapError { task, .. }
+                            | ResolvedTaskTransform::Collect { task }
+                            | ResolvedTaskTransform::Discard { task } => *task,
+                        };
+                        validate_task(program, task, statement)?;
+                    }
+                    for route in flow
+                        .success
+                        .iter()
+                        .chain(flow.error.iter())
+                        .chain(flow.units.iter())
+                    {
+                        validate_route(program, route, statement.id)?;
+                    }
+                }
+                ResolvedStatementKind::TaskGroup { statements, .. } => {
+                    for child in statements {
+                        visit(program, handler, child, Some(statement.id))?;
+                    }
+                }
+                ResolvedStatementKind::Abortable { task, .. } => {
+                    visit(program, handler, task, Some(statement.id))?;
+                }
+                ResolvedStatementKind::WidgetOperation { operation, route } => {
+                    validate_widget_operation(program, operation, statement.origin)?;
+                    if let Some(route) = route {
+                        validate_route(program, route, statement.id)?;
+                    }
+                }
+                ResolvedStatementKind::PaneOperation {
+                    route: Some(route), ..
+                } => validate_route(program, route, statement.id)?,
+                ResolvedStatementKind::WindowOperation {
+                    operation, route, ..
+                } => {
+                    validate_window_operation(program, operation, statement.origin)?;
+                    if let Some(route) = route {
+                        validate_route(program, route, statement.id)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        for handler in &self.handlers {
+            let declaration = self.declarations.try_handler(handler.id).ok_or_else(|| {
+                self.invariant_at_origin(handler.origin, "handler ID is outside its arena")
+            })?;
+            if declaration.owner != handler.owner || declaration.name != handler.name {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler ID belongs to a different declaration",
+                ));
+            }
+            for statement in &handler.statements {
+                visit(self, handler, statement, None)?;
+            }
+        }
+
+        let missing_origin = OriginId(u32::MAX);
+        for id in &self.app_handlers {
+            let handler = self.try_handler(*id).ok_or_else(|| {
+                self.invariant_at_origin(missing_origin, "app handler ID is outside its arena")
+            })?;
+            if handler.owner != HandlerOwner::App {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "app handler ID belongs to a different owner",
+                ));
+            }
+        }
+        for id in &self.preset_handlers {
+            let handler = self.try_handler(*id).ok_or_else(|| {
+                self.invariant_at_origin(missing_origin, "preset handler ID is outside its arena")
+            })?;
+            if !matches!(handler.owner, HandlerOwner::Preset(_)) {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "preset handler ID belongs to a different owner",
+                ));
+            }
+        }
+        for component in &self.components {
+            for id in &component.handlers {
+                let handler = self.try_handler(*id).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        component.origin,
+                        "component handler ID is outside its arena",
+                    )
+                })?;
+                if handler.owner != HandlerOwner::Component(component.id) {
+                    return Err(self.invariant_at_origin(
+                        handler.origin,
+                        "component handler ID belongs to a different owner",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn document(&self) -> &Document {
         &self.document
     }
@@ -730,6 +1069,10 @@ impl LoweredProgram {
         &self.components[id.0 as usize]
     }
 
+    pub(crate) fn try_component(&self, id: ComponentId) -> Option<&ComponentContract> {
+        self.components.get(id.0 as usize)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
         &self.handlers
@@ -737,6 +1080,33 @@ impl LoweredProgram {
 
     pub(crate) fn handler(&self, id: HandlerId) -> &ResolvedHandler {
         &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&ResolvedHandler> {
+        self.handlers.get(id.0 as usize)
+    }
+
+    pub(crate) fn invariant_at_origin(
+        &self,
+        origin: OriginId,
+        message: impl Into<String>,
+    ) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some(origin) = self.origins.try_get(origin) else {
+            return Error::new("E196", &Span::line(1), message);
+        };
+        let mut error = Error::new(
+            "E196",
+            &Span {
+                line: origin.line,
+                column: origin.column,
+            },
+            message,
+        );
+        if let Some(path) = &origin.path {
+            error = error.at_path(path.display().to_string());
+        }
+        error
     }
 
     pub(crate) fn app_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
@@ -1380,17 +1750,43 @@ impl Lowerer {
             }
             HandlerOwner::App | HandlerOwner::Preset(_) => None,
         };
-        if self.origins.get(declaration.declaration.origin).parent != expected_origin_parent {
+        if self
+            .origins
+            .try_get(declaration.declaration.origin)
+            .is_none_or(|origin| origin.parent != expected_origin_parent)
+        {
             return Err(self.invariant(
                 &handler.span,
                 "handler HIR origin chain diverged from its owner",
             ));
         }
-        let checked = self.facts.handler(id).clone();
+        let checked = self
+            .facts
+            .try_handler(id)
+            .ok_or_else(|| {
+                self.invariant(&handler.span, "handler checked ID is outside its arena")
+            })?
+            .clone();
         if checked.id != id || checked.params.len() != handler.params.len() {
             return Err(self.invariant(
                 &handler.span,
                 "checked handler facts do not belong to the lowered handler",
+            ));
+        }
+        let raw_param_names = handler
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect::<Vec<_>>();
+        let raw_param_types = handler
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        if raw_param_names != checked.param_names || raw_param_types != checked.param_types {
+            return Err(self.invariant(
+                &handler.span,
+                "handler parameter contract changed after checking",
             ));
         }
         let params = handler
@@ -1439,9 +1835,11 @@ impl Lowerer {
             operand: *operand,
         };
         *operand += 1;
-        self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+        let expression = self.facts.expression_use_by_owner(owner).ok_or_else(|| {
             self.invariant(span, "handler statement expression has no checked HIR fact")
-        })
+        })?;
+        self.validate_checked_expression_use(expression, span)?;
+        Ok(expression)
     }
 
     fn checked_task_expression(
@@ -1455,36 +1853,67 @@ impl Lowerer {
             operand: *operand,
         };
         *operand += 1;
-        self.facts
+        let expression = self
+            .facts
             .expression_use_by_owner(owner)
-            .ok_or_else(|| self.invariant(span, "task expression has no checked HIR fact"))
+            .ok_or_else(|| self.invariant(span, "task expression has no checked HIR fact"))?;
+        self.validate_checked_expression_use(expression, span)?;
+        Ok(expression)
+    }
+
+    fn validate_checked_expression_use(
+        &self,
+        expression: CheckedExprUseId,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let checked = self.facts.try_expression_use(expression).ok_or_else(|| {
+            self.invariant(span, "checked expression-use ID is outside its arena")
+        })?;
+        if self.facts.try_expression(checked.root).is_none() {
+            return Err(self.invariant(span, "checked expression root ID is outside its arena"));
+        }
+        Ok(())
+    }
+
+    fn ensure_task_operands_consumed(
+        &self,
+        task: TaskId,
+        operand: u32,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if self
+            .facts
+            .expression_use_by_owner(crate::check::CheckedExprOwner::Task { task, operand })
+            .is_some()
+        {
+            return Err(self.invariant(
+                span,
+                "task did not consume its complete checked operand contract",
+            ));
+        }
+        Ok(())
     }
 
     fn writable_state(
         &self,
-        owner: HandlerOwner,
-        name: &str,
+        statement: &crate::check::CheckedStatement,
+        index: &mut usize,
         span: &Span,
     ) -> Result<ResolvedWritableState, Error> {
-        let value = self
-            .facts
-            .values()
-            .iter()
-            .find(|value| {
-                value.name == name
-                    && match (owner, value.id) {
-                        (
-                            HandlerOwner::App | HandlerOwner::Preset(_),
-                            CheckedValueRef::AppState(_),
-                        ) => true,
-                        (
-                            HandlerOwner::Component(component),
-                            CheckedValueRef::ComponentState(id),
-                        ) => id.component == component,
-                        _ => false,
-                    }
-            })
-            .ok_or_else(|| self.invariant(span, "writable handler target has no checked state"))?;
+        let value_ref = statement
+            .writable_targets
+            .get(*index)
+            .copied()
+            .ok_or_else(|| {
+                self.invariant(
+                    span,
+                    "writable handler target has no checked state contract",
+                )
+            })?;
+        *index += 1;
+        let value = self.facts.try_value_by_ref(value_ref).ok_or_else(|| {
+            self.invariant(span, "writable state value ID is outside its checked arena")
+        })?;
         Ok(ResolvedWritableState {
             value: value.id,
             name: value.name.clone(),
@@ -1494,19 +1923,52 @@ impl Lowerer {
 
     fn effect_target(
         &self,
+        task: TaskId,
         function: &str,
         kind: EffectKind,
         span: &Span,
     ) -> Result<ResolvedEffectTarget, Error> {
-        if let Some(extern_decl) = self.declarations.extern_decl_by_name(function)
-            && extern_decl.kind == ExternKind::from(kind)
-        {
-            return Ok(ResolvedEffectTarget::Extern(extern_decl.declaration.id));
+        let checked = self.facts.try_task(task).ok_or_else(|| {
+            self.invariant(span, "effect target task ID is outside its checked arena")
+        })?;
+        match checked.target.as_ref().ok_or_else(|| {
+            self.invariant(span, "effect task has no authoritative checked target")
+        })? {
+            crate::check::CheckedEffectTarget::Builtin(name) => {
+                if name != function {
+                    return Err(
+                        self.invariant(span, "built-in effect target changed after checking")
+                    );
+                }
+                Ok(ResolvedEffectTarget::Builtin(name.clone()))
+            }
+            crate::check::CheckedEffectTarget::Extern(id) => {
+                let declaration = self.declarations.try_extern_decl(*id).ok_or_else(|| {
+                    self.invariant(span, "effect extern target ID is outside its arena")
+                })?;
+                if declaration.name != function || declaration.kind != ExternKind::from(kind) {
+                    return Err(self.invariant(span, "effect extern target changed after checking"));
+                }
+                Ok(ResolvedEffectTarget::Extern(*id))
+            }
         }
-        if function.starts_with("__ice_") {
-            return Ok(ResolvedEffectTarget::Builtin(function.to_owned()));
+    }
+
+    fn sip_target(&self, task: TaskId, function: &str, span: &Span) -> Result<ExternFnId, Error> {
+        let checked = self.facts.try_task(task).ok_or_else(|| {
+            self.invariant(span, "sip target task ID is outside its checked arena")
+        })?;
+        let Some(crate::check::CheckedEffectTarget::Extern(id)) = &checked.target else {
+            return Err(self.invariant(span, "sip task has no authoritative extern target"));
+        };
+        let declaration = self
+            .declarations
+            .try_extern_decl(*id)
+            .ok_or_else(|| self.invariant(span, "sip extern target ID is outside its arena"))?;
+        if declaration.name != function || declaration.kind != ExternKind::Sip {
+            return Err(self.invariant(span, "sip extern target changed after checking"));
         }
-        Err(self.invariant(span, "checked effect target has no normalized declaration"))
+        Ok(*id)
     }
 
     pub(crate) fn lower_route(
@@ -1517,90 +1979,134 @@ impl Lowerer {
         statement: StatementId,
         task: Option<TaskId>,
     ) -> Result<ResolvedRoute, Error> {
-        let declaration = self.declarations.route(id);
+        self.lower_handler_route(route, id, owner, statement, task, false)
+    }
+
+    fn lower_handler_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+        ordered: bool,
+    ) -> Result<ResolvedRoute, Error> {
+        let declaration = self.declarations.try_route(id).ok_or_else(|| {
+            self.invariant(&route.span, "route HIR ID is outside its declaration arena")
+        })?;
+        let statement_declaration =
+            self.declarations.try_statement(statement).ok_or_else(|| {
+                self.invariant(&route.span, "route statement ID is outside its arena")
+            })?;
         if declaration.declaration.id != id
             || declaration.statement != statement
             || declaration.task != task
-            || self.origins.get(declaration.declaration.origin).parent
-                != Some(self.declarations.statement(statement).declaration.origin)
+            || self
+                .origins
+                .try_get(declaration.declaration.origin)
+                .is_none_or(|origin| {
+                    origin.parent != Some(statement_declaration.declaration.origin)
+                })
         {
             return Err(self.invariant(
                 &route.span,
                 "route HIR owner or origin chain diverged from its statement",
             ));
         }
-        let (target, target_handler) = match owner {
-            HandlerOwner::Component(component) => {
-                let handler = self
-                    .declarations
-                    .handlers()
-                    .iter()
-                    .find(|candidate| {
-                        candidate.owner == HandlerOwner::Component(component)
-                            && candidate.name == route.handler
-                    })
-                    .ok_or_else(|| {
-                        self.invariant(&route.span, "component route target has no handler ID")
-                    })?;
-                (
-                    ResolvedRouteTarget::Component {
-                        component,
-                        handler: handler.declaration.id,
-                        name: handler.name.clone(),
-                    },
-                    handler.declaration.id,
-                )
-            }
-            HandlerOwner::App | HandlerOwner::Preset(_) => {
-                let handler = self
-                    .declarations
-                    .handlers()
-                    .iter()
-                    .find(|candidate| {
-                        candidate.owner == HandlerOwner::App && candidate.name == route.handler
-                    })
-                    .ok_or_else(|| {
-                        self.invariant(&route.span, "app route target has no handler ID")
-                    })?;
-                (
-                    ResolvedRouteTarget::App {
-                        handler: handler.declaration.id,
-                        name: handler.name.clone(),
-                    },
-                    handler.declaration.id,
-                )
-            }
+        let checked = self.facts.try_route(id).ok_or_else(|| {
+            self.invariant(&route.span, "route checked ID is outside its fact arena")
+        })?;
+        let expected_target_owner = match owner {
+            HandlerOwner::Preset(_) => HandlerOwner::App,
+            owner => owner,
         };
-        let target_params = &self.facts.handler(target_handler).params;
-        let args = route
+        let raw_arg_kinds = route
             .args
             .iter()
-            .enumerate()
-            .map(|(index, arg)| match arg {
-                RouteArg::Payload => target_params
-                    .get(index)
-                    .map(|local| ResolvedRouteArg::Payload {
-                        index: 0,
-                        ty: self.facts.local(*local).ty.clone(),
-                    })
+            .map(|arg| match arg {
+                RouteArg::Expr(_) => crate::check::CheckedRouteArgKind::Expression,
+                RouteArg::Payload => crate::check::CheckedRouteArgKind::Payload,
+            })
+            .collect::<Vec<_>>();
+        if checked.id != id
+            || checked.origin != declaration.declaration.origin
+            || checked.target_owner != expected_target_owner
+            || checked.args != raw_arg_kinds
+            || checked.ordered_payloads != ordered
+        {
+            return Err(self.invariant(
+                &route.span,
+                "route semantic contract changed after checking",
+            ));
+        }
+        let target_handler = checked.target;
+        let handler = self
+            .declarations
+            .try_handler(target_handler)
+            .ok_or_else(|| {
+                self.invariant(&route.span, "route target handler ID is outside its arena")
+            })?;
+        if handler.name != route.handler || handler.owner != checked.target_owner {
+            return Err(self.invariant(&route.span, "route target changed after checking"));
+        }
+        let target = match checked.target_owner {
+            HandlerOwner::Component(component) => ResolvedRouteTarget::Component {
+                component,
+                handler: target_handler,
+                name: handler.name.clone(),
+            },
+            HandlerOwner::App => ResolvedRouteTarget::App {
+                handler: target_handler,
+                name: handler.name.clone(),
+            },
+            HandlerOwner::Preset(_) => {
+                return Err(self.invariant(&route.span, "route cannot target a preset handler"));
+            }
+        };
+        let target_params = self
+            .facts
+            .try_handler(target_handler)
+            .ok_or_else(|| {
+                self.invariant(
+                    &route.span,
+                    "route target checked handler ID is outside its arena",
+                )
+            })?
+            .params
+            .iter()
+            .map(|local| {
+                self.facts
+                    .try_local(*local)
+                    .map(|local| local.ty.clone())
                     .ok_or_else(|| {
                         self.invariant(
                             &route.span,
-                            "route payload has no checked target parameter type",
+                            "route target parameter local ID is outside its arena",
                         )
-                    }),
-                RouteArg::Expr(_) => self
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let args = lower_typed_route_arguments(
+            route,
+            &target_params,
+            TypedRouteInputs {
+                source_payloads: &checked.source_payloads,
+                ordered,
+            },
+            |index| {
+                let expression = self
                     .facts
                     .expression_use_by_owner(crate::check::CheckedExprOwner::Route {
                         route: id,
                         argument: index as u32,
                     })
-                    .map(ResolvedRouteArg::Expression)
                     .ok_or_else(|| {
                         self.invariant(&route.span, "route argument has no checked expression fact")
-                    }),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                    })?;
+                self.validate_checked_expression_use(expression, &route.span)?;
+                Ok(expression)
+            },
+        )?;
         Ok(ResolvedRoute {
             id,
             target,
@@ -1617,15 +2123,7 @@ impl Lowerer {
         statement: StatementId,
         task: Option<TaskId>,
     ) -> Result<ResolvedRoute, Error> {
-        let mut route = self.lower_route(route, id, owner, statement, task)?;
-        let mut payload = 0u32;
-        for arg in &mut route.args {
-            if let ResolvedRouteArg::Payload { index, .. } = arg {
-                *index = payload;
-                payload += 1;
-            }
-        }
-        Ok(route)
+        self.lower_handler_route(route, id, owner, statement, task, true)
     }
 
     fn lower_handler_statement(
@@ -1636,22 +2134,64 @@ impl Lowerer {
         owner: HandlerOwner,
         parent: Option<StatementId>,
     ) -> Result<ResolvedStatement, Error> {
-        let declaration = self.declarations.statement(id);
+        let declaration = self.declarations.try_statement(id).ok_or_else(|| {
+            self.invariant(
+                statement.span(),
+                "statement HIR ID is outside its declaration arena",
+            )
+        })?;
+        let checked_statement = self.facts.try_statement(id).ok_or_else(|| {
+            self.invariant(
+                statement.span(),
+                "statement checked ID is outside its fact arena",
+            )
+        })?;
+        if checked_statement.id != id
+            || checked_statement.origin != declaration.declaration.origin
+            || checked_statement.semantic_key != crate::hir::statement_semantic_key(statement)
+            || checked_statement.operation != crate::hir::handler_operation_contract(statement)
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "handler statement semantic contract changed after checking",
+            ));
+        }
+        let declaration_handler = self
+            .declarations
+            .try_handler(declaration.handler)
+            .ok_or_else(|| {
+                self.invariant(
+                    statement.span(),
+                    "statement handler ID is outside its arena",
+                )
+            })?;
         if declaration.declaration.id != id
             || declaration.handler != handler
             || declaration.parent != parent
-            || self.declarations.handler(declaration.handler).owner != owner
+            || declaration_handler.owner != owner
         {
             return Err(self.invariant(
                 statement.span(),
                 "statement HIR owner or preorder parent does not match its handler",
             ));
         }
-        let expected_origin_parent = parent.map_or_else(
-            || self.declarations.handler(handler).declaration.origin,
-            |parent| self.declarations.statement(parent).declaration.origin,
-        );
-        if self.origins.get(declaration.declaration.origin).parent != Some(expected_origin_parent) {
+        let expected_origin_parent = match parent {
+            Some(parent) => {
+                self.declarations
+                    .try_statement(parent)
+                    .ok_or_else(|| {
+                        self.invariant(statement.span(), "statement parent ID is outside its arena")
+                    })?
+                    .declaration
+                    .origin
+            }
+            None => declaration_handler.declaration.origin,
+        };
+        if self
+            .origins
+            .try_get(declaration.declaration.origin)
+            .is_none_or(|origin| origin.parent != Some(expected_origin_parent))
+        {
             return Err(self.invariant(
                 statement.span(),
                 "statement HIR origin chain diverged from its preorder parent",
@@ -1664,12 +2204,16 @@ impl Lowerer {
             ));
         }
         if let Some(task) = declaration.task {
-            let task_declaration = self.declarations.task(task);
+            let task_declaration = self.declarations.try_task(task).ok_or_else(|| {
+                self.invariant(statement.span(), "statement task ID is outside its arena")
+            })?;
             if task_declaration.declaration.id != task
                 || task_declaration.statement != id
                 || task_declaration.parent.is_some()
-                || self.origins.get(task_declaration.declaration.origin).parent
-                    != Some(declaration.declaration.origin)
+                || self
+                    .origins
+                    .try_get(task_declaration.declaration.origin)
+                    .is_none_or(|origin| origin.parent != Some(declaration.declaration.origin))
             {
                 return Err(self.invariant(
                     statement.span(),
@@ -1678,6 +2222,7 @@ impl Lowerer {
             }
         }
         let mut operand = 0u32;
+        let mut writable = 0usize;
         let mut routes = declaration.routes.iter().copied();
         let kind = match statement {
             Statement::Let {
@@ -1693,19 +2238,25 @@ impl Lowerer {
                 ResolvedStatementKind::Let {
                     local,
                     name: name.clone(),
+                    ty: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "let local ID is outside its arena"))?
+                        .ty
+                        .clone(),
                     value,
                 }
             }
             Statement::Assign {
-                target,
+                target: _,
                 value: _,
                 at,
                 span,
             } => {
-                let target = self.writable_state(owner, target, span)?;
+                let target = self.writable_state(checked_statement, &mut writable, span)?;
                 let value = self.checked_statement_expression(id, &mut operand, span)?;
-                let move_self =
-                    target.ty == Type::Editor && self.editor_self_move(value, target.value);
+                let move_self = target.ty == Type::Editor
+                    && self.editor_self_move(value, target.value, span)?;
                 ResolvedStatementKind::Assign {
                     target,
                     value,
@@ -1716,14 +2267,16 @@ impl Lowerer {
                     move_self,
                 }
             }
-            Statement::MarkdownAppend { target, span, .. } => {
-                ResolvedStatementKind::MarkdownAppend {
-                    target: self.writable_state(owner, target, span)?,
-                    value: self.checked_statement_expression(id, &mut operand, span)?,
-                }
-            }
-            Statement::ComboPush { target, span, .. } => ResolvedStatementKind::ComboPush {
-                target: self.writable_state(owner, target, span)?,
+            Statement::MarkdownAppend {
+                target: _, span, ..
+            } => ResolvedStatementKind::MarkdownAppend {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::ComboPush {
+                target: _, span, ..
+            } => ResolvedStatementKind::ComboPush {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
                 value: self.checked_statement_expression(id, &mut operand, span)?,
             },
             Statement::ReturnIf { span, .. } => ResolvedStatementKind::ReturnIf {
@@ -1747,6 +2300,7 @@ impl Lowerer {
                     .iter()
                     .map(|_| self.checked_task_expression(task, &mut task_operand, span))
                     .collect::<Result<Vec<_>, _>>()?;
+                self.ensure_task_operands_consumed(task, task_operand, span)?;
                 let success_id = routes.next().ok_or_else(|| {
                     self.invariant(span, "run success route has no normalized ID")
                 })?;
@@ -1765,7 +2319,9 @@ impl Lowerer {
                     return Err(self.invariant(span, "run mode and stable run-site ID diverged"));
                 }
                 if let Some(site) = site {
-                    let run_site = self.declarations.run_site(site);
+                    let run_site = self.declarations.try_run_site(site).ok_or_else(|| {
+                        self.invariant(span, "stable run-site ID is outside its arena")
+                    })?;
                     if run_site.declaration.id != site
                         || run_site.statement != id
                         || run_site.mode != *mode
@@ -1781,7 +2337,7 @@ impl Lowerer {
                     kind: *kind,
                     mode: *mode,
                     site,
-                    target: self.effect_target(function, *kind, span)?,
+                    target: self.effect_target(task, function, *kind, span)?,
                     args,
                     success,
                     error,
@@ -1803,6 +2359,7 @@ impl Lowerer {
                     .iter()
                     .map(|_| self.checked_task_expression(task, &mut task_operand, span))
                     .collect::<Result<Vec<_>, _>>()?;
+                self.ensure_task_operands_consumed(task, task_operand, span)?;
                 let mut route = |source: &Route| -> Result<ResolvedRoute, Error> {
                     let route_id = routes
                         .next()
@@ -1810,12 +2367,7 @@ impl Lowerer {
                     self.lower_route(source, route_id, owner, id, declaration.task)
                 };
                 ResolvedStatementKind::Sip(ResolvedSip {
-                    target: self
-                        .declarations
-                        .extern_decl_by_name(function)
-                        .ok_or_else(|| self.invariant(span, "sip extern target is unresolved"))?
-                        .declaration
-                        .id,
+                    target: self.sip_target(task, function, span)?,
                     args,
                     progress: route(progress)?,
                     success: route(success)?,
@@ -1837,12 +2389,23 @@ impl Lowerer {
                     return Err(self.invariant(span, "task flow task arena shape diverged"));
                 }
                 for source_task in &declaration.source_tasks {
-                    let task_declaration = self.declarations.task(*source_task);
+                    let task_declaration =
+                        self.declarations.try_task(*source_task).ok_or_else(|| {
+                            self.invariant(span, "task-flow child task ID is outside its arena")
+                        })?;
+                    let root_task_declaration =
+                        self.declarations.try_task(task).ok_or_else(|| {
+                            self.invariant(span, "task-flow root task ID is outside its arena")
+                        })?;
                     if task_declaration.declaration.id != *source_task
                         || task_declaration.statement != id
                         || task_declaration.parent != Some(task)
-                        || self.origins.get(task_declaration.declaration.origin).parent
-                            != Some(self.declarations.task(task).declaration.origin)
+                        || self
+                            .origins
+                            .try_get(task_declaration.declaration.origin)
+                            .is_none_or(|origin| {
+                                origin.parent != Some(root_task_declaration.declaration.origin)
+                            })
                     {
                         return Err(self.invariant(
                             span,
@@ -1868,7 +2431,9 @@ impl Lowerer {
                     })?;
                     self.lower_route(source, route_id, owner, id, declaration.task)
                 };
-                let checked = self.facts.task(task);
+                let checked = self.facts.try_task(task).ok_or_else(|| {
+                    self.invariant(span, "task-flow checked task ID is outside its arena")
+                })?;
                 if checked.id != task {
                     return Err(self.invariant(span, "task flow checked owner mismatch"));
                 }
@@ -1902,7 +2467,7 @@ impl Lowerer {
                 }
             }
             Statement::Abortable {
-                handle,
+                handle: _,
                 abort_on_drop,
                 task,
                 span,
@@ -1911,7 +2476,7 @@ impl Lowerer {
                     return Err(self.invariant(span, "abortable HIR child count diverged"));
                 };
                 ResolvedStatementKind::Abortable {
-                    handle: self.writable_state(owner, handle, span)?,
+                    handle: self.writable_state(checked_statement, &mut writable, span)?,
                     abort_on_drop: *abort_on_drop,
                     task: Box::new(self.lower_handler_statement(
                         task,
@@ -1922,15 +2487,17 @@ impl Lowerer {
                     )?),
                 }
             }
-            Statement::Abort { handle, span } => ResolvedStatementKind::Abort {
-                handle: self.writable_state(owner, handle, span)?,
+            Statement::Abort { handle: _, span } => ResolvedStatementKind::Abort {
+                handle: self.writable_state(checked_statement, &mut writable, span)?,
             },
-            Statement::DebugStart { target, span, .. } => ResolvedStatementKind::DebugStart {
+            Statement::DebugStart {
+                target: _, span, ..
+            } => ResolvedStatementKind::DebugStart {
                 name: self.checked_statement_expression(id, &mut operand, span)?,
-                target: self.writable_state(owner, target, span)?,
+                target: self.writable_state(checked_statement, &mut writable, span)?,
             },
-            Statement::DebugFinish { target, span } => ResolvedStatementKind::DebugFinish {
-                target: self.writable_state(owner, target, span)?,
+            Statement::DebugFinish { target: _, span } => ResolvedStatementKind::DebugFinish {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
             },
             Statement::ClipboardWrite {
                 primary,
@@ -2031,8 +2598,28 @@ impl Lowerer {
                 "statement HIR left a route declaration unconsumed",
             ));
         }
+        if operand != checked_statement.operand_count
+            || writable != checked_statement.writable_targets.len()
+            || self
+                .facts
+                .expression_use_by_owner(crate::check::CheckedExprOwner::HandlerStatement {
+                    statement: id,
+                    operand,
+                })
+                .is_some()
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "handler statement did not consume its complete checked operand contract",
+            ));
+        }
         if let Some(task) = declaration.task {
-            let checked = self.facts.task(task);
+            let checked = self.facts.try_task(task).ok_or_else(|| {
+                self.invariant(
+                    statement.span(),
+                    "statement checked task ID is outside its arena",
+                )
+            })?;
             if checked.id != task || checked.is_final != declaration.is_final {
                 return Err(self.invariant(
                     statement.span(),
@@ -2049,32 +2636,51 @@ impl Lowerer {
         })
     }
 
-    fn editor_self_move(&self, expression: CheckedExprUseId, target: CheckedValueRef) -> bool {
+    fn editor_self_move(
+        &self,
+        expression: CheckedExprUseId,
+        target: CheckedValueRef,
+        span: &Span,
+    ) -> Result<bool, Error> {
         fn count(
             facts: &CheckedFacts,
             expression: crate::check::CheckedExprId,
             target: CheckedValueRef,
-        ) -> usize {
-            match &facts.expression(expression).kind {
+            span: &Span,
+        ) -> Result<usize, Error> {
+            let expression = facts.try_expression(expression).ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    span,
+                    "lowering invariant failed: editor expression node ID is outside its arena",
+                )
+            })?;
+            Ok(match &expression.kind {
                 crate::check::CheckedExprKind::Path { root, .. } => {
                     usize::from(*root == crate::check::CheckedPathRoot::Value(target))
                 }
                 crate::check::CheckedExprKind::List(values) => values
                     .iter()
-                    .map(|value| count(facts, *value, target))
+                    .map(|value| count(facts, *value, target, span))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
                     .sum(),
                 crate::check::CheckedExprKind::Call { arguments, .. } => arguments
                     .iter()
                     .map(|argument| match argument {
                         crate::check::CheckedCallArgument::Value(value) => {
-                            count(facts, *value, target)
+                            count(facts, *value, target, span)
                         }
-                        crate::check::CheckedCallArgument::Binding(_) => 0,
+                        crate::check::CheckedCallArgument::Binding(_) => Ok(0),
                     })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
                     .sum(),
-                crate::check::CheckedExprKind::Unary { value, .. } => count(facts, *value, target),
+                crate::check::CheckedExprKind::Unary { value, .. } => {
+                    count(facts, *value, target, span)?
+                }
                 crate::check::CheckedExprKind::Binary { left, right, .. } => {
-                    count(facts, *left, target) + count(facts, *right, target)
+                    count(facts, *left, target, span)? + count(facts, *right, target, span)?
                 }
                 crate::check::CheckedExprKind::Bool(_)
                 | crate::check::CheckedExprKind::I64(_)
@@ -2083,20 +2689,29 @@ impl Lowerer {
                 | crate::check::CheckedExprKind::Bytes(_)
                 | crate::check::CheckedExprKind::None
                 | crate::check::CheckedExprKind::SlotProvided(_) => 0,
-            }
+            })
         }
 
-        let use_fact = self.facts.expression_use(expression);
-        let root = self.facts.expression(use_fact.root);
+        let use_fact = self
+            .facts
+            .try_expression_use(expression)
+            .ok_or_else(|| self.invariant(span, "editor expression-use ID is outside its arena"))?;
+        let root = self.facts.try_expression(use_fact.root).ok_or_else(|| {
+            self.invariant(span, "editor expression root ID is outside its arena")
+        })?;
         let crate::check::CheckedExprKind::Call {
             target: crate::check::CheckedCallTarget::Extern(function),
             ..
         } = root.kind
         else {
-            return false;
+            return Ok(false);
         };
-        self.declarations.extern_decl(function).kind == ExternKind::Sync
-            && count(&self.facts, use_fact.root, target) == 1
+        let function = self
+            .declarations
+            .try_extern_decl(function)
+            .ok_or_else(|| self.invariant(span, "editor sync extern ID is outside its arena"))?;
+        Ok(function.kind == ExternKind::Sync
+            && count(&self.facts, use_fact.root, target, span)? == 1)
     }
 
     fn lower_task_source(
@@ -2104,7 +2719,11 @@ impl Lowerer {
         source: &TaskSource,
         task: TaskId,
     ) -> Result<ResolvedTaskSource, Error> {
-        if self.facts.task(task).id != task {
+        if self
+            .facts
+            .try_task(task)
+            .is_none_or(|checked| checked.id != task)
+        {
             return Err(self.invariant(
                 match source {
                     TaskSource::Effect { span, .. }
@@ -2114,33 +2733,38 @@ impl Lowerer {
                 "task source checked owner mismatch",
             ));
         }
-        Ok(match source {
+        let mut operand = 0;
+        let resolved = match source {
             TaskSource::Effect {
                 kind,
                 function,
                 args,
                 span,
-            } => {
-                let mut operand = 0;
-                ResolvedTaskSource::Effect {
-                    task,
-                    kind: *kind,
-                    target: self.effect_target(function, *kind, span)?,
-                    args: args
-                        .iter()
-                        .map(|_| self.checked_task_expression(task, &mut operand, span))
-                        .collect::<Result<Vec<_>, _>>()?,
-                }
-            }
+            } => ResolvedTaskSource::Effect {
+                task,
+                kind: *kind,
+                target: self.effect_target(task, function, *kind, span)?,
+                args: args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut operand, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
             TaskSource::Done { span, .. } => ResolvedTaskSource::Done {
                 task,
-                value: self.checked_task_expression(task, &mut 0, span)?,
+                value: self.checked_task_expression(task, &mut operand, span)?,
             },
             TaskSource::None { output, .. } => ResolvedTaskSource::None {
                 task,
                 output: output.clone(),
             },
-        })
+        };
+        let span = match source {
+            TaskSource::Effect { span, .. }
+            | TaskSource::Done { span, .. }
+            | TaskSource::None { span, .. } => span,
+        };
+        self.ensure_task_operands_consumed(task, operand, span)?;
+        Ok(resolved)
     }
 
     fn lower_task_transform(
@@ -2164,12 +2788,28 @@ impl Lowerer {
                 span,
             } => {
                 let local = local(span)?;
+                let mut operand = 0;
+                let value = self.checked_task_expression(task, &mut operand, span)?;
+                self.ensure_task_operands_consumed(task, operand, span)?;
                 ResolvedTaskTransform::Map {
                     task,
                     local,
                     binding: binding.clone(),
-                    input: self.facts.local(local).ty.clone(),
-                    value: self.checked_task_expression(task, &mut 0, span)?,
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "map local ID is outside its arena"))?
+                        .ty
+                        .clone(),
+                    input_fallible: self
+                        .facts
+                        .try_task(task)
+                        .ok_or_else(|| {
+                            self.invariant(span, "map checked task ID is outside its arena")
+                        })?
+                        .error
+                        .is_some(),
+                    value,
                 }
             }
             TaskTransform::Then {
@@ -2182,7 +2822,12 @@ impl Lowerer {
                     task,
                     local,
                     binding: binding.clone(),
-                    input: self.facts.local(local).ty.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "then local ID is outside its arena"))?
+                        .ty
+                        .clone(),
                     source: self.lower_task_source(source, task)?,
                 }
             }
@@ -2196,7 +2841,12 @@ impl Lowerer {
                     task,
                     local,
                     binding: binding.clone(),
-                    input: self.facts.local(local).ty.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "try local ID is outside its arena"))?
+                        .ty
+                        .clone(),
                     source: self.lower_task_source(source, task)?,
                 }
             }
@@ -2206,12 +2856,22 @@ impl Lowerer {
                 span,
             } => {
                 let local = local(span)?;
+                let mut operand = 0;
+                let value = self.checked_task_expression(task, &mut operand, span)?;
+                self.ensure_task_operands_consumed(task, operand, span)?;
                 ResolvedTaskTransform::MapError {
                     task,
                     local,
                     binding: binding.clone(),
-                    input: self.facts.local(local).ty.clone(),
-                    value: self.checked_task_expression(task, &mut 0, span)?,
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| {
+                            self.invariant(span, "map-error local ID is outside its arena")
+                        })?
+                        .ty
+                        .clone(),
+                    value,
                 }
             }
             TaskTransform::Collect { .. } => ResolvedTaskTransform::Collect { task },
@@ -3084,6 +3744,7 @@ mod tests {
                 binding,
                 input,
                 value,
+                ..
             } => format!(
                 "t{} map {binding}:{}/local={local:?} -> {value:?}",
                 task.0,
@@ -3138,7 +3799,9 @@ mod tests {
         let padding = " ".repeat(indent);
         let origin = program.origin(statement.origin);
         let kind = match &statement.kind {
-            ResolvedStatementKind::Let { local, name, value } => {
+            ResolvedStatementKind::Let {
+                local, name, value, ..
+            } => {
                 format!("let {name} {local:?} = {value:?}")
             }
             ResolvedStatementKind::Assign {
@@ -3460,7 +4123,7 @@ view
         *mode = FutureMode::Replace;
         let error = lower(changed_mode).unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("stable run-site"));
+        assert!(error.message.contains("semantic contract"));
 
         let mut changed_route = analyze(&source).unwrap();
         let Statement::Run { success, .. } =
@@ -3471,7 +4134,7 @@ view
         success.args[0] = RouteArg::Expr(Expr::I64(7));
         let error = lower(changed_route).unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("checked expression fact"));
+        assert!(error.message.contains("semantic contract"));
 
         let mut missing_statement = analyze(&source).unwrap();
         missing_statement.document.components[0].handlers[0]
@@ -3506,7 +4169,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let handler = program
             .handlers()
             .iter()
@@ -3524,7 +4187,337 @@ view
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 5 1 {encoded_import}")));
 
+        let imported_handler = program
+            .handlers
+            .iter_mut()
+            .find(|handler| handler.name == "select")
+            .unwrap();
+        imported_handler.id = HandlerId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn handler_semantic_contract_rejects_same_signature_raw_mutations() {
+        let source = format!(
+            r#"app SemanticContract
+extern crate::backend
+  fetch(value:i64) -> i64
+  fetch_other(value:i64) -> i64
+{THEME}state
+  first = 1
+  second = 2
+on start
+  first = first + 1
+  run fetch(first) -> loaded _
+on loaded(value)
+  first = value
+on route_alternate
+  run fetch(first) -> alternate _
+on alternate(value)
+  first = value
+on empty
+  flow
+    from none i64
+    done -> loaded _
+view
+  text first
+"#
+        );
+
+        let mut changed_target = analyze(&source).unwrap();
+        let Statement::Assign { target, .. } =
+            &mut changed_target.document.handlers[0].statements[0]
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        *target = "second".into();
+        let error = lower(changed_target).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_effect = analyze(&source).unwrap();
+        let Statement::Run { function, .. } =
+            &mut changed_effect.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a run");
+        };
+        *function = "fetch_other".into();
+        let error = lower(changed_effect).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let Statement::Run { success, .. } = &mut changed_route.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a route");
+        };
+        success.handler = "alternate".into();
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut missing_argument = analyze(&source).unwrap();
+        let Statement::Run { success, .. } =
+            &mut missing_argument.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a route");
+        };
+        success.args.clear();
+        let error = lower(missing_argument).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_param = analyze(&source).unwrap();
+        changed_param.document.handlers[1].params[0].name = "renamed".into();
+        let error = lower(changed_param).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter contract"));
+
+        let mut changed_none = analyze(&source).unwrap();
+        let Statement::TaskFlow { source, .. } =
+            &mut changed_none.document.handlers[4].statements[0]
+        else {
+            panic!("fixture must contain a flow");
+        };
+        let TaskSource::None { output, .. } = source else {
+            panic!("fixture must contain a none source");
+        };
+        *output = Type::F64;
+        let error = lower(changed_none).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+    }
+
+    #[test]
+    fn typed_route_core_uses_real_source_payload_contracts_without_handler_ids() {
+        let route = Route {
+            handler: "moved".into(),
+            args: vec![RouteArg::Payload, RouteArg::Payload],
+            span: Span::line(27),
+        };
+        let args = lower_typed_route_arguments(
+            &route,
+            &[Type::F64, Type::I64],
+            TypedRouteInputs {
+                source_payloads: &[Type::F64, Type::I64],
+                ordered: true,
+            },
+            |_| unreachable!("fixture has no expression arguments"),
+        )
+        .unwrap();
+        assert!(matches!(
+            args.as_slice(),
+            [
+                ResolvedRouteArg::Payload { index: 0, .. },
+                ResolvedRouteArg::Payload { index: 1, .. }
+            ]
+        ));
+
+        let error = lower_typed_route_arguments(
+            &route,
+            &[Type::F64, Type::I64],
+            TypedRouteInputs {
+                source_payloads: &[Type::F64, Type::F64],
+                ordered: true,
+            },
+            |_| unreachable!("fixture has no expression arguments"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, 27);
+        assert!(error.message.contains("payload type"));
+    }
+
+    #[test]
+    fn checked_operation_contract_preserves_every_non_expression_payload() {
+        let span = Span::line(1);
+        let widget = |name: &str, all: bool| Statement::WidgetOperation {
+            operation: WidgetOperation::Find {
+                selector: WidgetSelector::Id(WidgetTarget {
+                    segments: vec![Id {
+                        name: name.into(),
+                        key: Some(Expr::I64(1)),
+                    }],
+                }),
+                all,
+            },
+            route: None,
+            span: span.clone(),
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&widget("first", false)),
+            crate::hir::handler_operation_contract(&widget("second", false))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&widget("first", false)),
+            crate::hir::handler_operation_contract(&widget("first", true))
+        );
+
+        let pane = |edge| Statement::PaneOperation {
+            grid: "work".into(),
+            operation: PaneOperation::Drop {
+                pane: PaneReference::Dynamic {
+                    template: "file".into(),
+                    key: Expr::I64(1),
+                },
+                target: PaneReference::Static("editor".into()),
+                edge,
+            },
+            route: None,
+            span: span.clone(),
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&pane(Some(PaneEdge::Left))),
+            crate::hir::handler_operation_contract(&pane(Some(PaneEdge::Right)))
+        );
+
+        let window = |name: &str, function: &str, arguments: usize| {
+            let operation = if function.is_empty() {
+                WindowOperation::Open(Some(name.into()))
+            } else {
+                WindowOperation::Callback {
+                    function: function.into(),
+                    args: vec![Expr::I64(1); arguments],
+                }
+            };
+            Statement::WindowOperation {
+                operation,
+                target: None,
+                route: None,
+                span: span.clone(),
+            }
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("first", "", 0)),
+            crate::hir::handler_operation_contract(&window("second", "", 0))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("", "first", 1)),
+            crate::hir::handler_operation_contract(&window("", "second", 1))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("", "first", 1)),
+            crate::hir::handler_operation_contract(&window("", "first", 2))
+        );
+    }
+
+    #[test]
+    fn malformed_handler_hir_ids_are_fallible_source_mapped_invariants() {
+        fn program() -> LoweredProgram {
+            let source = format!(
+                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+            );
+            lower(analyze(&source).unwrap()).unwrap()
+        }
+
+        fn route(program: &mut LoweredProgram) -> &mut ResolvedRoute {
+            let ResolvedStatementKind::Run(run) = &mut program.handlers[0].statements[0].kind
+            else {
+                panic!("fixture must contain a run");
+            };
+            &mut run.success
+        }
+
+        let mut invalid_route = program();
+        let origin = route(&mut invalid_route).origin;
+        let expected_line = invalid_route.origin(origin).line;
+        route(&mut invalid_route).id = RouteId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_route, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("route ID"));
+
+        let mut invalid_target = program();
+        let origin = route(&mut invalid_target).origin;
+        let expected_line = invalid_target.origin(origin).line;
+        let ResolvedRouteTarget::App { handler, .. } = &mut route(&mut invalid_target).target
+        else {
+            panic!("fixture route must target the app");
+        };
+        *handler = HandlerId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_target, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("handler ID"));
+
+        let mut wrong_owner = program();
+        let origin = route(&mut wrong_owner).origin;
+        let expected_line = wrong_owner.origin(origin).line;
+        let ResolvedRouteTarget::App { handler, .. } = &mut route(&mut wrong_owner).target else {
+            panic!("fixture route must target the app");
+        };
+        *handler = HandlerId(0);
+        let error = crate::codegen::generate(&wrong_owner, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("different handler"));
+
+        let mut invalid_statement = program();
+        let origin = invalid_statement.handlers[0].statements[0].origin;
+        let expected_line = invalid_statement.origin(origin).line;
+        invalid_statement.handlers[0].statements[0].id = StatementId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_statement, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("statement ID"));
+
+        let mut invalid_task = program();
+        let origin = invalid_task.handlers[0].statements[0].origin;
+        let expected_line = invalid_task.origin(origin).line;
+        invalid_task.handlers[0].statements[0].task = Some(TaskId(u32::MAX));
+        let error = crate::codegen::generate(&invalid_task, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("task ID"));
+    }
+
+    #[test]
+    fn malformed_checked_handler_local_expression_and_extern_ids_do_not_panic() {
+        fn checked() -> CheckedDocument {
+            let source = format!(
+                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+            );
+            analyze(&source).unwrap()
+        }
+
+        let mut invalid_local = checked();
+        invalid_local
+            .facts
+            .corrupt_handler_param_local(HandlerId(1), 0, u32::MAX);
+        let error = lower(invalid_local).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter local ID"));
+
+        let mut invalid_root = checked();
+        let statement = invalid_root.declarations.handlers()[1].statement_roots[0];
+        invalid_root.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::HandlerStatement {
+                statement,
+                operand: 0,
+            },
+            u32::MAX,
+        );
+        let error = lower(invalid_root).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression root ID"));
+
+        let mut invalid_extern = checked();
+        let task = invalid_extern
+            .declarations
+            .statement(invalid_extern.declarations.handlers()[0].statement_roots[0])
+            .task
+            .unwrap();
+        invalid_extern
+            .facts
+            .corrupt_task_extern_target(task, u32::MAX);
+        let error = lower(invalid_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern target ID"));
     }
 
     #[test]

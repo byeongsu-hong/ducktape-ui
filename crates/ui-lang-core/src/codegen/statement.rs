@@ -182,19 +182,19 @@ pub(in crate::codegen) fn generate_statements(
         has_task |= statement.task.is_some();
         writeln!(out, "{}", source_marker_origin(program, statement.origin)).unwrap();
         match &statement.kind {
-            ResolvedStatementKind::Let { local, name, value } => {
+            ResolvedStatementKind::Let {
+                local,
+                name,
+                ty,
+                value,
+            } => {
                 let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 writeln!(out, "let {name} = {code};").unwrap();
-                let ty = program
-                    .checked_facts()
-                    .expression_use(*value)
-                    .destination
-                    .clone();
                 env.insert(
                     name.clone(),
                     Binding {
                         code: name.clone(),
-                        ty,
+                        ty: ty.clone(),
                         local: false,
                         state: None,
                         owner: Some(BindingOwner::Local(*local)),

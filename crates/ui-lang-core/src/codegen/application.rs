@@ -216,7 +216,7 @@ pub(in crate::codegen) fn generate_boot(
     let document = program.document();
     let accessibility_root = rust_string(program.app_name());
     writeln!(out, "fn __state() -> Self {{").unwrap();
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid {
             name,
             configuration,
@@ -304,7 +304,7 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid {
             name,
             configuration,
@@ -428,7 +428,7 @@ pub(in crate::codegen) fn generate_update(
                     .iter()
                     .any(|state| state.ty == Type::Str)
         })
-        || document_pane_grids(document).into_iter().any(|(node, _)| {
+        || document_pane_grids(program).into_iter().any(|(node, _)| {
             matches!(node, ViewNode::PaneGrid { options, .. } if options.resize_leeway.is_some() || options.draggable)
         })
         || !controlled_state_bindings(document, false)
@@ -686,7 +686,7 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
         }
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid { name, options, .. } = node else {
             unreachable!()
         };

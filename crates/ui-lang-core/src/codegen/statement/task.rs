@@ -87,10 +87,11 @@ pub(in crate::codegen) fn task_flow_code(
     for transform in &flow.transforms {
         match transform {
             ResolvedTaskTransform::Map {
-                task: transform_task,
+                task: _,
                 local,
                 binding,
                 input,
+                input_fallible,
                 value,
                 ..
             } => {
@@ -105,12 +106,7 @@ pub(in crate::codegen) fn task_flow_code(
                     },
                 )]);
                 let value = checked_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
-                task = if program
-                    .checked_facts()
-                    .task(*transform_task)
-                    .error
-                    .is_some()
-                {
+                task = if *input_fallible {
                     format!("({task}).map(move |result| result.map(|{binding}| {value}))")
                 } else {
                     format!("({task}).map(move |{binding}| {value})")

@@ -56,6 +56,20 @@ pub(crate) trait ExprTypeEnv {
     }
 }
 
+impl<T: ExprTypeEnv + ?Sized> ExprTypeEnv for &mut T {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        (**self).get_type(name)
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        (**self).visit_types(visitor);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        (**self).type_with_prefix(prefix)
+    }
+}
+
 impl ExprTypeEnv for HashMap<String, Type> {
     fn get_type(&self, name: &str) -> Option<&Type> {
         self.get(name)
@@ -75,33 +89,25 @@ impl ExprTypeEnv for HashMap<String, Type> {
 
 pub(crate) struct ScopedTypeEnv<'a> {
     base: &'a dyn ExprTypeEnv,
-    entries: Vec<(String, Type)>,
+    entries: HashMap<String, Type>,
 }
 
 impl<'a> ScopedTypeEnv<'a> {
     pub(crate) fn new(base: &'a dyn ExprTypeEnv) -> Self {
         Self {
             base,
-            entries: Vec::new(),
+            entries: HashMap::new(),
         }
     }
 
     pub(crate) fn insert(&mut self, name: String, ty: Type) {
-        if let Some((_, current)) = self.entries.iter_mut().find(|(key, _)| *key == name) {
-            *current = ty;
-        } else {
-            self.entries.push((name, ty));
-        }
+        self.entries.insert(name, ty);
     }
 }
 
 impl ExprTypeEnv for ScopedTypeEnv<'_> {
     fn get_type(&self, name: &str) -> Option<&Type> {
-        self.entries
-            .iter()
-            .rev()
-            .find_map(|(key, ty)| (key == name).then_some(ty))
-            .or_else(|| self.base.get_type(name))
+        self.entries.get(name).or_else(|| self.base.get_type(name))
     }
 
     fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
@@ -160,6 +166,69 @@ impl ExprTypeEnv for LayeredTypeEnv<'_> {
 
 thread_local! {
     static ACTIVE_EXPR_TYPE_ANALYSIS: RefCell<Option<ActiveExprTypeAnalysis>> = const { RefCell::new(None) };
+    static ACTIVE_HANDLER_ANALYSES: RefCell<Option<HandlerAnalyses>> = const { RefCell::new(None) };
+}
+
+#[derive(Default)]
+pub(super) struct HandlerAnalyses {
+    pub(super) expressions: HashMap<usize, ExprTypeAnalysis>,
+    pub(super) routes: HashMap<usize, CapturedRouteInputs>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CapturedRouteInputs {
+    pub(super) payloads: Vec<Type>,
+    pub(super) ordered: bool,
+}
+
+pub(super) fn capture_handler_route_inputs(route: &Route, payloads: Vec<Type>, ordered: bool) {
+    ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+        if let Some(analyses) = analyses.borrow_mut().as_mut() {
+            analyses.routes.insert(
+                std::ptr::from_ref(route).addr(),
+                CapturedRouteInputs { payloads, ordered },
+            );
+        }
+    });
+}
+
+pub(super) struct HandlerAnalysisGuard {
+    active: bool,
+}
+
+impl HandlerAnalysisGuard {
+    pub(super) fn start() -> Self {
+        ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+            let mut analyses = analyses.borrow_mut();
+            assert!(
+                analyses.is_none(),
+                "handler expression analysis capture must not be nested"
+            );
+            *analyses = Some(HandlerAnalyses::default());
+        });
+        Self { active: true }
+    }
+
+    pub(super) fn finish(mut self) -> HandlerAnalyses {
+        let analyses = ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+            analyses
+                .borrow_mut()
+                .take()
+                .expect("handler expression analysis capture must remain active")
+        });
+        self.active = false;
+        analyses
+    }
+}
+
+impl Drop for HandlerAnalysisGuard {
+    fn drop(&mut self) {
+        if self.active {
+            ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+                analyses.borrow_mut().take();
+            });
+        }
+    }
 }
 
 struct ExprTypeAnalysisGuard {
@@ -205,7 +274,7 @@ fn take_active_expr_type_analysis() -> ActiveExprTypeAnalysis {
     })
 }
 
-fn expr_key(expr: &Expr) -> usize {
+pub(super) fn expr_key(expr: &Expr) -> usize {
     std::ptr::from_ref(expr).addr()
 }
 
@@ -403,6 +472,39 @@ pub(crate) fn expr_type(
         Some(cached)
     }) {
         return Ok(cached);
+    }
+
+    if ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| active.borrow().is_none()) {
+        if let Some(ty) = ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+            analyses
+                .borrow()
+                .as_ref()?
+                .expressions
+                .get(&key)?
+                .type_of(expr)
+                .cloned()
+        }) {
+            return Ok(ty);
+        }
+        if ACTIVE_HANDLER_ANALYSES.with(|analyses| analyses.borrow().is_some()) {
+            let analysis = analyze_expr_types(expr, env, document, span)?;
+            let ty = analysis.type_of(expr).cloned().ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    span,
+                    "missing captured handler expression root type",
+                )
+            })?;
+            ACTIVE_HANDLER_ANALYSES.with(|analyses| {
+                analyses
+                    .borrow_mut()
+                    .as_mut()
+                    .expect("handler capture remains active")
+                    .expressions
+                    .insert(key, analysis);
+            });
+            return Ok(ty);
+        }
     }
 
     let ty = expr_type_uncached(expr, env, document, span)?;

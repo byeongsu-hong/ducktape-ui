@@ -1,5 +1,7 @@
 use super::*;
 
+const HANDLER_PERF_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+
 #[test]
 fn lowers_derived_values_to_getters_and_handler_locals_to_rust_lets() {
     let source = r#"app Derived
@@ -264,7 +266,7 @@ view
 
 #[test]
 #[ignore = "explicit full analyze, handler-HIR lowering, and codegen linearity contract"]
-fn performance_contract_four_thousand_handler_statements_have_zero_rechecks_and_full_clones() {
+fn performance_contract_four_thousand_handler_statements_reuse_authoritative_analyses() {
     use crate::codegen::{binding_env_metrics, reset_binding_env_metrics};
     use std::fmt::Write as _;
     use std::time::{Duration, Instant};
@@ -315,10 +317,10 @@ fn performance_contract_four_thousand_handler_statements_have_zero_rechecks_and_
     let (small, small_bindings, small_elapsed, small_output) = measure(500);
     let (large, large_bindings, large_elapsed, large_output) = measure(4_000);
 
-    assert_eq!(small.handler_analysis_passes, 500);
-    assert_eq!(large.handler_analysis_passes, 4_000);
-    assert_eq!(small.handler_type_rechecks, 0);
-    assert_eq!(large.handler_type_rechecks, 0);
+    assert_eq!(small.handler_authoritative_analyses, 500);
+    assert_eq!(large.handler_authoritative_analyses, 4_000);
+    assert_eq!(small.handler_auxiliary_analyses, 0);
+    assert_eq!(large.handler_auxiliary_analyses, 0);
     assert_eq!(small.type_scope_env_full_clones, 0);
     assert_eq!(large.type_scope_env_full_clones, 0);
     assert_eq!(small.scope_env_full_clones, 0);
@@ -335,6 +337,96 @@ fn performance_contract_four_thousand_handler_statements_have_zero_rechecks_and_
         large_elapsed.as_secs_f64() <= small_elapsed.as_secs_f64() * 12.0 + 0.5,
         "handler HIR scaling exceeded linear allowance: 500={small_elapsed:?}, 4k={large_elapsed:?}"
     );
+}
+
+#[test]
+#[ignore = "explicit all-local handler linearity contract"]
+fn performance_contract_four_thousand_handler_locals_use_scoped_hash_environments() {
+    use crate::codegen::{binding_env_metrics, reset_binding_env_metrics};
+    use std::fmt::Write as _;
+
+    let mut source = format!("app LocalPerf\n{HANDLER_PERF_THEME}state\n  value = 0\non update\n");
+    const LOCALS: usize = 4_000;
+    for index in 0..LOCALS {
+        writeln!(source, "  let local_{index} = value + {index}").unwrap();
+    }
+    source.push_str("view\n  text value\n");
+
+    reset_binding_env_metrics();
+    let program = crate::lower::lower(crate::analyze(&source).unwrap()).unwrap();
+    let facts = program.checked_facts().metrics();
+    let generated = crate::codegen::generate(&program, "handler_locals.ice").unwrap();
+    let bindings = binding_env_metrics();
+
+    assert_eq!(facts.handler_authoritative_analyses, LOCALS);
+    assert_eq!(facts.handler_auxiliary_analyses, 0);
+    assert_eq!(facts.locals, LOCALS);
+    assert_eq!(facts.type_scope_env_full_clones, 0);
+    assert_eq!(facts.scope_env_full_clones, 0);
+    assert_eq!(bindings.scope_env_full_clones, 0);
+    assert_eq!(bindings.binding_clone_allocations, 1);
+    assert!(generated.contains("let local_3999 ="));
+}
+
+#[test]
+#[ignore = "explicit handler-by-state cross-product regression contract"]
+fn performance_contract_handler_and_state_growth_builds_one_base_environment_per_scope() {
+    use crate::codegen::{BindingEnvMetrics, binding_env_metrics, reset_binding_env_metrics};
+    use std::fmt::Write as _;
+
+    fn measure(
+        size: usize,
+        component: bool,
+    ) -> (crate::check::CheckedFactMetrics, BindingEnvMetrics) {
+        let mut source = format!("app ScopePerf\n{HANDLER_PERF_THEME}");
+        if component {
+            source.push_str("component Surface()\n  state\n");
+            for index in 0..size {
+                writeln!(source, "    value_{index} = {index}").unwrap();
+            }
+            for index in 0..size {
+                writeln!(
+                    source,
+                    "  on update_{index}\n    value_{index} = value_{index} + 1"
+                )
+                .unwrap();
+            }
+            source.push_str("  text value_0\nview\n  Surface\n");
+        } else {
+            source.push_str("state\n");
+            for index in 0..size {
+                writeln!(source, "  value_{index} = {index}").unwrap();
+            }
+            for index in 0..size {
+                writeln!(
+                    source,
+                    "on update_{index}\n  value_{index} = value_{index} + 1"
+                )
+                .unwrap();
+            }
+            source.push_str("view\n  text value_0\n");
+        }
+
+        reset_binding_env_metrics();
+        let program = crate::lower::lower(crate::analyze(&source).unwrap()).unwrap();
+        crate::codegen::generate(&program, "scope_perf.ice").unwrap();
+        (program.checked_facts().metrics(), binding_env_metrics())
+    }
+
+    for component in [false, true] {
+        let (small, small_bindings) = measure(200, component);
+        let (large, large_bindings) = measure(800, component);
+        assert_eq!(large.handler_authoritative_analyses, 800);
+        assert_eq!(large.handler_auxiliary_analyses, 0);
+        assert_eq!(large.scope_env_builds, small.scope_env_builds);
+        assert_eq!(large.scope_env_entries, small.scope_env_entries * 4);
+        assert_eq!(large.scope_env_full_clones, 0);
+        assert_eq!(large_bindings.scope_env_full_clones, 0);
+        assert_eq!(
+            large_bindings.binding_clone_allocations,
+            small_bindings.binding_clone_allocations * 4
+        );
+    }
 }
 
 #[test]

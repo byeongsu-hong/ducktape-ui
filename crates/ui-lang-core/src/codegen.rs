@@ -332,6 +332,7 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
 }
 
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
+    program.validate_handler_hir()?;
     let document = program.document();
     let message = format!("__{}Message", document.app);
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
@@ -482,7 +483,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid {
             name,
             configuration,
@@ -638,7 +639,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     if has_animations(document) {
         writeln!(out, "__AnimationFrame,").unwrap();
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid { name, options, .. } = node else {
             unreachable!()
         };

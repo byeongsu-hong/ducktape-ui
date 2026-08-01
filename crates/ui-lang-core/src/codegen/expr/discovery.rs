@@ -93,7 +93,7 @@ pub(in crate::codegen) fn generate_pane_types(
     out: &mut String,
     program: &LoweredProgram,
 ) -> Result<(), Error> {
-    for (node, test_only) in document_pane_grids(program.document()) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid {
             name,
             templates,
@@ -287,28 +287,34 @@ pub(in crate::codegen) fn pane_grids(root: &ViewNode) -> Vec<&ViewNode> {
     output
 }
 
-pub(in crate::codegen) fn document_pane_grids(document: &Document) -> Vec<(&ViewNode, bool)> {
-    fn statements_reference_grid(statements: &[Statement], name: &str) -> bool {
+pub(in crate::codegen) fn document_pane_grids(program: &LoweredProgram) -> Vec<(&ViewNode, bool)> {
+    fn statements_reference_grid(statements: &[ResolvedStatement], name: &str) -> bool {
         statements.iter().any(|statement| match statement {
-            Statement::PaneOperation { grid, .. } => grid == name,
-            Statement::TaskGroup { statements, .. } => statements_reference_grid(statements, name),
-            Statement::Abortable { task, .. } => {
-                statements_reference_grid(::std::slice::from_ref(task), name)
-            }
+            ResolvedStatement {
+                kind: ResolvedStatementKind::PaneOperation { grid, .. },
+                ..
+            } => grid == name,
+            ResolvedStatement {
+                kind: ResolvedStatementKind::TaskGroup { statements, .. },
+                ..
+            } => statements_reference_grid(statements, name),
+            ResolvedStatement {
+                kind: ResolvedStatementKind::Abortable { task, .. },
+                ..
+            } => statements_reference_grid(::std::slice::from_ref(task), name),
             _ => false,
         })
     }
 
     let referenced = |name: &str| {
-        document
-            .handlers
-            .iter()
+        program
+            .app_handlers()
             .any(|handler| statements_reference_grid(&handler.statements, name))
-            || document
-                .presets
-                .iter()
-                .any(|preset| statements_reference_grid(&preset.statements, name))
+            || program
+                .preset_handlers()
+                .any(|handler| statements_reference_grid(&handler.statements, name))
     };
+    let document = program.document();
     pane_grids(&document.view)
         .into_iter()
         .map(|node| (node, false))

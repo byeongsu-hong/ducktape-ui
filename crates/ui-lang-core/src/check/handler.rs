@@ -4,23 +4,38 @@ use super::*;
 pub(in crate::check) fn check_handler(
     handler: &Handler,
     states: &HashMap<String, Type>,
-    readables: &HashMap<String, Type>,
+    readables: &dyn ExprTypeEnv,
     document: &Document,
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
 ) -> Result<(), Error> {
-    let mut env = readables.clone();
-    env.extend(
-        handler
-            .params
-            .iter()
-            .map(|param| (param.name.clone(), param.ty.clone())),
-    );
-    for (index, statement) in handler.statements.iter().enumerate() {
-        check_task_finality(statement, index + 1 == handler.statements.len())?;
+    let mut env = ScopedTypeEnv::new(readables);
+    for param in &handler.params {
+        env.insert(param.name.clone(), param.ty.clone());
+    }
+    check_handler_statements(
+        &handler.statements,
+        states,
+        document,
+        operation_ids,
+        pane_grids,
+        &mut env,
+    )
+}
+
+fn check_handler_statements(
+    statements: &[Statement],
+    states: &HashMap<String, Type>,
+    document: &Document,
+    operation_ids: &[WidgetIdPath],
+    pane_grids: &HashMap<String, PaneGridNames>,
+    env: &mut ScopedTypeEnv<'_>,
+) -> Result<(), Error> {
+    for (index, statement) in statements.iter().enumerate() {
+        check_task_finality(statement, index + 1 == statements.len())?;
         match statement {
             Statement::Let { name, value, span } => {
-                if env.contains_key(name) {
+                if env.contains_type(name) {
                     return Err(Error::new(
                         "E140",
                         span,
@@ -164,16 +179,14 @@ pub(in crate::check) fn check_handler(
             }
             Statement::TaskGroup { statements, .. } => {
                 for statement in statements {
-                    check_handler(
-                        &Handler {
-                            statements: vec![statement.clone()],
-                            ..handler.clone()
-                        },
+                    let mut child_env = ScopedTypeEnv::new(&*env);
+                    check_handler_statements(
+                        ::std::slice::from_ref(statement),
                         states,
-                        &env,
                         document,
                         operation_ids,
                         pane_grids,
+                        &mut child_env,
                     )?;
                 }
             }
@@ -182,16 +195,14 @@ pub(in crate::check) fn check_handler(
             } => {
                 require_task_handle_state(handle, states, span)?;
                 record_write(handle, span);
-                check_handler(
-                    &Handler {
-                        statements: vec![(**task).clone()],
-                        ..handler.clone()
-                    },
+                let mut child_env = ScopedTypeEnv::new(&*env);
+                check_handler_statements(
+                    ::std::slice::from_ref(task.as_ref()),
                     states,
-                    &env,
                     document,
                     operation_ids,
                     pane_grids,
+                    &mut child_env,
                 )?;
             }
             Statement::Abort { handle, span } => {
@@ -785,7 +796,7 @@ pub(in crate::check) fn builtin_task_type(
 pub(in crate::check) fn task_source_type(
     source: &TaskSource,
     document: &Document,
-    env: &HashMap<String, Type>,
+    env: &dyn ExprTypeEnv,
 ) -> Result<(Type, Option<Type>), Error> {
     match source {
         TaskSource::Done { value, span } => Ok((expr_type(value, env, document, span)?, None)),
@@ -839,7 +850,7 @@ pub(crate) fn task_flow_type(
     source: &TaskSource,
     transforms: &[TaskTransform],
     document: &Document,
-    root_env: &HashMap<String, Type>,
+    root_env: &dyn ExprTypeEnv,
 ) -> Result<(Option<Type>, Option<Type>), Error> {
     let (mut output, mut error_ty) = task_source_type(source, document, root_env)?;
     for (index, transform) in transforms.iter().enumerate() {
