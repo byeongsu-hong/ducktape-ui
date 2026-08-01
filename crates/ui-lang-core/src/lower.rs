@@ -3340,10 +3340,15 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
                     "app setting expression binding belongs to another expression use",
                 ));
             }
-            CheckedLocalOwner::View { .. } => {
+            CheckedLocalOwner::View { .. }
+            | CheckedLocalOwner::CanvasState(_)
+            | CheckedLocalOwner::CanvasWidth(_)
+            | CheckedLocalOwner::CanvasHeight(_)
+            | CheckedLocalOwner::CanvasCommandItem(_)
+            | CheckedLocalOwner::CanvasEventBinding { .. } => {
                 return Err(self.lowerer.invariant(
                     self.span,
-                    "app setting expression cannot reference a view local",
+                    "app setting expression cannot reference a view local, including canvas locals",
                 ));
             }
             CheckedLocalOwner::TestTarget(_) => {
@@ -5865,14 +5870,21 @@ impl Lowerer {
                 .events
                 .iter()
                 .enumerate()
-                .map(|(index, event)| ComponentEventContract {
-                    id: ComponentEventId {
+                .map(|(index, event)| {
+                    let event_id = ComponentEventId {
                         component: id,
                         index: index as u32,
-                    },
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    origin: self.push_origin(&event.span, Some(origin)),
+                    };
+                    let declaration = self
+                        .declarations
+                        .component_event(event_id)
+                        .expect("indexed component event");
+                    ComponentEventContract {
+                        id: event_id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        origin: declaration.declaration.origin,
+                    }
                 })
                 .collect();
             let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
