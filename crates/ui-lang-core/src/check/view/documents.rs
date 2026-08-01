@@ -91,24 +91,49 @@ pub(in crate::check) fn infer_documents_group(
                     "keyed keys must be copyable bool, i64, or f64 values",
                 ));
             }
-            for length in [&options.width, &options.height].into_iter().flatten() {
-                check_length_value(length, env, document, span, "keyed size")?;
+            for (length, role) in [
+                (&options.width, CheckedViewExprRole::KeyedWidth),
+                (&options.height, CheckedViewExprRole::KeyedHeight),
+            ] {
+                if let Some(LengthValue::Fixed(value)) = length {
+                    let actual = retained_view_expr_type(value, env, document, span, role)?;
+                    if !matches!(actual, Type::F64 | Type::Length) {
+                        return Err(Error::new(
+                            "E101",
+                            span,
+                            format!(
+                                "expected `f64` or `length`, got `{}` for keyed size",
+                                actual.display()
+                            ),
+                        ));
+                    }
+                    if actual == Type::F64 {
+                        require_f32_literal_range(value, 0.0, None, "keyed size", span)?;
+                    }
+                }
             }
-            for value in [
-                &options.spacing,
-                &options.padding.all,
-                &options.padding.x,
-                &options.padding.y,
-                &options.padding.top,
-                &options.padding.right,
-                &options.padding.bottom,
-                &options.padding.left,
-                &options.max_width,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                require_nonnegative_f64(value, env, document, "keyed metric", span)?;
+            for (value, role) in [
+                (&options.spacing, CheckedViewExprRole::KeyedSpacing),
+                (&options.padding.all, CheckedViewExprRole::KeyedPaddingAll),
+                (&options.padding.x, CheckedViewExprRole::KeyedPaddingX),
+                (&options.padding.y, CheckedViewExprRole::KeyedPaddingY),
+                (&options.padding.top, CheckedViewExprRole::KeyedPaddingTop),
+                (
+                    &options.padding.right,
+                    CheckedViewExprRole::KeyedPaddingRight,
+                ),
+                (
+                    &options.padding.bottom,
+                    CheckedViewExprRole::KeyedPaddingBottom,
+                ),
+                (&options.padding.left, CheckedViewExprRole::KeyedPaddingLeft),
+                (&options.max_width, CheckedViewExprRole::KeyedMaxWidth),
+            ] {
+                if let Some(value) = value {
+                    let actual = retained_view_expr_type(value, env, document, span, role)?;
+                    require_type(&actual, &Type::F64, span)?;
+                    require_f32_literal_range(value, 0.0, None, "keyed metric", span)?;
+                }
             }
             infer_view(child, &child_env, document, signatures, ids)?;
         }

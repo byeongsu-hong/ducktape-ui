@@ -117,54 +117,58 @@ pub(in crate::codegen) fn render_table(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_keyed_column(
-    options: &LayoutOptions,
+    keyed: &ResolvedKeyedColumn,
     child: &ViewNode,
-    span: &Span,
     document: &RenderDocument<'_>,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let CheckedViewFlow::Keyed { items, key, item } = &document.program().checked_view(span)?.flow
-    else {
-        return Err(Error::new("E196", span, "keyed column has no checked flow"));
-    };
-    let items = checked_expr_use_code(document.program(), *items, env, ValueMode::Borrowed)?;
-    let checked_item = document.program().checked_facts().local(*item);
-    let item_name = &checked_item.name;
+    let program = document.hir();
+    let items = checked_expr_use_code(program, keyed.items, env, ValueMode::Borrowed)?;
+    let item_name = &keyed.item.name;
     let mut child_env = ScopedBindingEnv::new(env);
     child_env.insert(
         item_name.clone(),
-        checked_local_binding(document.program(), *item, item_name.clone(), false),
+        checked_local_binding(program, keyed.item.local, item_name.clone(), false),
     );
-    let key = checked_expr_use_code(document.program(), *key, &child_env, ValueMode::Owned)?;
+    let key = checked_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
         "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::keyed_column(__children)"
     );
-    if let Some(spacing) = &options.spacing {
+    if let Some(spacing) = keyed.spacing {
         write!(
             code,
             ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-            expr_code(spacing, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
+    if let Some(padding) = resolved_keyed_padding_code(&keyed.padding, program, env)? {
         write!(code, ".padding({padding})").unwrap();
     }
-    append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
-    if let Some(max_width) = &options.max_width {
+    for (method, length) in [("width", &keyed.width), ("height", &keyed.height)] {
+        if let Some(length) = length {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_keyed_length_code(length, program, env)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(max_width) = keyed.max_width {
         write!(
             code,
             ".max_width({} as f32)",
-            expr_code(max_width, env, document, ValueMode::Owned)?
+            checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(align) = options.align {
+    if let Some(align) = keyed.align {
         let align = match align {
             FlexAlignment::Start => "Start",
             FlexAlignment::Center => "Center",
@@ -173,4 +177,57 @@ pub(in crate::codegen) fn render_keyed_column(
         write!(code, ".align_items(::iced::Alignment::{align})").unwrap();
     }
     Ok(format!("{code}; __layout.into() }}"))
+}
+
+fn resolved_keyed_length_code(
+    length: &ResolvedKeyedLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedKeyedLength::Fill => "::iced::Fill".into(),
+        ResolvedKeyedLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedKeyedLength::Shrink => "::iced::Shrink".into(),
+        ResolvedKeyedLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedKeyedLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
+fn resolved_keyed_padding_code(
+    padding: &ResolvedKeyedPadding,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if padding.all.is_none()
+        && padding.x.is_none()
+        && padding.y.is_none()
+        && padding.top.is_none()
+        && padding.right.is_none()
+        && padding.bottom.is_none()
+        && padding.left.is_none()
+    {
+        return Ok(None);
+    }
+    let code = |value: Option<CheckedExprUseId>| {
+        value
+            .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+            .transpose()
+    };
+    let all = code(padding.all)?.unwrap_or_else(|| "0.0".into());
+    let x = code(padding.x)?.unwrap_or_else(|| all.clone());
+    let y = code(padding.y)?.unwrap_or_else(|| all.clone());
+    let top = code(padding.top)?.unwrap_or_else(|| y.clone());
+    let right = code(padding.right)?.unwrap_or_else(|| x.clone());
+    let bottom = code(padding.bottom)?.unwrap_or(y);
+    let left = code(padding.left)?.unwrap_or(x);
+    Ok(Some(format!(
+        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
+    )))
 }

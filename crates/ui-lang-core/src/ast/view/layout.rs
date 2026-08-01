@@ -31,6 +31,36 @@ pub struct LayoutOptions {
     pub scroll: Option<ScrollOptions>,
 }
 
+pub(crate) fn keyed_column_semantic_key(options: &LayoutOptions) -> String {
+    fn length_key(length: &Option<LengthValue>) -> String {
+        match length {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed".into(),
+        }
+    }
+
+    format!(
+        "keyed|width={}|height={}|spacing={}|padding={:?}|max-width={}|align={:?}",
+        length_key(&options.width),
+        length_key(&options.height),
+        options.spacing.is_some(),
+        [
+            options.padding.all.is_some(),
+            options.padding.x.is_some(),
+            options.padding.y.is_some(),
+            options.padding.top.is_some(),
+            options.padding.right.is_some(),
+            options.padding.bottom.is_some(),
+            options.padding.left.is_some(),
+        ],
+        options.max_width.is_some(),
+        options.align,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ContainerOptions {
     pub padding: PaddingOptions,

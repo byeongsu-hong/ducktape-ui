@@ -9,8 +9,8 @@ use crate::check::{
     ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
-    CheckedExprUseId, CheckedResponsiveLength, CheckedSubscription, CheckedSubscriptionExprRole,
-    CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -29,6 +29,7 @@ use std::path::Path;
 mod canvas;
 mod float;
 mod interaction;
+mod keyed_column;
 mod lazy;
 mod media;
 mod pin;
@@ -40,6 +41,7 @@ mod tooltip;
 pub(crate) use canvas::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
+pub(crate) use keyed_column::*;
 pub(crate) use lazy::*;
 pub(crate) use media::*;
 pub(crate) use pin::*;
@@ -1449,6 +1451,7 @@ pub(crate) struct LoweredProgram {
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
@@ -3014,6 +3017,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn keyed_column(&self, id: ViewId) -> Option<&ResolvedKeyedColumn> {
+        self.keyed_columns.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
         self.lazy_views.get(&id)
     }
@@ -3246,6 +3254,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "lazy reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_keyed_column_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedKeyedColumn, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "keyed column reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "keyed column reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.keyed_columns.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "keyed column reached code generation without normalized HIR",
             )
         })
     }
@@ -3510,6 +3547,7 @@ pub(crate) struct Lowerer {
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
@@ -4227,6 +4265,7 @@ impl Lowerer {
             floats: HashMap::new(),
             pins: HashMap::new(),
             responsives: HashMap::new(),
+            keyed_columns: HashMap::new(),
             lazy_views: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
@@ -4307,6 +4346,7 @@ impl Lowerer {
             floats: self.floats,
             pins: self.pins,
             responsives: self.responsives,
+            keyed_columns: self.keyed_columns,
             lazy_views: self.lazy_views,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
@@ -8133,6 +8173,18 @@ impl Lowerer {
                 self.lower_lazy(dependency, binding, span, outer_component)?;
                 self.lower_view(child, outer_component)?;
             }
+            ViewNode::KeyedColumn {
+                item,
+                items,
+                key,
+                options,
+                child,
+                span,
+                ..
+            } => {
+                self.lower_keyed_column(item, items, key, options, span, outer_component)?;
+                self.lower_view(child, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -8183,8 +8235,7 @@ impl Lowerer {
                 ..
             }
             | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. } => {
+            | ViewNode::Theme { content, .. } => {
                 self.lower_view(content, outer_component)?;
             }
             ViewNode::Overlay { content, layer, .. } => {
@@ -11001,6 +11052,121 @@ view
     }
 
     #[test]
+    fn normalizes_keyed_flow_binding_and_layout_options() {
+        let source = format!(
+            "app KeyedHir\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id w=fill(2) h=120.0 gap=8.0 p=4.0 pl=12.0 max-w=640.0 align=end\n    text item.name\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let keyed = program.keyed_column(ViewId(0)).unwrap();
+        assert_eq!(keyed.id, ViewId(0));
+        assert_eq!(keyed.item.name, "item");
+        assert!(matches!(
+            keyed.width,
+            Some(ResolvedKeyedLength::FillPortion(2))
+        ));
+        assert!(matches!(
+            keyed.height,
+            Some(ResolvedKeyedLength::FixedF64(_))
+        ));
+        assert!(keyed.spacing.is_some());
+        assert!(keyed.padding.all.is_some());
+        assert!(keyed.padding.left.is_some());
+        assert!(keyed.max_width.is_some());
+        assert_eq!(keyed.align, Some(FlexAlignment::End));
+    }
+
+    #[test]
+    fn malformed_checked_keyed_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidKeyedFacts\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id gap=8.0\n    text item.name\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::KeyedItems,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_keyed_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn keyed_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedKeyed\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id gap=8.0 align=end\n    text item.name\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-keyed.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::KeyedColumn {
+            items,
+            key,
+            options,
+            ..
+        } = &mut changed_expressions.document.view
+        else {
+            panic!("fixture root must be keyed");
+        };
+        *items = Expr::Str("Poisoned".into());
+        *key = Expr::Str("Poisoned".into());
+        options.spacing = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-keyed.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::KeyedColumn { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be keyed");
+        };
+        options.align = Some(FlexAlignment::Start);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn keyed_codegen_ignores_raw_flow_and_layout_after_lowering() {
+        let source = format!(
+            "app LoweredKeyed\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id w=fill(2) gap=8.0 p=4.0 align=end\n    text item.name\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-keyed.ice").unwrap();
+        let ViewNode::KeyedColumn {
+            item,
+            items,
+            key,
+            options,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be keyed");
+        };
+        *item = "poisoned".into();
+        *items = Expr::Str("Poisoned".into());
+        *key = Expr::Str("Poisoned".into());
+        options.width = Some(LengthValue::Shrink);
+        options.spacing = Some(Expr::F64(999.0));
+        options.padding = PaddingOptions::default();
+        options.align = Some(FlexAlignment::Start);
+        let actual = crate::codegen::generate(&program, "lowered-keyed.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -11286,6 +11452,37 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized lazy views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized keyed-column lowering and emission performance contract"]
+    fn performance_contract_four_thousand_keyed_columns_lower_and_emit_under_two_seconds() {
+        const KEYED_COLUMNS: usize = 4_000;
+        let mut source = format!(
+            "app KeyedScale\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  col\n"
+        );
+        for index in 0..KEYED_COLUMNS {
+            writeln!(
+                source,
+                "    keyed item_{index} in items by=item_{index}.id gap=8.0 p=4.0\n      text item_{index}.name"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "keyed-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.keyed_columns.len(), KEYED_COLUMNS);
+        assert_eq!(
+            generated.matches("::iced::widget::keyed_column(").count(),
+            KEYED_COLUMNS
+        );
+        eprintln!("4k normalized keyed columns lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized keyed columns lowered and emitted in {elapsed:?}"
         );
     }
 

@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, and Lazy therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, and KeyedColumn therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -346,6 +346,16 @@ publishing `ResolvedLazy`. Rust emission consumes that record; source nodes
 provide only the child subtree. Dependency/binding mutation, post-lowering AST
 poisoning, malformed expression/local IDs, owned-static codegen, and an ignored
 4,000-node lower+emit budget provide the executable evidence.
+
+KeyedColumn is a completed structural collection slice. Its checked flow owns
+the stable list and key expressions, typed item local, normalized dimension
+variants, spacing, padding, maximum width, and alignment. Lowering revalidates
+expression owner mappings and DAGs, scope, types, local ownership, and static
+option topology before publishing `ResolvedKeyedColumn`. Rust emission consumes
+that record and uses the source node only for the child template. Malformed IDs,
+post-check expression/static mutation, post-lowering AST poisoning, configured
+codegen, and an ignored 4,000-node lower+emit budget provide the executable
+evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,

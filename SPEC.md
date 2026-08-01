@@ -316,6 +316,14 @@ Lowering validates their owner, scope, type, and expression DAG before
 publishing `ResolvedLazy`. Rust generation does not reread the dependency,
 binding spelling, checked flow, or checked local facts.
 
+KeyedColumn is a completed structural collection HIR slice. Its item list, key,
+typed item local, width and height variants, spacing, padding, maximum width,
+and alignment are resolved before Rust generation. Lowering validates their
+owner, scope, type, expression DAG, and static option topology before publishing
+`ResolvedKeyedColumn`. Rust generation reads only that record plus the child
+template and does not reread keyed expressions, layout options, checked flow,
+or checked local facts.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

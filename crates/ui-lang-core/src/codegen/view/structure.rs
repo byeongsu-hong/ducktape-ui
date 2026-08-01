@@ -127,21 +127,11 @@ pub(in crate::codegen) fn render_structure(
             }
             Ok(format!("{code}.into()"))
         }
-        ViewNode::KeyedColumn {
-            options,
-            child,
-            span,
-            ..
-        } => render_keyed_column(
-            options,
-            child,
-            span,
-            document,
-            message,
-            env,
-            &child_scope,
-            slot,
-        ),
+        ViewNode::KeyedColumn { child, .. } => {
+            let program = document.hir();
+            let keyed = program.resolved_keyed_column_for(node)?;
+            render_keyed_column(keyed, child, document, message, env, &child_scope, slot)
+        }
         ViewNode::Lazy { child, .. } => {
             let program = document.hir();
             let lazy = program.resolved_lazy_for(node)?;

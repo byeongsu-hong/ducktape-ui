@@ -237,6 +237,7 @@ pub(crate) enum CheckedViewFlow {
         items: CheckedExprUseId,
         key: CheckedExprUseId,
         item: CheckedLocalId,
+        layout: CheckedKeyedLayout,
     },
     Lazy {
         dependency: CheckedExprUseId,
@@ -270,6 +271,40 @@ pub(crate) enum CheckedViewFlow {
         semantic_key: String,
         expression_count: u32,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedKeyedLength {
+    None,
+    Fill,
+    FillPortion(u16),
+    Shrink,
+    Fixed {
+        expression: CheckedExprUseId,
+        source: Type,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CheckedKeyedPadding {
+    pub(crate) all: Option<CheckedExprUseId>,
+    pub(crate) x: Option<CheckedExprUseId>,
+    pub(crate) y: Option<CheckedExprUseId>,
+    pub(crate) top: Option<CheckedExprUseId>,
+    pub(crate) right: Option<CheckedExprUseId>,
+    pub(crate) bottom: Option<CheckedExprUseId>,
+    pub(crate) left: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedKeyedLayout {
+    pub(crate) semantic_key: String,
+    pub(crate) width: CheckedKeyedLength,
+    pub(crate) height: CheckedKeyedLength,
+    pub(crate) spacing: Option<CheckedExprUseId>,
+    pub(crate) padding: CheckedKeyedPadding,
+    pub(crate) max_width: Option<CheckedExprUseId>,
+    pub(crate) align: Option<FlexAlignment>,
 }
 
 #[derive(Clone, Debug)]
@@ -374,6 +409,17 @@ pub(crate) enum CheckedViewExprRole {
     MatchValue,
     KeyedItems,
     KeyedKey,
+    KeyedWidth,
+    KeyedHeight,
+    KeyedSpacing,
+    KeyedPaddingAll,
+    KeyedPaddingX,
+    KeyedPaddingY,
+    KeyedPaddingTop,
+    KeyedPaddingRight,
+    KeyedPaddingBottom,
+    KeyedPaddingLeft,
+    KeyedMaxWidth,
     LazyDependency,
     TableRows,
     PaneTemplateKey(u32),
@@ -801,6 +847,14 @@ impl CheckedFacts {
             panic!("test view must be lazy");
         };
         *binding = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_keyed_item_local(&mut self, view: ViewId, raw: u32) {
+        let CheckedViewFlow::Keyed { item, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be keyed");
+        };
+        *item = CheckedLocalId(raw);
     }
 
     #[cfg(test)]
@@ -5610,6 +5664,67 @@ impl<'a> FactsBuilder<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_keyed_length(
+        &mut self,
+        view: ViewId,
+        value: &Option<LengthValue>,
+        role: CheckedViewExprRole,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedKeyedLength, Error> {
+        Ok(match value {
+            None => CheckedKeyedLength::None,
+            Some(LengthValue::Fill) => CheckedKeyedLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedKeyedLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedKeyedLength::Shrink,
+            Some(LengthValue::Fixed(expression)) => {
+                let expression = self.push_view_expression(
+                    CheckedExprOwner::View { view, role },
+                    expression,
+                    None,
+                    env,
+                    span,
+                    parent,
+                )?;
+                let source = self.facts.expression_use(expression).source.clone();
+                if !matches!(source, Type::F64 | Type::Length) {
+                    return Err(self.invariant(
+                        span,
+                        "keyed dimension type diverged after semantic checking",
+                    ));
+                }
+                CheckedKeyedLength::Fixed { expression, source }
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_keyed_metric(
+        &mut self,
+        view: ViewId,
+        value: &Option<Expr>,
+        role: CheckedViewExprRole,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<Option<CheckedExprUseId>, Error> {
+        value
+            .as_ref()
+            .map(|expression| {
+                self.push_view_expression(
+                    CheckedExprOwner::View { view, role },
+                    expression,
+                    Some(&Type::F64),
+                    env,
+                    span,
+                    parent,
+                )
+            })
+            .transpose()
+    }
+
     fn push_retained_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -5852,6 +5967,7 @@ impl<'a> FactsBuilder<'a> {
                 item,
                 items,
                 key,
+                options,
                 child,
                 span,
                 ..
@@ -5895,11 +6011,110 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
+                let width = self.lower_keyed_length(
+                    view,
+                    &options.width,
+                    CheckedViewExprRole::KeyedWidth,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let height = self.lower_keyed_length(
+                    view,
+                    &options.height,
+                    CheckedViewExprRole::KeyedHeight,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let spacing = self.lower_keyed_metric(
+                    view,
+                    &options.spacing,
+                    CheckedViewExprRole::KeyedSpacing,
+                    env,
+                    span,
+                    origin,
+                )?;
+                let padding = CheckedKeyedPadding {
+                    all: self.lower_keyed_metric(
+                        view,
+                        &options.padding.all,
+                        CheckedViewExprRole::KeyedPaddingAll,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    x: self.lower_keyed_metric(
+                        view,
+                        &options.padding.x,
+                        CheckedViewExprRole::KeyedPaddingX,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    y: self.lower_keyed_metric(
+                        view,
+                        &options.padding.y,
+                        CheckedViewExprRole::KeyedPaddingY,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    top: self.lower_keyed_metric(
+                        view,
+                        &options.padding.top,
+                        CheckedViewExprRole::KeyedPaddingTop,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    right: self.lower_keyed_metric(
+                        view,
+                        &options.padding.right,
+                        CheckedViewExprRole::KeyedPaddingRight,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    bottom: self.lower_keyed_metric(
+                        view,
+                        &options.padding.bottom,
+                        CheckedViewExprRole::KeyedPaddingBottom,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                    left: self.lower_keyed_metric(
+                        view,
+                        &options.padding.left,
+                        CheckedViewExprRole::KeyedPaddingLeft,
+                        env,
+                        span,
+                        origin,
+                    )?,
+                };
+                let max_width = self.lower_keyed_metric(
+                    view,
+                    &options.max_width,
+                    CheckedViewExprRole::KeyedMaxWidth,
+                    env,
+                    span,
+                    origin,
+                )?;
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Keyed {
                     items: items_use,
                     key: key_use,
                     item: local,
+                    layout: CheckedKeyedLayout {
+                        semantic_key: crate::ast::keyed_column_semantic_key(options),
+                        width,
+                        height,
+                        spacing,
+                        padding,
+                        max_width,
+                        align: options.align,
+                    },
                 }
             }
             ViewNode::Lazy {
@@ -9240,6 +9455,68 @@ view
                 role: CheckedViewLocalRole::LazyDependency,
             }
         );
+    }
+
+    #[test]
+    fn keyed_facts_retain_flow_layout_expressions_and_item_local() {
+        let source = r#"app KeyedFacts
+extern crate::backend
+  Item(id:i64, name:str)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items:[Item] = []
+view
+  keyed item in items by=item.id w=fill(2) h=120.0 gap=8.0 p=4.0 max-w=640.0 align=end
+    text item.name
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let CheckedViewFlow::Keyed {
+            items,
+            key,
+            item,
+            layout,
+        } = &program.checked_facts().view(ViewId(0)).flow
+        else {
+            panic!("root must retain keyed facts");
+        };
+        assert_eq!(
+            program.checked_facts().expression_use(*items).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::KeyedItems,
+            }
+        );
+        assert_eq!(
+            program.checked_facts().expression_use(*key).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::KeyedKey,
+            }
+        );
+        let item = program.checked_facts().local(*item);
+        assert_eq!(item.name, "item");
+        assert_eq!(
+            item.owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::KeyedItem,
+            }
+        );
+        assert!(matches!(layout.width, CheckedKeyedLength::FillPortion(2)));
+        assert!(matches!(layout.height, CheckedKeyedLength::Fixed { .. }));
+        assert!(layout.spacing.is_some());
+        assert!(layout.padding.all.is_some());
+        assert!(layout.max_width.is_some());
+        assert_eq!(layout.align, Some(FlexAlignment::End));
     }
 
     #[test]

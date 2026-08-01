@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, and Lazy families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, and KeyedColumn families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -493,7 +493,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, and Lazy remain open HIR slices.
+ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, and KeyedColumn remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -598,6 +598,16 @@ reads that record instead of checker flow or facts; the source node supplies
 only the child subtree. Malformed expression/local IDs, post-check dependency
 and binding mutation, post-lowering AST poisoning, owned-static codegen, and an
 ignored 4,000-node lower+emit contract cover the boundary.
+
+KeyedColumn has a complete private HIR boundary. Its checked flow owns the list
+and key expressions, typed item local, dimension variants, spacing, padding,
+maximum width, and alignment. Lowering revalidates expression owner mappings,
+DAGs, scope, types, local ownership, and static option topology before
+publishing `ResolvedKeyedColumn`. Production emission reads only that record;
+the source node supplies the child template. Malformed expression/local IDs,
+post-check expression and static mutation, post-lowering AST poisoning, full
+configured codegen, and an ignored 4,000-node lower+emit contract cover the
+boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
