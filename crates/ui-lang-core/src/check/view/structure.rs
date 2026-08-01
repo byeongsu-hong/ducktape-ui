@@ -93,6 +93,7 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             for (route, label) in [
                 (&options.show, "sensor show"),
@@ -135,6 +136,7 @@ pub(in crate::check) fn infer_structure_group(
                     return Err(Error::new("E128", span, "sensor delay cannot be negative"));
                 }
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Responsive {

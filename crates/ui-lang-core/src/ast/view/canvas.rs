@@ -810,6 +810,49 @@ pub struct SensorOptions {
     pub delay_ms: Option<Expr>,
 }
 
+pub(crate) fn sensor_routes(options: &SensorOptions) -> Vec<&Route> {
+    [&options.show, &options.resize, &options.hide]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+pub(crate) fn sensor_semantic_key(options: &SensorOptions) -> String {
+    let route = |route: &Route| {
+        let arguments = route
+            .args
+            .iter()
+            .map(|argument| match argument {
+                RouteArg::Expr(_) => "expression",
+                RouteArg::Payload => "payload",
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{}({arguments})", route.handler)
+    };
+    format!(
+        "sensor|key={}|anticipate={}|delay={}|show={}|resize={}|hide={}",
+        options.key.is_some(),
+        options.anticipate.is_some(),
+        options.delay_ms.is_some(),
+        options
+            .show
+            .as_ref()
+            .map(&route)
+            .unwrap_or_else(|| "none".into()),
+        options
+            .resize
+            .as_ref()
+            .map(&route)
+            .unwrap_or_else(|| "none".into()),
+        options
+            .hide
+            .as_ref()
+            .map(route)
+            .unwrap_or_else(|| "none".into()),
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseInteraction {
     None,

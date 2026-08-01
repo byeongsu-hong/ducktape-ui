@@ -98,68 +98,11 @@ pub(in crate::codegen) fn render_structure(
             append_dimensions(&mut code, [width, height], env, document)?;
             Ok(format!("{code}.into() }}"))
         }
-        ViewNode::Sensor {
-            options, content, ..
-        } => {
+        ViewNode::Sensor { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let mut code = format!(
-                "{{ let __sensor_content: __IceElement<'_, {message}> = {content}; ::iced::widget::sensor(__sensor_content)"
-            );
-            if let Some(route) = &options.show {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__size",
-                    &["__size.width as f64", "__size.height as f64"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_show({callback})").unwrap();
-            }
-            if let Some(route) = &options.resize {
-                let callback = ordered_route_callback_code(
-                    route,
-                    "__size",
-                    &["__size.width as f64", "__size.height as f64"],
-                    env,
-                    document,
-                    message,
-                )?;
-                write!(code, ".on_resize({callback})").unwrap();
-            }
-            if let Some(route) = &options.hide {
-                write!(
-                    code,
-                    ".on_hide({})",
-                    route_code(route, "", env, document, message)?
-                )
-                .unwrap();
-            }
-            if let Some(key) = &options.key {
-                write!(
-                    code,
-                    ".key({})",
-                    expr_code(key, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(distance) = &options.anticipate {
-                write!(
-                    code,
-                    ".anticipate({})",
-                    clamped_f32_code(distance, "0.0", "f32::MAX", env, document)?
-                )
-                .unwrap();
-            }
-            if let Some(delay) = &options.delay_ms {
-                write!(
-                    code,
-                    ".delay(::std::time::Duration::from_millis(u64::try_from({}).unwrap_or(0)))",
-                    expr_code(delay, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into() }}"))
+            let program = document.hir();
+            let sensor = program.resolved_sensor_for(node)?;
+            render_resolved_sensor(sensor, program, message, env, content)
         }
         ViewNode::Responsive {
             content,
@@ -296,4 +239,62 @@ pub(in crate::codegen) fn render_structure(
     Ok(Some(identify_rendered(
         rendered, id, message, env, document, scope,
     )?))
+}
+
+fn render_resolved_sensor(
+    sensor: &ResolvedSensor,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let mut code = format!(
+        "{{ let __sensor_content: __IceElement<'_, {message}> = {content}; ::iced::widget::sensor(__sensor_content)"
+    );
+    for (route, method) in [(&sensor.show, "on_show"), (&sensor.resize, "on_resize")] {
+        if let Some(route) = route {
+            let callback = resolved_interaction_route_callback_code(
+                route,
+                "__size",
+                &["__size.width as f64", "__size.height as f64"],
+                env,
+                program,
+                message,
+            )?;
+            write!(code, ".{method}({callback})").unwrap();
+        }
+    }
+    if let Some(route) = &sensor.hide {
+        write!(
+            code,
+            ".on_hide({})",
+            resolved_interaction_route_code(route, &[], env, program, message)?
+        )
+        .unwrap();
+    }
+    if let Some(key) = sensor.key {
+        write!(
+            code,
+            ".key({})",
+            checked_expr_use_code(program, key, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(anticipate) = sensor.anticipate {
+        let anticipate = checked_expr_use_code(program, anticipate, env, ValueMode::Owned)?;
+        write!(
+            code,
+            ".anticipate((({anticipate}) as f32).max(0.0).min(f32::MAX))"
+        )
+        .unwrap();
+    }
+    if let Some(delay) = sensor.delay_ms {
+        let delay = checked_expr_use_code(program, delay, env, ValueMode::Owned)?;
+        write!(
+            code,
+            ".delay(::std::time::Duration::from_millis(u64::try_from({delay}).unwrap_or(0)))"
+        )
+        .unwrap();
+    }
+    Ok(format!("{code}.into() }}"))
 }

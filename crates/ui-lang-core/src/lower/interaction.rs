@@ -8,6 +8,7 @@ use super::*;
 pub(crate) enum ResolvedInteractionWidget {
     MouseArea(Box<ResolvedMouseArea>),
     ResizeHandle(Box<ResolvedResizeHandle>),
+    Sensor(Box<ResolvedSensor>),
 }
 
 impl ResolvedInteractionWidget {
@@ -15,6 +16,7 @@ impl ResolvedInteractionWidget {
         match self {
             Self::MouseArea(widget) => widget.id,
             Self::ResizeHandle(widget) => widget.id,
+            Self::Sensor(widget) => widget.id,
         }
     }
 }
@@ -45,6 +47,18 @@ pub(crate) struct ResolvedResizeHandle {
     pub(crate) press: Option<ResolvedInteractionRoute>,
     pub(crate) release: Option<ResolvedInteractionRoute>,
     pub(crate) interaction: Option<MouseInteraction>,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedSensor {
+    pub(crate) id: ViewId,
+    pub(crate) show: Option<ResolvedInteractionRoute>,
+    pub(crate) resize: Option<ResolvedInteractionRoute>,
+    pub(crate) hide: Option<ResolvedInteractionRoute>,
+    pub(crate) key: Option<CheckedExprUseId>,
+    pub(crate) anticipate: Option<CheckedExprUseId>,
+    pub(crate) delay_ms: Option<CheckedExprUseId>,
     pub(crate) origin: OriginId,
 }
 
@@ -92,10 +106,11 @@ impl Lowerer {
             outer_component,
         )?;
         self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
-        if options.interaction_expr.is_some() != checked.interaction_expression.is_some() {
+        let expected_option_expressions = usize::from(options.interaction_expr.is_some());
+        if checked.option_expressions.len() != expected_option_expressions {
             return Err(self.invariant(span, "mouse-area interaction expression presence diverged"));
         }
-        if let Some(expression) = checked.interaction_expression {
+        if let Some(expression) = checked.option_expressions.first().copied() {
             let retained = self.facts.try_expression_use(expression).ok_or_else(|| {
                 self.invariant(span, "mouse-area interaction expression is invalid")
             })?;
@@ -122,7 +137,7 @@ impl Lowerer {
             move_route: take(&options.move_route)?,
             scroll: take(&options.scroll)?,
             interaction: options.interaction,
-            interaction_expression: checked.interaction_expression,
+            interaction_expression: checked.option_expressions.first().copied(),
             origin,
         };
         if route != checked.routes.len() {
@@ -148,7 +163,7 @@ impl Lowerer {
             outer_component,
         )?;
         self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
-        if checked.interaction_expression.is_some() {
+        if !checked.option_expressions.is_empty() {
             return Err(self.invariant(
                 span,
                 "resize-handle unexpectedly retained an interaction expression",
@@ -173,6 +188,81 @@ impl Lowerer {
         self.insert_interaction(
             id,
             ResolvedInteractionWidget::ResizeHandle(Box::new(resolved)),
+            span,
+        )
+    }
+
+    pub(super) fn lower_sensor(
+        &mut self,
+        options: &SensorOptions,
+        span: &Span,
+        outer_component: Option<ComponentId>,
+    ) -> Result<(), Error> {
+        let (id, checked, scope, origin) = self.interaction_contract(
+            CheckedInteractionKind::Sensor,
+            crate::ast::sensor_semantic_key(options),
+            span,
+            outer_component,
+        )?;
+        self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
+
+        let mut expressions = checked.option_expressions.iter().copied();
+        let mut take_expression = |present: bool,
+                                   expected: Option<&Type>,
+                                   label: &str|
+         -> Result<_, Error> {
+            if !present {
+                return Ok(None);
+            }
+            let expression = expressions.next().ok_or_else(|| {
+                self.invariant(span, format!("sensor {label} expression disappeared"))
+            })?;
+            let retained = self.facts.try_expression_use(expression).ok_or_else(|| {
+                self.invariant(span, format!("sensor {label} expression is invalid"))
+            })?;
+            if retained.destination != expected.unwrap_or(&retained.source).clone() {
+                return Err(self.invariant(span, format!("sensor {label} expression changed type")));
+            }
+            Ok(Some(expression))
+        };
+        let key = take_expression(options.key.is_some(), None, "key")?;
+        let anticipate =
+            take_expression(options.anticipate.is_some(), Some(&Type::F64), "anticipate")?;
+        let delay_ms = take_expression(options.delay_ms.is_some(), Some(&Type::I64), "delay")?;
+        if let Some(key) = key {
+            let ty = &self.facts.expression_use(key).source;
+            if !matches!(
+                ty,
+                Type::Bool | Type::I64 | Type::F64 | Type::Str | Type::Named(_)
+            ) {
+                return Err(self.invariant(span, "sensor key retained an invalid checked type"));
+            }
+        }
+        if expressions.next().is_some() {
+            return Err(self.invariant(span, "sensor left checked option expressions unconsumed"));
+        }
+
+        let routes = crate::ast::sensor_routes(options);
+        let mut route = 0usize;
+        let mut take_route = |source: &Option<Route>| {
+            self.lower_optional_interaction_route(source, &checked, &routes, &mut route, id, scope)
+        };
+        let resolved = ResolvedSensor {
+            id,
+            show: take_route(&options.show)?,
+            resize: take_route(&options.resize)?,
+            hide: take_route(&options.hide)?,
+            key,
+            anticipate,
+            delay_ms,
+            origin,
+        };
+        if route != checked.routes.len() {
+            return Err(self.invariant(span, "sensor left checked routes unconsumed"));
+        }
+        self.insert_interaction(
+            id,
+            ResolvedInteractionWidget::Sensor(Box::new(resolved)),
             span,
         )
     }
