@@ -115,12 +115,11 @@ family. Their backend helpers are removed only when those expressions and view
 options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors, handlers, tasks and
-asynchronous call sites, canvas locals, other application settings, tests, and
-remaining widget options therefore remain open implementation slices; this
-status does not satisfy the migration-complete criteria below. Current
-diagnostics and generated source markers still use the established source-map
-path rather than traversing `OriginId` parent stacks.
+The remaining expression-backed native styles/colors, canvas locals, other
+application settings, tests, and remaining widget options therefore remain
+open implementation slices; this status does not satisfy the
+migration-complete criteria below. Migrated handler generation uses the shared
+origin arena directly for imported and root source markers.
 
 The checker now also preserves the first expression-family facts in a private,
 owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
@@ -161,9 +160,31 @@ validates raw view kind/children against the stable checked topology. Invalid
 owner, topology, match binding, and enum IDs therefore fail with source-mapped
 `E196`. Imported expressions retain physical locations and parent chains;
 missing, duplicate, or leftover authoritative analyses also fail with `E196`.
-Handler/task/canvas/settings/test expressions and expression-bearing
-widget options remain later slices, so the full-HIR completion criteria remain
-open.
+Canvas/settings/test expressions and expression-bearing widget options
+remain later slices, so the full-HIR completion criteria remain open.
+
+Handler bodies are now a completed production HIR slice. One deterministic
+preorder arena owns app, implicit `mount`, component, and preset handlers;
+nested statements; immediate and flow tasks; body routes; and latest/replace
+run sites. Checked locals have explicit handler-parameter, statement-let, or
+task-transform owners. Every operand has a statement, task, or route owner and
+retains its checked expression-use ID, concrete type, resolved writable state,
+extern ID, task output/error/finality, and route target/payload contract.
+`RunSiteId` is independent of source lines and is the sole generation and
+replacement identity used by component state and messages.
+
+Lowering validates handler, statement, task, route, and run-site ownership,
+preorder parentage, complete arena consumption, task finality, and origin
+chains. Generated handler code consumes only `ResolvedHandler` and
+`ResolvedStatement`; it does not inspect statement AST expressions, rerun
+expression typing, rediscover extern functions, or derive async identity from a
+line number. Nested statement scopes use borrowed binding layers instead of
+cloning the full environment. Structured HIR snapshots cover app, mount,
+component, preset, group, sip, flow, abortable, route, payload, transform, and
+stable run-site records. Post-check AST mutation, imported-origin, invalid-state,
+compiled-fixture, and 500/4,000-statement contracts prove checked-fact
+authority, source mapping, linear growth, zero handler type rechecks, and zero
+full environment clones.
 
 An integration ratchet inventories selected lexical markers for backend escapes
 through `LoweredProgram::document`, the `RenderDocument` raw-document wrapper,

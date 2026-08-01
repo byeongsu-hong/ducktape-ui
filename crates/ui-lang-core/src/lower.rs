@@ -5,7 +5,8 @@ use crate::check::{
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
     AppStateId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId, ComponentSlotId,
-    ComponentStateId, DeclarationIndex, ExternFnId, OriginArena, OriginId, PaletteId,
+    ComponentStateId, DeclarationIndex, ExternFnId, HandlerId, HandlerOwner, OriginArena, OriginId,
+    PaletteId, RouteId, RunSiteId, StatementId, TaskId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::HashMap;
@@ -14,6 +15,8 @@ use std::path::Path;
 mod style;
 
 pub(crate) use style::*;
+
+pub(crate) type ResolvedExpressionId = CheckedExprUseId;
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -99,6 +102,465 @@ pub(crate) struct ResolvedAnimation {
     pub(crate) auto_reverse: bool,
 }
 
+// These fields are the normalized compiler contract. Some are consumed only by
+// invariant tests today and remain available to later lowering slices.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedHandler {
+    pub(crate) id: HandlerId,
+    pub(crate) owner: HandlerOwner,
+    pub(crate) name: String,
+    pub(crate) params: Vec<ResolvedHandlerParam>,
+    pub(crate) statements: Vec<ResolvedStatement>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedHandlerParam {
+    pub(crate) local: crate::check::CheckedLocalId,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedStatement {
+    pub(crate) id: StatementId,
+    pub(crate) kind: ResolvedStatementKind,
+    pub(crate) task: Option<TaskId>,
+    pub(crate) is_final: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedStatementKind {
+    Let {
+        local: crate::check::CheckedLocalId,
+        name: String,
+        ty: Type,
+        value: CheckedExprUseId,
+    },
+    Assign {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+        at: Option<CheckedExprUseId>,
+        move_self: bool,
+    },
+    MarkdownAppend {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+    },
+    ComboPush {
+        target: ResolvedWritableState,
+        value: CheckedExprUseId,
+    },
+    ReturnIf {
+        condition: CheckedExprUseId,
+    },
+    Exit,
+    Run(ResolvedRun),
+    Sip(ResolvedSip),
+    TaskFlow(ResolvedTaskFlow),
+    TaskGroup {
+        kind: TaskGroupKind,
+        statements: Vec<ResolvedStatement>,
+    },
+    Abortable {
+        handle: ResolvedWritableState,
+        abort_on_drop: bool,
+        task: Box<ResolvedStatement>,
+    },
+    Abort {
+        handle: ResolvedWritableState,
+    },
+    DebugStart {
+        name: CheckedExprUseId,
+        target: ResolvedWritableState,
+    },
+    DebugFinish {
+        target: ResolvedWritableState,
+    },
+    ClipboardWrite {
+        primary: bool,
+        value: CheckedExprUseId,
+    },
+    WidgetOperation {
+        operation: ResolvedWidgetOperation,
+        route: Option<ResolvedRoute>,
+    },
+    PaneOperation {
+        grid: String,
+        dynamic: bool,
+        operation: ResolvedPaneOperation,
+        route: Option<ResolvedRoute>,
+    },
+    WindowOperation {
+        operation: ResolvedWindowOperation,
+        target: Option<CheckedExprUseId>,
+        route: Option<ResolvedRoute>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWritableState {
+    pub(crate) value: CheckedValueRef,
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedEffectTarget {
+    Builtin(String),
+    Extern(ExternFnId),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedRun {
+    pub(crate) kind: EffectKind,
+    pub(crate) mode: FutureMode,
+    pub(crate) site: Option<RunSiteId>,
+    pub(crate) target: ResolvedEffectTarget,
+    pub(crate) args: Vec<CheckedExprUseId>,
+    pub(crate) success: ResolvedRoute,
+    pub(crate) error: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedSip {
+    pub(crate) target: ExternFnId,
+    pub(crate) args: Vec<CheckedExprUseId>,
+    pub(crate) progress: ResolvedRoute,
+    pub(crate) success: ResolvedRoute,
+    pub(crate) error: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTaskFlow {
+    pub(crate) source: ResolvedTaskSource,
+    pub(crate) transforms: Vec<ResolvedTaskTransform>,
+    pub(crate) output: Option<Type>,
+    pub(crate) error_type: Option<Type>,
+    pub(crate) success: Option<ResolvedRoute>,
+    pub(crate) error: Option<ResolvedRoute>,
+    pub(crate) units: Option<ResolvedRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTaskSource {
+    Effect {
+        task: TaskId,
+        kind: EffectKind,
+        target: ResolvedEffectTarget,
+        args: Vec<CheckedExprUseId>,
+    },
+    Done {
+        task: TaskId,
+        value: CheckedExprUseId,
+    },
+    None {
+        task: TaskId,
+        output: Type,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTaskTransform {
+    Map {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        input_fallible: bool,
+        value: CheckedExprUseId,
+    },
+    Then {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        source: ResolvedTaskSource,
+    },
+    AndThen {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        source: ResolvedTaskSource,
+    },
+    MapError {
+        task: TaskId,
+        local: crate::check::CheckedLocalId,
+        binding: String,
+        input: Type,
+        value: CheckedExprUseId,
+    },
+    Collect {
+        task: TaskId,
+    },
+    Discard {
+        task: TaskId,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedRoute {
+    pub(crate) id: RouteId,
+    pub(crate) target: ResolvedRouteTarget,
+    pub(crate) args: Vec<ResolvedRouteArg>,
+    pub(crate) origin: OriginId,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedRouteTarget {
+    App {
+        handler: HandlerId,
+        name: String,
+    },
+    Component {
+        component: ComponentId,
+        handler: HandlerId,
+        name: String,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedRouteArg {
+    Expression(CheckedExprUseId),
+    Payload { index: u32, ty: Type },
+}
+
+/// Backend-neutral typed route argument lowering shared by handler effects and
+/// route-bearing surfaces such as Canvas. Statement/task arena ownership is
+/// deliberately outside this contract.
+pub(crate) struct TypedRouteInputs<'a> {
+    pub(crate) source_payloads: &'a [Type],
+    pub(crate) ordered: bool,
+}
+
+pub(crate) fn lower_typed_route_arguments(
+    route: &Route,
+    target_params: &[Type],
+    inputs: TypedRouteInputs<'_>,
+    mut expression: impl FnMut(usize) -> Result<CheckedExprUseId, Error>,
+) -> Result<Vec<ResolvedRouteArg>, Error> {
+    if route.args.len() != target_params.len() {
+        return Err(Error::new(
+            "E196",
+            &route.span,
+            "route argument count diverged from its checked target contract",
+        ));
+    }
+    let mut payload_index = 0usize;
+    route
+        .args
+        .iter()
+        .zip(target_params)
+        .enumerate()
+        .map(|(argument, (raw, target))| match raw {
+            RouteArg::Expr(_) => expression(argument).map(ResolvedRouteArg::Expression),
+            RouteArg::Payload => {
+                let source_index = if inputs.ordered { payload_index } else { 0 };
+                let source = inputs.source_payloads.get(source_index).ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        &route.span,
+                        "route payload has no typed source contract",
+                    )
+                })?;
+                if source != target {
+                    return Err(Error::new(
+                        "E196",
+                        &route.span,
+                        "route payload type diverged from its checked target parameter",
+                    ));
+                }
+                payload_index += 1;
+                Ok(ResolvedRouteArg::Payload {
+                    index: source_index as u32,
+                    ty: target.clone(),
+                })
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWidgetTarget {
+    pub(crate) segments: Vec<ResolvedWidgetTargetSegment>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedWidgetTargetSegment {
+    pub(crate) name: String,
+    pub(crate) key: Option<CheckedExprUseId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWidgetSelector {
+    Id(ResolvedWidgetTarget),
+    Text(CheckedExprUseId),
+    Point {
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    Focused,
+    Extern {
+        target: ExternFnId,
+        args: Vec<CheckedExprUseId>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWidgetOperation {
+    FocusPrevious,
+    FocusNext,
+    Focus {
+        target: ResolvedWidgetTarget,
+    },
+    Focused {
+        target: ResolvedWidgetTarget,
+    },
+    CursorFront {
+        target: ResolvedWidgetTarget,
+    },
+    CursorEnd {
+        target: ResolvedWidgetTarget,
+    },
+    Cursor {
+        target: ResolvedWidgetTarget,
+        position: CheckedExprUseId,
+    },
+    SelectAll {
+        target: ResolvedWidgetTarget,
+    },
+    Select {
+        target: ResolvedWidgetTarget,
+        start: CheckedExprUseId,
+        end: CheckedExprUseId,
+    },
+    Snap {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    SnapEnd {
+        target: ResolvedWidgetTarget,
+    },
+    ScrollTo {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    ScrollBy {
+        target: ResolvedWidgetTarget,
+        x: CheckedExprUseId,
+        y: CheckedExprUseId,
+    },
+    Find {
+        selector: ResolvedWidgetSelector,
+        all: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedPaneReference {
+    Static(String),
+    Dynamic {
+        template: String,
+        key: CheckedExprUseId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedPaneOperation {
+    Maximize {
+        pane: ResolvedPaneReference,
+    },
+    Restore,
+    Maximized,
+    Adjacent {
+        pane: ResolvedPaneReference,
+        edge: PaneEdge,
+    },
+    Swap {
+        first: ResolvedPaneReference,
+        second: ResolvedPaneReference,
+    },
+    Close {
+        pane: ResolvedPaneReference,
+    },
+    Move {
+        pane: ResolvedPaneReference,
+        edge: PaneEdge,
+    },
+    Resize {
+        split: Option<String>,
+        ratio: CheckedExprUseId,
+    },
+    Drop {
+        pane: ResolvedPaneReference,
+        target: ResolvedPaneReference,
+        edge: Option<PaneEdge>,
+    },
+    Split {
+        target: ResolvedPaneReference,
+        pane: ResolvedPaneReference,
+        axis: PaneAxis,
+        ratio: CheckedExprUseId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedWindowOperation {
+    Open(Option<u32>),
+    Oldest,
+    Latest,
+    Close,
+    Drag,
+    DragResize(WindowDirection),
+    Resize(CheckedExprUseId, CheckedExprUseId),
+    Resizable(CheckedExprUseId),
+    MinSize(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    MaxSize(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    ResizeIncrements(Option<(CheckedExprUseId, CheckedExprUseId)>),
+    Size,
+    IsMaximized,
+    Maximize(CheckedExprUseId),
+    IsMinimized,
+    Minimize(CheckedExprUseId),
+    Position,
+    ScaleFactor,
+    Move(CheckedExprUseId, CheckedExprUseId),
+    Mode,
+    SetMode(WindowMode),
+    ToggleMaximize,
+    ToggleDecorations,
+    Attention(Option<WindowAttention>),
+    Focus,
+    SetLevel(WindowLevel),
+    SystemMenu,
+    RawId,
+    Screenshot,
+    MousePassthrough(CheckedExprUseId),
+    MonitorSize,
+    AutomaticTabbing(CheckedExprUseId),
+    Icon {
+        pixels: CheckedExprUseId,
+        width: CheckedExprUseId,
+        height: CheckedExprUseId,
+    },
+    Callback {
+        target: ExternFnId,
+        args: Vec<CheckedExprUseId>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedAnimationEasing {
     Builtin(String),
@@ -122,7 +584,7 @@ pub(crate) struct ComponentContract {
     events: Vec<ComponentEventContract>,
     slots: Vec<ComponentSlotContract>,
     pub(crate) states: Vec<ComponentStateContract>,
-    pub(crate) handlers: Vec<Handler>,
+    pub(crate) handlers: Vec<HandlerId>,
     pub(crate) root: ViewNode,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
@@ -276,15 +738,1512 @@ pub(crate) struct LoweredProgram {
     app_states: Vec<AppStateContract>,
     derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
+    handlers: Vec<ResolvedHandler>,
+    app_handlers: Vec<HandlerId>,
+    preset_handlers: Vec<HandlerId>,
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgram,
     origins: OriginArena,
 }
 
+fn validate_expression_declaration_references(
+    facts: &CheckedFacts,
+    declarations: &DeclarationIndex,
+) -> Result<(), (OriginId, &'static str)> {
+    use crate::check::{
+        CheckedCallTarget, CheckedExprKind, CheckedPathRoot, CheckedProjectionKind,
+    };
+
+    for expression in facts.expressions() {
+        let valid = match &expression.kind {
+            CheckedExprKind::SlotProvided(id) => declarations.try_component_slot(*id).is_some(),
+            CheckedExprKind::Path { root, projections } => {
+                let root_valid = match root {
+                    CheckedPathRoot::EnumVariant(id) => {
+                        declarations.try_enum_variant_decl(*id).is_some()
+                    }
+                    CheckedPathRoot::Palette(id) => declarations.palette_name(*id).is_some(),
+                    CheckedPathRoot::Value(_) | CheckedPathRoot::Local(_) => true,
+                };
+                root_valid
+                    && projections.iter().all(|projection| match &projection.kind {
+                        CheckedProjectionKind::Struct(id) => {
+                            declarations.try_struct_field_decl(*id).is_some()
+                        }
+                        CheckedProjectionKind::Native
+                        | CheckedProjectionKind::OptionalWidgetTarget => true,
+                    })
+            }
+            CheckedExprKind::Call { target, .. } => match target {
+                CheckedCallTarget::Extern(id) => declarations.try_extern_decl(*id).is_some(),
+                CheckedCallTarget::EnumVariant(id) => {
+                    declarations.try_enum_variant_decl(*id).is_some()
+                }
+                CheckedCallTarget::Builtin(_) => true,
+            },
+            _ => true,
+        };
+        if !valid {
+            return Err((
+                expression.origin,
+                "expression declaration ID is outside its arena",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolved_statement_semantic_key(
+    program: &LoweredProgram,
+    statement: &ResolvedStatement,
+) -> Result<String, Error> {
+    fn route_shape(route: &ResolvedRoute) -> String {
+        let name = match &route.target {
+            ResolvedRouteTarget::App { name, .. } | ResolvedRouteTarget::Component { name, .. } => {
+                name
+            }
+        };
+        let args = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                ResolvedRouteArg::Payload { .. } => '_',
+                ResolvedRouteArg::Expression(_) => 'e',
+            })
+            .collect::<String>();
+        format!("{name}:{args}")
+    }
+
+    fn effect_name(
+        program: &LoweredProgram,
+        target: &ResolvedEffectTarget,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        match target {
+            ResolvedEffectTarget::Builtin(name) => Ok(name.clone()),
+            ResolvedEffectTarget::Extern(id) => program
+                .declarations
+                .try_extern_decl(*id)
+                .map(|declaration| declaration.name.clone())
+                .ok_or_else(|| {
+                    program.invariant_at_origin(origin, "effect target ID is outside its arena")
+                }),
+        }
+    }
+
+    fn source_key(
+        program: &LoweredProgram,
+        source: &ResolvedTaskSource,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        Ok(match source {
+            ResolvedTaskSource::Effect {
+                kind, target, args, ..
+            } => format!(
+                "effect:{kind:?}:{}:{}",
+                effect_name(program, target, origin)?,
+                args.len()
+            ),
+            ResolvedTaskSource::Done { .. } => "done".into(),
+            ResolvedTaskSource::None { output, .. } => format!("none:{output:?}"),
+        })
+    }
+
+    fn transform_key(
+        program: &LoweredProgram,
+        transform: &ResolvedTaskTransform,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        Ok(match transform {
+            ResolvedTaskTransform::Map { binding, .. } => format!("map:{binding}"),
+            ResolvedTaskTransform::Then {
+                binding, source, ..
+            } => format!("then:{binding}:{}", source_key(program, source, origin)?),
+            ResolvedTaskTransform::AndThen {
+                binding, source, ..
+            } => format!(
+                "and-then:{binding}:{}",
+                source_key(program, source, origin)?
+            ),
+            ResolvedTaskTransform::MapError { binding, .. } => {
+                format!("map-error:{binding}")
+            }
+            ResolvedTaskTransform::Collect { .. } => "collect".into(),
+            ResolvedTaskTransform::Discard { .. } => "discard".into(),
+        })
+    }
+
+    Ok(match &statement.kind {
+        ResolvedStatementKind::Let { name, .. } => format!("let:{name}"),
+        ResolvedStatementKind::Assign { target, at, .. } => {
+            format!("assign:{}:{}", target.name, at.is_some())
+        }
+        ResolvedStatementKind::MarkdownAppend { target, .. } => {
+            format!("markdown-append:{}", target.name)
+        }
+        ResolvedStatementKind::ComboPush { target, .. } => {
+            format!("combo-push:{}", target.name)
+        }
+        ResolvedStatementKind::ReturnIf { .. } => "return-if".into(),
+        ResolvedStatementKind::Exit => "exit".into(),
+        ResolvedStatementKind::Run(run) => format!(
+            "run:{:?}:{:?}:{}:{}:{}:{}",
+            run.kind,
+            run.mode,
+            effect_name(program, &run.target, statement.origin)?,
+            run.args.len(),
+            route_shape(&run.success),
+            run.error.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::Sip(sip) => {
+            let function = program
+                .declarations
+                .try_extern_decl(sip.target)
+                .map(|declaration| declaration.name.as_str())
+                .ok_or_else(|| {
+                    program
+                        .invariant_at_origin(statement.origin, "sip target ID is outside its arena")
+                })?;
+            format!(
+                "sip:{function}:{}:{}:{}:{}",
+                sip.args.len(),
+                route_shape(&sip.progress),
+                route_shape(&sip.success),
+                sip.error.as_ref().map(route_shape).unwrap_or_default()
+            )
+        }
+        ResolvedStatementKind::TaskFlow(flow) => format!(
+            "flow:{}:[{}]:{}:{}:{}",
+            source_key(program, &flow.source, statement.origin)?,
+            flow.transforms
+                .iter()
+                .map(|transform| transform_key(program, transform, statement.origin))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(","),
+            flow.success.as_ref().map(route_shape).unwrap_or_default(),
+            flow.error.as_ref().map(route_shape).unwrap_or_default(),
+            flow.units.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::TaskGroup { kind, .. } => format!("task-group:{kind:?}"),
+        ResolvedStatementKind::Abortable {
+            handle,
+            abort_on_drop,
+            ..
+        } => format!("abortable:{}:{abort_on_drop}", handle.name),
+        ResolvedStatementKind::Abort { handle } => format!("abort:{}", handle.name),
+        ResolvedStatementKind::DebugStart { target, .. } => {
+            format!("debug-start:{}", target.name)
+        }
+        ResolvedStatementKind::DebugFinish { target } => {
+            format!("debug-finish:{}", target.name)
+        }
+        ResolvedStatementKind::ClipboardWrite { primary, .. } => {
+            format!("clipboard:{primary}")
+        }
+        ResolvedStatementKind::WidgetOperation {
+            operation, route, ..
+        } => format!(
+            "widget:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::PaneOperation {
+            grid,
+            operation,
+            route,
+            ..
+        } => format!(
+            "pane:{grid}:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        ResolvedStatementKind::WindowOperation {
+            operation,
+            target,
+            route,
+        } => format!(
+            "window:{:?}:{}:{}",
+            std::mem::discriminant(operation),
+            target.is_some(),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+    })
+}
+
+fn resolved_handler_operation_contract(
+    program: &LoweredProgram,
+    statement: &ResolvedStatement,
+) -> Result<Option<crate::hir::HandlerOperationContract>, Error> {
+    use crate::hir::{
+        CheckedPaneEdge, CheckedPaneOperation, CheckedPaneReference, CheckedWidgetOperation,
+        CheckedWidgetSelector, CheckedWidgetTarget, CheckedWindowOperation,
+        HandlerOperationContract,
+    };
+
+    fn target(value: &ResolvedWidgetTarget) -> CheckedWidgetTarget {
+        CheckedWidgetTarget(
+            value
+                .segments
+                .iter()
+                .map(|segment| (segment.name.clone(), segment.key.is_some()))
+                .collect(),
+        )
+    }
+    fn pane(value: &ResolvedPaneReference) -> CheckedPaneReference {
+        match value {
+            ResolvedPaneReference::Static(name) => CheckedPaneReference::Static(name.clone()),
+            ResolvedPaneReference::Dynamic { template, .. } => {
+                CheckedPaneReference::Dynamic(template.clone())
+            }
+        }
+    }
+    fn edge(value: PaneEdge) -> CheckedPaneEdge {
+        match value {
+            PaneEdge::Top => CheckedPaneEdge::Top,
+            PaneEdge::Left => CheckedPaneEdge::Left,
+            PaneEdge::Right => CheckedPaneEdge::Right,
+            PaneEdge::Bottom => CheckedPaneEdge::Bottom,
+        }
+    }
+    fn extern_name(
+        program: &LoweredProgram,
+        id: ExternFnId,
+        origin: OriginId,
+    ) -> Result<String, Error> {
+        program
+            .declarations
+            .try_extern_decl(id)
+            .map(|declaration| declaration.name.clone())
+            .ok_or_else(|| {
+                program.invariant_at_origin(origin, "operation extern ID is outside its arena")
+            })
+    }
+
+    Ok(Some(match &statement.kind {
+        ResolvedStatementKind::WidgetOperation { operation, .. } => {
+            HandlerOperationContract::Widget(match operation {
+                ResolvedWidgetOperation::FocusPrevious => CheckedWidgetOperation::FocusPrevious,
+                ResolvedWidgetOperation::FocusNext => CheckedWidgetOperation::FocusNext,
+                ResolvedWidgetOperation::Focus { target: value } => {
+                    CheckedWidgetOperation::Focus(target(value))
+                }
+                ResolvedWidgetOperation::Focused { target: value } => {
+                    CheckedWidgetOperation::Focused(target(value))
+                }
+                ResolvedWidgetOperation::CursorFront { target: value } => {
+                    CheckedWidgetOperation::CursorFront(target(value))
+                }
+                ResolvedWidgetOperation::CursorEnd { target: value } => {
+                    CheckedWidgetOperation::CursorEnd(target(value))
+                }
+                ResolvedWidgetOperation::Cursor { target: value, .. } => {
+                    CheckedWidgetOperation::Cursor(target(value))
+                }
+                ResolvedWidgetOperation::SelectAll { target: value } => {
+                    CheckedWidgetOperation::SelectAll(target(value))
+                }
+                ResolvedWidgetOperation::Select { target: value, .. } => {
+                    CheckedWidgetOperation::Select(target(value))
+                }
+                ResolvedWidgetOperation::Snap { target: value, .. } => {
+                    CheckedWidgetOperation::Snap(target(value))
+                }
+                ResolvedWidgetOperation::SnapEnd { target: value } => {
+                    CheckedWidgetOperation::SnapEnd(target(value))
+                }
+                ResolvedWidgetOperation::ScrollTo { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollTo(target(value))
+                }
+                ResolvedWidgetOperation::ScrollBy { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollBy(target(value))
+                }
+                ResolvedWidgetOperation::Find { selector, all } => CheckedWidgetOperation::Find {
+                    selector: match selector {
+                        ResolvedWidgetSelector::Id(value) => {
+                            CheckedWidgetSelector::Id(target(value))
+                        }
+                        ResolvedWidgetSelector::Text(_) => CheckedWidgetSelector::Text,
+                        ResolvedWidgetSelector::Point { .. } => CheckedWidgetSelector::Point,
+                        ResolvedWidgetSelector::Focused => CheckedWidgetSelector::Focused,
+                        ResolvedWidgetSelector::Extern { target: id, args } => {
+                            CheckedWidgetSelector::Extern {
+                                function: extern_name(program, *id, statement.origin)?,
+                                arguments: args.len(),
+                            }
+                        }
+                    },
+                    all: *all,
+                },
+            })
+        }
+        ResolvedStatementKind::PaneOperation {
+            grid, operation, ..
+        } => HandlerOperationContract::Pane {
+            grid: grid.clone(),
+            operation: match operation {
+                ResolvedPaneOperation::Maximize { pane: value } => {
+                    CheckedPaneOperation::Maximize(pane(value))
+                }
+                ResolvedPaneOperation::Restore => CheckedPaneOperation::Restore,
+                ResolvedPaneOperation::Maximized => CheckedPaneOperation::Maximized,
+                ResolvedPaneOperation::Adjacent {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Adjacent(pane(value), edge(*value_edge)),
+                ResolvedPaneOperation::Swap { first, second } => {
+                    CheckedPaneOperation::Swap(pane(first), pane(second))
+                }
+                ResolvedPaneOperation::Close { pane: value } => {
+                    CheckedPaneOperation::Close(pane(value))
+                }
+                ResolvedPaneOperation::Move {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Move(pane(value), edge(*value_edge)),
+                ResolvedPaneOperation::Resize { split, .. } => {
+                    CheckedPaneOperation::Resize(split.clone())
+                }
+                ResolvedPaneOperation::Drop {
+                    pane: value,
+                    target,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Drop(pane(value), pane(target), value_edge.map(edge)),
+                ResolvedPaneOperation::Split {
+                    target,
+                    pane: value,
+                    axis,
+                    ..
+                } => CheckedPaneOperation::Split {
+                    target: pane(target),
+                    pane: pane(value),
+                    axis: format!("{axis:?}"),
+                },
+            },
+        },
+        ResolvedStatementKind::WindowOperation { operation, .. } => {
+            HandlerOperationContract::Window(match operation {
+                ResolvedWindowOperation::Open(index) => CheckedWindowOperation::Open(
+                    index
+                        .map(|index| {
+                            program
+                                .document
+                                .settings
+                                .windows
+                                .get(index as usize)
+                                .map(|window| window.name.clone())
+                                .ok_or_else(|| {
+                                    program.invariant_at_origin(
+                                        statement.origin,
+                                        "named window index is outside its arena",
+                                    )
+                                })
+                        })
+                        .transpose()?,
+                ),
+                ResolvedWindowOperation::Oldest => CheckedWindowOperation::Oldest,
+                ResolvedWindowOperation::Latest => CheckedWindowOperation::Latest,
+                ResolvedWindowOperation::Close => CheckedWindowOperation::Close,
+                ResolvedWindowOperation::Drag => CheckedWindowOperation::Drag,
+                ResolvedWindowOperation::DragResize(direction) => {
+                    CheckedWindowOperation::DragResize(format!("{direction:?}"))
+                }
+                ResolvedWindowOperation::Resize(..) => CheckedWindowOperation::Resize,
+                ResolvedWindowOperation::Resizable(_) => CheckedWindowOperation::Resizable,
+                ResolvedWindowOperation::MinSize(value) => {
+                    CheckedWindowOperation::MinSize(value.is_some())
+                }
+                ResolvedWindowOperation::MaxSize(value) => {
+                    CheckedWindowOperation::MaxSize(value.is_some())
+                }
+                ResolvedWindowOperation::ResizeIncrements(value) => {
+                    CheckedWindowOperation::ResizeIncrements(value.is_some())
+                }
+                ResolvedWindowOperation::Size => CheckedWindowOperation::Size,
+                ResolvedWindowOperation::IsMaximized => CheckedWindowOperation::IsMaximized,
+                ResolvedWindowOperation::Maximize(_) => CheckedWindowOperation::Maximize,
+                ResolvedWindowOperation::IsMinimized => CheckedWindowOperation::IsMinimized,
+                ResolvedWindowOperation::Minimize(_) => CheckedWindowOperation::Minimize,
+                ResolvedWindowOperation::Position => CheckedWindowOperation::Position,
+                ResolvedWindowOperation::ScaleFactor => CheckedWindowOperation::ScaleFactor,
+                ResolvedWindowOperation::Move(..) => CheckedWindowOperation::Move,
+                ResolvedWindowOperation::Mode => CheckedWindowOperation::Mode,
+                ResolvedWindowOperation::SetMode(mode) => {
+                    CheckedWindowOperation::SetMode(format!("{mode:?}"))
+                }
+                ResolvedWindowOperation::ToggleMaximize => CheckedWindowOperation::ToggleMaximize,
+                ResolvedWindowOperation::ToggleDecorations => {
+                    CheckedWindowOperation::ToggleDecorations
+                }
+                ResolvedWindowOperation::Attention(value) => {
+                    CheckedWindowOperation::Attention(value.map(|value| format!("{value:?}")))
+                }
+                ResolvedWindowOperation::Focus => CheckedWindowOperation::Focus,
+                ResolvedWindowOperation::SetLevel(level) => {
+                    CheckedWindowOperation::SetLevel(format!("{level:?}"))
+                }
+                ResolvedWindowOperation::SystemMenu => CheckedWindowOperation::SystemMenu,
+                ResolvedWindowOperation::RawId => CheckedWindowOperation::RawId,
+                ResolvedWindowOperation::Screenshot => CheckedWindowOperation::Screenshot,
+                ResolvedWindowOperation::MousePassthrough(_) => {
+                    CheckedWindowOperation::MousePassthrough
+                }
+                ResolvedWindowOperation::MonitorSize => CheckedWindowOperation::MonitorSize,
+                ResolvedWindowOperation::AutomaticTabbing(_) => {
+                    CheckedWindowOperation::AutomaticTabbing
+                }
+                ResolvedWindowOperation::Icon { .. } => CheckedWindowOperation::Icon,
+                ResolvedWindowOperation::Callback { target, args } => {
+                    CheckedWindowOperation::Callback {
+                        function: extern_name(program, *target, statement.origin)?,
+                        arguments: args.len(),
+                    }
+                }
+            })
+        }
+        _ => return Ok(None),
+    }))
+}
+
 impl LoweredProgram {
+    pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
+        fn validate_expression_use(
+            program: &LoweredProgram,
+            id: CheckedExprUseId,
+            owner: crate::check::CheckedExprOwner,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            let expression = program.facts.try_expression_use(id).ok_or_else(|| {
+                program.invariant_at_origin(origin, "expression-use ID is outside its arena")
+            })?;
+            if expression.owner != owner {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "expression-use ID belongs to a different HIR owner",
+                ));
+            }
+            if program.facts.try_expression(expression.root).is_none() {
+                return Err(
+                    program.invariant_at_origin(origin, "expression root ID is outside its arena")
+                );
+            }
+            Ok(())
+        }
+
+        fn validate_route(
+            program: &LoweredProgram,
+            route: &ResolvedRoute,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let declaration = program.declarations.try_route(route.id).ok_or_else(|| {
+                program.invariant_at_origin(route.origin, "route ID is outside its arena")
+            })?;
+            if declaration.statement != statement.id || declaration.task != statement.task {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route ID belongs to a different statement or task",
+                ));
+            }
+            let checked = program.facts.try_route(route.id).ok_or_else(|| {
+                program.invariant_at_origin(route.origin, "route has no checked HIR contract")
+            })?;
+            let (handler, owner, name) = match &route.target {
+                ResolvedRouteTarget::App { handler, name } => {
+                    (*handler, HandlerOwner::App, name.as_str())
+                }
+                ResolvedRouteTarget::Component {
+                    component,
+                    handler,
+                    name,
+                } => (*handler, HandlerOwner::Component(*component), name.as_str()),
+            };
+            let target = program.try_handler(handler).ok_or_else(|| {
+                program.invariant_at_origin(
+                    route.origin,
+                    "route target handler ID is outside its arena",
+                )
+            })?;
+            if target.owner != owner || target.name != name {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route target ID belongs to a different handler",
+                ));
+            }
+            if checked.id != route.id
+                || checked.origin != route.origin
+                || declaration.declaration.origin != route.origin
+                || checked.target != handler
+                || checked.target_owner != owner
+                || checked.args.len() != route.args.len()
+                || target.params.len() != route.args.len()
+            {
+                return Err(program.invariant_at_origin(
+                    route.origin,
+                    "route target or argument cardinality diverged from its checked contract",
+                ));
+            }
+            let mut payload = 0usize;
+            for (argument, ((resolved, checked_kind), param)) in route
+                .args
+                .iter()
+                .zip(&checked.args)
+                .zip(&target.params)
+                .enumerate()
+            {
+                match (resolved, checked_kind) {
+                    (
+                        ResolvedRouteArg::Expression(expression),
+                        crate::check::CheckedRouteArgKind::Expression,
+                    ) => {
+                        validate_expression_use(
+                            program,
+                            *expression,
+                            crate::check::CheckedExprOwner::Route {
+                                route: route.id,
+                                argument: argument as u32,
+                            },
+                            route.origin,
+                        )?;
+                        let expression = program.facts.expression_use(*expression);
+                        if expression.destination != param.ty {
+                            return Err(program.invariant_at_origin(
+                                route.origin,
+                                "route expression type diverged from its target parameter",
+                            ));
+                        }
+                    }
+                    (
+                        ResolvedRouteArg::Payload { index, ty },
+                        crate::check::CheckedRouteArgKind::Payload,
+                    ) => {
+                        let expected = if checked.ordered_payloads { payload } else { 0 };
+                        let source = checked.source_payloads.get(expected).ok_or_else(|| {
+                            program.invariant_at_origin(
+                                route.origin,
+                                "route payload index is outside its checked source contract",
+                            )
+                        })?;
+                        if *index as usize != expected || source != ty || param.ty != *ty {
+                            return Err(program.invariant_at_origin(
+                                route.origin,
+                                "route payload topology or type diverged from its checked contract",
+                            ));
+                        }
+                        payload += 1;
+                    }
+                    _ => {
+                        return Err(program.invariant_at_origin(
+                            route.origin,
+                            "route argument kind diverged from its checked contract",
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        fn validate_task(
+            program: &LoweredProgram,
+            task: TaskId,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let declaration = program.declarations.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(statement.origin, "task ID is outside its arena")
+            })?;
+            if declaration.statement != statement.id {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task ID belongs to a different statement",
+                ));
+            }
+            let checked = program.facts.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(statement.origin, "task has no checked HIR contract")
+            })?;
+            if checked.id != task {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task ID diverged from its checked HIR contract",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_task_operands(
+            program: &LoweredProgram,
+            task: TaskId,
+            operands: &[CheckedExprUseId],
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            for (operand, expression) in operands.iter().enumerate() {
+                validate_expression_use(
+                    program,
+                    *expression,
+                    crate::check::CheckedExprOwner::Task {
+                        task,
+                        operand: operand as u32,
+                    },
+                    origin,
+                )?;
+            }
+            if program
+                .facts
+                .expression_use_by_owner(crate::check::CheckedExprOwner::Task {
+                    task,
+                    operand: operands.len() as u32,
+                })
+                .is_some()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "task operand cardinality diverged from its checked HIR contract",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_effect(
+            program: &LoweredProgram,
+            target: &ResolvedEffectTarget,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedEffectTarget::Extern(id) = target
+                && program.declarations.try_extern_decl(*id).is_none()
+            {
+                return Err(program
+                    .invariant_at_origin(origin, "effect extern target ID is outside its arena"));
+            }
+            Ok(())
+        }
+
+        fn validate_effect_task(
+            program: &LoweredProgram,
+            task: TaskId,
+            kind: EffectKind,
+            target: &ResolvedEffectTarget,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            validate_effect(program, target, origin)?;
+            let checked = program.facts.try_task(task).ok_or_else(|| {
+                program.invariant_at_origin(origin, "effect task has no checked HIR contract")
+            })?;
+            let matches = match (&checked.target, target) {
+                (
+                    Some(crate::check::CheckedEffectTarget::Builtin(checked)),
+                    ResolvedEffectTarget::Builtin(resolved),
+                ) => checked == resolved,
+                (
+                    Some(crate::check::CheckedEffectTarget::Extern(checked)),
+                    ResolvedEffectTarget::Extern(resolved),
+                ) => checked == resolved,
+                _ => false,
+            };
+            if !matches {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "effect target diverged from its checked task contract",
+                ));
+            }
+            let kind_matches = match target {
+                ResolvedEffectTarget::Builtin(_) => kind == EffectKind::Task,
+                ResolvedEffectTarget::Extern(id) => program
+                    .declarations
+                    .try_extern_decl(*id)
+                    .is_some_and(|declaration| declaration.kind == ExternKind::from(kind)),
+            };
+            if !kind_matches {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "effect kind diverged from its checked target contract",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_task_source(
+            program: &LoweredProgram,
+            source: &ResolvedTaskSource,
+            statement: &ResolvedStatement,
+        ) -> Result<TaskId, Error> {
+            let (task, operands) = match source {
+                ResolvedTaskSource::Effect {
+                    task,
+                    kind,
+                    target,
+                    args,
+                } => {
+                    validate_effect_task(program, *task, *kind, target, statement.origin)?;
+                    (*task, args.as_slice())
+                }
+                ResolvedTaskSource::Done { task, value } => (*task, ::std::slice::from_ref(value)),
+                ResolvedTaskSource::None { task, .. } => (*task, &[] as &[CheckedExprUseId]),
+            };
+            validate_task(program, task, statement)?;
+            validate_task_operands(program, task, operands, statement.origin)?;
+            Ok(task)
+        }
+
+        fn validate_widget_operation(
+            program: &LoweredProgram,
+            operation: &ResolvedWidgetOperation,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedWidgetOperation::Find {
+                selector: ResolvedWidgetSelector::Extern { target, .. },
+                ..
+            } = operation
+                && program.declarations.try_extern_decl(*target).is_none()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "widget selector extern target ID is outside its arena",
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_window_operation(
+            program: &LoweredProgram,
+            operation: &ResolvedWindowOperation,
+            origin: OriginId,
+        ) -> Result<(), Error> {
+            if let ResolvedWindowOperation::Callback { target, .. } = operation
+                && program.declarations.try_extern_decl(*target).is_none()
+            {
+                return Err(program.invariant_at_origin(
+                    origin,
+                    "window callback extern target ID is outside its arena",
+                ));
+            }
+            Ok(())
+        }
+
+        fn widget_target_operands(
+            target: &ResolvedWidgetTarget,
+            operands: &mut Vec<CheckedExprUseId>,
+        ) {
+            operands.extend(target.segments.iter().filter_map(|segment| segment.key));
+        }
+
+        fn pane_reference_operands(
+            reference: &ResolvedPaneReference,
+            operands: &mut Vec<CheckedExprUseId>,
+        ) {
+            if let ResolvedPaneReference::Dynamic { key, .. } = reference {
+                operands.push(*key);
+            }
+        }
+
+        fn statement_operands(statement: &ResolvedStatement) -> Vec<CheckedExprUseId> {
+            let mut operands = Vec::new();
+            match &statement.kind {
+                ResolvedStatementKind::Let { value, .. }
+                | ResolvedStatementKind::MarkdownAppend { value, .. }
+                | ResolvedStatementKind::ComboPush { value, .. }
+                | ResolvedStatementKind::ClipboardWrite { value, .. } => operands.push(*value),
+                ResolvedStatementKind::Assign { value, at, .. } => {
+                    operands.push(*value);
+                    operands.extend(at);
+                }
+                ResolvedStatementKind::ReturnIf { condition } => operands.push(*condition),
+                ResolvedStatementKind::DebugStart { name, .. } => operands.push(*name),
+                ResolvedStatementKind::WidgetOperation { operation, .. } => match operation {
+                    ResolvedWidgetOperation::FocusPrevious | ResolvedWidgetOperation::FocusNext => {
+                    }
+                    ResolvedWidgetOperation::Focus { target }
+                    | ResolvedWidgetOperation::Focused { target }
+                    | ResolvedWidgetOperation::CursorFront { target }
+                    | ResolvedWidgetOperation::CursorEnd { target }
+                    | ResolvedWidgetOperation::SelectAll { target }
+                    | ResolvedWidgetOperation::SnapEnd { target } => {
+                        widget_target_operands(target, &mut operands);
+                    }
+                    ResolvedWidgetOperation::Cursor { target, position } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.push(*position);
+                    }
+                    ResolvedWidgetOperation::Select { target, start, end } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.extend([*start, *end]);
+                    }
+                    ResolvedWidgetOperation::Snap { target, x, y }
+                    | ResolvedWidgetOperation::ScrollTo { target, x, y }
+                    | ResolvedWidgetOperation::ScrollBy { target, x, y } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.extend([*x, *y]);
+                    }
+                    ResolvedWidgetOperation::Find { selector, .. } => match selector {
+                        ResolvedWidgetSelector::Id(target) => {
+                            widget_target_operands(target, &mut operands);
+                        }
+                        ResolvedWidgetSelector::Text(value) => operands.push(*value),
+                        ResolvedWidgetSelector::Point { x, y } => operands.extend([*x, *y]),
+                        ResolvedWidgetSelector::Focused => {}
+                        ResolvedWidgetSelector::Extern { args, .. } => {
+                            operands.extend(args.iter().copied());
+                        }
+                    },
+                },
+                ResolvedStatementKind::PaneOperation { operation, .. } => match operation {
+                    ResolvedPaneOperation::Restore | ResolvedPaneOperation::Maximized => {}
+                    ResolvedPaneOperation::Maximize { pane }
+                    | ResolvedPaneOperation::Adjacent { pane, .. }
+                    | ResolvedPaneOperation::Close { pane }
+                    | ResolvedPaneOperation::Move { pane, .. } => {
+                        pane_reference_operands(pane, &mut operands);
+                    }
+                    ResolvedPaneOperation::Swap { first, second } => {
+                        pane_reference_operands(first, &mut operands);
+                        pane_reference_operands(second, &mut operands);
+                    }
+                    ResolvedPaneOperation::Resize { ratio, .. } => operands.push(*ratio),
+                    ResolvedPaneOperation::Drop { pane, target, .. } => {
+                        pane_reference_operands(pane, &mut operands);
+                        pane_reference_operands(target, &mut operands);
+                    }
+                    ResolvedPaneOperation::Split {
+                        target,
+                        pane,
+                        ratio,
+                        ..
+                    } => {
+                        pane_reference_operands(target, &mut operands);
+                        pane_reference_operands(pane, &mut operands);
+                        operands.push(*ratio);
+                    }
+                },
+                ResolvedStatementKind::WindowOperation {
+                    operation, target, ..
+                } => {
+                    operands.extend(target);
+                    match operation {
+                        ResolvedWindowOperation::Resize(width, height)
+                        | ResolvedWindowOperation::Move(width, height) => {
+                            operands.extend([*width, *height]);
+                        }
+                        ResolvedWindowOperation::Resizable(value)
+                        | ResolvedWindowOperation::Maximize(value)
+                        | ResolvedWindowOperation::Minimize(value)
+                        | ResolvedWindowOperation::MousePassthrough(value)
+                        | ResolvedWindowOperation::AutomaticTabbing(value) => {
+                            operands.push(*value);
+                        }
+                        ResolvedWindowOperation::MinSize(size)
+                        | ResolvedWindowOperation::MaxSize(size)
+                        | ResolvedWindowOperation::ResizeIncrements(size) => {
+                            if let Some((width, height)) = size {
+                                operands.extend([*width, *height]);
+                            }
+                        }
+                        ResolvedWindowOperation::Icon {
+                            pixels,
+                            width,
+                            height,
+                        } => operands.extend([*pixels, *width, *height]),
+                        ResolvedWindowOperation::Callback { args, .. } => {
+                            operands.extend(args.iter().copied());
+                        }
+                        ResolvedWindowOperation::Open(_)
+                        | ResolvedWindowOperation::Oldest
+                        | ResolvedWindowOperation::Latest
+                        | ResolvedWindowOperation::Close
+                        | ResolvedWindowOperation::Drag
+                        | ResolvedWindowOperation::DragResize(_)
+                        | ResolvedWindowOperation::Size
+                        | ResolvedWindowOperation::IsMaximized
+                        | ResolvedWindowOperation::IsMinimized
+                        | ResolvedWindowOperation::Position
+                        | ResolvedWindowOperation::ScaleFactor
+                        | ResolvedWindowOperation::Mode
+                        | ResolvedWindowOperation::SetMode(_)
+                        | ResolvedWindowOperation::ToggleMaximize
+                        | ResolvedWindowOperation::ToggleDecorations
+                        | ResolvedWindowOperation::Attention(_)
+                        | ResolvedWindowOperation::Focus
+                        | ResolvedWindowOperation::SetLevel(_)
+                        | ResolvedWindowOperation::SystemMenu
+                        | ResolvedWindowOperation::RawId
+                        | ResolvedWindowOperation::Screenshot
+                        | ResolvedWindowOperation::MonitorSize => {}
+                    }
+                }
+                ResolvedStatementKind::Exit
+                | ResolvedStatementKind::Run(_)
+                | ResolvedStatementKind::Sip(_)
+                | ResolvedStatementKind::TaskFlow(_)
+                | ResolvedStatementKind::TaskGroup { .. }
+                | ResolvedStatementKind::Abortable { .. }
+                | ResolvedStatementKind::Abort { .. }
+                | ResolvedStatementKind::DebugFinish { .. } => {}
+            }
+            operands
+        }
+
+        fn validate_statement_operands(
+            program: &LoweredProgram,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let checked = program.facts.try_statement(statement.id).ok_or_else(|| {
+                program
+                    .invariant_at_origin(statement.origin, "statement has no checked HIR contract")
+            })?;
+            let operands = statement_operands(statement);
+            if checked.id != statement.id || checked.operand_count as usize != operands.len() {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement operand cardinality diverged from its checked HIR contract",
+                ));
+            }
+            for (operand, expression) in operands.iter().enumerate() {
+                validate_expression_use(
+                    program,
+                    *expression,
+                    crate::check::CheckedExprOwner::HandlerStatement {
+                        statement: statement.id,
+                        operand: operand as u32,
+                    },
+                    statement.origin,
+                )?;
+            }
+            Ok(())
+        }
+
+        fn statement_routes(statement: &ResolvedStatement) -> Vec<&ResolvedRoute> {
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => std::iter::once(&run.success)
+                    .chain(run.error.iter())
+                    .collect(),
+                ResolvedStatementKind::Sip(sip) => std::iter::once(&sip.progress)
+                    .chain(std::iter::once(&sip.success))
+                    .chain(sip.error.iter())
+                    .collect(),
+                ResolvedStatementKind::TaskFlow(flow) => flow
+                    .success
+                    .iter()
+                    .chain(flow.error.iter())
+                    .chain(flow.units.iter())
+                    .collect(),
+                ResolvedStatementKind::WidgetOperation { route, .. }
+                | ResolvedStatementKind::PaneOperation { route, .. }
+                | ResolvedStatementKind::WindowOperation { route, .. } => route.iter().collect(),
+                _ => Vec::new(),
+            }
+        }
+
+        fn statement_writable_targets(
+            statement: &ResolvedStatement,
+        ) -> Vec<&ResolvedWritableState> {
+            match &statement.kind {
+                ResolvedStatementKind::Assign { target, .. }
+                | ResolvedStatementKind::MarkdownAppend { target, .. }
+                | ResolvedStatementKind::ComboPush { target, .. }
+                | ResolvedStatementKind::DebugStart { target, .. }
+                | ResolvedStatementKind::DebugFinish { target }
+                | ResolvedStatementKind::Abort { handle: target }
+                | ResolvedStatementKind::Abortable { handle: target, .. } => vec![target],
+                _ => Vec::new(),
+            }
+        }
+
+        fn validate_writable_targets(
+            program: &LoweredProgram,
+            statement: &ResolvedStatement,
+            checked: &crate::check::CheckedStatement,
+        ) -> Result<(), Error> {
+            let resolved = statement_writable_targets(statement);
+            if resolved.len() != checked.writable_targets.len() {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement writable target cardinality diverged from checked HIR",
+                ));
+            }
+            for (target, expected) in resolved.iter().zip(&checked.writable_targets) {
+                let value = program.facts.try_value_by_ref(*expected).ok_or_else(|| {
+                    program.invariant_at_origin(
+                        statement.origin,
+                        "checked writable target ID is outside its arena",
+                    )
+                })?;
+                if target.value != *expected || target.name != value.name || target.ty != value.ty {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "statement writable target identity or type diverged from checked HIR",
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn validate_transform_local(
+            program: &LoweredProgram,
+            transform: &ResolvedTaskTransform,
+            index: usize,
+            statement: &ResolvedStatement,
+        ) -> Result<(), Error> {
+            let (task, local, binding, input, input_fallible) = match transform {
+                ResolvedTaskTransform::Map {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    input_fallible,
+                    ..
+                } => (*task, *local, binding, input, Some(*input_fallible)),
+                ResolvedTaskTransform::Then {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                }
+                | ResolvedTaskTransform::AndThen {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                }
+                | ResolvedTaskTransform::MapError {
+                    task,
+                    local,
+                    binding,
+                    input,
+                    ..
+                } => (*task, *local, binding, input, None),
+                ResolvedTaskTransform::Collect { .. } | ResolvedTaskTransform::Discard { .. } => {
+                    return Ok(());
+                }
+            };
+            let expected =
+                program
+                    .facts
+                    .local_by_owner(crate::check::CheckedLocalOwner::TaskTransform {
+                        task,
+                        index: index as u32,
+                    });
+            let local_fact = program.facts.try_local(local).ok_or_else(|| {
+                program.invariant_at_origin(
+                    statement.origin,
+                    "task transform local ID is outside its arena",
+                )
+            })?;
+            if expected != Some(local)
+                || local_fact.name != *binding
+                || local_fact.ty != *input
+                || local_fact.owner
+                    != (crate::check::CheckedLocalOwner::TaskTransform {
+                        task,
+                        index: index as u32,
+                    })
+            {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "task transform local identity, binding, or type diverged from checked HIR",
+                ));
+            }
+            if let Some(input_fallible) = input_fallible {
+                let expected = program
+                    .facts
+                    .try_task(task)
+                    .is_some_and(|task| task.error.is_some());
+                if input_fallible != expected {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "task transform fallibility diverged from checked HIR",
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn visit(
+            program: &LoweredProgram,
+            handler: &ResolvedHandler,
+            statement: &ResolvedStatement,
+            parent: Option<StatementId>,
+        ) -> Result<(), Error> {
+            let declaration = program
+                .declarations
+                .try_statement(statement.id)
+                .ok_or_else(|| {
+                    program
+                        .invariant_at_origin(statement.origin, "statement ID is outside its arena")
+                })?;
+            if declaration.handler != handler.id
+                || declaration.parent != parent
+                || declaration.task != statement.task
+                || declaration.is_final != statement.is_final
+                || declaration.declaration.origin != statement.origin
+            {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement owner, parent, task ID, finality, or origin diverged from its declaration",
+                ));
+            }
+            if let Some(task) = statement.task {
+                validate_task(program, task, statement)?;
+            }
+            validate_statement_operands(program, statement)?;
+            let routes = statement_routes(statement);
+            for route in &routes {
+                validate_route(program, route, statement)?;
+            }
+            if routes.iter().map(|route| route.id).collect::<Vec<_>>() != declaration.routes {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement route cardinality or order diverged from its declaration",
+                ));
+            }
+            let children = match &statement.kind {
+                ResolvedStatementKind::TaskGroup { statements, .. } => {
+                    statements.iter().map(|child| child.id).collect::<Vec<_>>()
+                }
+                ResolvedStatementKind::Abortable { task, .. } => vec![task.id],
+                _ => Vec::new(),
+            };
+            if children != declaration.children {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement child cardinality or order diverged from its declaration",
+                ));
+            }
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => {
+                    let task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "run statement has no normalized task ID",
+                        )
+                    })?;
+                    validate_effect_task(program, task, run.kind, &run.target, statement.origin)?;
+                    validate_task_operands(program, task, &run.args, statement.origin)?;
+                    if (run.mode == FutureMode::Every) != run.site.is_none()
+                        || run.site != declaration.run_site
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "run mode and stable run-site cardinality diverged",
+                        ));
+                    }
+                    if let Some(site) = run.site {
+                        let run_site =
+                            program.declarations.try_run_site(site).ok_or_else(|| {
+                                program.invariant_at_origin(
+                                    statement.origin,
+                                    "run-site ID is outside its arena",
+                                )
+                            })?;
+                        if run_site.statement != statement.id || run_site.mode != run.mode {
+                            return Err(program.invariant_at_origin(
+                                statement.origin,
+                                "run-site ID belongs to a different statement or mode",
+                            ));
+                        }
+                    }
+                }
+                ResolvedStatementKind::Sip(sip) => {
+                    let task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "sip statement has no normalized task ID",
+                        )
+                    })?;
+                    let checked_task = program.facts.try_task(task).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "sip task has no checked HIR contract",
+                        )
+                    })?;
+                    if !program
+                        .declarations
+                        .try_extern_decl(sip.target)
+                        .is_some_and(|declaration| declaration.kind == ExternKind::Sip)
+                        || checked_task.target
+                            != Some(crate::check::CheckedEffectTarget::Extern(sip.target))
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "sip extern target diverged from its checked task contract",
+                        ));
+                    }
+                    validate_task_operands(program, task, &sip.args, statement.origin)?;
+                }
+                ResolvedStatementKind::TaskFlow(flow) => {
+                    let root_task = statement.task.ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow statement has no normalized root task ID",
+                        )
+                    })?;
+                    let checked_root = program.facts.try_task(root_task).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow root task has no checked HIR contract",
+                        )
+                    })?;
+                    if flow.output != checked_root.output || flow.error_type != checked_root.error {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow output or error type diverged from checked HIR",
+                        ));
+                    }
+                    let mut source_tasks =
+                        vec![validate_task_source(program, &flow.source, statement)?];
+                    for (index, transform) in flow.transforms.iter().enumerate() {
+                        validate_transform_local(program, transform, index, statement)?;
+                        let task = match transform {
+                            ResolvedTaskTransform::Map { task, value, .. }
+                            | ResolvedTaskTransform::MapError { task, value, .. } => {
+                                validate_task(program, *task, statement)?;
+                                validate_task_operands(
+                                    program,
+                                    *task,
+                                    ::std::slice::from_ref(value),
+                                    statement.origin,
+                                )?;
+                                *task
+                            }
+                            ResolvedTaskTransform::Then { source, .. }
+                            | ResolvedTaskTransform::AndThen { source, .. } => {
+                                validate_task_source(program, source, statement)?
+                            }
+                            ResolvedTaskTransform::Collect { task }
+                            | ResolvedTaskTransform::Discard { task } => {
+                                validate_task(program, *task, statement)?;
+                                validate_task_operands(program, *task, &[], statement.origin)?;
+                                *task
+                            }
+                        };
+                        source_tasks.push(task);
+                    }
+                    if source_tasks != declaration.source_tasks {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "task-flow source task cardinality or order diverged",
+                        ));
+                    }
+                }
+                ResolvedStatementKind::TaskGroup { statements, .. } => {
+                    for child in statements {
+                        visit(program, handler, child, Some(statement.id))?;
+                    }
+                }
+                ResolvedStatementKind::Abortable { task, .. } => {
+                    visit(program, handler, task, Some(statement.id))?;
+                }
+                ResolvedStatementKind::WidgetOperation { operation, .. } => {
+                    validate_widget_operation(program, operation, statement.origin)?;
+                }
+                ResolvedStatementKind::PaneOperation { .. } => {}
+                ResolvedStatementKind::WindowOperation { operation, .. } => {
+                    validate_window_operation(program, operation, statement.origin)?;
+                }
+                _ => {}
+            }
+            let checked = program.facts.statement(statement.id);
+            validate_writable_targets(program, statement, checked)?;
+            match &statement.kind {
+                ResolvedStatementKind::Let {
+                    local, name, ty, ..
+                } => {
+                    let expected = program.facts.local_by_owner(
+                        crate::check::CheckedLocalOwner::StatementLet(statement.id),
+                    );
+                    let local_fact = program.facts.try_local(*local).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "let local ID is outside its arena",
+                        )
+                    })?;
+                    if expected != Some(*local)
+                        || local_fact.name != *name
+                        || local_fact.ty != *ty
+                        || local_fact.owner
+                            != crate::check::CheckedLocalOwner::StatementLet(statement.id)
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "let local identity, name, or type diverged from checked HIR",
+                        ));
+                    }
+                }
+                ResolvedStatementKind::Assign { move_self, .. }
+                    if checked.editor_self_move != Some(*move_self) =>
+                {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "editor self-move mode diverged from checked HIR",
+                    ));
+                }
+                ResolvedStatementKind::PaneOperation { dynamic, .. }
+                    if checked.pane_grid_dynamic != Some(*dynamic) =>
+                {
+                    return Err(program.invariant_at_origin(
+                        statement.origin,
+                        "pane grid mode diverged from checked HIR",
+                    ));
+                }
+                _ => {}
+            }
+            if checked.semantic_key != resolved_statement_semantic_key(program, statement)?
+                || checked.operation != resolved_handler_operation_contract(program, statement)?
+            {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "statement semantics or operation contract diverged from checked HIR",
+                ));
+            }
+            Ok(())
+        }
+
+        if let Err((origin, message)) = self.facts.validate_expression_arena() {
+            return Err(self.invariant_at_origin(origin, message));
+        }
+        if let Err((origin, message)) =
+            validate_expression_declaration_references(&self.facts, &self.declarations)
+        {
+            return Err(self.invariant_at_origin(origin, message));
+        }
+
+        if self.handlers.len() != self.declarations.handlers().len() {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "handler arena cardinality diverged from its declarations",
+            ));
+        }
+        if let Some((_, handler)) = self
+            .handlers
+            .iter()
+            .enumerate()
+            .find(|(index, handler)| handler.id != HandlerId(*index as u32))
+        {
+            return Err(self.invariant_at_origin(
+                handler.origin,
+                "handler arena order diverged from its declarations",
+            ));
+        }
+
+        for handler in &self.handlers {
+            let declaration = self.declarations.try_handler(handler.id).ok_or_else(|| {
+                self.invariant_at_origin(handler.origin, "handler ID is outside its arena")
+            })?;
+            if declaration.owner != handler.owner || declaration.name != handler.name {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler identity diverged from its declaration",
+                ));
+            }
+            let checked = self.facts.try_handler(handler.id).ok_or_else(|| {
+                self.invariant_at_origin(handler.origin, "handler has no checked HIR contract")
+            })?;
+            if checked.id != handler.id
+                || checked.origin != handler.origin
+                || checked.params.len() != handler.params.len()
+                || checked.param_names.len() != handler.params.len()
+                || checked.param_types.len() != handler.params.len()
+            {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler parameter cardinality or origin diverged from its checked contract",
+                ));
+            }
+            for (index, param) in handler.params.iter().enumerate() {
+                let local = self.facts.try_local(param.local).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        handler.origin,
+                        "handler parameter local ID is outside its arena",
+                    )
+                })?;
+                if checked.params[index] != param.local
+                    || checked.param_names[index] != param.name
+                    || checked.param_types[index] != param.ty
+                    || local.name != param.name
+                    || local.ty != param.ty
+                    || local.owner
+                        != (crate::check::CheckedLocalOwner::HandlerParam {
+                            handler: handler.id,
+                            index: index as u32,
+                        })
+                {
+                    return Err(self.invariant_at_origin(
+                        handler.origin,
+                        "handler parameter identity, type, or local owner diverged",
+                    ));
+                }
+            }
+            for statement in &handler.statements {
+                visit(self, handler, statement, None)?;
+            }
+            if declaration.statement_roots
+                != handler
+                    .statements
+                    .iter()
+                    .map(|statement| statement.id)
+                    .collect::<Vec<_>>()
+            {
+                return Err(self.invariant_at_origin(
+                    handler.origin,
+                    "handler statement roots diverged from its declaration",
+                ));
+            }
+        }
+
+        let mut expected_app = Vec::new();
+        let mut expected_presets = Vec::new();
+        let mut expected_components = vec![Vec::new(); self.components.len()];
+        for handler in self.declarations.handlers() {
+            match handler.owner {
+                HandlerOwner::App => expected_app.push(handler.declaration.id),
+                HandlerOwner::Preset(_) => expected_presets.push(handler.declaration.id),
+                HandlerOwner::Component(component) => {
+                    let Some(partition) = expected_components.get_mut(component.0 as usize) else {
+                        return Err(self.invariant_at_origin(
+                            handler.declaration.origin,
+                            "component handler owner ID is outside its contract arena",
+                        ));
+                    };
+                    partition.push(handler.declaration.id);
+                }
+            }
+        }
+        if self.app_handlers != expected_app {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "app handler index diverged from its declaration partition",
+            ));
+        }
+        if self.preset_handlers != expected_presets {
+            return Err(self.invariant_at_origin(
+                OriginId(u32::MAX),
+                "preset handler index diverged from its declaration partition",
+            ));
+        }
+        for (index, (component, expected)) in
+            self.components.iter().zip(expected_components).enumerate()
+        {
+            if component.id != ComponentId(index as u32) || component.handlers != expected {
+                return Err(self.invariant_at_origin(
+                    component.origin,
+                    "component identity or handler index diverged from its declaration partition",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    pub(crate) fn app_name(&self) -> &str {
+        &self.document.app
+    }
+
+    pub(crate) fn is_daemon(&self) -> bool {
+        self.document.daemon
+    }
+
+    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
+        &self.document.structs
     }
 
     #[allow(dead_code)]
@@ -310,6 +2269,54 @@ impl LoweredProgram {
 
     pub(crate) fn component(&self, id: ComponentId) -> &ComponentContract {
         &self.components[id.0 as usize]
+    }
+
+    pub(crate) fn try_component(&self, id: ComponentId) -> Option<&ComponentContract> {
+        self.components.get(id.0 as usize)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
+        &self.handlers
+    }
+
+    pub(crate) fn handler(&self, id: HandlerId) -> &ResolvedHandler {
+        &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&ResolvedHandler> {
+        self.handlers.get(id.0 as usize)
+    }
+
+    pub(crate) fn invariant_at_origin(
+        &self,
+        origin: OriginId,
+        message: impl Into<String>,
+    ) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some(origin) = self.origins.try_get(origin) else {
+            return Error::new("E196", &Span::line(1), message);
+        };
+        let mut error = Error::new(
+            "E196",
+            &Span {
+                line: origin.line,
+                column: origin.column,
+            },
+            message,
+        );
+        if let Some(path) = &origin.path {
+            error = error.at_path(path.display().to_string());
+        }
+        error
+    }
+
+    pub(crate) fn app_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
+        self.app_handlers.iter().map(|id| self.handler(*id))
+    }
+
+    pub(crate) fn preset_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
+        self.preset_handlers.iter().map(|id| self.handler(*id))
     }
 
     pub(crate) fn component_slot_name(&self, id: ComponentSlotId) -> Result<&str, Error> {
@@ -438,7 +2445,7 @@ pub(crate) fn lower(checked: CheckedDocument) -> Result<LoweredProgram, Error> {
     Lowerer::new(checked).lower()
 }
 
-struct Lowerer {
+pub(crate) struct Lowerer {
     document: Document,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
@@ -449,6 +2456,9 @@ struct Lowerer {
     calls: Vec<ComponentCall>,
     calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgramBuilder,
+    handlers: Vec<ResolvedHandler>,
+    app_handlers: Vec<HandlerId>,
+    preset_handlers: Vec<HandlerId>,
 }
 
 impl Lowerer {
@@ -472,14 +2482,26 @@ impl Lowerer {
             calls: Vec::new(),
             calls_by_site: HashMap::new(),
             styles: StyleProgramBuilder::default(),
+            handlers: Vec::new(),
+            app_handlers: Vec::new(),
+            preset_handlers: Vec::new(),
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        if let Err((origin, message)) = self.facts.validate_expression_arena() {
+            return Err(self.invariant_at_origin(origin, message));
+        }
+        if let Err((origin, message)) =
+            validate_expression_declaration_references(&self.facts, &self.declarations)
+        {
+            return Err(self.invariant_at_origin(origin, message));
+        }
         self.lower_style_program()?;
         let app_states = self.lower_app_states()?;
         let derived = self.lower_derived()?;
         self.index_components()?;
+        self.lower_handlers()?;
         let component_roots = self
             .components
             .iter()
@@ -513,6 +2535,9 @@ impl Lowerer {
             app_states,
             derived,
             components: self.components,
+            handlers: self.handlers,
+            app_handlers: self.app_handlers,
+            preset_handlers: self.preset_handlers,
             calls: self.calls,
             calls_by_site: self.calls_by_site,
             styles,
@@ -714,7 +2739,7 @@ impl Lowerer {
                 events,
                 slots,
                 states,
-                handlers: component.handlers,
+                handlers: Vec::new(),
                 root: component.root,
                 storage,
                 origin,
@@ -726,6 +2751,1564 @@ impl Lowerer {
             });
         }
         Ok(())
+    }
+
+    fn lower_handlers(&mut self) -> Result<(), Error> {
+        let mut declaration_index = 0usize;
+        for index in 0..self.document.handlers.len() {
+            let handler = self.document.handlers[index].clone();
+            let id = self.lower_handler(declaration_index, &handler, HandlerOwner::App)?;
+            self.app_handlers.push(id);
+            declaration_index += 1;
+        }
+        for component_index in 0..self.document.components.len() {
+            let component = self.document.components[component_index].clone();
+            for handler in &component.handlers {
+                let id = self.lower_handler(
+                    declaration_index,
+                    handler,
+                    HandlerOwner::Component(ComponentId(component_index as u32)),
+                )?;
+                self.components[component_index].handlers.push(id);
+                declaration_index += 1;
+            }
+        }
+        for preset_index in 0..self.document.presets.len() {
+            let preset = self.document.presets[preset_index].clone();
+            let handler = Handler {
+                name: format!("preset {}", preset.name),
+                params: Vec::new(),
+                statements: preset.statements,
+                span: preset.span,
+            };
+            let id = self.lower_handler(
+                declaration_index,
+                &handler,
+                HandlerOwner::Preset(preset_index as u32),
+            )?;
+            self.preset_handlers.push(id);
+            declaration_index += 1;
+        }
+        if declaration_index != self.declarations.handlers().len()
+            || self.handlers.len() != declaration_index
+        {
+            return Err(self.invariant(
+                &Span::line(1),
+                "handler lowering did not consume the complete declaration arena",
+            ));
+        }
+        self.validate_handler_arena_consumption()?;
+        Ok(())
+    }
+
+    fn validate_handler_arena_consumption(&self) -> Result<(), Error> {
+        fn mark(seen: &mut [bool], index: u32) -> bool {
+            seen.get_mut(index as usize).is_some_and(|slot| {
+                *slot = true;
+                true
+            })
+        }
+        fn mark_route(route: &ResolvedRoute, routes: &mut [bool]) -> bool {
+            mark(routes, route.id.0)
+        }
+        fn mark_source(source: &ResolvedTaskSource, tasks: &mut [bool]) -> bool {
+            let task = match source {
+                ResolvedTaskSource::Effect { task, .. }
+                | ResolvedTaskSource::Done { task, .. }
+                | ResolvedTaskSource::None { task, .. } => *task,
+            };
+            mark(tasks, task.0)
+        }
+        fn visit(
+            statement: &ResolvedStatement,
+            statements: &mut [bool],
+            tasks: &mut [bool],
+            routes: &mut [bool],
+            run_sites: &mut [bool],
+        ) -> bool {
+            if !mark(statements, statement.id.0)
+                || statement.task.is_some_and(|task| !mark(tasks, task.0))
+            {
+                return false;
+            }
+            match &statement.kind {
+                ResolvedStatementKind::Run(run) => {
+                    mark_route(&run.success, routes)
+                        && run
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && run.site.is_none_or(|site| mark(run_sites, site.0))
+                }
+                ResolvedStatementKind::Sip(sip) => {
+                    mark_route(&sip.progress, routes)
+                        && mark_route(&sip.success, routes)
+                        && sip
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::TaskFlow(flow) => {
+                    mark_source(&flow.source, tasks)
+                        && flow.transforms.iter().all(|transform| {
+                            let task = match transform {
+                                ResolvedTaskTransform::Map { task, .. }
+                                | ResolvedTaskTransform::Then { task, .. }
+                                | ResolvedTaskTransform::AndThen { task, .. }
+                                | ResolvedTaskTransform::MapError { task, .. }
+                                | ResolvedTaskTransform::Collect { task }
+                                | ResolvedTaskTransform::Discard { task } => *task,
+                            };
+                            mark(tasks, task.0)
+                        })
+                        && flow
+                            .success
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && flow
+                            .error
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                        && flow
+                            .units
+                            .as_ref()
+                            .is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::TaskGroup {
+                    statements: children,
+                    ..
+                } => children
+                    .iter()
+                    .all(|child| visit(child, statements, tasks, routes, run_sites)),
+                ResolvedStatementKind::Abortable { task, .. } => {
+                    visit(task, statements, tasks, routes, run_sites)
+                }
+                ResolvedStatementKind::WidgetOperation { route, .. }
+                | ResolvedStatementKind::PaneOperation { route, .. }
+                | ResolvedStatementKind::WindowOperation { route, .. } => {
+                    route.as_ref().is_none_or(|route| mark_route(route, routes))
+                }
+                ResolvedStatementKind::Let { .. }
+                | ResolvedStatementKind::Assign { .. }
+                | ResolvedStatementKind::MarkdownAppend { .. }
+                | ResolvedStatementKind::ComboPush { .. }
+                | ResolvedStatementKind::ReturnIf { .. }
+                | ResolvedStatementKind::Exit
+                | ResolvedStatementKind::Abort { .. }
+                | ResolvedStatementKind::DebugStart { .. }
+                | ResolvedStatementKind::DebugFinish { .. }
+                | ResolvedStatementKind::ClipboardWrite { .. } => true,
+            }
+        }
+
+        let mut statements = vec![false; self.declarations.statement_count()];
+        let mut tasks = vec![false; self.declarations.task_count()];
+        let mut routes = vec![false; self.declarations.route_count()];
+        let mut run_sites = vec![false; self.declarations.run_site_count()];
+        let valid = self
+            .handlers
+            .iter()
+            .flat_map(|handler| &handler.statements)
+            .all(|statement| {
+                visit(
+                    statement,
+                    &mut statements,
+                    &mut tasks,
+                    &mut routes,
+                    &mut run_sites,
+                )
+            });
+        if !valid
+            || statements.iter().any(|seen| !seen)
+            || tasks.iter().any(|seen| !seen)
+            || routes.iter().any(|seen| !seen)
+            || run_sites.iter().any(|seen| !seen)
+        {
+            return Err(self.invariant(
+                &Span::line(1),
+                "handler lowering did not consume every statement, task, route, and run-site ID",
+            ));
+        }
+        Ok(())
+    }
+
+    fn lower_handler(
+        &mut self,
+        declaration_index: usize,
+        handler: &Handler,
+        expected_owner: HandlerOwner,
+    ) -> Result<HandlerId, Error> {
+        let declaration = self
+            .declarations
+            .handlers()
+            .get(declaration_index)
+            .ok_or_else(|| self.invariant(&handler.span, "handler has no HIR declaration"))?
+            .clone();
+        if declaration.name != handler.name || declaration.owner != expected_owner {
+            return Err(self.invariant(
+                &handler.span,
+                "handler HIR declaration owner order changed after checking",
+            ));
+        }
+        let id = declaration.declaration.id;
+        if id.0 as usize != self.handlers.len() {
+            return Err(self.invariant(&handler.span, "handler HIR arena is not preorder stable"));
+        }
+        let expected_origin_parent = match expected_owner {
+            HandlerOwner::Component(component) => {
+                Some(self.declarations.component(component.0 as usize).origin)
+            }
+            HandlerOwner::App | HandlerOwner::Preset(_) => None,
+        };
+        if self
+            .origins
+            .try_get(declaration.declaration.origin)
+            .is_none_or(|origin| origin.parent != expected_origin_parent)
+        {
+            return Err(self.invariant(
+                &handler.span,
+                "handler HIR origin chain diverged from its owner",
+            ));
+        }
+        let checked = self
+            .facts
+            .try_handler(id)
+            .ok_or_else(|| {
+                self.invariant(&handler.span, "handler checked ID is outside its arena")
+            })?
+            .clone();
+        if checked.id != id || checked.params.len() != handler.params.len() {
+            return Err(self.invariant(
+                &handler.span,
+                "checked handler facts do not belong to the lowered handler",
+            ));
+        }
+        let raw_param_names = handler
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect::<Vec<_>>();
+        let raw_param_types = handler
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        if raw_param_names != checked.param_names || raw_param_types != checked.param_types {
+            return Err(self.invariant(
+                &handler.span,
+                "handler parameter contract changed after checking",
+            ));
+        }
+        let params = handler
+            .params
+            .iter()
+            .zip(checked.params)
+            .map(|(param, local)| ResolvedHandlerParam {
+                local,
+                name: param.name.clone(),
+                ty: param.ty.clone(),
+            })
+            .collect();
+        if handler.statements.len() != declaration.statement_roots.len() {
+            return Err(self.invariant(
+                &handler.span,
+                "handler statement HIR declaration count diverged",
+            ));
+        }
+        let statements = handler
+            .statements
+            .iter()
+            .zip(declaration.statement_roots.iter().copied())
+            .map(|(source, statement)| {
+                self.lower_handler_statement(source, statement, id, declaration.owner, None)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.handlers.push(ResolvedHandler {
+            id,
+            owner: declaration.owner,
+            name: handler.name.clone(),
+            params,
+            statements,
+            origin: declaration.declaration.origin,
+        });
+        Ok(id)
+    }
+
+    fn checked_statement_expression(
+        &self,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = crate::check::CheckedExprOwner::HandlerStatement {
+            statement,
+            operand: *operand,
+        };
+        *operand += 1;
+        let expression = self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+            self.invariant(span, "handler statement expression has no checked HIR fact")
+        })?;
+        self.validate_checked_expression_use(expression, span)?;
+        Ok(expression)
+    }
+
+    fn checked_task_expression(
+        &self,
+        task: TaskId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = crate::check::CheckedExprOwner::Task {
+            task,
+            operand: *operand,
+        };
+        *operand += 1;
+        let expression = self
+            .facts
+            .expression_use_by_owner(owner)
+            .ok_or_else(|| self.invariant(span, "task expression has no checked HIR fact"))?;
+        self.validate_checked_expression_use(expression, span)?;
+        Ok(expression)
+    }
+
+    fn validate_checked_expression_use(
+        &self,
+        expression: CheckedExprUseId,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let checked = self.facts.try_expression_use(expression).ok_or_else(|| {
+            self.invariant(span, "checked expression-use ID is outside its arena")
+        })?;
+        if self.facts.try_expression(checked.root).is_none() {
+            return Err(self.invariant(span, "checked expression root ID is outside its arena"));
+        }
+        Ok(())
+    }
+
+    fn ensure_task_operands_consumed(
+        &self,
+        task: TaskId,
+        operand: u32,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if self
+            .facts
+            .expression_use_by_owner(crate::check::CheckedExprOwner::Task { task, operand })
+            .is_some()
+        {
+            return Err(self.invariant(
+                span,
+                "task did not consume its complete checked operand contract",
+            ));
+        }
+        Ok(())
+    }
+
+    fn writable_state(
+        &self,
+        statement: &crate::check::CheckedStatement,
+        index: &mut usize,
+        span: &Span,
+    ) -> Result<ResolvedWritableState, Error> {
+        let value_ref = statement
+            .writable_targets
+            .get(*index)
+            .copied()
+            .ok_or_else(|| {
+                self.invariant(
+                    span,
+                    "writable handler target has no checked state contract",
+                )
+            })?;
+        *index += 1;
+        let value = self.facts.try_value_by_ref(value_ref).ok_or_else(|| {
+            self.invariant(span, "writable state value ID is outside its checked arena")
+        })?;
+        Ok(ResolvedWritableState {
+            value: value.id,
+            name: value.name.clone(),
+            ty: value.ty.clone(),
+        })
+    }
+
+    fn effect_target(
+        &self,
+        task: TaskId,
+        function: &str,
+        kind: EffectKind,
+        span: &Span,
+    ) -> Result<ResolvedEffectTarget, Error> {
+        let checked = self.facts.try_task(task).ok_or_else(|| {
+            self.invariant(span, "effect target task ID is outside its checked arena")
+        })?;
+        match checked.target.as_ref().ok_or_else(|| {
+            self.invariant(span, "effect task has no authoritative checked target")
+        })? {
+            crate::check::CheckedEffectTarget::Builtin(name) => {
+                if name != function {
+                    return Err(
+                        self.invariant(span, "built-in effect target changed after checking")
+                    );
+                }
+                Ok(ResolvedEffectTarget::Builtin(name.clone()))
+            }
+            crate::check::CheckedEffectTarget::Extern(id) => {
+                let declaration = self.declarations.try_extern_decl(*id).ok_or_else(|| {
+                    self.invariant(span, "effect extern target ID is outside its arena")
+                })?;
+                if declaration.name != function || declaration.kind != ExternKind::from(kind) {
+                    return Err(self.invariant(span, "effect extern target changed after checking"));
+                }
+                Ok(ResolvedEffectTarget::Extern(*id))
+            }
+        }
+    }
+
+    fn sip_target(&self, task: TaskId, function: &str, span: &Span) -> Result<ExternFnId, Error> {
+        let checked = self.facts.try_task(task).ok_or_else(|| {
+            self.invariant(span, "sip target task ID is outside its checked arena")
+        })?;
+        let Some(crate::check::CheckedEffectTarget::Extern(id)) = &checked.target else {
+            return Err(self.invariant(span, "sip task has no authoritative extern target"));
+        };
+        let declaration = self
+            .declarations
+            .try_extern_decl(*id)
+            .ok_or_else(|| self.invariant(span, "sip extern target ID is outside its arena"))?;
+        if declaration.name != function || declaration.kind != ExternKind::Sip {
+            return Err(self.invariant(span, "sip extern target changed after checking"));
+        }
+        Ok(*id)
+    }
+
+    pub(crate) fn lower_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+    ) -> Result<ResolvedRoute, Error> {
+        self.lower_handler_route(route, id, owner, statement, task, false)
+    }
+
+    fn lower_handler_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+        ordered: bool,
+    ) -> Result<ResolvedRoute, Error> {
+        let declaration = self.declarations.try_route(id).ok_or_else(|| {
+            self.invariant(&route.span, "route HIR ID is outside its declaration arena")
+        })?;
+        let statement_declaration =
+            self.declarations.try_statement(statement).ok_or_else(|| {
+                self.invariant(&route.span, "route statement ID is outside its arena")
+            })?;
+        if declaration.declaration.id != id
+            || declaration.statement != statement
+            || declaration.task != task
+            || self
+                .origins
+                .try_get(declaration.declaration.origin)
+                .is_none_or(|origin| {
+                    origin.parent != Some(statement_declaration.declaration.origin)
+                })
+        {
+            return Err(self.invariant(
+                &route.span,
+                "route HIR owner or origin chain diverged from its statement",
+            ));
+        }
+        let checked = self.facts.try_route(id).ok_or_else(|| {
+            self.invariant(&route.span, "route checked ID is outside its fact arena")
+        })?;
+        let expected_target_owner = match owner {
+            HandlerOwner::Preset(_) => HandlerOwner::App,
+            owner => owner,
+        };
+        let raw_arg_kinds = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                RouteArg::Expr(_) => crate::check::CheckedRouteArgKind::Expression,
+                RouteArg::Payload => crate::check::CheckedRouteArgKind::Payload,
+            })
+            .collect::<Vec<_>>();
+        if checked.id != id
+            || checked.origin != declaration.declaration.origin
+            || checked.target_owner != expected_target_owner
+            || checked.args != raw_arg_kinds
+            || checked.ordered_payloads != ordered
+        {
+            return Err(self.invariant(
+                &route.span,
+                "route semantic contract changed after checking",
+            ));
+        }
+        let target_handler = checked.target;
+        let handler = self
+            .declarations
+            .try_handler(target_handler)
+            .ok_or_else(|| {
+                self.invariant(&route.span, "route target handler ID is outside its arena")
+            })?;
+        if handler.name != route.handler || handler.owner != checked.target_owner {
+            return Err(self.invariant(&route.span, "route target changed after checking"));
+        }
+        let target = match checked.target_owner {
+            HandlerOwner::Component(component) => ResolvedRouteTarget::Component {
+                component,
+                handler: target_handler,
+                name: handler.name.clone(),
+            },
+            HandlerOwner::App => ResolvedRouteTarget::App {
+                handler: target_handler,
+                name: handler.name.clone(),
+            },
+            HandlerOwner::Preset(_) => {
+                return Err(self.invariant(&route.span, "route cannot target a preset handler"));
+            }
+        };
+        let target_params = self
+            .facts
+            .try_handler(target_handler)
+            .ok_or_else(|| {
+                self.invariant(
+                    &route.span,
+                    "route target checked handler ID is outside its arena",
+                )
+            })?
+            .params
+            .iter()
+            .map(|local| {
+                self.facts
+                    .try_local(*local)
+                    .map(|local| local.ty.clone())
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &route.span,
+                            "route target parameter local ID is outside its arena",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let args = lower_typed_route_arguments(
+            route,
+            &target_params,
+            TypedRouteInputs {
+                source_payloads: &checked.source_payloads,
+                ordered,
+            },
+            |index| {
+                let expression = self
+                    .facts
+                    .expression_use_by_owner(crate::check::CheckedExprOwner::Route {
+                        route: id,
+                        argument: index as u32,
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(&route.span, "route argument has no checked expression fact")
+                    })?;
+                self.validate_checked_expression_use(expression, &route.span)?;
+                Ok(expression)
+            },
+        )?;
+        Ok(ResolvedRoute {
+            id,
+            target,
+            args,
+            origin: declaration.declaration.origin,
+        })
+    }
+
+    pub(crate) fn lower_ordered_route(
+        &self,
+        route: &Route,
+        id: RouteId,
+        owner: HandlerOwner,
+        statement: StatementId,
+        task: Option<TaskId>,
+    ) -> Result<ResolvedRoute, Error> {
+        self.lower_handler_route(route, id, owner, statement, task, true)
+    }
+
+    fn lower_handler_statement(
+        &self,
+        statement: &Statement,
+        id: StatementId,
+        handler: HandlerId,
+        owner: HandlerOwner,
+        parent: Option<StatementId>,
+    ) -> Result<ResolvedStatement, Error> {
+        let declaration = self.declarations.try_statement(id).ok_or_else(|| {
+            self.invariant(
+                statement.span(),
+                "statement HIR ID is outside its declaration arena",
+            )
+        })?;
+        let checked_statement = self.facts.try_statement(id).ok_or_else(|| {
+            self.invariant(
+                statement.span(),
+                "statement checked ID is outside its fact arena",
+            )
+        })?;
+        if checked_statement.id != id
+            || checked_statement.origin != declaration.declaration.origin
+            || checked_statement.semantic_key != crate::hir::statement_semantic_key(statement)
+            || checked_statement.operation != crate::hir::handler_operation_contract(statement)
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "handler statement semantic contract changed after checking",
+            ));
+        }
+        let declaration_handler = self
+            .declarations
+            .try_handler(declaration.handler)
+            .ok_or_else(|| {
+                self.invariant(
+                    statement.span(),
+                    "statement handler ID is outside its arena",
+                )
+            })?;
+        if declaration.declaration.id != id
+            || declaration.handler != handler
+            || declaration.parent != parent
+            || declaration_handler.owner != owner
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR owner or preorder parent does not match its handler",
+            ));
+        }
+        let expected_origin_parent = match parent {
+            Some(parent) => {
+                self.declarations
+                    .try_statement(parent)
+                    .ok_or_else(|| {
+                        self.invariant(statement.span(), "statement parent ID is outside its arena")
+                    })?
+                    .declaration
+                    .origin
+            }
+            None => declaration_handler.declaration.origin,
+        };
+        if self
+            .origins
+            .try_get(declaration.declaration.origin)
+            .is_none_or(|origin| origin.parent != Some(expected_origin_parent))
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR origin chain diverged from its preorder parent",
+            ));
+        }
+        if statement.immediate_task().is_some() != declaration.task.is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "statement task declaration shape changed after checking",
+            ));
+        }
+        if let Some(task) = declaration.task {
+            let task_declaration = self.declarations.try_task(task).ok_or_else(|| {
+                self.invariant(statement.span(), "statement task ID is outside its arena")
+            })?;
+            if task_declaration.declaration.id != task
+                || task_declaration.statement != id
+                || task_declaration.parent.is_some()
+                || self
+                    .origins
+                    .try_get(task_declaration.declaration.origin)
+                    .is_none_or(|origin| origin.parent != Some(declaration.declaration.origin))
+            {
+                return Err(self.invariant(
+                    statement.span(),
+                    "statement task HIR owner or origin chain diverged",
+                ));
+            }
+        }
+        let mut operand = 0u32;
+        let mut writable = 0usize;
+        let mut routes = declaration.routes.iter().copied();
+        let kind = match statement {
+            Statement::Let {
+                name,
+                value: _,
+                span,
+            } => {
+                let value = self.checked_statement_expression(id, &mut operand, span)?;
+                let local = self
+                    .facts
+                    .local_by_owner(crate::check::CheckedLocalOwner::StatementLet(id))
+                    .ok_or_else(|| self.invariant(span, "let statement has no checked local"))?;
+                ResolvedStatementKind::Let {
+                    local,
+                    name: name.clone(),
+                    ty: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "let local ID is outside its arena"))?
+                        .ty
+                        .clone(),
+                    value,
+                }
+            }
+            Statement::Assign {
+                target: _,
+                value: _,
+                at,
+                span,
+            } => {
+                let target = self.writable_state(checked_statement, &mut writable, span)?;
+                let value = self.checked_statement_expression(id, &mut operand, span)?;
+                let move_self = checked_statement.editor_self_move.ok_or_else(|| {
+                    self.invariant(span, "assignment has no checked editor move contract")
+                })?;
+                ResolvedStatementKind::Assign {
+                    target,
+                    value,
+                    at: at
+                        .as_ref()
+                        .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                        .transpose()?,
+                    move_self,
+                }
+            }
+            Statement::MarkdownAppend {
+                target: _, span, ..
+            } => ResolvedStatementKind::MarkdownAppend {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::ComboPush {
+                target: _, span, ..
+            } => ResolvedStatementKind::ComboPush {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::ReturnIf { span, .. } => ResolvedStatementKind::ReturnIf {
+                condition: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::Exit { .. } => ResolvedStatementKind::Exit,
+            Statement::Run {
+                kind,
+                mode,
+                function,
+                args,
+                success,
+                error,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "run statement has no normalized task ID")
+                })?;
+                let mut task_operand = 0;
+                let args = args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut task_operand, span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.ensure_task_operands_consumed(task, task_operand, span)?;
+                let success_id = routes.next().ok_or_else(|| {
+                    self.invariant(span, "run success route has no normalized ID")
+                })?;
+                let success = self.lower_route(success, success_id, owner, id, declaration.task)?;
+                let error = error
+                    .as_ref()
+                    .map(|route| {
+                        let route_id = routes.next().ok_or_else(|| {
+                            self.invariant(span, "run error route has no normalized ID")
+                        })?;
+                        self.lower_route(route, route_id, owner, id, declaration.task)
+                    })
+                    .transpose()?;
+                let site = declaration.run_site;
+                if (*mode == FutureMode::Every) != site.is_none() {
+                    return Err(self.invariant(span, "run mode and stable run-site ID diverged"));
+                }
+                if let Some(site) = site {
+                    let run_site = self.declarations.try_run_site(site).ok_or_else(|| {
+                        self.invariant(span, "stable run-site ID is outside its arena")
+                    })?;
+                    if run_site.declaration.id != site
+                        || run_site.statement != id
+                        || run_site.mode != *mode
+                        || run_site.declaration.origin != declaration.declaration.origin
+                    {
+                        return Err(self.invariant(
+                            span,
+                            "stable run-site HIR owner, mode, or origin diverged",
+                        ));
+                    }
+                }
+                ResolvedStatementKind::Run(ResolvedRun {
+                    kind: *kind,
+                    mode: *mode,
+                    site,
+                    target: self.effect_target(task, function, *kind, span)?,
+                    args,
+                    success,
+                    error,
+                })
+            }
+            Statement::Sip {
+                function,
+                args,
+                progress,
+                success,
+                error,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "sip statement has no normalized task ID")
+                })?;
+                let mut task_operand = 0;
+                let args = args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut task_operand, span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.ensure_task_operands_consumed(task, task_operand, span)?;
+                let mut route = |source: &Route| -> Result<ResolvedRoute, Error> {
+                    let route_id = routes
+                        .next()
+                        .ok_or_else(|| self.invariant(span, "sip route has no normalized ID"))?;
+                    self.lower_route(source, route_id, owner, id, declaration.task)
+                };
+                ResolvedStatementKind::Sip(ResolvedSip {
+                    target: self.sip_target(task, function, span)?,
+                    args,
+                    progress: route(progress)?,
+                    success: route(success)?,
+                    error: error.as_ref().map(&mut route).transpose()?,
+                })
+            }
+            Statement::TaskFlow {
+                source,
+                transforms,
+                success,
+                error,
+                units,
+                span,
+            } => {
+                let task = declaration.task.ok_or_else(|| {
+                    self.invariant(span, "task flow has no normalized root task ID")
+                })?;
+                if declaration.source_tasks.len() != transforms.len() + 1 {
+                    return Err(self.invariant(span, "task flow task arena shape diverged"));
+                }
+                for source_task in &declaration.source_tasks {
+                    let task_declaration =
+                        self.declarations.try_task(*source_task).ok_or_else(|| {
+                            self.invariant(span, "task-flow child task ID is outside its arena")
+                        })?;
+                    let root_task_declaration =
+                        self.declarations.try_task(task).ok_or_else(|| {
+                            self.invariant(span, "task-flow root task ID is outside its arena")
+                        })?;
+                    if task_declaration.declaration.id != *source_task
+                        || task_declaration.statement != id
+                        || task_declaration.parent != Some(task)
+                        || self
+                            .origins
+                            .try_get(task_declaration.declaration.origin)
+                            .is_none_or(|origin| {
+                                origin.parent != Some(root_task_declaration.declaration.origin)
+                            })
+                    {
+                        return Err(self.invariant(
+                            span,
+                            "task flow child HIR owner or origin chain diverged",
+                        ));
+                    }
+                }
+                let source = self.lower_task_source(source, declaration.source_tasks[0])?;
+                let transforms = transforms
+                    .iter()
+                    .enumerate()
+                    .map(|(index, transform)| {
+                        self.lower_task_transform(
+                            transform,
+                            declaration.source_tasks[index + 1],
+                            index,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut route = |source: &Route| -> Result<ResolvedRoute, Error> {
+                    let route_id = routes.next().ok_or_else(|| {
+                        self.invariant(span, "task flow route has no normalized ID")
+                    })?;
+                    self.lower_route(source, route_id, owner, id, declaration.task)
+                };
+                let checked = self.facts.try_task(task).ok_or_else(|| {
+                    self.invariant(span, "task-flow checked task ID is outside its arena")
+                })?;
+                if checked.id != task {
+                    return Err(self.invariant(span, "task flow checked owner mismatch"));
+                }
+                ResolvedStatementKind::TaskFlow(ResolvedTaskFlow {
+                    source,
+                    transforms,
+                    output: checked.output.clone(),
+                    error_type: checked.error.clone(),
+                    success: success.as_ref().map(&mut route).transpose()?,
+                    error: error.as_ref().map(&mut route).transpose()?,
+                    units: units.as_ref().map(&mut route).transpose()?,
+                })
+            }
+            Statement::TaskGroup {
+                kind,
+                statements,
+                span,
+            } => {
+                if statements.len() != declaration.children.len() {
+                    return Err(self.invariant(span, "task group HIR child count diverged"));
+                }
+                ResolvedStatementKind::TaskGroup {
+                    kind: *kind,
+                    statements: statements
+                        .iter()
+                        .zip(declaration.children.iter().copied())
+                        .map(|(child, child_id)| {
+                            self.lower_handler_statement(child, child_id, handler, owner, Some(id))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                }
+            }
+            Statement::Abortable {
+                handle: _,
+                abort_on_drop,
+                task,
+                span,
+            } => {
+                let [child] = declaration.children.as_slice() else {
+                    return Err(self.invariant(span, "abortable HIR child count diverged"));
+                };
+                ResolvedStatementKind::Abortable {
+                    handle: self.writable_state(checked_statement, &mut writable, span)?,
+                    abort_on_drop: *abort_on_drop,
+                    task: Box::new(self.lower_handler_statement(
+                        task,
+                        *child,
+                        handler,
+                        owner,
+                        Some(id),
+                    )?),
+                }
+            }
+            Statement::Abort { handle: _, span } => ResolvedStatementKind::Abort {
+                handle: self.writable_state(checked_statement, &mut writable, span)?,
+            },
+            Statement::DebugStart {
+                target: _, span, ..
+            } => ResolvedStatementKind::DebugStart {
+                name: self.checked_statement_expression(id, &mut operand, span)?,
+                target: self.writable_state(checked_statement, &mut writable, span)?,
+            },
+            Statement::DebugFinish { target: _, span } => ResolvedStatementKind::DebugFinish {
+                target: self.writable_state(checked_statement, &mut writable, span)?,
+            },
+            Statement::ClipboardWrite {
+                primary,
+                value: _,
+                span,
+            } => ResolvedStatementKind::ClipboardWrite {
+                primary: *primary,
+                value: self.checked_statement_expression(id, &mut operand, span)?,
+            },
+            Statement::WidgetOperation {
+                operation,
+                route,
+                span,
+            } => ResolvedStatementKind::WidgetOperation {
+                operation: self.lower_widget_operation(operation, id, &mut operand, span)?,
+                route: route
+                    .as_ref()
+                    .map(|route| {
+                        self.lower_route(
+                            route,
+                            routes.next().ok_or_else(|| {
+                                self.invariant(span, "widget route has no normalized ID")
+                            })?,
+                            owner,
+                            id,
+                            declaration.task,
+                        )
+                    })
+                    .transpose()?,
+            },
+            Statement::PaneOperation {
+                grid,
+                operation,
+                route,
+                span,
+            } => ResolvedStatementKind::PaneOperation {
+                grid: grid.clone(),
+                dynamic: checked_statement.pane_grid_dynamic.ok_or_else(|| {
+                    self.invariant(span, "pane operation has no checked grid mode contract")
+                })?,
+                operation: self.lower_pane_operation(operation, id, &mut operand, span)?,
+                route: route
+                    .as_ref()
+                    .map(|route| {
+                        self.lower_route(
+                            route,
+                            routes.next().ok_or_else(|| {
+                                self.invariant(span, "pane route has no normalized ID")
+                            })?,
+                            owner,
+                            id,
+                            declaration.task,
+                        )
+                    })
+                    .transpose()?,
+            },
+            Statement::WindowOperation {
+                operation,
+                target,
+                route,
+                span,
+            } => {
+                let target = target
+                    .as_ref()
+                    .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                    .transpose()?;
+                ResolvedStatementKind::WindowOperation {
+                    operation: self.lower_window_operation(operation, id, &mut operand, span)?,
+                    target,
+                    route: route
+                        .as_ref()
+                        .map(|route| {
+                            let route_id = routes.next().ok_or_else(|| {
+                                self.invariant(span, "window route has no normalized ID")
+                            })?;
+                            if matches!(
+                                operation,
+                                WindowOperation::Size
+                                    | WindowOperation::Position
+                                    | WindowOperation::MonitorSize
+                            ) {
+                                self.lower_ordered_route(
+                                    route,
+                                    route_id,
+                                    owner,
+                                    id,
+                                    declaration.task,
+                                )
+                            } else {
+                                self.lower_route(route, route_id, owner, id, declaration.task)
+                            }
+                        })
+                        .transpose()?,
+                }
+            }
+        };
+        if routes.next().is_some() {
+            return Err(self.invariant(
+                statement.span(),
+                "statement HIR left a route declaration unconsumed",
+            ));
+        }
+        if operand != checked_statement.operand_count
+            || writable != checked_statement.writable_targets.len()
+            || self
+                .facts
+                .expression_use_by_owner(crate::check::CheckedExprOwner::HandlerStatement {
+                    statement: id,
+                    operand,
+                })
+                .is_some()
+        {
+            return Err(self.invariant(
+                statement.span(),
+                "handler statement did not consume its complete checked operand contract",
+            ));
+        }
+        if let Some(task) = declaration.task {
+            let checked = self.facts.try_task(task).ok_or_else(|| {
+                self.invariant(
+                    statement.span(),
+                    "statement checked task ID is outside its arena",
+                )
+            })?;
+            if checked.id != task || checked.is_final != declaration.is_final {
+                return Err(self.invariant(
+                    statement.span(),
+                    "statement task finality or owner changed after checking",
+                ));
+            }
+        }
+        Ok(ResolvedStatement {
+            id,
+            kind,
+            task: declaration.task,
+            is_final: declaration.is_final,
+            origin: declaration.declaration.origin,
+        })
+    }
+
+    fn lower_task_source(
+        &self,
+        source: &TaskSource,
+        task: TaskId,
+    ) -> Result<ResolvedTaskSource, Error> {
+        if self
+            .facts
+            .try_task(task)
+            .is_none_or(|checked| checked.id != task)
+        {
+            return Err(self.invariant(
+                match source {
+                    TaskSource::Effect { span, .. }
+                    | TaskSource::Done { span, .. }
+                    | TaskSource::None { span, .. } => span,
+                },
+                "task source checked owner mismatch",
+            ));
+        }
+        let mut operand = 0;
+        let resolved = match source {
+            TaskSource::Effect {
+                kind,
+                function,
+                args,
+                span,
+            } => ResolvedTaskSource::Effect {
+                task,
+                kind: *kind,
+                target: self.effect_target(task, function, *kind, span)?,
+                args: args
+                    .iter()
+                    .map(|_| self.checked_task_expression(task, &mut operand, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            TaskSource::Done { span, .. } => ResolvedTaskSource::Done {
+                task,
+                value: self.checked_task_expression(task, &mut operand, span)?,
+            },
+            TaskSource::None { output, .. } => ResolvedTaskSource::None {
+                task,
+                output: output.clone(),
+            },
+        };
+        let span = match source {
+            TaskSource::Effect { span, .. }
+            | TaskSource::Done { span, .. }
+            | TaskSource::None { span, .. } => span,
+        };
+        self.ensure_task_operands_consumed(task, operand, span)?;
+        Ok(resolved)
+    }
+
+    fn lower_task_transform(
+        &self,
+        transform: &TaskTransform,
+        task: TaskId,
+        index: usize,
+    ) -> Result<ResolvedTaskTransform, Error> {
+        let local = |span: &Span| {
+            self.facts
+                .local_by_owner(crate::check::CheckedLocalOwner::TaskTransform {
+                    task,
+                    index: index as u32,
+                })
+                .ok_or_else(|| self.invariant(span, "task transform has no checked local"))
+        };
+        Ok(match transform {
+            TaskTransform::Map {
+                binding,
+                value: _,
+                span,
+            } => {
+                let local = local(span)?;
+                let mut operand = 0;
+                let value = self.checked_task_expression(task, &mut operand, span)?;
+                self.ensure_task_operands_consumed(task, operand, span)?;
+                ResolvedTaskTransform::Map {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "map local ID is outside its arena"))?
+                        .ty
+                        .clone(),
+                    input_fallible: self
+                        .facts
+                        .try_task(task)
+                        .ok_or_else(|| {
+                            self.invariant(span, "map checked task ID is outside its arena")
+                        })?
+                        .error
+                        .is_some(),
+                    value,
+                }
+            }
+            TaskTransform::Then {
+                binding,
+                source,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::Then {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "then local ID is outside its arena"))?
+                        .ty
+                        .clone(),
+                    source: self.lower_task_source(source, task)?,
+                }
+            }
+            TaskTransform::AndThen {
+                binding,
+                source,
+                span,
+            } => {
+                let local = local(span)?;
+                ResolvedTaskTransform::AndThen {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| self.invariant(span, "try local ID is outside its arena"))?
+                        .ty
+                        .clone(),
+                    source: self.lower_task_source(source, task)?,
+                }
+            }
+            TaskTransform::MapError {
+                binding,
+                value: _,
+                span,
+            } => {
+                let local = local(span)?;
+                let mut operand = 0;
+                let value = self.checked_task_expression(task, &mut operand, span)?;
+                self.ensure_task_operands_consumed(task, operand, span)?;
+                ResolvedTaskTransform::MapError {
+                    task,
+                    local,
+                    binding: binding.clone(),
+                    input: self
+                        .facts
+                        .try_local(local)
+                        .ok_or_else(|| {
+                            self.invariant(span, "map-error local ID is outside its arena")
+                        })?
+                        .ty
+                        .clone(),
+                    value,
+                }
+            }
+            TaskTransform::Collect { .. } => ResolvedTaskTransform::Collect { task },
+            TaskTransform::Discard { .. } => ResolvedTaskTransform::Discard { task },
+        })
+    }
+
+    fn lower_widget_target(
+        &self,
+        target: &WidgetTarget,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetTarget, Error> {
+        Ok(ResolvedWidgetTarget {
+            segments: target
+                .segments
+                .iter()
+                .map(|segment| {
+                    Ok(ResolvedWidgetTargetSegment {
+                        name: segment.name.clone(),
+                        key: segment
+                            .key
+                            .as_ref()
+                            .map(|_| self.checked_statement_expression(statement, operand, span))
+                            .transpose()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        })
+    }
+
+    fn lower_widget_selector(
+        &self,
+        selector: &WidgetSelector,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetSelector, Error> {
+        Ok(match selector {
+            WidgetSelector::Id(target) => ResolvedWidgetSelector::Id(
+                self.lower_widget_target(target, statement, operand, span)?,
+            ),
+            WidgetSelector::Text(_) => ResolvedWidgetSelector::Text(
+                self.checked_statement_expression(statement, operand, span)?,
+            ),
+            WidgetSelector::Point { .. } => ResolvedWidgetSelector::Point {
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetSelector::Focused => ResolvedWidgetSelector::Focused,
+            WidgetSelector::Extern { function, args } => ResolvedWidgetSelector::Extern {
+                target: self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "widget selector extern is unresolved"))?
+                    .declaration
+                    .id,
+                args: args
+                    .iter()
+                    .map(|_| self.checked_statement_expression(statement, operand, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        })
+    }
+
+    fn lower_widget_operation(
+        &self,
+        operation: &WidgetOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWidgetOperation, Error> {
+        let target = |target: &WidgetTarget, operand: &mut u32| {
+            self.lower_widget_target(target, statement, operand, span)
+        };
+        Ok(match operation {
+            WidgetOperation::FocusPrevious => ResolvedWidgetOperation::FocusPrevious,
+            WidgetOperation::FocusNext => ResolvedWidgetOperation::FocusNext,
+            WidgetOperation::Focus { target: value } => ResolvedWidgetOperation::Focus {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Focused { target: value } => ResolvedWidgetOperation::Focused {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::CursorFront { target: value } => {
+                ResolvedWidgetOperation::CursorFront {
+                    target: target(value, operand)?,
+                }
+            }
+            WidgetOperation::CursorEnd { target: value } => ResolvedWidgetOperation::CursorEnd {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Cursor { target: value, .. } => ResolvedWidgetOperation::Cursor {
+                target: target(value, operand)?,
+                position: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::SelectAll { target: value } => ResolvedWidgetOperation::SelectAll {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::Select { target: value, .. } => ResolvedWidgetOperation::Select {
+                target: target(value, operand)?,
+                start: self.checked_statement_expression(statement, operand, span)?,
+                end: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::Snap { target: value, .. } => ResolvedWidgetOperation::Snap {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::SnapEnd { target: value } => ResolvedWidgetOperation::SnapEnd {
+                target: target(value, operand)?,
+            },
+            WidgetOperation::ScrollTo { target: value, .. } => ResolvedWidgetOperation::ScrollTo {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::ScrollBy { target: value, .. } => ResolvedWidgetOperation::ScrollBy {
+                target: target(value, operand)?,
+                x: self.checked_statement_expression(statement, operand, span)?,
+                y: self.checked_statement_expression(statement, operand, span)?,
+            },
+            WidgetOperation::Find { selector, all } => ResolvedWidgetOperation::Find {
+                selector: self.lower_widget_selector(selector, statement, operand, span)?,
+                all: *all,
+            },
+        })
+    }
+
+    fn lower_pane_reference(
+        &self,
+        pane: &PaneReference,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedPaneReference, Error> {
+        Ok(match pane {
+            PaneReference::Static(name) => ResolvedPaneReference::Static(name.clone()),
+            PaneReference::Dynamic { template, .. } => ResolvedPaneReference::Dynamic {
+                template: template.clone(),
+                key: self.checked_statement_expression(statement, operand, span)?,
+            },
+        })
+    }
+
+    fn lower_pane_operation(
+        &self,
+        operation: &PaneOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedPaneOperation, Error> {
+        let pane = |value: &PaneReference, operand: &mut u32| {
+            self.lower_pane_reference(value, statement, operand, span)
+        };
+        Ok(match operation {
+            PaneOperation::Maximize { pane: value } => ResolvedPaneOperation::Maximize {
+                pane: pane(value, operand)?,
+            },
+            PaneOperation::Restore => ResolvedPaneOperation::Restore,
+            PaneOperation::Maximized => ResolvedPaneOperation::Maximized,
+            PaneOperation::Adjacent { pane: value, edge } => ResolvedPaneOperation::Adjacent {
+                pane: pane(value, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Swap { first, second } => ResolvedPaneOperation::Swap {
+                first: pane(first, operand)?,
+                second: pane(second, operand)?,
+            },
+            PaneOperation::Close { pane: value } => ResolvedPaneOperation::Close {
+                pane: pane(value, operand)?,
+            },
+            PaneOperation::Move { pane: value, edge } => ResolvedPaneOperation::Move {
+                pane: pane(value, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Resize { split, .. } => ResolvedPaneOperation::Resize {
+                split: split.clone(),
+                ratio: self.checked_statement_expression(statement, operand, span)?,
+            },
+            PaneOperation::Drop {
+                pane: value,
+                target,
+                edge,
+            } => ResolvedPaneOperation::Drop {
+                pane: pane(value, operand)?,
+                target: pane(target, operand)?,
+                edge: *edge,
+            },
+            PaneOperation::Split {
+                target,
+                pane: value,
+                axis,
+                ..
+            } => ResolvedPaneOperation::Split {
+                target: pane(target, operand)?,
+                pane: pane(value, operand)?,
+                axis: *axis,
+                ratio: self.checked_statement_expression(statement, operand, span)?,
+            },
+        })
+    }
+
+    fn lower_window_operation(
+        &self,
+        operation: &WindowOperation,
+        statement: StatementId,
+        operand: &mut u32,
+        span: &Span,
+    ) -> Result<ResolvedWindowOperation, Error> {
+        let expression =
+            |operand: &mut u32| self.checked_statement_expression(statement, operand, span);
+        let pair = |operand: &mut u32| -> Result<_, Error> {
+            Ok((expression(operand)?, expression(operand)?))
+        };
+        Ok(match operation {
+            WindowOperation::Open(window) => ResolvedWindowOperation::Open(
+                window
+                    .as_ref()
+                    .map(|name| {
+                        self.document
+                            .settings
+                            .windows
+                            .iter()
+                            .position(|window| window.name == *name)
+                            .map(|index| index as u32)
+                            .ok_or_else(|| {
+                                self.invariant(span, "named window operation target is unresolved")
+                            })
+                    })
+                    .transpose()?,
+            ),
+            WindowOperation::Oldest => ResolvedWindowOperation::Oldest,
+            WindowOperation::Latest => ResolvedWindowOperation::Latest,
+            WindowOperation::Close => ResolvedWindowOperation::Close,
+            WindowOperation::Drag => ResolvedWindowOperation::Drag,
+            WindowOperation::DragResize(direction) => {
+                ResolvedWindowOperation::DragResize(*direction)
+            }
+            WindowOperation::Resize(_, _) => {
+                let (width, height) = pair(operand)?;
+                ResolvedWindowOperation::Resize(width, height)
+            }
+            WindowOperation::Resizable(_) => {
+                ResolvedWindowOperation::Resizable(expression(operand)?)
+            }
+            WindowOperation::MinSize(value) => {
+                ResolvedWindowOperation::MinSize(value.as_ref().map(|_| pair(operand)).transpose()?)
+            }
+            WindowOperation::MaxSize(value) => {
+                ResolvedWindowOperation::MaxSize(value.as_ref().map(|_| pair(operand)).transpose()?)
+            }
+            WindowOperation::ResizeIncrements(value) => ResolvedWindowOperation::ResizeIncrements(
+                value.as_ref().map(|_| pair(operand)).transpose()?,
+            ),
+            WindowOperation::Size => ResolvedWindowOperation::Size,
+            WindowOperation::IsMaximized => ResolvedWindowOperation::IsMaximized,
+            WindowOperation::Maximize(_) => ResolvedWindowOperation::Maximize(expression(operand)?),
+            WindowOperation::IsMinimized => ResolvedWindowOperation::IsMinimized,
+            WindowOperation::Minimize(_) => ResolvedWindowOperation::Minimize(expression(operand)?),
+            WindowOperation::Position => ResolvedWindowOperation::Position,
+            WindowOperation::ScaleFactor => ResolvedWindowOperation::ScaleFactor,
+            WindowOperation::Move(_, _) => {
+                let (x, y) = pair(operand)?;
+                ResolvedWindowOperation::Move(x, y)
+            }
+            WindowOperation::Mode => ResolvedWindowOperation::Mode,
+            WindowOperation::SetMode(mode) => ResolvedWindowOperation::SetMode(*mode),
+            WindowOperation::ToggleMaximize => ResolvedWindowOperation::ToggleMaximize,
+            WindowOperation::ToggleDecorations => ResolvedWindowOperation::ToggleDecorations,
+            WindowOperation::Attention(attention) => ResolvedWindowOperation::Attention(*attention),
+            WindowOperation::Focus => ResolvedWindowOperation::Focus,
+            WindowOperation::SetLevel(level) => ResolvedWindowOperation::SetLevel(*level),
+            WindowOperation::SystemMenu => ResolvedWindowOperation::SystemMenu,
+            WindowOperation::RawId => ResolvedWindowOperation::RawId,
+            WindowOperation::Screenshot => ResolvedWindowOperation::Screenshot,
+            WindowOperation::MousePassthrough(_) => {
+                ResolvedWindowOperation::MousePassthrough(expression(operand)?)
+            }
+            WindowOperation::MonitorSize => ResolvedWindowOperation::MonitorSize,
+            WindowOperation::AutomaticTabbing(_) => {
+                ResolvedWindowOperation::AutomaticTabbing(expression(operand)?)
+            }
+            WindowOperation::Icon { .. } => ResolvedWindowOperation::Icon {
+                pixels: expression(operand)?,
+                width: expression(operand)?,
+                height: expression(operand)?,
+            },
+            WindowOperation::Callback { function, args } => ResolvedWindowOperation::Callback {
+                target: self
+                    .declarations
+                    .extern_decl_by_name(function)
+                    .ok_or_else(|| self.invariant(span, "window callback extern is unresolved"))?
+                    .declaration
+                    .id,
+                args: args
+                    .iter()
+                    .map(|_| expression(operand))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        })
     }
 
     fn lower_view(
@@ -1127,6 +4710,25 @@ impl Lowerer {
             format!("lowering invariant failed: {}", message.into()),
         )
     }
+
+    fn invariant_at_origin(&self, origin: OriginId, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some(origin) = self.origins.try_get(origin) else {
+            return Error::new("E196", &Span::line(1), message);
+        };
+        let mut error = Error::new(
+            "E196",
+            &Span {
+                line: origin.line,
+                column: origin.column,
+            },
+            message,
+        );
+        if let Some(path) = &origin.path {
+            error = error.at_path(path.display().to_string());
+        }
+        error
+    }
 }
 
 fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
@@ -1216,6 +4818,1181 @@ mod tests {
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+
+    fn route_snapshot(program: &LoweredProgram, route: &ResolvedRoute) -> String {
+        let target = match &route.target {
+            ResolvedRouteTarget::App { handler, name } => {
+                format!("app h{} {name}", handler.0)
+            }
+            ResolvedRouteTarget::Component {
+                component,
+                handler,
+                name,
+            } => format!("component c{} h{} {name}", component.0, handler.0),
+        };
+        let args = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                ResolvedRouteArg::Expression(expression) => format!("expr {expression:?}"),
+                ResolvedRouteArg::Payload { index, ty } => {
+                    format!("payload {index}:{}", ty.display())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let origin = program.origin(route.origin);
+        format!(
+            "r{} -> {target} ({args}) @{}:{}",
+            route.id.0, origin.line, origin.column
+        )
+    }
+
+    fn task_source_snapshot(source: &ResolvedTaskSource) -> String {
+        match source {
+            ResolvedTaskSource::Effect {
+                task,
+                kind,
+                target,
+                args,
+            } => {
+                format!("t{} {kind:?} {target:?} args={args:?}", task.0)
+            }
+            ResolvedTaskSource::Done { task, value } => {
+                format!("t{} done {value:?}", task.0)
+            }
+            ResolvedTaskSource::None { task, output } => {
+                format!("t{} none {}", task.0, output.display())
+            }
+        }
+    }
+
+    fn task_transform_snapshot(transform: &ResolvedTaskTransform) -> String {
+        match transform {
+            ResolvedTaskTransform::Map {
+                task,
+                local,
+                binding,
+                input,
+                value,
+                ..
+            } => format!(
+                "t{} map {binding}:{}/local={local:?} -> {value:?}",
+                task.0,
+                input.display()
+            ),
+            ResolvedTaskTransform::Then {
+                task,
+                local,
+                binding,
+                input,
+                source,
+            } => format!(
+                "t{} then {binding}:{}/local={local:?} -> {}",
+                task.0,
+                input.display(),
+                task_source_snapshot(source)
+            ),
+            ResolvedTaskTransform::AndThen {
+                task,
+                local,
+                binding,
+                input,
+                source,
+            } => format!(
+                "t{} try {binding}:{}/local={local:?} -> {}",
+                task.0,
+                input.display(),
+                task_source_snapshot(source)
+            ),
+            ResolvedTaskTransform::MapError {
+                task,
+                local,
+                binding,
+                input,
+                value,
+            } => format!(
+                "t{} map-error {binding}:{}/local={local:?} -> {value:?}",
+                task.0,
+                input.display()
+            ),
+            ResolvedTaskTransform::Collect { task } => format!("t{} collect", task.0),
+            ResolvedTaskTransform::Discard { task } => format!("t{} discard", task.0),
+        }
+    }
+
+    fn statement_snapshot(
+        program: &LoweredProgram,
+        statement: &ResolvedStatement,
+        indent: usize,
+        output: &mut String,
+    ) {
+        let padding = " ".repeat(indent);
+        let origin = program.origin(statement.origin);
+        let kind = match &statement.kind {
+            ResolvedStatementKind::Let {
+                local, name, value, ..
+            } => {
+                format!("let {name} {local:?} = {value:?}")
+            }
+            ResolvedStatementKind::Assign {
+                target,
+                value,
+                at,
+                move_self,
+            } => format!(
+                "assign {}:{}, value={value:?}, at={at:?}, move={move_self}",
+                target.name,
+                target.ty.display()
+            ),
+            ResolvedStatementKind::MarkdownAppend { .. } => "markdown-append".into(),
+            ResolvedStatementKind::ComboPush { .. } => "combo-push".into(),
+            ResolvedStatementKind::ReturnIf { condition } => {
+                format!("return-if {condition:?}")
+            }
+            ResolvedStatementKind::Exit => "exit".into(),
+            ResolvedStatementKind::Run(run) => format!(
+                "run {:?} site={:?} {} error={}",
+                run.mode,
+                run.site,
+                route_snapshot(program, &run.success),
+                run.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::Sip(sip) => format!(
+                "sip {} | {} | {}",
+                route_snapshot(program, &sip.progress),
+                route_snapshot(program, &sip.success),
+                sip.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::TaskFlow(flow) => format!(
+                "flow source=[{}] output={} error={} transforms=[{}] success={} error-route={} units={}",
+                task_source_snapshot(&flow.source),
+                flow.output
+                    .as_ref()
+                    .map_or_else(|| "none".into(), Type::display),
+                flow.error_type
+                    .as_ref()
+                    .map_or_else(|| "none".into(), Type::display),
+                flow.transforms
+                    .iter()
+                    .map(task_transform_snapshot)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                flow.success
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+                flow.error
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+                flow.units
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route)),
+            ),
+            ResolvedStatementKind::TaskGroup { kind, statements } => {
+                let label = format!("group {kind:?}");
+                writeln!(
+                    output,
+                    "{padding}s{} task={:?} final={} {label} @{}:{}",
+                    statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+                )
+                .unwrap();
+                for child in statements {
+                    statement_snapshot(program, child, indent + 2, output);
+                }
+                return;
+            }
+            ResolvedStatementKind::Abortable { task, .. } => {
+                let label = "abortable";
+                writeln!(
+                    output,
+                    "{padding}s{} task={:?} final={} {label} @{}:{}",
+                    statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+                )
+                .unwrap();
+                statement_snapshot(program, task, indent + 2, output);
+                return;
+            }
+            ResolvedStatementKind::Abort { .. } => "abort".into(),
+            ResolvedStatementKind::DebugStart { .. } => "debug-start".into(),
+            ResolvedStatementKind::DebugFinish { .. } => "debug-finish".into(),
+            ResolvedStatementKind::ClipboardWrite { .. } => "clipboard-write".into(),
+            ResolvedStatementKind::WidgetOperation { route, .. } => format!(
+                "widget-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::PaneOperation { route, .. } => format!(
+                "pane-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+            ResolvedStatementKind::WindowOperation { route, .. } => format!(
+                "window-op {}",
+                route
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |route| route_snapshot(program, route))
+            ),
+        };
+        writeln!(
+            output,
+            "{padding}s{} task={:?} final={} {kind} @{}:{}",
+            statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+        )
+        .unwrap();
+    }
+
+    fn handler_snapshot(program: &LoweredProgram) -> String {
+        let mut output = String::new();
+        for handler in program.handlers() {
+            let origin = program.origin(handler.origin);
+            writeln!(
+                output,
+                "h{} {:?} {} params={:?} @{}:{}",
+                handler.id.0,
+                handler.owner,
+                handler.name,
+                handler
+                    .params
+                    .iter()
+                    .map(|param| format!("{}:{}:{:?}", param.name, param.ty.display(), param.local))
+                    .collect::<Vec<_>>(),
+                origin.line,
+                origin.column
+            )
+            .unwrap();
+            for statement in &handler.statements {
+                statement_snapshot(program, statement, 2, &mut output);
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn snapshots_app_mount_component_and_preset_handler_hir_with_stable_ids() {
+        let source = format!(
+            r#"app HandlerHir
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 0
+preset seeded
+  state
+    value = 7
+on mount
+  let request = value + 1
+  run fetch(request) -> loaded _
+on loaded(next)
+  value = next
+component Card()
+  state
+    local = 0
+  on start
+    run replace fetch(local) -> done _
+  on done(next)
+    local = next
+  button "Start" -> start
+view
+  Card
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        assert_eq!(
+            handler_snapshot(&program),
+            r#"h0 App mount params=[] @19:1
+  s0 task=None final=false let request CheckedLocalId(0) = CheckedExprUseId(2) @20:1
+  s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
+h1 App loaded params=["next:i64:CheckedLocalId(1)"] @22:1
+  s2 task=None final=true assign value:i64, value=CheckedExprUseId(4), at=None, move=false @23:1
+h2 Component(ComponentId(0)) start params=[] @27:1
+  s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
+h3 Component(ComponentId(0)) done params=["next:i64:CheckedLocalId(2)"] @29:1
+  s4 task=None final=true assign local:i64, value=CheckedExprUseId(6), at=None, move=false @30:1
+h4 Preset(0) preset seeded params=[] @16:1
+  s5 task=None final=true assign value:i64, value=CheckedExprUseId(7), at=None, move=false @18:1
+"#
+        );
+    }
+
+    #[test]
+    fn snapshots_nested_tasks_flows_and_body_routes_in_preorder() {
+        let source = format!(
+            r#"app TaskHir
+extern crate::backend
+  AppError(message:str)
+  sip transfer(size:i64) progress=f64 -> bytes
+  stream numbers(limit:i64) -> i64
+  task double(value:i64) -> i64
+{THEME}state
+  request:task-handle? = none
+on start
+  parallel
+    sip transfer(3)
+      progress -> progressed _
+      done -> downloaded _
+    flow
+      from stream numbers(3)
+      map value -> value + 1
+      then value -> task double(value)
+      collect
+      done -> collected _
+      units -> planned _
+    abortable request abort-on-drop
+      task system theme -> themed _
+on progressed(value)
+on downloaded(value)
+on collected(values)
+on planned(units)
+on themed(theme)
+view
+  text "Tasks"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let snapshot = handler_snapshot(&program);
+        for expected in [
+            "h0 App start params=[]",
+            "s0 task=Some(TaskId(0)) final=true group Parallel",
+            "s1 task=Some(TaskId(1)) final=true sip r0 -> app h1 progressed (payload 0:f64)",
+            "r1 -> app h2 downloaded (payload 0:bytes)",
+            "s2 task=Some(TaskId(2)) final=true flow source=[t3 Stream Extern(ExternFnId(1))",
+            "t4 map value:i64/local=CheckedLocalId(0)",
+            "t5 then value:i64/local=CheckedLocalId(1) -> t5 Task Extern(ExternFnId(2))",
+            "t6 collect",
+            "r2 -> app h3 collected (payload 0:[i64])",
+            "r3 -> app h4 planned (payload 0:i64)",
+            "s3 task=Some(TaskId(7)) final=true abortable",
+            "s4 task=Some(TaskId(8)) final=true run Every site=None r4 -> app h5 themed (payload 0:str)",
+        ] {
+            assert!(
+                snapshot.contains(expected),
+                "missing `{expected}` in handler HIR snapshot:\n{snapshot}"
+            );
+        }
+    }
+
+    #[test]
+    fn handler_codegen_uses_checked_expressions_and_stable_run_sites_after_ast_mutation() {
+        let source = format!(
+            r#"app Mutation
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 1
+on changed
+  let original = value + 1
+  value = original
+component Search()
+  state
+    query = 2
+  on search
+    run latest fetch(query) -> loaded _
+  on loaded(next)
+    query = next
+  button "Search" -> search
+view
+  Search
+"#
+        );
+        let mut checked = analyze(&source).unwrap();
+        let Statement::Let { value, span, .. } = &mut checked.document.handlers[0].statements[0]
+        else {
+            panic!("fixture must start with a let statement");
+        };
+        *value = Expr::Str("unchecked-poison".into());
+        span.line = 900;
+        let Statement::Run { args, span, .. } =
+            &mut checked.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("component fixture must contain a latest run");
+        };
+        args[0] = Expr::Str("unchecked-run-poison".into());
+        span.line = 999;
+
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "mutation.ice").unwrap();
+        assert!(generated.contains("let original = (self.value + 1);"));
+        assert!(generated.contains("crate::backend::fetch(__local.query)"));
+        assert!(generated.contains("__ice_latest_0"));
+        assert!(!generated.contains("Latest999"));
+        assert!(!generated.contains("unchecked-poison"));
+        assert!(!generated.contains("unchecked-run-poison"));
+        assert!(!generated.contains("// __ICE_SOURCE 900 1"));
+        assert!(!generated.contains("// __ICE_SOURCE 999 1"));
+    }
+
+    #[test]
+    fn rejects_mutated_handler_route_run_site_and_statement_shapes_as_hir_invariants() {
+        let source = format!(
+            r#"app InvalidHir
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}component Search()
+  state
+    query = 1
+  on search
+    run latest fetch(query) -> loaded _
+  on loaded(next)
+    query = next
+  button "Search" -> search
+view
+  Search
+"#
+        );
+
+        let mut changed_mode = analyze(&source).unwrap();
+        let Statement::Run { mode, .. } =
+            &mut changed_mode.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("fixture must contain a run");
+        };
+        *mode = FutureMode::Replace;
+        let error = lower(changed_mode).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let Statement::Run { success, .. } =
+            &mut changed_route.document.components[0].handlers[0].statements[0]
+        else {
+            panic!("fixture must contain a run");
+        };
+        success.args[0] = RouteArg::Expr(Expr::I64(7));
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut missing_statement = analyze(&source).unwrap();
+        missing_statement.document.components[0].handlers[0]
+            .statements
+            .clear();
+        let error = lower(missing_statement).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("statement HIR declaration count"));
+    }
+
+    #[test]
+    fn imported_handler_origins_reach_lowered_hir_and_generated_source_markers() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-handler-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedHandler\nuse \"card.ice\"\n{THEME}view\n  ImportedCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedCard()\n  state\n    selected = false\n  on select\n    selected = true\n  button \"Select\" -> select\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let handler = program
+            .handlers()
+            .iter()
+            .find(|handler| handler.name == "select")
+            .unwrap();
+        let handler_origin = program.origin(handler.origin);
+        assert_eq!(handler_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(handler_origin.line, 4);
+        let statement_origin = program.origin(handler.statements[0].origin);
+        assert_eq!(statement_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(statement_origin.line, 5);
+        assert_eq!(statement_origin.parent, Some(handler.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 5 1 {encoded_import}")));
+
+        let imported_handler = program
+            .handlers
+            .iter_mut()
+            .find(|handler| handler.name == "select")
+            .unwrap();
+        imported_handler.id = HandlerId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn handler_semantic_contract_rejects_same_signature_raw_mutations() {
+        let source = format!(
+            r#"app SemanticContract
+extern crate::backend
+  fetch(value:i64) -> i64
+  fetch_other(value:i64) -> i64
+{THEME}state
+  first = 1
+  second = 2
+on start
+  first = first + 1
+  run fetch(first) -> loaded _
+on loaded(value)
+  first = value
+on route_alternate
+  run fetch(first) -> alternate _
+on alternate(value)
+  first = value
+on empty
+  flow
+    from none i64
+    done -> loaded _
+view
+  text first
+"#
+        );
+
+        let mut changed_target = analyze(&source).unwrap();
+        let Statement::Assign { target, .. } =
+            &mut changed_target.document.handlers[0].statements[0]
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        *target = "second".into();
+        let error = lower(changed_target).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_effect = analyze(&source).unwrap();
+        let Statement::Run { function, .. } =
+            &mut changed_effect.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a run");
+        };
+        *function = "fetch_other".into();
+        let error = lower(changed_effect).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let Statement::Run { success, .. } = &mut changed_route.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a route");
+        };
+        success.handler = "alternate".into();
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut missing_argument = analyze(&source).unwrap();
+        let Statement::Run { success, .. } =
+            &mut missing_argument.document.handlers[0].statements[1]
+        else {
+            panic!("fixture must contain a route");
+        };
+        success.args.clear();
+        let error = lower(missing_argument).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut changed_param = analyze(&source).unwrap();
+        changed_param.document.handlers[1].params[0].name = "renamed".into();
+        let error = lower(changed_param).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter contract"));
+
+        let mut changed_none = analyze(&source).unwrap();
+        let Statement::TaskFlow { source, .. } =
+            &mut changed_none.document.handlers[4].statements[0]
+        else {
+            panic!("fixture must contain a flow");
+        };
+        let TaskSource::None { output, .. } = source else {
+            panic!("fixture must contain a none source");
+        };
+        *output = Type::F64;
+        let error = lower(changed_none).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+    }
+
+    #[test]
+    fn typed_route_core_uses_real_source_payload_contracts_without_handler_ids() {
+        let route = Route {
+            handler: "moved".into(),
+            args: vec![RouteArg::Payload, RouteArg::Payload],
+            span: Span::line(27),
+        };
+        let args = lower_typed_route_arguments(
+            &route,
+            &[Type::F64, Type::I64],
+            TypedRouteInputs {
+                source_payloads: &[Type::F64, Type::I64],
+                ordered: true,
+            },
+            |_| unreachable!("fixture has no expression arguments"),
+        )
+        .unwrap();
+        assert!(matches!(
+            args.as_slice(),
+            [
+                ResolvedRouteArg::Payload { index: 0, .. },
+                ResolvedRouteArg::Payload { index: 1, .. }
+            ]
+        ));
+
+        let error = lower_typed_route_arguments(
+            &route,
+            &[Type::F64, Type::I64],
+            TypedRouteInputs {
+                source_payloads: &[Type::F64, Type::F64],
+                ordered: true,
+            },
+            |_| unreachable!("fixture has no expression arguments"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, 27);
+        assert!(error.message.contains("payload type"));
+    }
+
+    #[test]
+    fn checked_operation_contract_preserves_every_non_expression_payload() {
+        let span = Span::line(1);
+        let widget = |name: &str, all: bool| Statement::WidgetOperation {
+            operation: WidgetOperation::Find {
+                selector: WidgetSelector::Id(WidgetTarget {
+                    segments: vec![Id {
+                        name: name.into(),
+                        key: Some(Expr::I64(1)),
+                    }],
+                }),
+                all,
+            },
+            route: None,
+            span: span.clone(),
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&widget("first", false)),
+            crate::hir::handler_operation_contract(&widget("second", false))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&widget("first", false)),
+            crate::hir::handler_operation_contract(&widget("first", true))
+        );
+
+        let pane = |edge| Statement::PaneOperation {
+            grid: "work".into(),
+            operation: PaneOperation::Drop {
+                pane: PaneReference::Dynamic {
+                    template: "file".into(),
+                    key: Expr::I64(1),
+                },
+                target: PaneReference::Static("editor".into()),
+                edge,
+            },
+            route: None,
+            span: span.clone(),
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&pane(Some(PaneEdge::Left))),
+            crate::hir::handler_operation_contract(&pane(Some(PaneEdge::Right)))
+        );
+
+        let window = |name: &str, function: &str, arguments: usize| {
+            let operation = if function.is_empty() {
+                WindowOperation::Open(Some(name.into()))
+            } else {
+                WindowOperation::Callback {
+                    function: function.into(),
+                    args: vec![Expr::I64(1); arguments],
+                }
+            };
+            Statement::WindowOperation {
+                operation,
+                target: None,
+                route: None,
+                span: span.clone(),
+            }
+        };
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("first", "", 0)),
+            crate::hir::handler_operation_contract(&window("second", "", 0))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("", "first", 1)),
+            crate::hir::handler_operation_contract(&window("", "second", 1))
+        );
+        assert_ne!(
+            crate::hir::handler_operation_contract(&window("", "first", 1)),
+            crate::hir::handler_operation_contract(&window("", "first", 2))
+        );
+    }
+
+    #[test]
+    fn malformed_handler_hir_ids_are_fallible_source_mapped_invariants() {
+        fn program() -> LoweredProgram {
+            let source = format!(
+                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
+            );
+            lower(analyze(&source).unwrap()).unwrap()
+        }
+
+        fn route(program: &mut LoweredProgram) -> &mut ResolvedRoute {
+            let ResolvedStatementKind::Run(run) = &mut program.handlers[0].statements[0].kind
+            else {
+                panic!("fixture must contain a run");
+            };
+            &mut run.success
+        }
+
+        let mut invalid_route = program();
+        let origin = route(&mut invalid_route).origin;
+        let expected_line = invalid_route.origin(origin).line;
+        route(&mut invalid_route).id = RouteId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_route, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("route ID"));
+
+        let mut invalid_target = program();
+        let origin = route(&mut invalid_target).origin;
+        let expected_line = invalid_target.origin(origin).line;
+        let ResolvedRouteTarget::App { handler, .. } = &mut route(&mut invalid_target).target
+        else {
+            panic!("fixture route must target the app");
+        };
+        *handler = HandlerId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_target, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("handler ID"));
+
+        let mut wrong_owner = program();
+        let origin = route(&mut wrong_owner).origin;
+        let expected_line = wrong_owner.origin(origin).line;
+        let ResolvedRouteTarget::App { handler, .. } = &mut route(&mut wrong_owner).target else {
+            panic!("fixture route must target the app");
+        };
+        *handler = HandlerId(0);
+        let error = crate::codegen::generate(&wrong_owner, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("different handler"));
+
+        let mut invalid_statement = program();
+        let origin = invalid_statement.handlers[0].statements[0].origin;
+        let expected_line = invalid_statement.origin(origin).line;
+        invalid_statement.handlers[0].statements[0].id = StatementId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_statement, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("statement ID"));
+
+        let mut invalid_task = program();
+        let origin = invalid_task.handlers[0].statements[0].origin;
+        let expected_line = invalid_task.origin(origin).line;
+        invalid_task.handlers[0].statements[0].task = Some(TaskId(u32::MAX));
+        let error = crate::codegen::generate(&invalid_task, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("task ID"));
+
+        let mut missing_task = program();
+        missing_task.handlers[0].statements[0].task = None;
+        let error = crate::codegen::generate(&missing_task, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("task ID"));
+
+        let mut invalid_mode = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_mode.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.mode = FutureMode::Latest;
+        let error = crate::codegen::generate(&invalid_mode, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run mode"));
+
+        let mut invalid_kind = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_kind.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.kind = EffectKind::Task;
+        let error = crate::codegen::generate(&invalid_kind, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("effect kind"));
+
+        let mut invalid_operand = program();
+        let ResolvedStatementKind::Run(run) = &mut invalid_operand.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a run");
+        };
+        run.args[0] = CheckedExprUseId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_operand, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression-use ID"));
+
+        let mut invalid_descendant = program();
+        let task = invalid_descendant.handlers[0].statements[0]
+            .task
+            .expect("fixture run task");
+        invalid_descendant.facts.corrupt_expression_first_child(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+            u32::MAX,
+        );
+        let error = crate::codegen::generate(&invalid_descendant, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+
+        let mut invalid_route_operand = program();
+        let ResolvedRouteArg::Expression(expression) =
+            &mut route(&mut invalid_route_operand).args[0]
+        else {
+            panic!("fixture route must contain an expression");
+        };
+        *expression = CheckedExprUseId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_route_operand, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression-use ID"));
+
+        let mut invalid_param = program();
+        invalid_param.handlers[1].params[0].local =
+            crate::check::CheckedLocalId::invalid_for_test();
+        let error = crate::codegen::generate(&invalid_param, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter local ID"));
+
+        let mut invalid_handler_order = program();
+        invalid_handler_order.handlers.swap(0, 1);
+        let error = crate::codegen::generate(&invalid_handler_order, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler arena order"));
+
+        let mut invalid_app_partition = program();
+        invalid_app_partition.app_handlers.pop();
+        let error = crate::codegen::generate(&invalid_app_partition, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("app handler index"));
+
+        let component_source = format!(
+            "app ComponentPartition\n{THEME}component Surface()\n  on update\n  text \"Ready\"\nview\n  Surface\n"
+        );
+        let mut invalid_component = lower(analyze(&component_source).unwrap()).unwrap();
+        invalid_component.components[0].id = ComponentId(u32::MAX);
+        let error = crate::codegen::generate(&invalid_component, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("component identity"));
+    }
+
+    #[test]
+    fn malformed_run_site_and_required_operation_routes_are_e196_not_panics() {
+        let latest = format!(
+            "app Search\nextern crate::backend\n  fetch(query:str) -> str\n{THEME}component SearchBox()\n  state\n    query = \"\"\n    result:str? = none\n  on search\n    run latest fetch(query) -> loaded _\n  on loaded(value)\n    result = some(value)\n  button \"Search\" -> search\nview\n  SearchBox #search\n"
+        );
+        let mut invalid_site = lower(analyze(&latest).unwrap()).unwrap();
+        let statement = invalid_site
+            .handlers
+            .iter_mut()
+            .find(|handler| handler.name == "search")
+            .and_then(|handler| handler.statements.first_mut())
+            .expect("fixture component run");
+        let ResolvedStatementKind::Run(run) = &mut statement.kind else {
+            panic!("fixture must contain a run");
+        };
+        run.site = None;
+        let error = crate::codegen::generate(&invalid_site, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("run-site"));
+
+        let widget = format!(
+            "app WidgetRoute\n{THEME}state\n  field = \"\"\n  focused = false\non inspect\n  task widget focused #field -> observed _\non observed(value)\n  focused = value\nview\n  input \"Field\" #field <-> field\n"
+        );
+        let mut invalid_widget = lower(analyze(&widget).unwrap()).unwrap();
+        let statement = &mut invalid_widget.handlers[0].statements[0];
+        let ResolvedStatementKind::WidgetOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a widget operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_widget, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
+
+        let pane = format!(
+            "app PaneRoute\n{THEME}on inspect\n  pane #work maximized -> observed _\non observed(name)\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane).unwrap()).unwrap();
+        let statement = &mut invalid_pane.handlers[0].statements[0];
+        let ResolvedStatementKind::PaneOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a pane operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
+
+        let window = format!(
+            "app WindowRoute\n{THEME}on inspect\n  task window size -> observed _ _\non observed(width, height)\nview\n  text \"Window\"\n"
+        );
+        let mut invalid_window = lower(analyze(&window).unwrap()).unwrap();
+        let statement = &mut invalid_window.handlers[0].statements[0];
+        let ResolvedStatementKind::WindowOperation { route, .. } = &mut statement.kind else {
+            panic!("fixture must contain a window operation");
+        };
+        *route = None;
+        let error = crate::codegen::generate(&invalid_window, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route cardinality"));
+    }
+
+    #[test]
+    fn malformed_operation_discriminants_are_e196_before_route_expectations() {
+        let widget = format!(
+            "app WidgetOperation\n{THEME}state\n  field = \"\"\non inspect\n  task widget focus #field\nview\n  input \"Field\" #field <-> field\n"
+        );
+        let mut invalid_widget = lower(analyze(&widget).unwrap()).unwrap();
+        let statement = &mut invalid_widget.handlers[0].statements[0];
+        let ResolvedStatementKind::WidgetOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a widget operation");
+        };
+        let ResolvedWidgetOperation::Focus { target } = operation else {
+            panic!("fixture must contain widget focus");
+        };
+        *operation = ResolvedWidgetOperation::Focused {
+            target: target.clone(),
+        };
+        let error = crate::codegen::generate(&invalid_widget, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+
+        let pane = format!(
+            "app PaneOperation\n{THEME}on inspect\n  pane #work restore\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane).unwrap()).unwrap();
+        let statement = &mut invalid_pane.handlers[0].statements[0];
+        let ResolvedStatementKind::PaneOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a pane operation");
+        };
+        *operation = ResolvedPaneOperation::Maximized;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+
+        let window = format!(
+            "app WindowOperation\n{THEME}on inspect\n  task window close\nview\n  text \"Window\"\n"
+        );
+        let mut invalid_window = lower(analyze(&window).unwrap()).unwrap();
+        let statement = &mut invalid_window.handlers[0].statements[0];
+        let ResolvedStatementKind::WindowOperation { operation, .. } = &mut statement.kind else {
+            panic!("fixture must contain a window operation");
+        };
+        *operation = ResolvedWindowOperation::Size;
+        let error = crate::codegen::generate(&invalid_window, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("operation contract"));
+    }
+
+    #[test]
+    fn malformed_codegen_consumed_handler_fields_are_e196() {
+        fn editor_program() -> LoweredProgram {
+            let source = format!(
+                "app EditorContract\nextern crate::backend\n  sync apply_command(content:editor, command:str) -> editor\n{THEME}state\n  notes:editor = \"hello\"\non command\n  notes = apply_command(notes, \"bold\")\nview\n  editor <-> notes\n"
+            );
+            lower(analyze(&source).unwrap()).unwrap()
+        }
+
+        let mut invalid_move = editor_program();
+        let ResolvedStatementKind::Assign { move_self, .. } =
+            &mut invalid_move.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        *move_self = false;
+        let error = crate::codegen::generate(&invalid_move, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("self-move"));
+
+        let mut invalid_writable = editor_program();
+        let ResolvedStatementKind::Assign { target, .. } =
+            &mut invalid_writable.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain an assignment");
+        };
+        target.ty = Type::Str;
+        let error = crate::codegen::generate(&invalid_writable, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("writable target"));
+
+        let let_source =
+            format!("app LetContract\n{THEME}on start\n  let total = 1\nview\n  text \"ready\"\n");
+        let mut invalid_let = lower(analyze(&let_source).unwrap()).unwrap();
+        let ResolvedStatementKind::Let { ty, .. } = &mut invalid_let.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a let");
+        };
+        *ty = Type::F64;
+        let error = crate::codegen::generate(&invalid_let, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("let local"));
+
+        let pane_source = format!(
+            "app PaneMode\n{THEME}on inspect\n  pane #work restore\nview\n  panes #work\n    split vertical\n      pane files\n        text \"Files\"\n      pane editor\n        text \"Editor\"\n"
+        );
+        let mut invalid_pane = lower(analyze(&pane_source).unwrap()).unwrap();
+        let ResolvedStatementKind::PaneOperation { dynamic, .. } =
+            &mut invalid_pane.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a pane operation");
+        };
+        *dynamic = !*dynamic;
+        let error = crate::codegen::generate(&invalid_pane, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("pane grid mode"));
+
+        let flow_source = format!(
+            "app FlowContract\n{THEME}on start\n  flow\n    from done 1\n    map value -> value + 1\n    done -> loaded _\non loaded(value)\nview\n  text \"ready\"\n"
+        );
+        let mut invalid_flow = lower(analyze(&flow_source).unwrap()).unwrap();
+        let ResolvedStatementKind::TaskFlow(flow) =
+            &mut invalid_flow.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a flow");
+        };
+        flow.output = Some(Type::F64);
+        let error = crate::codegen::generate(&invalid_flow, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("output or error type"));
+
+        let mut invalid_transform = lower(analyze(&flow_source).unwrap()).unwrap();
+        let ResolvedStatementKind::TaskFlow(flow) =
+            &mut invalid_transform.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must contain a flow");
+        };
+        let ResolvedTaskTransform::Map { input, .. } = &mut flow.transforms[0] else {
+            panic!("fixture must contain a map transform");
+        };
+        *input = Type::F64;
+        let error = crate::codegen::generate(&invalid_transform, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("transform local"));
+    }
+
+    #[test]
+    #[ignore = "explicit many-component handler partition linearity contract"]
+    fn performance_contract_component_handler_partitions_are_linear() {
+        use std::fmt::Write as _;
+        use std::time::{Duration, Instant};
+
+        fn measure(components: usize) -> Duration {
+            let mut source = format!("app HandlerPartitions\n{THEME}");
+            for index in 0..components {
+                writeln!(
+                    source,
+                    "component Surface{index}()\n  on update\n  text \"Surface {index}\""
+                )
+                .unwrap();
+            }
+            source.push_str("view\n  text \"Ready\"\n");
+            let program = lower(analyze(&source).unwrap()).unwrap();
+            assert_eq!(program.handlers.len(), components);
+            let started = Instant::now();
+            for _ in 0..20 {
+                program.validate_handler_hir().unwrap();
+            }
+            started.elapsed()
+        }
+
+        let small = measure(500);
+        let large = measure(4_000);
+        eprintln!("500 component handlers in {small:?}; 4k in {large:?}");
+        assert!(
+            large.as_secs_f64() <= small.as_secs_f64() * 12.0 + 0.05,
+            "handler partition validation exceeded linear allowance: 500={small:?}, 4k={large:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_checked_handler_local_expression_and_extern_ids_do_not_panic() {
+        fn checked() -> CheckedDocument {
+            let source = format!(
+                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+            );
+            analyze(&source).unwrap()
+        }
+
+        let mut invalid_local = checked();
+        invalid_local
+            .facts
+            .corrupt_handler_param_local(HandlerId(1), 0, u32::MAX);
+        let error = lower(invalid_local).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("parameter local ID"));
+
+        let mut invalid_root = checked();
+        let statement = invalid_root.declarations.handlers()[1].statement_roots[0];
+        invalid_root.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::HandlerStatement {
+                statement,
+                operand: 0,
+            },
+            u32::MAX,
+        );
+        let error = lower(invalid_root).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression root ID"));
+
+        let mut invalid_descendant = checked();
+        let statement = invalid_descendant.declarations.handlers()[0].statement_roots[0];
+        let task = invalid_descendant
+            .declarations
+            .statement(statement)
+            .task
+            .expect("fixture run task");
+        invalid_descendant.facts.corrupt_expression_first_child(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+            u32::MAX,
+        );
+        let error = lower(invalid_descendant).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+
+        let mut invalid_cycle = checked();
+        let statement = invalid_cycle.declarations.handlers()[0].statement_roots[0];
+        let task = invalid_cycle
+            .declarations
+            .statement(statement)
+            .task
+            .expect("fixture run task");
+        invalid_cycle.facts.corrupt_expression_first_child_to_root(
+            crate::check::CheckedExprOwner::Task { task, operand: 0 },
+        );
+        let error = lower(invalid_cycle).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cycle"));
+
+        let mut invalid_extern = checked();
+        let task = invalid_extern
+            .declarations
+            .statement(invalid_extern.declarations.handlers()[0].statement_roots[0])
+            .task
+            .unwrap();
+        invalid_extern
+            .facts
+            .corrupt_task_extern_target(task, u32::MAX);
+        let error = lower(invalid_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern target ID"));
+    }
 
     #[test]
     fn lowers_component_calls_into_ordered_complete_contracts() {

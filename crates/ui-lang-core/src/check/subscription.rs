@@ -296,40 +296,57 @@ pub(in crate::check) fn infer_runs(
     handler: &Handler,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
-    value_env: &HashMap<String, Type>,
-    route_env: &HashMap<String, Type>,
+    value_env: &dyn ExprTypeEnv,
+    route_env: &dyn ExprTypeEnv,
 ) -> Result<(), Error> {
-    let mut unknown_env = route_env.clone();
-    unknown_env.extend(
-        handler
-            .params
-            .iter()
-            .map(|param| (param.name.clone(), Type::Unknown)),
-    );
-    let mut local_env = value_env.clone();
-    local_env.extend(unknown_env.clone());
-    for statement in &handler.statements {
+    let params = handler
+        .params
+        .iter()
+        .map(|param| (param.name.as_str(), Type::Unknown));
+    infer_run_statements(
+        &handler.statements,
+        params,
+        document,
+        signatures,
+        value_env,
+        route_env,
+    )
+}
+
+fn infer_run_statements<'a>(
+    statements: &[Statement],
+    params: impl Iterator<Item = (&'a str, Type)>,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    value_env: &dyn ExprTypeEnv,
+    route_env: &dyn ExprTypeEnv,
+) -> Result<(), Error> {
+    let mut unknown_env = ScopedTypeEnv::new(route_env);
+    let mut local_env = ScopedTypeEnv::new(value_env);
+    for (name, ty) in params {
+        unknown_env.insert(name.to_owned(), ty.clone());
+        local_env.insert(name.to_owned(), ty);
+    }
+    for statement in statements {
         if let Statement::Let { name, value, span } = statement {
             let ty = expr_type(value, &local_env, document, span)?;
-            unknown_env.insert(name.clone(), ty);
-            local_env.extend(unknown_env.clone());
+            unknown_env.insert(name.clone(), ty.clone());
+            local_env.insert(name.clone(), ty);
             continue;
         }
-        let nested = match statement {
-            Statement::TaskGroup { statements, .. } => Some(statements.clone()),
-            Statement::Abortable { task, .. } => Some(vec![(**task).clone()]),
+        let nested: Option<&[Statement]> = match statement {
+            Statement::TaskGroup { statements, .. } => Some(statements),
+            Statement::Abortable { task, .. } => Some(::std::slice::from_ref(task.as_ref())),
             _ => None,
         };
         if let Some(statements) = nested {
-            infer_runs(
-                &Handler {
-                    statements,
-                    ..handler.clone()
-                },
+            infer_run_statements(
+                statements,
+                ::std::iter::empty(),
                 document,
                 signatures,
                 &local_env,
-                route_env,
+                &unknown_env,
             )?;
             continue;
         }
@@ -615,13 +632,7 @@ pub(in crate::check) fn infer_runs(
                 span,
                 "flow routes accept at most one `_`; read other state in the handler",
             )?;
-            let mut flow_env = document
-                .states
-                .iter()
-                .map(|state| (state.name.clone(), state.ty.clone()))
-                .collect::<HashMap<_, _>>();
-            flow_env.extend(unknown_env.clone());
-            let (output, error_ty) = task_flow_type(source, transforms, document, &flow_env)?;
+            let (output, error_ty) = task_flow_type(source, transforms, document, &local_env)?;
             if let Some(route) = units {
                 infer_route(route, Some(Type::I64), &unknown_env, document, signatures)?;
             }
@@ -721,6 +732,11 @@ fn infer_route_with_payloads(
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
+    let (captured_payloads, captured_ordered) = match payloads {
+        RoutePayloads::Single(payload) => (payload.cloned().into_iter().collect(), false),
+        RoutePayloads::Ordered(payloads) => (payloads.to_vec(), true),
+    };
+    super::expr::capture_handler_route_inputs(route, captured_payloads, captured_ordered);
     if route.handler == "emit"
         && let Some(output) = component_output(env)
     {
@@ -911,6 +927,7 @@ pub(in crate::check) fn infer_ordered_payload_route(
         return infer_route(route, payloads.first().cloned(), env, document, signatures);
     }
     infer_route(route, Some(Type::Unknown), env, document, signatures)?;
+    super::expr::capture_handler_route_inputs(route, payloads.to_vec(), true);
     let key = component_context(env)
         .map(|component| component_handler_key(component, &route.handler))
         .filter(|key| signatures.contains_key(key))

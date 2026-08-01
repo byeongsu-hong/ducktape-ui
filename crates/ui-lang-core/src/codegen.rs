@@ -3,12 +3,8 @@ use crate::check::{
     CheckedLocalId, CheckedMatchPattern, CheckedValueRef, CheckedViewFlow,
     controlled_editor_bindings, controlled_state_bindings, expr_type,
 };
-use crate::lower::{
-    ComponentOutputRoute, ComponentScope, ComponentStorage, LoweredProgram,
-    ResolvedAppThemeSelection, ResolvedBackground, ResolvedEventRoute, ResolvedPaletteSelection,
-    ResolvedSlot, ResolvedStyle, ResolvedStyleFontWeight, ResolvedThemeColor,
-    ResolvedThemeColorBase, ResolvedThemeFactory, ResolvedThemePreset,
-};
+use crate::hir::{HandlerId, RunSiteId};
+use crate::lower::*;
 use crate::{Error, canonical_snake};
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -23,6 +19,19 @@ const RENDER_SOURCE_MARKER_END: &str = "__";
 
 fn source_marker(span: &Span) -> String {
     format!("{SOURCE_MARKER}{} {}", span.line, span.column)
+}
+
+fn source_marker_origin(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
+    let origin = program.origin(origin);
+    match &origin.path {
+        Some(path) => format!(
+            "{SOURCE_MARKER}{} {} {}",
+            origin.line,
+            origin.column,
+            encode_source_path(&path.display().to_string())
+        ),
+        None => format!("{SOURCE_MARKER}{} {}", origin.line, origin.column),
+    }
 }
 
 fn source_mapped_expression(
@@ -46,7 +55,7 @@ fn source_mapped_expression(
     )
 }
 
-fn encode_source_path(path: &str) -> String {
+pub(crate) fn encode_source_path(path: &str) -> String {
     path.as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -268,45 +277,30 @@ pub(in crate::codegen) fn find_extern_function<'a>(
         .find(|item| item.name == name && item.kind == kind)
 }
 
-pub(in crate::codegen) fn component_generation_lines(
-    handlers: &[Handler],
-) -> impl Iterator<Item = usize> + '_ {
+pub(in crate::codegen) fn component_run_sites(
+    program: &LoweredProgram,
+    handlers: &[HandlerId],
+) -> Vec<(RunSiteId, FutureMode)> {
     handlers
         .iter()
-        .flat_map(|handler| &handler.statements)
-        .filter_map(|statement| match statement {
-            Statement::Run { mode, span, .. } if *mode != FutureMode::Every => Some(span.line),
+        .flat_map(|handler| &program.handler(*handler).statements)
+        .filter_map(|statement| match &statement.kind {
+            ResolvedStatementKind::Run(run) => run.site.map(|site| (site, run.mode)),
             _ => None,
         })
+        .collect()
 }
 
-pub(in crate::codegen) fn component_replace_lines(
-    handlers: &[Handler],
-) -> impl Iterator<Item = usize> + '_ {
-    handlers
-        .iter()
-        .flat_map(|handler| &handler.statements)
-        .filter_map(|statement| match statement {
-            Statement::Run {
-                mode: FutureMode::Replace,
-                span,
-                ..
-            } => Some(span.line),
-            _ => None,
-        })
-}
-
-pub(in crate::codegen) fn handler_future(handler: &Handler) -> Option<(FutureMode, usize)> {
+pub(in crate::codegen) fn handler_future(
+    handler: &ResolvedHandler,
+) -> Option<(FutureMode, Option<RunSiteId>)> {
     handler
         .statements
         .iter()
-        .find_map(|statement| match statement {
-            Statement::Run {
-                kind: EffectKind::Future,
-                mode,
-                span,
-                ..
-            } => Some((*mode, span.line)),
+        .find_map(|statement| match &statement.kind {
+            ResolvedStatementKind::Run(run) if run.kind == EffectKind::Future => {
+                Some((run.mode, run.site))
+            }
             _ => None,
         })
 }
@@ -338,6 +332,7 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
 }
 
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
+    program.validate_handler_hir()?;
     let document = program.document();
     let message = format!("__{}Message", document.app);
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
@@ -428,14 +423,17 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             writeln!(out, "{}: {},", state.name, state.ty.rust(&document.structs)).unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for line in component_generation_lines(&component.handlers) {
-            writeln!(out, "{}: u64,", component_latest_field(line)).unwrap();
+        for (site, _) in component_run_sites(program, &component.handlers) {
+            writeln!(out, "{}: u64,", component_latest_field(site.0 as usize)).unwrap();
         }
-        for line in component_replace_lines(&component.handlers) {
+        for (site, _mode) in component_run_sites(program, &component.handlers)
+            .into_iter()
+            .filter(|(_, mode)| *mode == FutureMode::Replace)
+        {
             writeln!(
                 out,
                 "{}: ::std::option::Option<::iced::task::Handle>,",
-                component_replace_field(line)
+                component_replace_field(site.0 as usize)
             )
             .unwrap();
         }
@@ -455,14 +453,17 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for line in component_generation_lines(&component.handlers) {
-            writeln!(out, "{}: 0,", component_latest_field(line)).unwrap();
+        for (site, _) in component_run_sites(program, &component.handlers) {
+            writeln!(out, "{}: 0,", component_latest_field(site.0 as usize)).unwrap();
         }
-        for line in component_replace_lines(&component.handlers) {
+        for (site, _mode) in component_run_sites(program, &component.handlers)
+            .into_iter()
+            .filter(|(_, mode)| *mode == FutureMode::Replace)
+        {
             writeln!(
                 out,
                 "{}: ::std::option::Option::None,",
-                component_replace_field(line)
+                component_replace_field(site.0 as usize)
             )
             .unwrap();
         }
@@ -482,7 +483,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid {
             name,
             configuration,
@@ -565,7 +566,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
     )
     .unwrap();
-    for handler in &document.handlers {
+    for handler in program.app_handlers() {
         if handler.name == "mount" {
             continue;
         }
@@ -583,15 +584,15 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         }
     }
     for component in program.components() {
-        for line in component_generation_lines(&component.handlers) {
+        for (site, _) in component_run_sites(program, &component.handlers) {
             writeln!(
                 out,
                 "{}(::std::string::String, u64, ::std::boxed::Box<{message}>),",
-                component_latest_variant(&component.name, line)
+                component_latest_variant(&component.name, site.0 as usize)
             )
             .unwrap();
         }
-        for handler in &component.handlers {
+        for handler in component.handlers.iter().map(|id| program.handler(*id)) {
             let variant = component_handler_variant(&component.name, &handler.name);
             let fields = ::std::iter::once("::std::string::String".to_owned())
                 .chain(
@@ -638,7 +639,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     if has_animations(document) {
         writeln!(out, "__AnimationFrame,").unwrap();
     }
-    for (node, test_only) in document_pane_grids(document) {
+    for (node, test_only) in document_pane_grids(program) {
         let ViewNode::PaneGrid { name, options, .. } = node else {
             unreachable!()
         };
@@ -759,7 +760,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
 
     generate_theme(&mut out, program)?;
     generate_boot(&mut out, program, &message)?;
-    generate_presets(&mut out, document, &message)?;
+    generate_presets(&mut out, program, &message)?;
     generate_update(&mut out, program, &message)?;
     generate_subscription(&mut out, document, &message)?;
     generate_view(&mut out, program, &message)?;

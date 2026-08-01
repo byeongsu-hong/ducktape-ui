@@ -30,6 +30,10 @@ pub(in crate::codegen) trait BindingEnvironment {
     fn contains_key(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        None
+    }
 }
 
 pub(in crate::codegen) struct ScopedBindingEnv<'a> {
@@ -78,6 +82,10 @@ impl BindingEnvironment for ScopedBindingEnv<'_> {
             .find_map(|(name, binding)| name.starts_with(prefix).then_some(binding))
             .or_else(|| self.base.binding_with_prefix(prefix))
     }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        binding::component_context(self)
+    }
 }
 
 impl BindingEnvironment for HashMap<String, Binding> {
@@ -95,16 +103,24 @@ impl BindingEnvironment for HashMap<String, Binding> {
         self.iter()
             .find_map(|(name, binding)| name.starts_with(prefix).then_some(binding))
     }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        component_context(self)
+    }
 }
 
-struct LayeredBindingEnv<'a> {
+pub(in crate::codegen) struct LayeredBindingEnv<'a> {
     base: &'a dyn BindingEnvironment,
     name: &'a str,
     binding: Binding,
 }
 
 impl<'a> LayeredBindingEnv<'a> {
-    fn new(base: &'a dyn BindingEnvironment, name: &'a str, binding: Binding) -> Self {
+    pub(in crate::codegen) fn new(
+        base: &'a dyn BindingEnvironment,
+        name: &'a str,
+        binding: Binding,
+    ) -> Self {
         #[cfg(test)]
         record_binding_env_overlay();
         Self {
@@ -134,6 +150,10 @@ impl BindingEnvironment for LayeredBindingEnv<'_> {
             .starts_with(prefix)
             .then_some(&self.binding)
             .or_else(|| self.base.binding_with_prefix(prefix))
+    }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        self.base.component_context()
     }
 }
 

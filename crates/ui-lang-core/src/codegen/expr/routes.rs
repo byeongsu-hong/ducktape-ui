@@ -1,5 +1,80 @@
 use super::*;
 
+pub(in crate::codegen) fn resolved_route_code(
+    route: &crate::lower::ResolvedRoute,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    let invariant = |message| program.invariant_at_origin(route.origin, message);
+    let (variant, component) = match &route.target {
+        crate::lower::ResolvedRouteTarget::App { handler, name } => {
+            let resolved = program.try_handler(*handler).ok_or_else(|| {
+                invariant("normalized app route references an invalid handler ID")
+            })?;
+            if resolved.owner != HandlerOwner::App || resolved.name != *name {
+                return Err(invariant(
+                    "normalized app route target does not match its handler contract",
+                ));
+            }
+            (handler_variant(&resolved.name), None)
+        }
+        crate::lower::ResolvedRouteTarget::Component {
+            component,
+            handler,
+            name,
+        } => {
+            let component_contract = program.try_component(*component).ok_or_else(|| {
+                invariant("normalized component route references an invalid component ID")
+            })?;
+            let resolved = program.try_handler(*handler).ok_or_else(|| {
+                invariant("normalized component route references an invalid handler ID")
+            })?;
+            if resolved.owner != HandlerOwner::Component(*component) || resolved.name != *name {
+                return Err(invariant(
+                    "normalized component route target does not match its handler contract",
+                ));
+            }
+            (
+                component_handler_variant(&component_contract.name, &resolved.name),
+                Some(component_contract.name.as_str()),
+            )
+        }
+    };
+    let mut args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            crate::lower::ResolvedRouteArg::Payload { index, .. } => payloads
+                .get(*index as usize)
+                .map(|payload| (*payload).to_owned())
+                .ok_or_else(|| {
+                    invariant("normalized route payload index is outside its payload contract")
+                }),
+            crate::lower::ResolvedRouteArg::Expression(expression) => {
+                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(component_name) = component {
+        let (active, context) = env.component_context().ok_or_else(|| {
+            invariant("normalized component route has no component emission scope")
+        })?;
+        if active != component_name {
+            return Err(invariant(
+                "normalized component route owner does not match emission scope",
+            ));
+        }
+        args.insert(0, format!("({}).clone()", context.code));
+    }
+    if args.is_empty() {
+        Ok(format!("{message}::{variant}"))
+    } else {
+        Ok(format!("{message}::{variant}({})", args.join(", ")))
+    }
+}
+
 pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> {
     match field {
         "kind" => Some(Type::Str),

@@ -381,7 +381,7 @@ fn check(
         infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
     }
     for component in &document.components {
-        let values = component
+        let values: HashMap<String, Type> = component
             .states
             .iter()
             .map(|state| (state.name.clone(), state.ty.clone()))
@@ -441,9 +441,11 @@ fn check(
         }
     }
 
+    let handler_analysis_guard = expr::HandlerAnalysisGuard::start();
     for handler in &document.handlers {
         with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
             with_handler_usage(None, &handler.name, || {
+                infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
                 check_handler(
                     handler,
                     &states,
@@ -457,6 +459,7 @@ fn check(
     }
     for handler in &preset_handlers {
         with_handler_usage(None, &handler.name, || {
+            infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
             check_handler(
                 handler,
                 &states,
@@ -492,6 +495,14 @@ fn check(
                     && reachable_handlers.component_contains(&component.name, &handler.name),
                 || {
                     with_handler_usage(Some(&component.name), &handler.name, || {
+                        let route_env = HashMap::from([
+                            (component_context_key(&component.name), Type::Unit),
+                            (
+                                COMPONENT_CONTEXT_INDEX.into(),
+                                Type::Named(component.name.clone()),
+                            ),
+                        ]);
+                        infer_runs(handler, document, &mut signatures, &states, &route_env)?;
                         check_handler(
                             handler,
                             &states,
@@ -506,6 +517,7 @@ fn check(
             )?;
         }
     }
+    initializer_analyses.retain_handlers(handler_analysis_guard.finish(), preset_handlers);
     check_tests(document, &view_states)?;
     initializer_analyses.extend(view_analysis_guard.finish())?;
     Ok(initializer_analyses)
@@ -782,9 +794,11 @@ use expr::{check_length_value, contains_ui_enum};
 pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedComponentArgumentSource,
-    CheckedExprId, CheckedExprKind, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
-    CheckedLocalId, CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
-    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewFlow,
+    CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUseId,
+    CheckedFacts, CheckedInitializerCoercion, CheckedLocalId, CheckedLocalOwner,
+    CheckedMatchPattern, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
+    CheckedRouteArgKind, CheckedStatement, CheckedUnaryOperator, CheckedValueRef, CheckedView,
+    CheckedViewFlow,
 };
 pub(crate) use handler::task_flow_type;
 

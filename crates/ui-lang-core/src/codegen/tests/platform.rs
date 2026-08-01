@@ -371,7 +371,7 @@ view
     assert!(generated.contains("::iced::system::information().map(__ice_system_info)"));
     assert!(generated.contains("::iced::system::theme().map(__ice_system_theme)"));
     assert!(generated.contains("::iced::system::theme_changes().map(__ice_system_theme)"));
-    assert!(generated.contains("self.cpu = info.cpu_brand.clone()"));
+    assert!(generated.contains("self.cpu = info.cpu_brand.to_owned()"));
 }
 
 #[test]

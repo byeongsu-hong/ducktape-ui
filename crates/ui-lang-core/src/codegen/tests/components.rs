@@ -1151,15 +1151,15 @@ view
   SearchBox #search
 "#;
     let generated = compile(source, "search.ice").unwrap();
-    assert!(generated.contains("__ice_latest_19: u64"));
-    assert!(generated.contains("__SearchBoxLatest19(::std::string::String, u64"));
-    assert!(generated.contains("__local.__ice_latest_19.wrapping_add(1)"));
-    assert!(generated.contains("__SearchMessage::__SearchBoxLatest19(__scope.clone()"));
-    assert!(generated.contains("__local.__ice_latest_19 == __generation"));
+    assert!(generated.contains("__ice_latest_0: u64"));
+    assert!(generated.contains("__SearchBoxLatest0(::std::string::String, u64"));
+    assert!(generated.contains("__local.__ice_latest_0.wrapping_add(1)"));
+    assert!(generated.contains("__SearchMessage::__SearchBoxLatest0(__scope.clone()"));
+    assert!(generated.contains("__local.__ice_latest_0 == __generation"));
     assert!(generated.contains("return self.__update(*__message)"));
 
     let ordinary = compile(&source.replace("run latest", "run"), "search.ice").unwrap();
-    assert!(!ordinary.contains("Latest19"));
+    assert!(!ordinary.contains("Latest0"));
     assert!(!ordinary.contains("wrapping_add(1)"));
 }
 
@@ -1196,16 +1196,16 @@ view
 "#;
     let generated = compile(source, "search.ice").unwrap();
     assert!(generated.contains("::ui_lang_runtime::MountedComponentState<__IceSearchBoxState>"));
-    assert!(generated.contains("__ice_replace_19: ::std::option::Option<::iced::task::Handle>"));
-    assert!(generated.contains("__ice_latest_19: u64"));
+    assert!(generated.contains("__ice_replace_0: ::std::option::Option<::iced::task::Handle>"));
+    assert!(generated.contains("__ice_latest_0: u64"));
     assert!(generated.contains(".next_generation()"));
-    assert!(generated.contains(".__ice_replace_19.replace(__handle.abort_on_drop())"));
+    assert!(generated.contains(".__ice_replace_0.replace(__handle.abort_on_drop())"));
     assert!(generated.contains("__previous.abort()"));
     assert!(generated.contains("let (__task, __handle) = __task.abortable()"));
     assert!(generated.contains(".begin_render()"));
     assert!(generated.contains(".mount("));
     assert!(generated.contains(".finish_render(__ice_root_scope_ref)"));
-    assert!(generated.contains("SearchBoxLatest19"));
+    assert!(generated.contains("SearchBoxLatest0"));
     assert!(generated.contains("::iced::widget::keyed_column(__children)"));
     assert!(generated.contains("format!(\"{}/key({})\""));
 }

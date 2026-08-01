@@ -1,60 +1,47 @@
 use super::*;
 
-pub(in crate::codegen) fn task_source_code(
-    source: &TaskSource,
-    document: &Document,
-    env: &HashMap<String, Binding>,
+fn resolved_effect_call(
+    kind: EffectKind,
+    target: &ResolvedEffectTarget,
+    args: &[ResolvedExpressionId],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    match source {
-        TaskSource::Done { value, .. } => Ok(format!(
-            "::iced::Task::done({})",
-            expr_code(value, env, document, ValueMode::Owned)?
-        )),
-        TaskSource::None { output, .. } => Ok(format!(
-            "::iced::Task::<{}>::none()",
-            output.rust(&document.structs)
-        )),
-        TaskSource::Effect {
-            kind,
-            function,
-            args,
-            span,
-        } => {
-            if *kind == EffectKind::Task {
-                match function.as_str() {
-                    "__ice_system_info" => {
-                        return Ok("::iced::system::information().map(__ice_system_info)".into());
-                    }
-                    "__ice_system_theme" => {
-                        return Ok("::iced::system::theme().map(__ice_system_theme)".into());
-                    }
-                    "__ice_time_now" => return Ok("::iced::time::now()".into()),
-                    "__ice_clipboard_read" => return Ok("::iced::clipboard::read()".into()),
-                    "__ice_clipboard_read_primary" => {
-                        return Ok("::iced::clipboard::read_primary()".into());
-                    }
-                    "__ice_font_load" => {
-                        let bytes = expr_code(&args[0], env, document, ValueMode::Owned)?;
-                        return Ok(format!(
-                            "::iced::font::load({bytes}).map(|result| match result {{ ::std::result::Result::Ok(value) => value, ::std::result::Result::Err(error) => match error {{}} }})"
-                        ));
-                    }
-                    "__ice_image_allocate" => {
-                        let handle = expr_code(&args[0], env, document, ValueMode::Owned)?;
-                        return Ok(format!("::iced::widget::image::allocate({handle})"));
-                    }
-                    _ => {}
+    let args = args
+        .iter()
+        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    match target {
+        ResolvedEffectTarget::Builtin(function) if kind == EffectKind::Task => {
+            Ok(match function.as_str() {
+                "__ice_system_info" => {
+                    "::iced::system::information().map(__ice_system_info)".into()
                 }
-            }
-            let action =
-                find_extern_function(document, function, (*kind).into()).ok_or_else(|| {
-                    Error::new(
-                        "E130",
-                        span,
-                        format!("unknown extern task source `{function}`"),
-                    )
-                })?;
-            let args = expr_list_code(args, env, document)?;
+                "__ice_system_theme" => "::iced::system::theme().map(__ice_system_theme)".into(),
+                "__ice_time_now" => "::iced::time::now()".into(),
+                "__ice_clipboard_read" => "::iced::clipboard::read()".into(),
+                "__ice_clipboard_read_primary" => "::iced::clipboard::read_primary()".into(),
+                "__ice_font_load" => format!(
+                    "::iced::font::load({args}).map(|result| match result {{ ::std::result::Result::Ok(value) => value, ::std::result::Result::Err(error) => match error {{}} }})"
+                ),
+                "__ice_image_allocate" => format!("::iced::widget::image::allocate({args})"),
+                _ => {
+                    return Err(Error::new(
+                        "E196",
+                        &Span::line(1),
+                        "normalized task source references an unknown built-in",
+                    ));
+                }
+            })
+        }
+        ResolvedEffectTarget::Builtin(_) => Err(Error::new(
+            "E196",
+            &Span::line(1),
+            "normalized non-task effect references a built-in task",
+        )),
+        ResolvedEffectTarget::Extern(id) => {
+            let action = program.extern_function(*id);
             Ok(match kind {
                 EffectKind::Future => format!(
                     "::iced::Task::perform({}({args}), |value| value)",
@@ -70,96 +57,117 @@ pub(in crate::codegen) fn task_source_code(
     }
 }
 
-pub(in crate::codegen) fn task_flow_code(
-    root: &TaskSource,
-    transforms: &[TaskTransform],
-    document: &Document,
-    message: &str,
-    env: &HashMap<String, Binding>,
+pub(in crate::codegen) fn task_source_code(
+    source: &ResolvedTaskSource,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let mut task = task_source_code(root, document, env)?;
-    let type_env = env
-        .iter()
-        .map(|(name, binding)| (name.clone(), binding.ty.clone()))
-        .collect::<HashMap<_, _>>();
-    for (index, transform) in transforms.iter().enumerate() {
+    Ok(match source {
+        ResolvedTaskSource::Done { value, .. } => format!(
+            "::iced::Task::done({})",
+            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+        ),
+        ResolvedTaskSource::None { output, .. } => format!(
+            "::iced::Task::<{}>::none()",
+            output.rust(program.extern_structs())
+        ),
+        ResolvedTaskSource::Effect {
+            kind, target, args, ..
+        } => resolved_effect_call(*kind, target, args, program, env)?,
+    })
+}
+
+pub(in crate::codegen) fn task_flow_code(
+    flow: &ResolvedTaskFlow,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let mut task = task_source_code(&flow.source, program, env)?;
+    for transform in &flow.transforms {
         match transform {
-            TaskTransform::Map { binding, value, .. } => {
-                let (output, error) =
-                    crate::check::task_flow_type(root, &transforms[..index], document, &type_env)?;
-                let output = output.expect("discard is the final transform");
+            ResolvedTaskTransform::Map {
+                task: _,
+                local,
+                binding,
+                input,
+                input_fallible,
+                value,
+                ..
+            } => {
                 let map_env = HashMap::from([(
                     binding.clone(),
                     Binding {
                         code: binding.clone(),
-                        ty: output,
+                        ty: input.clone(),
                         local: false,
                         state: None,
-                        owner: None,
+                        owner: Some(BindingOwner::Local(*local)),
                     },
                 )]);
-                let value = expr_code(value, &map_env, document, ValueMode::Owned)?;
-                task = if error.is_some() {
+                let value = checked_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
+                task = if *input_fallible {
                     format!("({task}).map(move |result| result.map(|{binding}| {value}))")
                 } else {
                     format!("({task}).map(move |{binding}| {value})")
                 };
             }
-            TaskTransform::Then {
-                binding, source, ..
+            ResolvedTaskTransform::Then {
+                local,
+                binding,
+                input,
+                source,
+                ..
             }
-            | TaskTransform::AndThen {
-                binding, source, ..
+            | ResolvedTaskTransform::AndThen {
+                local,
+                binding,
+                input,
+                source,
+                ..
             } => {
-                let (output, error) =
-                    crate::check::task_flow_type(root, &transforms[..index], document, &type_env)?;
-                let output = output.expect("discard is the final transform");
-                let binding_ty =
-                    if matches!(transform, TaskTransform::AndThen { .. }) && error.is_none() {
-                        let Type::Option(inner) = output else {
-                            unreachable!("checked optional try")
-                        };
-                        *inner
-                    } else {
-                        output
-                    };
                 let next_env = HashMap::from([(
                     binding.clone(),
                     Binding {
                         code: binding.clone(),
-                        ty: binding_ty,
+                        ty: input.clone(),
                         local: false,
                         state: None,
-                        owner: None,
+                        owner: Some(BindingOwner::Local(*local)),
                     },
                 )]);
-                let next = task_source_code(source, document, &next_env)?;
-                let method = if matches!(transform, TaskTransform::Then { .. }) {
+                let next = task_source_code(source, program, &next_env)?;
+                let method = if matches!(transform, ResolvedTaskTransform::Then { .. }) {
                     "then"
                 } else {
                     "and_then"
                 };
                 task = format!("({task}).{method}(move |{binding}| {next})");
             }
-            TaskTransform::MapError { binding, value, .. } => {
-                let (_, error) =
-                    crate::check::task_flow_type(root, &transforms[..index], document, &type_env)?;
-                let error = error.expect("checked map-err input");
+            ResolvedTaskTransform::MapError {
+                local,
+                binding,
+                input,
+                value,
+                ..
+            } => {
                 let map_env = HashMap::from([(
                     binding.clone(),
                     Binding {
                         code: binding.clone(),
-                        ty: error,
+                        ty: input.clone(),
                         local: false,
                         state: None,
-                        owner: None,
+                        owner: Some(BindingOwner::Local(*local)),
                     },
                 )]);
-                let value = expr_code(value, &map_env, document, ValueMode::Owned)?;
+                let value = checked_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
                 task = format!("({task}).map_err(move |{binding}| {value})");
             }
-            TaskTransform::Collect { .. } => task = format!("({task}).collect()"),
-            TaskTransform::Discard { .. } => task = format!("({task}).discard::<{message}>()"),
+            ResolvedTaskTransform::Collect { .. } => task = format!("({task}).collect()"),
+            ResolvedTaskTransform::Discard { .. } => {
+                task = format!("({task}).discard::<{message}>()")
+            }
         }
     }
     Ok(task)

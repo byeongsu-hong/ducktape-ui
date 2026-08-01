@@ -1,5 +1,5 @@
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 macro_rules! arena_id {
@@ -20,6 +20,11 @@ arena_id!(ExternFnId);
 arena_id!(OriginId);
 arena_id!(ViewId);
 arena_id!(ComponentCallId);
+arena_id!(HandlerId);
+arena_id!(StatementId);
+arena_id!(TaskId);
+arena_id!(RouteId);
+arena_id!(RunSiteId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentParamId {
@@ -157,6 +162,10 @@ impl OriginArena {
         &self.origins[id.0 as usize]
     }
 
+    pub(crate) fn try_get(&self, id: OriginId) -> Option<&Origin> {
+        self.origins.get(id.0 as usize)
+    }
+
     pub(crate) fn source_origins(&self) -> &[(PathBuf, usize)] {
         &self.source_origins
     }
@@ -210,6 +219,61 @@ pub(crate) struct DeclarationIndex {
     views: Vec<Declaration<ViewId>>,
     views_by_site: HashMap<SourceSite, ViewId>,
     component_calls_by_view: HashMap<ViewId, ComponentCallId>,
+    handlers: Vec<HandlerDeclaration>,
+    handlers_by_owner_name: HashMap<(HandlerOwner, String), HandlerId>,
+    statements: Vec<StatementDeclaration>,
+    tasks: Vec<TaskDeclaration>,
+    routes: Vec<RouteDeclaration>,
+    run_sites: Vec<RunSiteDeclaration>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum HandlerOwner {
+    App,
+    Component(ComponentId),
+    Preset(u32),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HandlerDeclaration {
+    pub(crate) declaration: Declaration<HandlerId>,
+    pub(crate) owner: HandlerOwner,
+    pub(crate) name: String,
+    pub(crate) statement_roots: Vec<StatementId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StatementDeclaration {
+    pub(crate) declaration: Declaration<StatementId>,
+    pub(crate) handler: HandlerId,
+    pub(crate) parent: Option<StatementId>,
+    pub(crate) task: Option<TaskId>,
+    pub(crate) source_tasks: Vec<TaskId>,
+    pub(crate) routes: Vec<RouteId>,
+    pub(crate) run_site: Option<RunSiteId>,
+    pub(crate) children: Vec<StatementId>,
+    pub(crate) is_final: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TaskDeclaration {
+    pub(crate) declaration: Declaration<TaskId>,
+    pub(crate) statement: StatementId,
+    pub(crate) parent: Option<TaskId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RouteDeclaration {
+    pub(crate) declaration: Declaration<RouteId>,
+    pub(crate) statement: StatementId,
+    pub(crate) task: Option<TaskId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RunSiteDeclaration {
+    pub(crate) declaration: Declaration<RunSiteId>,
+    pub(crate) statement: StatementId,
+    pub(crate) mode: FutureMode,
 }
 
 impl DeclarationIndex {
@@ -462,6 +526,72 @@ impl DeclarationIndex {
             );
         }
 
+        let mut handlers = Vec::new();
+        let mut statements = Vec::new();
+        let mut tasks = Vec::new();
+        let mut routes = Vec::new();
+        let mut run_sites = Vec::new();
+        for handler in &document.handlers {
+            index_handler_declaration(
+                handler,
+                HandlerOwner::App,
+                None,
+                origins,
+                &mut handlers,
+                &mut statements,
+                &mut tasks,
+                &mut routes,
+                &mut run_sites,
+            );
+        }
+        for (component_index, component) in document.components.iter().enumerate() {
+            let component_id = components[component_index].declaration.id;
+            let parent = Some(components[component_index].declaration.origin);
+            for handler in &component.handlers {
+                index_handler_declaration(
+                    handler,
+                    HandlerOwner::Component(component_id),
+                    parent,
+                    origins,
+                    &mut handlers,
+                    &mut statements,
+                    &mut tasks,
+                    &mut routes,
+                    &mut run_sites,
+                );
+            }
+        }
+        for (preset_index, preset) in document.presets.iter().enumerate() {
+            let handler = Handler {
+                name: format!("preset {}", preset.name),
+                params: Vec::new(),
+                statements: preset.statements.clone(),
+                span: preset.span.clone(),
+            };
+            index_handler_declaration(
+                &handler,
+                HandlerOwner::Preset(preset_index as u32),
+                None,
+                origins,
+                &mut handlers,
+                &mut statements,
+                &mut tasks,
+                &mut routes,
+                &mut run_sites,
+            );
+        }
+
+        let handlers_by_owner_name = handlers
+            .iter()
+            .map(|handler| {
+                let route_owner = match handler.owner {
+                    HandlerOwner::Preset(_) => HandlerOwner::App,
+                    owner => owner,
+                };
+                ((route_owner, handler.name.clone()), handler.declaration.id)
+            })
+            .collect();
+
         Self {
             app_states,
             derived,
@@ -481,6 +611,12 @@ impl DeclarationIndex {
             views,
             views_by_site,
             component_calls_by_view,
+            handlers,
+            handlers_by_owner_name,
+            statements,
+            tasks,
+            routes,
+            run_sites,
         }
     }
 
@@ -528,6 +664,17 @@ impl DeclarationIndex {
         self.components[component.0 as usize].slots[index]
     }
 
+    pub(crate) fn try_component_slot(
+        &self,
+        id: ComponentSlotId,
+    ) -> Option<Declaration<ComponentSlotId>> {
+        self.components
+            .get(id.component.0 as usize)?
+            .slots
+            .get(id.index as usize)
+            .copied()
+    }
+
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
         self.views[id.0 as usize]
     }
@@ -558,6 +705,16 @@ impl DeclarationIndex {
         let id = self.struct_fields_by_owner.get(&owner)?.get(name)?;
         self.structs
             .get(owner.0 as usize)?
+            .fields
+            .get(id.index as usize)
+    }
+
+    pub(crate) fn try_struct_field_decl(
+        &self,
+        id: StructFieldId,
+    ) -> Option<&StructFieldDeclaration> {
+        self.structs
+            .get(id.owner.0 as usize)?
             .fields
             .get(id.index as usize)
     }
@@ -625,6 +782,304 @@ impl DeclarationIndex {
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
     }
+
+    pub(crate) fn try_extern_decl(&self, id: ExternFnId) -> Option<&ExternDeclaration> {
+        self.externs.get(id.0 as usize)
+    }
+
+    pub(crate) fn handlers(&self) -> &[HandlerDeclaration] {
+        &self.handlers
+    }
+
+    pub(crate) fn handler(&self, id: HandlerId) -> &HandlerDeclaration {
+        &self.handlers[id.0 as usize]
+    }
+
+    pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&HandlerDeclaration> {
+        self.handlers.get(id.0 as usize)
+    }
+
+    pub(crate) fn handler_id(&self, owner: HandlerOwner, name: &str) -> Option<HandlerId> {
+        let owner = match owner {
+            HandlerOwner::Preset(_) => HandlerOwner::App,
+            owner => owner,
+        };
+        self.handlers_by_owner_name
+            .get(&(owner, name.to_owned()))
+            .copied()
+    }
+
+    pub(crate) fn statement(&self, id: StatementId) -> &StatementDeclaration {
+        &self.statements[id.0 as usize]
+    }
+
+    pub(crate) fn try_statement(&self, id: StatementId) -> Option<&StatementDeclaration> {
+        self.statements.get(id.0 as usize)
+    }
+
+    pub(crate) fn task(&self, id: TaskId) -> &TaskDeclaration {
+        &self.tasks[id.0 as usize]
+    }
+
+    pub(crate) fn try_task(&self, id: TaskId) -> Option<&TaskDeclaration> {
+        self.tasks.get(id.0 as usize)
+    }
+
+    pub(crate) fn route(&self, id: RouteId) -> &RouteDeclaration {
+        &self.routes[id.0 as usize]
+    }
+
+    pub(crate) fn try_route(&self, id: RouteId) -> Option<&RouteDeclaration> {
+        self.routes.get(id.0 as usize)
+    }
+
+    pub(crate) fn try_run_site(&self, id: RunSiteId) -> Option<&RunSiteDeclaration> {
+        self.run_sites.get(id.0 as usize)
+    }
+
+    pub(crate) fn statement_count(&self) -> usize {
+        self.statements.len()
+    }
+
+    pub(crate) fn task_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    pub(crate) fn route_count(&self) -> usize {
+        self.routes.len()
+    }
+
+    pub(crate) fn run_site_count(&self) -> usize {
+        self.run_sites.len()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_handler_declaration(
+    handler: &Handler,
+    owner: HandlerOwner,
+    parent: Option<OriginId>,
+    origins: &mut OriginArena,
+    handlers: &mut Vec<HandlerDeclaration>,
+    statements: &mut Vec<StatementDeclaration>,
+    tasks: &mut Vec<TaskDeclaration>,
+    routes: &mut Vec<RouteDeclaration>,
+    run_sites: &mut Vec<RunSiteDeclaration>,
+) {
+    let id = HandlerId(handlers.len() as u32);
+    let origin = origins.push(&handler.span, parent);
+    let statement_roots = handler
+        .statements
+        .iter()
+        .enumerate()
+        .map(|(index, statement)| {
+            index_statement_declaration(
+                statement,
+                id,
+                None,
+                index + 1 == handler.statements.len(),
+                origin,
+                origins,
+                statements,
+                tasks,
+                routes,
+                run_sites,
+            )
+        })
+        .collect();
+    handlers.push(HandlerDeclaration {
+        declaration: Declaration { id, origin },
+        owner,
+        name: handler.name.clone(),
+        statement_roots,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_statement_declaration(
+    statement: &Statement,
+    handler: HandlerId,
+    parent: Option<StatementId>,
+    is_final: bool,
+    parent_origin: OriginId,
+    origins: &mut OriginArena,
+    statements: &mut Vec<StatementDeclaration>,
+    tasks: &mut Vec<TaskDeclaration>,
+    routes: &mut Vec<RouteDeclaration>,
+    run_sites: &mut Vec<RunSiteDeclaration>,
+) -> StatementId {
+    let id = StatementId(statements.len() as u32);
+    let origin = origins.push(statement.span(), Some(parent_origin));
+    statements.push(StatementDeclaration {
+        declaration: Declaration { id, origin },
+        handler,
+        parent,
+        task: None,
+        source_tasks: Vec::new(),
+        routes: Vec::new(),
+        run_site: None,
+        children: Vec::new(),
+        is_final,
+    });
+
+    let task = statement.immediate_task().map(|_| {
+        let task = TaskId(tasks.len() as u32);
+        let task_origin = origins.push(statement.span(), Some(origin));
+        tasks.push(TaskDeclaration {
+            declaration: Declaration {
+                id: task,
+                origin: task_origin,
+            },
+            statement: id,
+            parent: None,
+        });
+        task
+    });
+    statements[id.0 as usize].task = task;
+
+    if let Statement::TaskFlow {
+        source, transforms, ..
+    } = statement
+    {
+        let parent_task = task;
+        let source_task = index_task_source(source, id, parent_task, origins, tasks);
+        statements[id.0 as usize].source_tasks.push(source_task);
+        for transform in transforms {
+            let transform_task = index_task_transform(transform, id, parent_task, origins, tasks);
+            statements[id.0 as usize].source_tasks.push(transform_task);
+        }
+    }
+
+    let route_values: Vec<&Route> = match statement {
+        Statement::Run { success, error, .. } => {
+            std::iter::once(success).chain(error.iter()).collect()
+        }
+        Statement::Sip {
+            progress,
+            success,
+            error,
+            ..
+        } => std::iter::once(progress)
+            .chain(std::iter::once(success))
+            .chain(error.iter())
+            .collect(),
+        Statement::TaskFlow {
+            success,
+            error,
+            units,
+            ..
+        } => success
+            .iter()
+            .chain(error.iter())
+            .chain(units.iter())
+            .collect(),
+        Statement::WidgetOperation { route, .. }
+        | Statement::PaneOperation { route, .. }
+        | Statement::WindowOperation { route, .. } => route.iter().collect(),
+        _ => Vec::new(),
+    };
+    for route in route_values {
+        let route_id = RouteId(routes.len() as u32);
+        let route_origin = origins.push(&route.span, Some(origin));
+        routes.push(RouteDeclaration {
+            declaration: Declaration {
+                id: route_id,
+                origin: route_origin,
+            },
+            statement: id,
+            task,
+        });
+        statements[id.0 as usize].routes.push(route_id);
+    }
+
+    if let Statement::Run { mode, .. } = statement
+        && *mode != FutureMode::Every
+    {
+        let run_site = RunSiteId(run_sites.len() as u32);
+        run_sites.push(RunSiteDeclaration {
+            declaration: Declaration {
+                id: run_site,
+                origin,
+            },
+            statement: id,
+            mode: *mode,
+        });
+        statements[id.0 as usize].run_site = Some(run_site);
+    }
+
+    let children: Vec<&Statement> = match statement {
+        Statement::TaskGroup { statements, .. } => statements.iter().collect(),
+        Statement::Abortable { task, .. } => vec![task.as_ref()],
+        _ => Vec::new(),
+    };
+    let child_ids = children
+        .into_iter()
+        .map(|child| {
+            index_statement_declaration(
+                child,
+                handler,
+                Some(id),
+                true,
+                origin,
+                origins,
+                statements,
+                tasks,
+                routes,
+                run_sites,
+            )
+        })
+        .collect();
+    statements[id.0 as usize].children = child_ids;
+    id
+}
+
+fn index_task_source(
+    source: &TaskSource,
+    statement: StatementId,
+    parent: Option<TaskId>,
+    origins: &mut OriginArena,
+    tasks: &mut Vec<TaskDeclaration>,
+) -> TaskId {
+    let span = match source {
+        TaskSource::Effect { span, .. }
+        | TaskSource::Done { span, .. }
+        | TaskSource::None { span, .. } => span,
+    };
+    let id = TaskId(tasks.len() as u32);
+    let parent_origin = parent.map(|parent| tasks[parent.0 as usize].declaration.origin);
+    let origin = origins.push(span, parent_origin);
+    tasks.push(TaskDeclaration {
+        declaration: Declaration { id, origin },
+        statement,
+        parent,
+    });
+    id
+}
+
+fn index_task_transform(
+    transform: &TaskTransform,
+    statement: StatementId,
+    parent: Option<TaskId>,
+    origins: &mut OriginArena,
+    tasks: &mut Vec<TaskDeclaration>,
+) -> TaskId {
+    let span = match transform {
+        TaskTransform::Map { span, .. }
+        | TaskTransform::Then { span, .. }
+        | TaskTransform::AndThen { span, .. }
+        | TaskTransform::MapError { span, .. }
+        | TaskTransform::Collect { span }
+        | TaskTransform::Discard { span } => span,
+    };
+    let id = TaskId(tasks.len() as u32);
+    let parent_origin = parent.map(|parent| tasks[parent.0 as usize].declaration.origin);
+    let origin = origins.push(span, parent_origin);
+    tasks.push(TaskDeclaration {
+        declaration: Declaration { id, origin },
+        statement,
+        parent,
+    });
+    id
 }
 
 fn declared_slots(node: &ViewNode) -> Vec<&Span> {
@@ -717,6 +1172,458 @@ pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
         },
         _ => Vec::new(),
     }
+}
+
+pub(crate) fn dynamic_pane_grids(document: &Document) -> HashSet<String> {
+    let mut dynamic = HashSet::new();
+    let mut pending = vec![&document.view];
+    pending.extend(document.tests.iter().filter_map(|test| test.mount.as_ref()));
+    while let Some(node) = pending.pop() {
+        if let ViewNode::PaneGrid {
+            name, templates, ..
+        } = node
+            && !templates.is_empty()
+        {
+            dynamic.insert(name.clone());
+        }
+        pending.extend(view_children(node));
+    }
+    dynamic
+}
+
+pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
+    fn route_shape(route: &Route) -> String {
+        let args = route
+            .args
+            .iter()
+            .map(|arg| match arg {
+                RouteArg::Payload => '_',
+                RouteArg::Expr(_) => 'e',
+            })
+            .collect::<String>();
+        format!("{}:{args}", route.handler)
+    }
+
+    fn source_key(source: &TaskSource) -> String {
+        match source {
+            TaskSource::Effect {
+                kind,
+                function,
+                args,
+                ..
+            } => format!("effect:{kind:?}:{function}:{}", args.len()),
+            TaskSource::Done { .. } => "done".into(),
+            TaskSource::None { output, .. } => format!("none:{output:?}"),
+        }
+    }
+
+    fn transform_key(transform: &TaskTransform) -> String {
+        match transform {
+            TaskTransform::Map { binding, .. } => format!("map:{binding}"),
+            TaskTransform::Then {
+                binding, source, ..
+            } => format!("then:{binding}:{}", source_key(source)),
+            TaskTransform::AndThen {
+                binding, source, ..
+            } => format!("and-then:{binding}:{}", source_key(source)),
+            TaskTransform::MapError { binding, .. } => format!("map-error:{binding}"),
+            TaskTransform::Collect { .. } => "collect".into(),
+            TaskTransform::Discard { .. } => "discard".into(),
+        }
+    }
+
+    match statement {
+        Statement::Let { name, .. } => format!("let:{name}"),
+        Statement::Assign { target, at, .. } => format!("assign:{target}:{}", at.is_some()),
+        Statement::MarkdownAppend { target, .. } => format!("markdown-append:{target}"),
+        Statement::ComboPush { target, .. } => format!("combo-push:{target}"),
+        Statement::ReturnIf { .. } => "return-if".into(),
+        Statement::Exit { .. } => "exit".into(),
+        Statement::Run {
+            kind,
+            mode,
+            function,
+            args,
+            success,
+            error,
+            ..
+        } => format!(
+            "run:{kind:?}:{mode:?}:{function}:{}:{}:{}",
+            args.len(),
+            route_shape(success),
+            error.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        Statement::Sip {
+            function,
+            args,
+            progress,
+            success,
+            error,
+            ..
+        } => format!(
+            "sip:{function}:{}:{}:{}:{}",
+            args.len(),
+            route_shape(progress),
+            route_shape(success),
+            error.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        Statement::TaskFlow {
+            source,
+            transforms,
+            success,
+            error,
+            units,
+            ..
+        } => format!(
+            "flow:{}:[{}]:{}:{}:{}",
+            source_key(source),
+            transforms
+                .iter()
+                .map(transform_key)
+                .collect::<Vec<_>>()
+                .join(","),
+            success.as_ref().map(route_shape).unwrap_or_default(),
+            error.as_ref().map(route_shape).unwrap_or_default(),
+            units.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        Statement::TaskGroup { kind, .. } => format!("task-group:{kind:?}"),
+        Statement::Abortable {
+            handle,
+            abort_on_drop,
+            ..
+        } => format!("abortable:{handle}:{abort_on_drop}"),
+        Statement::Abort { handle, .. } => format!("abort:{handle}"),
+        Statement::DebugStart { target, .. } => format!("debug-start:{target}"),
+        Statement::DebugFinish { target, .. } => format!("debug-finish:{target}"),
+        Statement::ClipboardWrite { primary, .. } => format!("clipboard:{primary}"),
+        Statement::WidgetOperation {
+            operation, route, ..
+        } => format!(
+            "widget:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        Statement::PaneOperation {
+            grid,
+            operation,
+            route,
+            ..
+        } => format!(
+            "pane:{grid}:{:?}:{}",
+            std::mem::discriminant(operation),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+        Statement::WindowOperation {
+            operation,
+            target,
+            route,
+            ..
+        } => format!(
+            "window:{:?}:{}:{}",
+            std::mem::discriminant(operation),
+            target.is_some(),
+            route.as_ref().map(route_shape).unwrap_or_default()
+        ),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HandlerOperationContract {
+    Widget(CheckedWidgetOperation),
+    Pane {
+        grid: String,
+        operation: CheckedPaneOperation,
+    },
+    Window(CheckedWindowOperation),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckedWidgetTarget(pub(crate) Vec<(String, bool)>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedWidgetSelector {
+    Id(CheckedWidgetTarget),
+    Text,
+    Point,
+    Focused,
+    Extern { function: String, arguments: usize },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedWidgetOperation {
+    FocusPrevious,
+    FocusNext,
+    Focus(CheckedWidgetTarget),
+    Focused(CheckedWidgetTarget),
+    CursorFront(CheckedWidgetTarget),
+    CursorEnd(CheckedWidgetTarget),
+    Cursor(CheckedWidgetTarget),
+    SelectAll(CheckedWidgetTarget),
+    Select(CheckedWidgetTarget),
+    Snap(CheckedWidgetTarget),
+    SnapEnd(CheckedWidgetTarget),
+    ScrollTo(CheckedWidgetTarget),
+    ScrollBy(CheckedWidgetTarget),
+    Find {
+        selector: CheckedWidgetSelector,
+        all: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedPaneReference {
+    Static(String),
+    Dynamic(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedPaneEdge {
+    Top,
+    Left,
+    Right,
+    Bottom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedPaneOperation {
+    Maximize(CheckedPaneReference),
+    Restore,
+    Maximized,
+    Adjacent(CheckedPaneReference, CheckedPaneEdge),
+    Swap(CheckedPaneReference, CheckedPaneReference),
+    Close(CheckedPaneReference),
+    Move(CheckedPaneReference, CheckedPaneEdge),
+    Resize(Option<String>),
+    Drop(
+        CheckedPaneReference,
+        CheckedPaneReference,
+        Option<CheckedPaneEdge>,
+    ),
+    Split {
+        target: CheckedPaneReference,
+        pane: CheckedPaneReference,
+        axis: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckedWindowOperation {
+    Open(Option<String>),
+    Oldest,
+    Latest,
+    Close,
+    Drag,
+    DragResize(String),
+    Resize,
+    Resizable,
+    MinSize(bool),
+    MaxSize(bool),
+    ResizeIncrements(bool),
+    Size,
+    IsMaximized,
+    Maximize,
+    IsMinimized,
+    Minimize,
+    Position,
+    ScaleFactor,
+    Move,
+    Mode,
+    SetMode(String),
+    ToggleMaximize,
+    ToggleDecorations,
+    Attention(Option<String>),
+    Focus,
+    SetLevel(String),
+    SystemMenu,
+    RawId,
+    Screenshot,
+    MousePassthrough,
+    MonitorSize,
+    AutomaticTabbing,
+    Icon,
+    Callback { function: String, arguments: usize },
+}
+
+pub(crate) fn handler_operation_contract(
+    statement: &Statement,
+) -> Option<HandlerOperationContract> {
+    fn target(value: &WidgetTarget) -> CheckedWidgetTarget {
+        CheckedWidgetTarget(
+            value
+                .segments
+                .iter()
+                .map(|segment| (segment.name.clone(), segment.key.is_some()))
+                .collect(),
+        )
+    }
+    fn selector(value: &WidgetSelector) -> CheckedWidgetSelector {
+        match value {
+            WidgetSelector::Id(value) => CheckedWidgetSelector::Id(target(value)),
+            WidgetSelector::Text(_) => CheckedWidgetSelector::Text,
+            WidgetSelector::Point { .. } => CheckedWidgetSelector::Point,
+            WidgetSelector::Focused => CheckedWidgetSelector::Focused,
+            WidgetSelector::Extern { function, args } => CheckedWidgetSelector::Extern {
+                function: function.clone(),
+                arguments: args.len(),
+            },
+        }
+    }
+    fn pane(value: &PaneReference) -> CheckedPaneReference {
+        match value {
+            PaneReference::Static(name) => CheckedPaneReference::Static(name.clone()),
+            PaneReference::Dynamic { template, .. } => {
+                CheckedPaneReference::Dynamic(template.clone())
+            }
+        }
+    }
+    fn edge(value: PaneEdge) -> CheckedPaneEdge {
+        match value {
+            PaneEdge::Top => CheckedPaneEdge::Top,
+            PaneEdge::Left => CheckedPaneEdge::Left,
+            PaneEdge::Right => CheckedPaneEdge::Right,
+            PaneEdge::Bottom => CheckedPaneEdge::Bottom,
+        }
+    }
+    Some(match statement {
+        Statement::WidgetOperation { operation, .. } => {
+            HandlerOperationContract::Widget(match operation {
+                WidgetOperation::FocusPrevious => CheckedWidgetOperation::FocusPrevious,
+                WidgetOperation::FocusNext => CheckedWidgetOperation::FocusNext,
+                WidgetOperation::Focus { target: value } => {
+                    CheckedWidgetOperation::Focus(target(value))
+                }
+                WidgetOperation::Focused { target: value } => {
+                    CheckedWidgetOperation::Focused(target(value))
+                }
+                WidgetOperation::CursorFront { target: value } => {
+                    CheckedWidgetOperation::CursorFront(target(value))
+                }
+                WidgetOperation::CursorEnd { target: value } => {
+                    CheckedWidgetOperation::CursorEnd(target(value))
+                }
+                WidgetOperation::Cursor { target: value, .. } => {
+                    CheckedWidgetOperation::Cursor(target(value))
+                }
+                WidgetOperation::SelectAll { target: value } => {
+                    CheckedWidgetOperation::SelectAll(target(value))
+                }
+                WidgetOperation::Select { target: value, .. } => {
+                    CheckedWidgetOperation::Select(target(value))
+                }
+                WidgetOperation::Snap { target: value, .. } => {
+                    CheckedWidgetOperation::Snap(target(value))
+                }
+                WidgetOperation::SnapEnd { target: value } => {
+                    CheckedWidgetOperation::SnapEnd(target(value))
+                }
+                WidgetOperation::ScrollTo { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollTo(target(value))
+                }
+                WidgetOperation::ScrollBy { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollBy(target(value))
+                }
+                WidgetOperation::Find {
+                    selector: value,
+                    all,
+                } => CheckedWidgetOperation::Find {
+                    selector: selector(value),
+                    all: *all,
+                },
+            })
+        }
+        Statement::PaneOperation {
+            grid, operation, ..
+        } => HandlerOperationContract::Pane {
+            grid: grid.clone(),
+            operation: match operation {
+                PaneOperation::Maximize { pane: value } => {
+                    CheckedPaneOperation::Maximize(pane(value))
+                }
+                PaneOperation::Restore => CheckedPaneOperation::Restore,
+                PaneOperation::Maximized => CheckedPaneOperation::Maximized,
+                PaneOperation::Adjacent {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Adjacent(pane(value), edge(*value_edge)),
+                PaneOperation::Swap { first, second } => {
+                    CheckedPaneOperation::Swap(pane(first), pane(second))
+                }
+                PaneOperation::Close { pane: value } => CheckedPaneOperation::Close(pane(value)),
+                PaneOperation::Move {
+                    pane: value,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Move(pane(value), edge(*value_edge)),
+                PaneOperation::Resize { split, .. } => CheckedPaneOperation::Resize(split.clone()),
+                PaneOperation::Drop {
+                    pane: value,
+                    target,
+                    edge: value_edge,
+                } => CheckedPaneOperation::Drop(pane(value), pane(target), value_edge.map(edge)),
+                PaneOperation::Split {
+                    target,
+                    pane: value,
+                    axis,
+                    ..
+                } => CheckedPaneOperation::Split {
+                    target: pane(target),
+                    pane: pane(value),
+                    axis: format!("{axis:?}"),
+                },
+            },
+        },
+        Statement::WindowOperation { operation, .. } => {
+            HandlerOperationContract::Window(match operation {
+                WindowOperation::Open(name) => CheckedWindowOperation::Open(name.clone()),
+                WindowOperation::Oldest => CheckedWindowOperation::Oldest,
+                WindowOperation::Latest => CheckedWindowOperation::Latest,
+                WindowOperation::Close => CheckedWindowOperation::Close,
+                WindowOperation::Drag => CheckedWindowOperation::Drag,
+                WindowOperation::DragResize(direction) => {
+                    CheckedWindowOperation::DragResize(format!("{direction:?}"))
+                }
+                WindowOperation::Resize(..) => CheckedWindowOperation::Resize,
+                WindowOperation::Resizable(_) => CheckedWindowOperation::Resizable,
+                WindowOperation::MinSize(value) => CheckedWindowOperation::MinSize(value.is_some()),
+                WindowOperation::MaxSize(value) => CheckedWindowOperation::MaxSize(value.is_some()),
+                WindowOperation::ResizeIncrements(value) => {
+                    CheckedWindowOperation::ResizeIncrements(value.is_some())
+                }
+                WindowOperation::Size => CheckedWindowOperation::Size,
+                WindowOperation::IsMaximized => CheckedWindowOperation::IsMaximized,
+                WindowOperation::Maximize(_) => CheckedWindowOperation::Maximize,
+                WindowOperation::IsMinimized => CheckedWindowOperation::IsMinimized,
+                WindowOperation::Minimize(_) => CheckedWindowOperation::Minimize,
+                WindowOperation::Position => CheckedWindowOperation::Position,
+                WindowOperation::ScaleFactor => CheckedWindowOperation::ScaleFactor,
+                WindowOperation::Move(..) => CheckedWindowOperation::Move,
+                WindowOperation::Mode => CheckedWindowOperation::Mode,
+                WindowOperation::SetMode(mode) => {
+                    CheckedWindowOperation::SetMode(format!("{mode:?}"))
+                }
+                WindowOperation::ToggleMaximize => CheckedWindowOperation::ToggleMaximize,
+                WindowOperation::ToggleDecorations => CheckedWindowOperation::ToggleDecorations,
+                WindowOperation::Attention(value) => {
+                    CheckedWindowOperation::Attention(value.map(|value| format!("{value:?}")))
+                }
+                WindowOperation::Focus => CheckedWindowOperation::Focus,
+                WindowOperation::SetLevel(level) => {
+                    CheckedWindowOperation::SetLevel(format!("{level:?}"))
+                }
+                WindowOperation::SystemMenu => CheckedWindowOperation::SystemMenu,
+                WindowOperation::RawId => CheckedWindowOperation::RawId,
+                WindowOperation::Screenshot => CheckedWindowOperation::Screenshot,
+                WindowOperation::MousePassthrough(_) => CheckedWindowOperation::MousePassthrough,
+                WindowOperation::MonitorSize => CheckedWindowOperation::MonitorSize,
+                WindowOperation::AutomaticTabbing(_) => CheckedWindowOperation::AutomaticTabbing,
+                WindowOperation::Icon { .. } => CheckedWindowOperation::Icon,
+                WindowOperation::Callback { function, args } => CheckedWindowOperation::Callback {
+                    function: function.clone(),
+                    arguments: args.len(),
+                },
+            })
+        }
+        _ => return None,
+    })
 }
 
 pub(crate) fn view_kind(node: &ViewNode) -> &'static str {
