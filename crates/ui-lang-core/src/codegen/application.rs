@@ -16,45 +16,13 @@ fn handler_param_binding(param: &ResolvedHandlerParam) -> Binding {
     }
 }
 
-fn checked_app_value_env(program: &LoweredProgram, receiver: &str) -> HashMap<String, Binding> {
-    let mut env = program
-        .app_states()
-        .iter()
-        .map(|state| {
-            (
-                state.name.clone(),
-                Binding {
-                    code: format!("{receiver}.{}", state.name),
-                    ty: state.ty.clone(),
-                    local: false,
-                    state: Some(StateBinding::App(state.name.clone())),
-                    owner: Some(BindingOwner::Value(CheckedValueRef::AppState(state.id))),
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    env.extend(program.derived().iter().map(|derived| {
-        (
-            derived.name.clone(),
-            Binding {
-                code: format!("Self::{}({receiver})", derived_method(&derived.name)),
-                ty: derived.ty.clone(),
-                local: true,
-                state: None,
-                owner: Some(BindingOwner::Value(CheckedValueRef::Derived(derived.id))),
-            },
-        )
-    }));
-    env
-}
-
 pub(in crate::codegen) fn generate_theme(
     out: &mut String,
     program: &LoweredProgram,
 ) -> Result<(), Error> {
     let settings = program.settings();
     let theme = program.theme();
-    let state_env = checked_app_value_env(program, "self");
+    let state_env = checked_state_env(program, "self");
     let mut callback_env = state_env.clone();
     if settings.kind == ProgramKind::Daemon {
         callback_env.insert(

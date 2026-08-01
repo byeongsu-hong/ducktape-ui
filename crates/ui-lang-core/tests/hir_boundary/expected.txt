@@ -2,7 +2,7 @@
 src/codegen.rs 1 0aa1e53a820312b67736ac2cdbda5a1e
 [source AST semantic reference]
 src/codegen.rs 82 87b9636527985d36ccf1bf2b6053e860
-src/codegen/application.rs 23 02f3aedbf4d007687e90d623a5c9f2d4
+src/codegen/application.rs 23 3fca2e86552c3a77f5b7224e409d8ce4
 src/codegen/canvas.rs 26 fe3f00ecd6c23078f5f0ccbaa18716fa
 src/codegen/canvas/commands.rs 32 decca76ff7d44dd0ea11b08c18f875cb
 src/codegen/canvas/events.rs 140 f3619bd232e1cb2d2e4318f0fd60273e
@@ -65,7 +65,7 @@ src/codegen/view/structure.rs 1 d021357a717040faf35f74c1416d37a0
 src/codegen/view/table.rs 2 3e89d20e6e0f99f514edcd08f4e5e271
 [checker semantic reference]
 src/codegen.rs 20 6b1fd05bd39a44f15d6f070fd9b964df
-src/codegen/application.rs 7 63f40a86c8bb326090760446d84671ea
+src/codegen/application.rs 5 e6c8f0ca92a54015d03d0c8ff7295274
 src/codegen/canvas.rs 1 a86731a57f40dab3cf18b62ef990dd49
 src/codegen/canvas/commands.rs 4 2b0ece5b59e3de7e86deb5a7404d7ad5
 src/codegen/expr.rs 60 8f56a32bd5a8a1b32cbabeff315d2d0d
