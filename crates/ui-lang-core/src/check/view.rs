@@ -130,6 +130,28 @@ pub(super) fn retain_canvas_analyses(
     })
 }
 
+pub(super) fn retain_media_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "media analysis session has no active view analysis",
+            )
+        })?;
+        let media = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "media has no shared view ID"))?;
+        active.analyses.retain_media(media, analyses)
+    })
+}
+
 impl Drop for ViewAnalysisGuard {
     fn drop(&mut self) {
         if self.active {

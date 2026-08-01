@@ -84,6 +84,12 @@ pub(crate) struct CanvasExpressionId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MediaExpressionId {
+    pub(crate) media: ViewId,
+    pub(crate) index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NamedTypeId {
     Struct(StructId),
     Enum(EnumId),
