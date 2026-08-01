@@ -2187,40 +2187,37 @@ impl LoweredProgram {
             }
         }
 
-        let expected_app = self
-            .declarations
-            .handlers()
-            .iter()
-            .filter(|handler| handler.owner == HandlerOwner::App)
-            .map(|handler| handler.declaration.id)
-            .collect::<Vec<_>>();
+        let mut expected_app = Vec::new();
+        let mut expected_presets = Vec::new();
+        let mut expected_components = vec![Vec::new(); self.components.len()];
+        for handler in self.declarations.handlers() {
+            match handler.owner {
+                HandlerOwner::App => expected_app.push(handler.declaration.id),
+                HandlerOwner::Preset(_) => expected_presets.push(handler.declaration.id),
+                HandlerOwner::Component(component) => {
+                    let Some(partition) = expected_components.get_mut(component.0 as usize) else {
+                        return Err(self.invariant_at_origin(
+                            handler.declaration.origin,
+                            "component handler owner ID is outside its contract arena",
+                        ));
+                    };
+                    partition.push(handler.declaration.id);
+                }
+            }
+        }
         if self.app_handlers != expected_app {
             return Err(self.invariant_at_origin(
                 OriginId(u32::MAX),
                 "app handler index diverged from its declaration partition",
             ));
         }
-        let expected_presets = self
-            .declarations
-            .handlers()
-            .iter()
-            .filter(|handler| matches!(handler.owner, HandlerOwner::Preset(_)))
-            .map(|handler| handler.declaration.id)
-            .collect::<Vec<_>>();
         if self.preset_handlers != expected_presets {
             return Err(self.invariant_at_origin(
                 OriginId(u32::MAX),
                 "preset handler index diverged from its declaration partition",
             ));
         }
-        for component in &self.components {
-            let expected = self
-                .declarations
-                .handlers()
-                .iter()
-                .filter(|handler| handler.owner == HandlerOwner::Component(component.id))
-                .map(|handler| handler.declaration.id)
-                .collect::<Vec<_>>();
+        for (component, expected) in self.components.iter().zip(expected_components) {
             if component.handlers != expected {
                 return Err(self.invariant_at_origin(
                     component.origin,
@@ -5877,6 +5874,40 @@ view
         let error = crate::codegen::generate(&invalid_transform, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("transform local"));
+    }
+
+    #[test]
+    #[ignore = "explicit many-component handler partition linearity contract"]
+    fn performance_contract_component_handler_partitions_are_linear() {
+        use std::fmt::Write as _;
+        use std::time::{Duration, Instant};
+
+        fn measure(components: usize) -> Duration {
+            let mut source = format!("app HandlerPartitions\n{THEME}");
+            for index in 0..components {
+                writeln!(
+                    source,
+                    "component Surface{index}()\n  on update\n  text \"Surface {index}\""
+                )
+                .unwrap();
+            }
+            source.push_str("view\n  text \"Ready\"\n");
+            let program = lower(analyze(&source).unwrap()).unwrap();
+            assert_eq!(program.handlers.len(), components);
+            let started = Instant::now();
+            for _ in 0..20 {
+                program.validate_handler_hir().unwrap();
+            }
+            started.elapsed()
+        }
+
+        let small = measure(500);
+        let large = measure(4_000);
+        eprintln!("500 component handlers in {small:?}; 4k in {large:?}");
+        assert!(
+            large.as_secs_f64() <= small.as_secs_f64() * 12.0 + 0.05,
+            "handler partition validation exceeded linear allowance: 500={small:?}, 4k={large:?}"
+        );
     }
 
     #[test]
