@@ -607,6 +607,7 @@ pub(crate) struct CheckedTooltip {
 pub(crate) enum CheckedInteractionKind {
     MouseArea,
     ResizeHandle,
+    Sensor,
 }
 
 #[derive(Clone, Debug)]
@@ -625,7 +626,7 @@ pub(crate) struct CheckedInteraction {
     pub(crate) kind: CheckedInteractionKind,
     pub(crate) semantic_key: String,
     pub(crate) expression_count: u32,
-    pub(crate) interaction_expression: Option<CheckedExprUseId>,
+    pub(crate) option_expressions: Vec<CheckedExprUseId>,
     pub(crate) routes: Vec<CheckedInteractionRoute>,
 }
 
@@ -2736,26 +2737,27 @@ impl<'a> FactsBuilder<'a> {
         widget: ViewId,
         kind: CheckedInteractionKind,
         semantic_key: String,
-        interaction_expression: Option<&Expr>,
+        option_expressions: Vec<(&Expr, Option<Type>)>,
         routes: Vec<&Route>,
         env: &dyn FactEnvironment,
         span: &Span,
     ) -> Result<(), Error> {
         let parent = self.declarations.view(widget).origin;
         let mut expression_count = 0u32;
-        let interaction_expression = interaction_expression
-            .map(|expression| {
+        let option_expressions = option_expressions
+            .into_iter()
+            .map(|(expression, destination)| {
                 self.push_interaction_expression(
                     widget,
                     &mut expression_count,
                     expression,
-                    &Type::MouseInteraction,
+                    destination.as_ref(),
                     env,
                     span,
                     parent,
                 )
             })
-            .transpose()?;
+            .collect::<Result<Vec<_>, _>>()?;
         let mut checked_routes = Vec::with_capacity(routes.len());
         for (index, route) in routes.into_iter().enumerate() {
             checked_routes.push(self.lower_interaction_route(
@@ -2797,7 +2799,7 @@ impl<'a> FactsBuilder<'a> {
                     kind,
                     semantic_key,
                     expression_count,
-                    interaction_expression,
+                    option_expressions,
                     routes: checked_routes,
                 },
             )
@@ -2904,7 +2906,7 @@ impl<'a> FactsBuilder<'a> {
                         widget,
                         expression_count,
                         expression,
-                        expected,
+                        Some(expected),
                         env,
                         &route.span,
                         origin,
@@ -2948,7 +2950,7 @@ impl<'a> FactsBuilder<'a> {
         widget: ViewId,
         index: &mut u32,
         expression: &Expr,
-        destination: &Type,
+        destination: Option<&Type>,
         env: &dyn FactEnvironment,
         span: &Span,
         parent: OriginId,
@@ -2995,8 +2997,8 @@ impl<'a> FactsBuilder<'a> {
         self.facts.expression_uses.push(CheckedExprUse {
             owner,
             root,
+            destination: destination.cloned().unwrap_or_else(|| source.clone()),
             source,
-            destination: destination.clone(),
             coercion: CheckedInitializerCoercion::None,
             origin,
         });
@@ -5733,7 +5735,12 @@ impl<'a> FactsBuilder<'a> {
                     view,
                     CheckedInteractionKind::MouseArea,
                     crate::ast::mouse_area_semantic_key(options),
-                    options.interaction_expr.as_ref(),
+                    options
+                        .interaction_expr
+                        .as_ref()
+                        .map(|expression| (expression, Some(Type::MouseInteraction)))
+                        .into_iter()
+                        .collect(),
                     crate::ast::mouse_area_routes(options),
                     env,
                     span,
@@ -5751,8 +5758,36 @@ impl<'a> FactsBuilder<'a> {
                     view,
                     CheckedInteractionKind::ResizeHandle,
                     crate::ast::resize_handle_semantic_key(options),
-                    None,
+                    Vec::new(),
                     crate::ast::resize_handle_routes(options),
+                    env,
+                    span,
+                )?;
+                self.lower_view_expression_tree(content, env)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Sensor {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                let mut option_expressions = Vec::new();
+                if let Some(expression) = &options.key {
+                    option_expressions.push((expression, None));
+                }
+                if let Some(expression) = &options.anticipate {
+                    option_expressions.push((expression, Some(Type::F64)));
+                }
+                if let Some(expression) = &options.delay_ms {
+                    option_expressions.push((expression, Some(Type::I64)));
+                }
+                self.lower_interaction_facts(
+                    view,
+                    CheckedInteractionKind::Sensor,
+                    crate::ast::sensor_semantic_key(options),
+                    option_expressions,
+                    crate::ast::sensor_routes(options),
                     env,
                     span,
                 )?;
@@ -8360,16 +8395,19 @@ on pressed(flag)
 on moved(x, y)
 on scrolled(x, y, pixels)
 on resized(dx, dy)
+on hidden
 view
   col
     mouse press=pressed(active) move=moved scroll=scrolled cursor=pointer
       text "Pointer"
     resize-handle drag=resized cursor=resize-horizontal
       text "Resize"
+    sensor show=resized resize=resized hide=hidden key=active anticipate=16.0 delay=20
+      text "Observed"
 "#;
         let program = lower::lower(analyze(source).unwrap()).unwrap();
         let facts = program.checked_facts();
-        assert_eq!(facts.interactions.len(), 2);
+        assert_eq!(facts.interactions.len(), 3);
 
         let mouse = facts.interaction(ViewId(1)).expect("checked mouse area");
         assert_eq!(mouse.kind, CheckedInteractionKind::MouseArea);
@@ -8412,14 +8450,36 @@ view
         assert_eq!(resize.routes.len(), 1);
         assert_eq!(resize.routes[0].source_payloads, [Type::F64, Type::F64]);
         assert!(resize.routes[0].ordered_payloads);
+
+        let sensor = facts.interaction(ViewId(5)).expect("checked sensor");
+        assert_eq!(sensor.kind, CheckedInteractionKind::Sensor);
+        assert_eq!(sensor.expression_count, 3);
+        assert_eq!(sensor.option_expressions.len(), 3);
+        assert_eq!(sensor.routes.len(), 3);
+        assert_eq!(sensor.routes[0].source_payloads, [Type::F64, Type::F64]);
+        assert!(sensor.routes[0].ordered_payloads);
+        assert!(sensor.routes[2].source_payloads.is_empty());
+        assert!(!sensor.routes[2].ordered_payloads);
+        for (index, expected) in [Type::Bool, Type::F64, Type::I64].into_iter().enumerate() {
+            let expression = facts.expression_use(sensor.option_expressions[index]);
+            assert_eq!(expression.source, expected);
+            assert_eq!(expression.destination, expected);
+        }
+        let ViewNode::Layout { children, .. } = &program.document().view else {
+            panic!("fixture root must be a column");
+        };
+        let ViewNode::Sensor { options, .. } = &children[2] else {
+            panic!("third child must be a sensor");
+        };
+        assert_eq!(
+            sensor.semantic_key,
+            crate::ast::sensor_semantic_key(options)
+        );
         assert_eq!(
             mouse.semantic_key,
-            crate::ast::mouse_area_semantic_key(match &program.document().view {
-                ViewNode::Layout { children, .. } => match &children[0] {
-                    ViewNode::MouseArea { options, .. } => options,
-                    _ => panic!("first child must be a mouse area"),
-                },
-                _ => panic!("fixture root must be a column"),
+            crate::ast::mouse_area_semantic_key(match &children[0] {
+                ViewNode::MouseArea { options, .. } => options,
+                _ => panic!("first child must be a mouse area"),
             })
         );
     }

@@ -92,10 +92,11 @@ impl Lowerer {
             outer_component,
         )?;
         self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
-        if options.interaction_expr.is_some() != checked.interaction_expression.is_some() {
+        let expected_option_expressions = usize::from(options.interaction_expr.is_some());
+        if checked.option_expressions.len() != expected_option_expressions {
             return Err(self.invariant(span, "mouse-area interaction expression presence diverged"));
         }
-        if let Some(expression) = checked.interaction_expression {
+        if let Some(expression) = checked.option_expressions.first().copied() {
             let retained = self.facts.try_expression_use(expression).ok_or_else(|| {
                 self.invariant(span, "mouse-area interaction expression is invalid")
             })?;
@@ -122,7 +123,7 @@ impl Lowerer {
             move_route: take(&options.move_route)?,
             scroll: take(&options.scroll)?,
             interaction: options.interaction,
-            interaction_expression: checked.interaction_expression,
+            interaction_expression: checked.option_expressions.first().copied(),
             origin,
         };
         if route != checked.routes.len() {
@@ -148,7 +149,7 @@ impl Lowerer {
             outer_component,
         )?;
         self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
-        if checked.interaction_expression.is_some() {
+        if !checked.option_expressions.is_empty() {
             return Err(self.invariant(
                 span,
                 "resize-handle unexpectedly retained an interaction expression",
