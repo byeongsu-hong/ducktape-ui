@@ -295,6 +295,13 @@ roles and expression scopes, and publishes `ResolvedFloat`. Rust generation
 does not reread Float expressions, style options, color spellings, or source
 theme-token order.
 
+Pin is a completed structural-wrapper HIR slice. Position and fixed-dimension
+operands have stable checked expression IDs, while absent, fill, fill-portion,
+shrink, numeric-fixed, and native-length-fixed dimensions are distinct resolved
+forms. Lowering freezes dimension topology, validates expression scope and
+types, and publishes `ResolvedPin`. Rust generation does not reread Pin
+positions, dimensions, or source expressions.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

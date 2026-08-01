@@ -80,6 +80,7 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
+            let pin_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             for value in [x, y] {
                 require_f32_value(value, env, document, "pin position", span)?;
@@ -87,6 +88,7 @@ pub(in crate::check) fn infer_structure_group(
             for length in [width, height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "pin size")?;
             }
+            retain_pin_analyses(span, pin_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Sensor {

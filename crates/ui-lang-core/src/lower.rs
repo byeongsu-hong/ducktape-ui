@@ -18,8 +18,8 @@ pub(crate) use crate::hir::{
     ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
     ExternRef, FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId,
     InteractionRouteId, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId,
-    PaletteId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
-    TestTargetId, TooltipExpressionId, ViewId,
+    PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
+    TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
@@ -29,6 +29,7 @@ mod canvas;
 mod float;
 mod interaction;
 mod media;
+mod pin;
 mod style;
 mod testing;
 mod tooltip;
@@ -37,6 +38,7 @@ pub(crate) use canvas::*;
 pub(crate) use float::*;
 pub(crate) use interaction::*;
 pub(crate) use media::*;
+pub(crate) use pin::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
@@ -1440,6 +1442,7 @@ pub(crate) struct LoweredProgram {
     media: HashMap<ViewId, ResolvedMedia>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
+    pins: HashMap<ViewId, ResolvedPin>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     test_mounts: HashMap<TestId, ViewNode>,
     preset_names: Vec<String>,
@@ -2994,6 +2997,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn pin(&self, id: ViewId) -> Option<&ResolvedPin> {
+        self.pins.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
         self.interaction_widgets.get(&id)
     }
@@ -3140,6 +3148,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "float reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_pin_for(&self, node: &ViewNode) -> Result<&ResolvedPin, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pin reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "pin reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.pins.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pin reached code generation without normalized HIR",
             )
         })
     }
@@ -3402,6 +3436,7 @@ pub(crate) struct Lowerer {
     media: HashMap<ViewId, ResolvedMedia>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
+    pins: HashMap<ViewId, ResolvedPin>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
 }
 
@@ -4116,6 +4151,7 @@ impl Lowerer {
             media: HashMap::new(),
             tooltips: HashMap::new(),
             floats: HashMap::new(),
+            pins: HashMap::new(),
             interaction_widgets: HashMap::new(),
         }
     }
@@ -4193,6 +4229,7 @@ impl Lowerer {
             media: self.media,
             tooltips: self.tooltips,
             floats: self.floats,
+            pins: self.pins,
             interaction_widgets: self.interaction_widgets,
             test_mounts,
             preset_names,
@@ -7978,6 +8015,18 @@ impl Lowerer {
                 self.lower_float(scale, x, y, style, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
+            ViewNode::Pin {
+                width,
+                height,
+                x,
+                y,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_pin(width, height, x, y, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -8029,7 +8078,6 @@ impl Lowerer {
             }
             | ViewNode::Container { content, .. }
             | ViewNode::Theme { content, .. }
-            | ViewNode::Pin { content, .. }
             | ViewNode::KeyedColumn { child: content, .. }
             | ViewNode::Lazy { child: content, .. } => {
                 self.lower_view(content, outer_component)?;
@@ -10012,6 +10060,30 @@ view
     }
 
     #[test]
+    fn malformed_checked_pin_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidPinFacts\n{THEME}view\n  pin w=fill h=80.0 x=12.0 y=8.0\n    text \"Pinned\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::Pin(PinExpressionId {
+                pin: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error.message.contains("invalid checked expression ID"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 13);
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -10497,6 +10569,88 @@ view
     }
 
     #[test]
+    fn normalizes_pin_positions_dimensions_and_expression_owners() {
+        let source = format!(
+            "app PinHir\n{THEME}state\n  offset = 12.0\n  height = 80.0\nview\n  pin w=fill h=height x=offset y=8.0\n    text \"Pinned\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let pin = program.pin(ViewId(0)).unwrap();
+
+        assert_eq!(pin.id, ViewId(0));
+        assert_eq!(pin.width, Some(ResolvedPinLength::Fill));
+        assert!(matches!(pin.height, Some(ResolvedPinLength::FixedF64(_))));
+        for expression in [pin.x, pin.y] {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, Type::F64);
+            assert_eq!(expression.destination, Type::F64);
+        }
+        assert_eq!(program.origin(pin.origin).line, 16);
+    }
+
+    #[test]
+    fn pin_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedPin\n{THEME}state\n  offset = 12.0\n  height = 80.0\nview\n  pin w=fill h=height x=offset y=8.0\n    text \"Pinned\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-pin.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Pin { height, x, y, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be a pin");
+        };
+        *x = Expr::F64(99.0);
+        *y = Expr::F64(99.0);
+        let Some(LengthValue::Fixed(height)) = height else {
+            panic!("fixture height must be fixed");
+        };
+        *height = Expr::F64(99.0);
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-pin.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Pin { width, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a pin");
+        };
+        *width = Some(LengthValue::Shrink);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn pin_codegen_ignores_raw_options_after_lowering() {
+        let source = format!(
+            "app LoweredPin\n{THEME}state\n  offset = 12.0\n  height = 80.0\nview\n  pin w=fill h=height x=offset y=8.0\n    text \"Pinned\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-pin.ice").unwrap();
+
+        let ViewNode::Pin {
+            width,
+            height,
+            x,
+            y,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a pin");
+        };
+        *width = Some(LengthValue::Shrink);
+        *height = None;
+        *x = Expr::F64(99.0);
+        *y = Expr::F64(99.0);
+
+        let actual = crate::codegen::generate(&program, "lowered-pin.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
@@ -10698,6 +10852,32 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized floats lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized pin lowering and emission performance contract"]
+    fn performance_contract_four_thousand_pins_lower_and_emit_under_two_seconds() {
+        const PINS: usize = 4_000;
+        let mut source = format!("app PinScale\n{THEME}view\n  col\n");
+        for index in 0..PINS {
+            writeln!(
+                source,
+                "    pin w=fill h=80.0 x=12.0 y=8.0\n      text \"Pinned {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "pin-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.pins.len(), PINS);
+        assert_eq!(generated.matches("::iced::widget::pin(").count(), PINS);
+        eprintln!("4k normalized pins lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized pins lowered and emitted in {elapsed:?}"
         );
     }
 
