@@ -1,181 +1,260 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const BACKDOORS: &[(&str, &str)] = &[
-    ("source AST dependency", "crate::ast::"),
-    ("checked-document escape", "program.document()"),
-    ("raw document wrapper", "RenderDocument"),
-    ("checker dependency", "crate::check"),
-    ("checked-facts escape", "checked_facts()"),
-    ("declaration-index escape", "declarations()"),
-    ("type re-analysis", "expr_type("),
-    ("extern re-resolution", "find_extern_function("),
-    ("raw expression fallback", "ExprNode::Ast"),
-    ("Document input", "&Document"),
-    ("Expr input", "&Expr"),
-    ("Route input", "&Route"),
-    ("Statement slice input", "&[Statement]"),
-];
+#[path = "hir_boundary/scanner.rs"]
+mod scanner;
 
-const EXPECTED_INVENTORY: &str = r#"[source AST dependency]
-src/codegen.rs 1
-[checked-document escape]
-src/codegen/application.rs 3
-src/codegen/expr/discovery.rs 2
-src/codegen/expr.rs 1
-src/codegen/statement/view_fn.rs 1
-src/codegen/style/model.rs 1
-src/codegen/testing.rs 3
-src/codegen.rs 3
-[raw document wrapper]
-src/codegen/expr/children.rs 1
-src/codegen/statement/view_fn.rs 1
-src/codegen/style/model.rs 1
-src/codegen/testing.rs 1
-src/codegen/view/container.rs 3
-src/codegen/view/content.rs 1
-src/codegen/view/controls.rs 1
-src/codegen/view/documents.rs 1
-src/codegen/view/foundation.rs 1
-src/codegen/view/layout.rs 3
-src/codegen/view/media.rs 1
-src/codegen/view/pane.rs 3
-src/codegen/view/structure.rs 1
-src/codegen/view/table.rs 2
-src/codegen/view.rs 4
-src/codegen.rs 3
-[checker dependency]
-src/codegen/expr.rs 4
-src/codegen/statement/task.rs 3
-src/codegen/statement.rs 1
-src/codegen.rs 1
-[checked-facts escape]
-src/codegen/expr/children.rs 3
-src/codegen/expr/discovery.rs 1
-src/codegen/expr.rs 7
-src/codegen/statement/view_fn.rs 1
-src/codegen/testing.rs 1
-src/codegen/view/layout.rs 3
-src/codegen/view/pane.rs 3
-src/codegen/view/structure.rs 3
-src/codegen/view/table.rs 2
-src/codegen.rs 2
-[declaration-index escape]
-src/codegen/expr.rs 4
-src/codegen.rs 3
-[type re-analysis]
-src/codegen/canvas/commands.rs 4
-src/codegen/canvas.rs 1
-src/codegen/expr.rs 1
-src/codegen/statement.rs 1
-src/codegen/style/common.rs 1
-src/codegen/view/media.rs 1
-[extern re-resolution]
-src/codegen/application.rs 1
-src/codegen/expr.rs 2
-src/codegen/statement/task.rs 1
-src/codegen/statement.rs 4
-src/codegen/style/helpers.rs 2
-src/codegen/subscription.rs 6
-src/codegen/view/content.rs 3
-src/codegen/view/documents.rs 3
-[raw expression fallback]
-src/codegen/expr.rs 4
-[Document input]
-src/codegen/application.rs 2
-src/codegen/canvas/commands.rs 1
-src/codegen/canvas/events.rs 2
-src/codegen/canvas/path.rs 1
-src/codegen/canvas/style.rs 8
-src/codegen/canvas.rs 2
-src/codegen/expr/binding.rs 1
-src/codegen/expr/discovery.rs 8
-src/codegen/expr/routes.rs 8
-src/codegen/expr.rs 4
-src/codegen/probes.rs 2
-src/codegen/runtime.rs 7
-src/codegen/settings.rs 2
-src/codegen/statement/task.rs 2
-src/codegen/statement.rs 2
-src/codegen/style/boolean.rs 8
-src/codegen/style/common.rs 8
-src/codegen/style/controls.rs 5
-src/codegen/style/helpers.rs 12
-src/codegen/style/model.rs 4
-src/codegen/style/selection.rs 9
-src/codegen/subscription.rs 1
-src/codegen/testing.rs 5
-src/codegen/view/container.rs 1
-src/codegen/view/foundation.rs 2
-src/codegen/view/layout.rs 6
-src/codegen/view/pane.rs 1
-src/codegen/view.rs 2
-[Expr input]
-src/codegen/canvas/style.rs 5
-src/codegen/expr/routes.rs 1
-src/codegen/expr.rs 26
-src/codegen/statement.rs 7
-src/codegen/style/common.rs 3
-src/codegen/style/model.rs 1
-src/codegen/testing.rs 1
-src/codegen/view/layout.rs 1
-[Route input]
-src/codegen/canvas/events.rs 1
-src/codegen/expr/routes.rs 7
-src/codegen/statement.rs 1
-[Statement slice input]
-src/codegen/application.rs 1
-src/codegen/expr/discovery.rs 1
-src/codegen/runtime.rs 3
-src/codegen/statement.rs 1"#;
+use scanner::{SourceFile, exported_ast_types, inventory, is_production_codegen_path};
+
+const EXPECTED_INVENTORY: &str = include_str!("hir_boundary/expected.txt");
 
 #[test]
-fn codegen_semantic_backdoors_are_an_explicit_shrinking_inventory() {
+fn codegen_semantic_backdoors_are_an_explicit_reviewed_inventory() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_root = manifest.join("src/codegen");
-    let mut files = Vec::new();
-    files.push(manifest.join("src/codegen.rs"));
-    collect_rust_files(&source_root, &mut files);
-    files.sort();
-
-    let mut inventory = String::new();
-    for (label, needle) in BACKDOORS {
-        inventory.push_str(&format!("[{label}]\n"));
-        for path in &files {
-            let relative = path.strip_prefix(&manifest).expect("codegen source path");
-            if relative
-                .components()
-                .any(|part| part.as_os_str() == "tests")
-            {
-                continue;
-            }
-            let source = fs::read_to_string(path).expect("read codegen source");
-            let count = source.matches(needle).count();
-            if count != 0 {
-                let relative = relative
-                    .iter()
-                    .map(|part| part.to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                inventory.push_str(&format!("{relative} {count}\n"));
-            }
-        }
-    }
-
+    let files = production_codegen_sources(&manifest);
+    let ast_types = exported_ast_types(&rust_sources(&manifest.join("src/ast")));
+    let actual = inventory(&files, &ast_types).expect("scan codegen boundary");
     assert_eq!(
-        inventory.trim_end(),
-        EXPECTED_INVENTORY,
-        "the codegen AST/checker backdoor inventory changed; semantic migrations must remove the old path and shrink this exact ledger, while new or restored entries are forbidden",
+        actual,
+        EXPECTED_INVENTORY.trim_end(),
+        "the selected codegen AST/checker lexical boundary inventory changed; occurrence growth is forbidden and every fingerprint change requires review"
     );
 }
 
+#[test]
+fn lexical_scanner_detects_lifetime_mut_by_value_container_and_qualified_ast_types() {
+    let ast_types = probe_ast_types();
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::ast::*; fn emit<'a>(document: &'a crate::Document, expr: &mut Expr, route: Option<Route>, statements: Vec<Document>, qualified: crate::ast::Statement) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    for category in [
+        "source AST import",
+        "source AST semantic reference",
+        "Document reference",
+        "Expr reference",
+        "Route reference",
+        "Statement reference",
+    ] {
+        assert!(section(&actual, category).contains("src/codegen/probe.rs"));
+    }
+}
+
+#[test]
+fn lexical_scanner_does_not_treat_identifier_prefixes_as_ast_types() {
+    let ast_types = probe_ast_types();
+    let clean = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "fn 이름(인자: &ExprArguments, 문맥: &ExprEmission<'_>) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    assert!(!section(&clean, "Expr reference").contains("probe.rs"));
+    assert!(!section(&clean, "source AST semantic reference").contains("probe.rs"));
+}
+
+#[test]
+fn lexical_scanner_handles_non_ascii_rust_identifiers_without_byte_boundary_panics() {
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "fn 경계_검사(값: 문자열) { let 결과 = 값; drop(결과); }",
+        )],
+        &probe_ast_types(),
+    )
+    .unwrap();
+    assert!(!actual.contains("src/codegen/probe.rs"));
+}
+
+#[test]
+fn lexical_scanner_ignores_comments_and_string_literals() {
+    let ast_types = probe_ast_types();
+    let clean = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            r###"fn emit() {
+                // program.document(); Expr Document
+                /* nested /* RenderDocument crate::check */ comment */
+                let _ = "program.document(); &Expr";
+                let _ = r#"crate::ast::Document"#;
+            }"###,
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    for category in [
+        "source AST import",
+        "source AST semantic reference",
+        "checked-document escape",
+        "raw document wrapper",
+        "checker semantic reference",
+        "Document reference",
+        "Expr reference",
+    ] {
+        assert!(!section(&clean, category).contains("probe.rs"));
+    }
+}
+
+#[test]
+fn occurrence_fingerprints_reject_same_file_delete_and_add_swaps() {
+    let ast_types = probe_ast_types();
+    let before = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "fn old(program: &LoweredProgram) { let _ = program.document(); } fn new(_: &LoweredProgram) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    let after = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "fn old(_: &LoweredProgram) {} fn new(program: &LoweredProgram) { let _ = program.document(); }",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    assert_eq!(
+        section_count(&before, "checked-document escape", "src/codegen/probe.rs"),
+        section_count(&after, "checked-document escape", "src/codegen/probe.rs")
+    );
+    assert_ne!(
+        before, after,
+        "relocating one occurrence must change its fingerprint"
+    );
+}
+
+#[test]
+fn root_imports_do_not_hide_new_ast_or_checker_uses() {
+    let ast_types = exported_ast_types(&[
+        "pub enum Expr {} pub fn ast_helper() {} pub const AST_REVISION: u32 = 1; pub static mut AST_ROOT: u32 = 1;"
+            .into(),
+    ]);
+    for exported in ["Expr", "ast_helper", "AST_REVISION", "AST_ROOT"] {
+        assert!(ast_types.contains(exported));
+    }
+    let before = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::ast::*; use crate::check::{CheckedExprId}; fn emit(_: CheckedExprId) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    let after = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::ast::*; use crate::check::{CheckedExprId, expr_type}; fn emit(_: CheckedExprId, _: Expr) { expr_type(); ast_helper(); let _ = AST_REVISION; let _ = AST_ROOT; }",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    assert_ne!(before, after);
+    assert!(section(&after, "Expr reference").contains("probe.rs"));
+    assert!(section(&after, "checker semantic reference").contains("probe.rs"));
+}
+
+#[test]
+fn production_filter_excludes_both_test_module_shapes() {
+    assert!(!is_production_codegen_path(Path::new(
+        "src/codegen/tests.rs"
+    )));
+    assert!(!is_production_codegen_path(Path::new(
+        "src/codegen/tests/application.rs"
+    )));
+    assert!(is_production_codegen_path(Path::new(
+        "src/codegen/application.rs"
+    )));
+}
+
+fn production_codegen_sources(manifest: &Path) -> Vec<SourceFile> {
+    let mut paths = vec![manifest.join("src/codegen.rs")];
+    collect_rust_files(&manifest.join("src/codegen"), &mut paths);
+    paths.retain(|path| {
+        path.strip_prefix(manifest)
+            .is_ok_and(is_production_codegen_path)
+    });
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| SourceFile {
+            relative: relative_path(manifest, &path),
+            source: fs::read_to_string(&path).expect("read codegen source"),
+        })
+        .collect()
+}
+
+fn rust_sources(directory: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_rust_files(directory, &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| fs::read_to_string(path).expect("read Rust source"))
+        .collect()
+}
+
 fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(directory).expect("read codegen directory") {
-        let path = entry.expect("read codegen entry").path();
-        if path.is_dir() {
+    for entry in fs::read_dir(directory).expect("read Rust source directory") {
+        let entry = entry.expect("read Rust source entry");
+        let file_type = entry.file_type().expect("read Rust source file type");
+        assert!(
+            !file_type.is_symlink(),
+            "source inventory does not follow symlinks"
+        );
+        let path = entry.path();
+        if file_type.is_dir() {
             collect_rust_files(&path, files);
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             files.push(path);
         }
     }
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .expect("source path below crate root")
+        .iter()
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn probe(relative: &str, source: &str) -> SourceFile {
+    SourceFile {
+        relative: relative.to_owned(),
+        source: source.to_owned(),
+    }
+}
+
+fn probe_ast_types() -> BTreeSet<String> {
+    exported_ast_types(&[
+        "pub struct Document; pub enum Expr {} pub struct Route; pub enum Statement {}".into(),
+    ])
+}
+
+fn section<'a>(inventory: &'a str, category: &str) -> &'a str {
+    let header = format!("[{category}]\n");
+    let body = inventory
+        .strip_prefix(&header)
+        .or_else(|| inventory.split_once(&header).map(|(_, body)| body))
+        .expect("inventory category");
+    body.split("\n[").next().unwrap_or(body)
+}
+
+fn section_count(inventory: &str, category: &str, path: &str) -> usize {
+    section(inventory, category)
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next() == Some(path)).then(|| fields.next().unwrap().parse().unwrap())
+        })
+        .unwrap_or(0)
 }

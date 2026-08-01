@@ -416,12 +416,18 @@ binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Handlers, tasks, canvas
 locals, settings, tests, and expression-bearing widget options remain outside
 this slice.
-The `hir_boundary` integration ratchet records every remaining code-generation
-use of the checked-document escape hatch or `RenderDocument` wrapper,
-checker/type/extern re-analysis, raw expression fallback, and source-AST
-semantic inputs. Its exact ledger may only shrink as later HIR slices delete
-their superseded paths; any new or restored entry fails the test. Full HIR
-still requires the ledger to reach zero.
+The `hir_boundary` integration ratchet records selected lexical markers for the
+remaining code-generation AST/checker boundary: exported AST identifiers,
+explicit checker imports and uses, checked-document and `RenderDocument`
+escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
+Rust scanner removes comments and literals, handles lifetime, mutable,
+by-value, container, and qualified type references, and fingerprints each
+occurrence from its normalized containing item and call-site context. The
+reviewed occurrence counts may not grow as later HIR slices delete their old
+paths, and every fingerprint change requires explicit review; completion still
+requires every selected count to reach zero. Mutation probes guard the scanner's
+documented lexical coverage. This is not Rust name resolution, and full HIR also
+requires ordinary semantic review for unrepresented behavior.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
