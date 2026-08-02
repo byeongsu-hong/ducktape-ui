@@ -16,7 +16,7 @@ pub(in crate::codegen) fn render_table(
     }
     let rows = resolved_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
     let item_name = &table.row.name;
-    let row_rust = program.rust_type(&table.row.ty);
+    let row_rust = rust_type_code(program, &table.row.ty);
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),

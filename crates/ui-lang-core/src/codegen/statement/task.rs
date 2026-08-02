@@ -68,7 +68,10 @@ pub(in crate::codegen) fn task_source_code(
             resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
         ResolvedTaskSource::None { output, .. } => {
-            format!("::iced::Task::<{}>::none()", program.rust_type(output))
+            format!(
+                "::iced::Task::<{}>::none()",
+                rust_type_code(program, output)
+            )
         }
         ResolvedTaskSource::Effect {
             kind, target, args, ..

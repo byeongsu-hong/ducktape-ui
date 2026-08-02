@@ -126,7 +126,7 @@ pub(in crate::codegen) fn generate_extern_probes(
             writeln!(
                 out,
                 "let _: &{} = &_value.{};",
-                program.rust_type(&field.ty),
+                rust_type_code(program, &field.ty),
                 field.name
             )
             .unwrap();
@@ -152,7 +152,7 @@ pub(in crate::codegen) fn generate_extern_probes(
                 let ty = if item.borrowed[index] {
                     borrowed_type(ty, program)
                 } else {
-                    program.rust_type(ty)
+                    rust_type_code(program, ty)
                 };
                 format!("arg{index}: {ty}")
             })
@@ -163,12 +163,12 @@ pub(in crate::codegen) fn generate_extern_probes(
             .collect::<Vec<_>>()
             .join(", ");
         let output = item.error.as_ref().map_or_else(
-            || program.rust_type(&item.output),
+            || rust_type_code(program, &item.output),
             |error| {
                 format!(
                     "::std::result::Result<{}, {}>",
-                    program.rust_type(&item.output),
-                    program.rust_type(error)
+                    rust_type_code(program, &item.output),
+                    rust_type_code(program, error)
                 )
             },
         );
@@ -222,7 +222,8 @@ pub(in crate::codegen) fn generate_extern_probes(
                 "#[allow(dead_code)] fn __ui_lang_check_sip_{}({params}) {{ let _: ::iced::Task<()> = ::iced::Task::sip({}({args}), |value| {{ let _: {} = value; }}, |value| {{ let _: {output} = value; }}); }}",
                 item.name,
                 item.rust_path,
-                program.rust_type(
+                rust_type_code(
+                    program,
                     item.progress
                         .as_ref()
                         .expect("sip extern has a progress type")
@@ -311,7 +312,7 @@ pub(in crate::codegen) fn generate_extern_probes(
                 .chain(
                     item.params
                         .iter()
-                        .map(|(_, ty)| program.rust_type(ty)),
+                        .map(|(_, ty)| rust_type_code(program, ty)),
                 )
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -362,7 +363,9 @@ pub(in crate::codegen) fn generate_extern_probes(
             .enumerate()
             .map(|(index, parameter)| {
                 let ty = match parameter.mode {
-                    ResolvedExternComponentArgumentMode::Owned => program.rust_type(&parameter.ty),
+                    ResolvedExternComponentArgumentMode::Owned => {
+                        rust_type_code(program, &parameter.ty)
+                    }
                     ResolvedExternComponentArgumentMode::BorrowedAsRef
                     | ResolvedExternComponentArgumentMode::Borrowed => {
                         borrowed_type(&parameter.ty, program)
@@ -382,7 +385,7 @@ pub(in crate::codegen) fn generate_extern_probes(
             declaration.name,
             if borrowed { "<'a>" } else { "" },
             if borrowed { "a" } else { "static" },
-            program.rust_type(&declaration.output),
+            rust_type_code(program, &declaration.output),
             declaration.rust_path
         )
         .unwrap();

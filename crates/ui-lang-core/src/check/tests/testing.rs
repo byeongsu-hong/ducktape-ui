@@ -94,10 +94,6 @@ fn checks_test_mount_targets_expressions_and_dispatch() {
         document.source_document().handlers[1].params[0].ty,
         Type::Str
     );
-    assert_eq!(
-        Type::TestTarget.rust(&[]),
-        "::ui_lang_runtime::testing::Target"
-    );
 }
 
 #[test]

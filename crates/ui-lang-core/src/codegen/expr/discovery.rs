@@ -109,7 +109,7 @@ pub(in crate::codegen) fn generate_pane_types(
                 out,
                 "{}({}),",
                 pane_template_variant(&template.item.name),
-                program.rust_type(&template.key_type)
+                rust_type_code(program, &template.key_type)
             )
             .unwrap();
         }

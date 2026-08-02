@@ -2040,7 +2040,7 @@ fn resolved_path_code(
             let palette = &program.theme().palettes[id.0 as usize];
             return Ok(format!(
                 "{}::{}",
-                generated_named_rust(&program.theme().contract.name),
+                canonical_rust_type_name(&program.theme().contract.name),
                 pascal(&palette.name)
             ));
         }

@@ -475,31 +475,6 @@ pub enum ThemePreset {
     Factory(ExternCall),
 }
 
-pub(crate) const BUILT_IN_THEMES: &[&str] = &[
-    "light",
-    "dark",
-    "dracula",
-    "nord",
-    "solarized-light",
-    "solarized-dark",
-    "gruvbox-light",
-    "gruvbox-dark",
-    "catppuccin-latte",
-    "catppuccin-frappe",
-    "catppuccin-macchiato",
-    "catppuccin-mocha",
-    "tokyo-night",
-    "tokyo-night-storm",
-    "tokyo-night-light",
-    "kanagawa-wave",
-    "kanagawa-dragon",
-    "kanagawa-lotus",
-    "moonfly",
-    "nightfly",
-    "oxocarbon",
-    "ferra",
-];
-
 #[derive(Clone, Debug)]
 pub enum ResponsiveContent {
     Breakpoint {
@@ -1144,26 +1119,6 @@ pub(crate) fn button_semantic_key(
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputAlignment {
-    Left,
-    Center,
-    Right,
-}
-
-impl std::str::FromStr for InputAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            _ => Err(()),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FontPreset {
     Default,
@@ -1511,63 +1466,4 @@ pub(crate) fn radio_semantic_key(
         style,
         route,
     )
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextShaping {
-    Auto,
-    Basic,
-    Advanced,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextWrapping {
-    None,
-    Word,
-    Glyph,
-    WordOrGlyph,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextAlignment {
-    Default,
-    Left,
-    Center,
-    Right,
-    Justified,
-}
-
-impl std::str::FromStr for TextAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "default" => Ok(Self::Default),
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            "justified" => Ok(Self::Justified),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VerticalAlignment {
-    Top,
-    Center,
-    Bottom,
-}
-
-impl std::str::FromStr for VerticalAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "top" => Ok(Self::Top),
-            "center" => Ok(Self::Center),
-            "bottom" => Ok(Self::Bottom),
-            _ => Err(()),
-        }
-    }
 }

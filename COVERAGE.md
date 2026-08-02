@@ -470,19 +470,18 @@ MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
 Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,
 Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and
 Match families remain outside this slice.
-The `hir_boundary` integration ratchet records selected lexical markers for the
-remaining code-generation AST/checker boundary: exported AST identifiers,
-explicit checker imports and uses, checked-document and `RenderDocument`
-escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
-Rust scanner removes comments and literals, handles lifetime, mutable,
-by-value, container, and qualified type references, tracks exact aliases from
-grouped and nested AST imports, and fingerprints each occurrence from its
-normalized containing item and call-site context. The
-reviewed occurrence counts may not grow as later HIR slices delete their old
-paths, and every fingerprint change requires explicit review; completion still
-requires every selected count to reach zero. Mutation probes guard the scanner's
-documented lexical coverage. This is not Rust name resolution, and full HIR also
-requires ordinary semantic review for unrepresented behavior.
+The `hir_boundary` integration ratchet now enforces an empty production
+code-generation AST/checker boundary: exported AST identifiers, explicit
+checker imports and uses, checked-document and `RenderDocument` escapes,
+re-analysis calls, and raw expression fallbacks all have zero occurrences. Its
+dependency-free Rust scanner removes comments and literals, discovers only
+top-level AST exports, follows import-reachable globs, names, module aliases,
+alias chains, qualified paths, and local uses, and fingerprints each occurrence
+from its normalized containing item and call-site context. Regression probes
+cover impl-method and same-name collisions as well as grouped, nested, module,
+and local aliases. The scanner is not Rust name resolution, so ordinary semantic
+review still guards unrepresented behavior; that review confirms production
+code generation consumes only normalized HIR and neutral semantic values.
 
 Application and daemon settings have a complete private HIR boundary. Stable
 setting-expression and named-window IDs retain title, active palette, theme,

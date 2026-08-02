@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::semantic::*;
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 

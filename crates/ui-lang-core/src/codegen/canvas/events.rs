@@ -138,7 +138,7 @@ pub(in crate::codegen) fn canvas_update_code(
         let filter = canvas_event_filter(&event.source);
         let pointer_guard = matches!(
             event.source,
-            SubscriptionSource::Mouse(
+            ResolvedCanvasEventSource::Mouse(
                 MouseEvent::Pressed | MouseEvent::Released | MouseEvent::Moved | MouseEvent::Wheel
             )
         )
@@ -227,20 +227,20 @@ pub(in crate::codegen) fn canvas_update_code(
     Ok(code)
 }
 
-pub(in crate::codegen) fn canvas_event_filter(source: &SubscriptionSource) -> String {
+pub(in crate::codegen) fn canvas_event_filter(source: &ResolvedCanvasEventSource) -> String {
     match source {
-        SubscriptionSource::InputMethod(event) => match event {
+        ResolvedCanvasEventSource::InputMethod(event) => match event {
             InputMethodEvent::Opened => "matches!(__event, ::iced::widget::canvas::Event::InputMethod(::iced::advanced::input_method::Event::Opened)).then_some(())".into(),
             InputMethodEvent::Preedit => "match __event { ::iced::widget::canvas::Event::InputMethod(::iced::advanced::input_method::Event::Preedit(content, range)) => { let (start, end) = range.as_ref().map_or((::std::option::Option::None, ::std::option::Option::None), |range| (::std::option::Option::Some(i64::try_from(range.start).unwrap_or(i64::MAX)), ::std::option::Option::Some(i64::try_from(range.end).unwrap_or(i64::MAX)))); ::std::option::Option::Some((content.clone(), start, end)) }, _ => ::std::option::Option::None }".into(),
             InputMethodEvent::Commit => "match __event { ::iced::widget::canvas::Event::InputMethod(::iced::advanced::input_method::Event::Commit(content)) => ::std::option::Option::Some(content.clone()), _ => ::std::option::Option::None }".into(),
             InputMethodEvent::Closed => "matches!(__event, ::iced::widget::canvas::Event::InputMethod(::iced::advanced::input_method::Event::Closed)).then_some(())".into(),
         },
-        SubscriptionSource::Keyboard(event) => match event {
+        ResolvedCanvasEventSource::Keyboard(event) => match event {
             KeyboardEvent::Press => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat }) => ::std::option::Option::Some(__IceKeyPress { key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers, text: text.as_ref().map(::std::string::ToString::to_string), repeat: *repeat }), _ => ::std::option::Option::None }".into(),
             KeyboardEvent::Release => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyReleased { key, modified_key, physical_key, location, modifiers }) => ::std::option::Option::Some(__IceKeyRelease { key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers }), _ => ::std::option::Option::None }".into(),
             KeyboardEvent::Modifiers => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::ModifiersChanged(modifiers)) => ::std::option::Option::Some(*modifiers), _ => ::std::option::Option::None }".into(),
         },
-        SubscriptionSource::Mouse(event) => match event {
+        ResolvedCanvasEventSource::Mouse(event) => match event {
             MouseEvent::Entered => "matches!(__event, ::iced::widget::canvas::Event::Mouse(::iced::mouse::Event::CursorEntered)).then_some(())".into(),
             MouseEvent::Left => "matches!(__event, ::iced::widget::canvas::Event::Mouse(::iced::mouse::Event::CursorLeft)).then_some(())".into(),
             MouseEvent::Moved => "match __event { ::iced::widget::canvas::Event::Mouse(::iced::mouse::Event::CursorMoved { position }) => ::std::option::Option::Some((position.x as f64, position.y as f64)), _ => ::std::option::Option::None }".into(),
@@ -248,7 +248,7 @@ pub(in crate::codegen) fn canvas_event_filter(source: &SubscriptionSource) -> St
             MouseEvent::Released => "match __event { ::iced::widget::canvas::Event::Mouse(::iced::mouse::Event::ButtonReleased(button)) => ::std::option::Option::Some(*button), _ => ::std::option::Option::None }".into(),
             MouseEvent::Wheel => "match __event { ::iced::widget::canvas::Event::Mouse(::iced::mouse::Event::WheelScrolled { delta }) => { let (x, y, pixels) = match delta { ::iced::mouse::ScrollDelta::Lines { x, y } => (*x as f64, *y as f64, false), ::iced::mouse::ScrollDelta::Pixels { x, y } => (*x as f64, *y as f64, true) }; ::std::option::Option::Some((x, y, pixels)) }, _ => ::std::option::Option::None }".into(),
         },
-        SubscriptionSource::Touch(event) => {
+        ResolvedCanvasEventSource::Touch(event) => {
             let variant = match event {
                 TouchEvent::Pressed => "FingerPressed",
                 TouchEvent::Moved => "FingerMoved",
@@ -257,7 +257,7 @@ pub(in crate::codegen) fn canvas_event_filter(source: &SubscriptionSource) -> St
             };
             format!("match __event {{ ::iced::widget::canvas::Event::Touch(::iced::touch::Event::{variant} {{ id, position }}) => ::std::option::Option::Some((*id, position.x as f64, position.y as f64)), _ => ::std::option::Option::None }}")
         }
-        SubscriptionSource::Window(event) => match event {
+        ResolvedCanvasEventSource::Window(event) => match event {
             WindowEvent::Frame => "matches!(__event, ::iced::widget::canvas::Event::Window(::iced::window::Event::RedrawRequested(_))).then_some(())".into(),
             WindowEvent::Opened => "match __event { ::iced::widget::canvas::Event::Window(::iced::window::Event::Opened { position, size }) => { let (x, y) = position.as_ref().map_or((::std::option::Option::None, ::std::option::Option::None), |position| (::std::option::Option::Some(position.x as f64), ::std::option::Option::Some(position.y as f64))); ::std::option::Option::Some((x, y, size.width as f64, size.height as f64)) }, _ => ::std::option::Option::None }".into(),
             WindowEvent::Closed => "matches!(__event, ::iced::widget::canvas::Event::Window(::iced::window::Event::Closed)).then_some(())".into(),
@@ -271,19 +271,18 @@ pub(in crate::codegen) fn canvas_event_filter(source: &SubscriptionSource) -> St
             WindowEvent::FileDropped => "match __event { ::iced::widget::canvas::Event::Window(::iced::window::Event::FileDropped(path)) => ::std::option::Option::Some(path.to_string_lossy().into_owned()), _ => ::std::option::Option::None }".into(),
             WindowEvent::FilesHoveredLeft => "matches!(__event, ::iced::widget::canvas::Event::Window(::iced::window::Event::FilesHoveredLeft)).then_some(())".into(),
         },
-        _ => unreachable!("parser rejects non-event canvas sources"),
     }
 }
 
 pub(in crate::codegen) fn canvas_event_route_code(
-    source: &SubscriptionSource,
+    source: &ResolvedCanvasEventSource,
     route: &ResolvedCanvasRoute,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
     message: &str,
 ) -> Result<String, Error> {
     match source {
-        SubscriptionSource::InputMethod(event) => match event {
+        ResolvedCanvasEventSource::InputMethod(event) => match event {
             InputMethodEvent::Opened | InputMethodEvent::Closed => {
                 resolved_canvas_route_code(route, &[], env, program, message)
             }
@@ -298,10 +297,10 @@ pub(in crate::codegen) fn canvas_event_route_code(
                 resolved_canvas_route_code(route, &["__value"], env, program, message)
             }
         },
-        SubscriptionSource::Keyboard(_) => {
+        ResolvedCanvasEventSource::Keyboard(_) => {
             resolved_canvas_route_code(route, &["__value"], env, program, message)
         }
-        SubscriptionSource::Mouse(event) => match event {
+        ResolvedCanvasEventSource::Mouse(event) => match event {
             MouseEvent::Entered | MouseEvent::Left => {
                 resolved_canvas_route_code(route, &[], env, program, message)
             }
@@ -323,14 +322,14 @@ pub(in crate::codegen) fn canvas_event_route_code(
                 message,
             ),
         },
-        SubscriptionSource::Touch(_) => resolved_canvas_route_code(
+        ResolvedCanvasEventSource::Touch(_) => resolved_canvas_route_code(
             route,
             &["__value.0", "__value.1", "__value.2"],
             env,
             program,
             message,
         ),
-        SubscriptionSource::Window(event) => match event {
+        ResolvedCanvasEventSource::Window(event) => match event {
             WindowEvent::Opened => resolved_canvas_route_code(
                 route,
                 &["__value.0", "__value.1", "__value.2", "__value.3"],
@@ -357,7 +356,6 @@ pub(in crate::codegen) fn canvas_event_route_code(
                 resolved_canvas_route_code(route, &[], env, program, message)
             }
         },
-        _ => unreachable!("parser rejects non-event canvas sources"),
     }
 }
 

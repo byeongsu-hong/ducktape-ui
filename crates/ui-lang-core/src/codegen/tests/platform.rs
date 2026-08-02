@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn omits_feature_gated_runtime_converters_when_unused() {
+    let source = r#"app Minimal
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "ready"
+"#;
+
+    let generated = compile(source, "minimal.ice").unwrap();
+
+    assert!(!generated.contains("::iced::system::Information"));
+    assert!(!generated.contains("::iced::widget::selector::Target"));
+    assert!(!generated.contains("::iced::widget::selector::Text"));
+}
+
+#[test]
 fn lowers_typed_iced_extern_boundaries() {
     let source = r#"app Interop
   renderer crate::backend::Renderer

@@ -1,6 +1,6 @@
-use crate::ast::*;
-use crate::hir::{ExternFnId, HandlerId, RunSiteId};
+use crate::hir::{ExternFnId, HandlerId, RunSiteId, canonical_rust_type_name};
 use crate::lower::*;
+use crate::semantic::*;
 use crate::{Error, canonical_snake};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -230,7 +230,11 @@ fn resolved_match_pattern_code(
             |binding| format!("{}::{}({binding})", owner, pascal(variant)),
         ),
         ResolvedMatchPattern::Palette { contract, palette } => {
-            format!("{}::{}", generated_named_rust(contract), pascal(palette))
+            format!(
+                "{}::{}",
+                canonical_rust_type_name(contract),
+                pascal(palette)
+            )
         }
         ResolvedMatchPattern::Wildcard => "_".into(),
     })
@@ -281,7 +285,7 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
             out,
             "fn {}(&self) -> {} {{ {value} }}",
             derived_method(&derived.name),
-            program.rust_type(&derived.ty),
+            rust_type_code(program, &derived.ty),
         )
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
@@ -332,8 +336,8 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .unwrap(),
     }
     generate_keyboard_types(&mut out, program, program.subscriptions());
-    generate_system_types(&mut out);
-    generate_widget_selector_types(&mut out);
+    generate_system_types(&mut out, program);
+    generate_widget_selector_types(&mut out, program);
     generate_canvas_types(&mut out, program);
     generate_pane_types(&mut out, program)?;
     let theme = program.theme();
@@ -341,7 +345,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(
         out,
         "#[allow(dead_code)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum {} {{",
-        generated_named_rust(&theme.contract.name)
+        canonical_rust_type_name(&theme.contract.name)
     )
     .unwrap();
     for palette in &theme.palettes {
@@ -373,7 +377,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         for variant in &item.variants {
             let name = pascal(&variant.name);
             if let Some(payload) = &variant.payload {
-                writeln!(out, "{name}({}),", program.rust_type(payload)).unwrap();
+                writeln!(out, "{name}({}),", rust_type_code(program, payload)).unwrap();
             } else {
                 writeln!(out, "{name},").unwrap();
             }
@@ -390,7 +394,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         writeln!(out, "#[allow(dead_code)]\npub(crate) struct {ty} {{").unwrap();
         for state in &component.states {
             writeln!(out, "{}", source_marker(&state.span)).unwrap();
-            writeln!(out, "{}: {},", state.name, program.rust_type(&state.ty)).unwrap();
+            writeln!(
+                out,
+                "{}: {},",
+                state.name,
+                rust_type_code(program, &state.ty)
+            )
+            .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
         for (site, _) in component_run_sites(program, &component.handlers) {
@@ -489,7 +499,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             out,
             "pub(crate) {}: {},",
             state.name,
-            program.rust_type(&state.ty)
+            rust_type_code(program, &state.ty)
         )
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
@@ -541,7 +551,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             let fields = handler
                 .params
                 .iter()
-                .map(|param| program.rust_type(&param.ty))
+                .map(|param| rust_type_code(program, &param.ty))
                 .collect::<Vec<_>>()
                 .join(", ");
             writeln!(out, "{variant}({fields}),").unwrap();
@@ -563,7 +573,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                     handler
                         .params
                         .iter()
-                        .map(|param| program.rust_type(&param.ty)),
+                        .map(|param| rust_type_code(program, &param.ty)),
                 )
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -752,7 +762,10 @@ mod statement;
 mod style;
 mod subscription;
 mod testing;
+mod type_code;
 mod view;
+
+use type_code::rust_type_code;
 
 use application::*;
 use canvas::*;

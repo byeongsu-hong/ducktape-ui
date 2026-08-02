@@ -82,7 +82,7 @@ pub(in crate::codegen) fn generate_theme(
                 &callback_env,
                 ValueMode::Owned,
             )?;
-            let contract = generated_named_rust(&theme.contract.name);
+            let contract = canonical_rust_type_name(&theme.contract.name);
             writeln!(out, "match {value} {{").unwrap();
             for palette in &theme.palettes {
                 writeln!(

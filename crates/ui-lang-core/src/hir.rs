@@ -1,8 +1,25 @@
 use crate::ast::*;
+use crate::semantic::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+pub(crate) fn canonical_rust_type_name(name: &str) -> String {
+    if name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        name.to_owned()
+    } else {
+        format!(
+            "__IceType0{}",
+            name.bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    }
+}
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -646,7 +663,7 @@ impl DeclarationIndex {
                 EnumDeclaration {
                     declaration: Declaration { id, origin },
                     name: item.name.clone(),
-                    rust_name: generated_named_rust(&item.name),
+                    rust_name: canonical_rust_type_name(&item.name),
                     variants,
                 }
             })

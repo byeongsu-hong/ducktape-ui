@@ -28,6 +28,7 @@ pub(crate) use crate::hir::{
     PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
     TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
+use crate::semantic::*;
 use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -3117,12 +3118,10 @@ impl LoweredProgram {
         self.declarations.extern_declarations()
     }
 
-    pub(crate) fn rust_type(&self, ty: &Type) -> String {
-        ty.rust_with_named(&|name| {
-            self.declarations
-                .struct_decl_by_name(name)
-                .map(|declaration| declaration.rust_path.clone())
-        })
+    pub(crate) fn struct_rust_path_by_name(&self, name: &str) -> Option<&str> {
+        self.declarations
+            .struct_decl_by_name(name)
+            .map(|declaration| declaration.rust_path.as_str())
     }
 
     #[cfg(test)]
