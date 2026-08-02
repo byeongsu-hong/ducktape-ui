@@ -428,6 +428,20 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
+
+Component-call direct output and named-event delivery have a complete private
+route HIR boundary. Checked call-route records own stable call/view/component,
+event, outer-event, and ordered route IDs; exact output and payload types;
+direct/forward topology; checked route expressions and payload indexes; and
+parented physical origins. Lowering publishes `ResolvedInteractionRoute`
+values inside the component call, and production callbacks consume those
+records without raw `Route`, `Expr`, or source component declarations. Dynamic
+and post-lowering raw poisoning, cross-owner expression and route attacks,
+valid-ID/type/cardinality/origin corruption, imported source mapping, the
+reduced lexical ratchet, native generation, and an ignored 4,000-call
+lower+emit budget cover the boundary. Component root/slot child topology and
+the general expression fallback remain separately tracked later slices.
+
 Expression-bearing widget options outside the completed Media, Tooltip,
 MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
 Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,

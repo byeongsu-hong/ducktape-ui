@@ -81,8 +81,13 @@ pub(in crate::codegen) fn render_content(
                 component_env.insert(
                     component_output_key(name),
                     Binding {
-                        code: route_callback_code(
-                            route, "__value", "__value", env, document, message,
+                        code: resolved_interaction_route_callback_code(
+                            route,
+                            "__value",
+                            &["__value"],
+                            env,
+                            document.program(),
+                            message,
                         )?,
                         ty: output.clone(),
                         local: true,
@@ -97,14 +102,16 @@ pub(in crate::codegen) fn render_content(
                     .collect::<Vec<_>>();
                 let payload_refs = payloads.iter().map(String::as_str).collect::<Vec<_>>();
                 let code = match event {
-                    ResolvedEventRoute::Direct { route, .. } => ordered_route_callback_code(
-                        route,
-                        &payloads.join(", "),
-                        &payload_refs,
-                        env,
-                        document,
-                        message,
-                    )?,
+                    ResolvedEventRoute::Direct { route, .. } => {
+                        resolved_interaction_route_callback_code(
+                            route,
+                            &payloads.join(", "),
+                            &payload_refs,
+                            env,
+                            document.program(),
+                            message,
+                        )?
+                    }
                     ResolvedEventRoute::Forward {
                         outer_component, ..
                     } => {

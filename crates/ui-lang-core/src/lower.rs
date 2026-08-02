@@ -2,8 +2,8 @@ use crate::ast::*;
 use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedBooleanControl, CheckedCallArgument,
     CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
-    CheckedComboBox, CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind,
-    CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
+    CheckedComboBox, CheckedComponentArgumentSource, CheckedComponentEventDelivery, CheckedExprId,
+    CheckedExprKind, CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
     CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
     CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchPattern,
     CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
@@ -1422,7 +1422,7 @@ pub(crate) enum ResolvedEventRoute {
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
-        route: Route,
+        route: ResolvedInteractionRoute,
         origin: OriginId,
     },
     Forward {
@@ -1479,7 +1479,7 @@ pub(crate) enum ComponentOutputRoute {
     None,
     Direct {
         output: Type,
-        route: Route,
+        route: ResolvedInteractionRoute,
         origin: OriginId,
     },
 }
@@ -9938,6 +9938,85 @@ impl Lowerer {
             )
         };
         let origin = self.declarations.view(view_id).origin;
+        let semantic_key = crate::ast::component_call_route_semantic_key(
+            name,
+            route.is_some(),
+            events
+                .iter()
+                .zip(&supplied_events)
+                .map(|(event, supplied)| {
+                    (
+                        event.name.as_str(),
+                        supplied
+                            .as_ref()
+                            .is_some_and(|supplied| supplied.route.is_some()),
+                    )
+                }),
+        );
+        let (route_view, interaction, route_scope, route_origin) = self.interaction_contract(
+            CheckedInteractionKind::ComponentCallRoutes,
+            semantic_key,
+            span,
+            outer_component,
+        )?;
+        let checked_routes = self
+            .facts
+            .component_call_routes(call_id)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "component call has no checked route contract"))?;
+        if route_view != view_id
+            || route_origin != origin
+            || checked_routes.call != call_id
+            || checked_routes.view != view_id
+            || checked_routes.component != component_id
+            || !interaction.option_expressions.is_empty()
+            || checked_routes.events.len() != events.len()
+        {
+            return Err(self.invariant(span, "component call route identity diverged"));
+        }
+        self.validate_interaction_expression_graphs(
+            view_id,
+            route_scope,
+            interaction.expression_count,
+            span,
+        )?;
+        let route_sources = route
+            .iter()
+            .chain(
+                supplied_events
+                    .iter()
+                    .filter_map(|event| event.as_ref().and_then(|event| event.route.as_ref())),
+            )
+            .collect::<Vec<_>>();
+        let mut route_index = 0usize;
+        let output = match (&output_ty, route, &checked_routes.output) {
+            (Type::Unit, None, None) => ComponentOutputRoute::None,
+            (output, Some(source), Some(checked)) if checked.output == *output => {
+                let resolved = self.lower_required_interaction_route(
+                    source,
+                    &interaction,
+                    &route_sources,
+                    &mut route_index,
+                    view_id,
+                    route_scope,
+                )?;
+                if resolved.id != checked.route {
+                    return Err(self.invariant(span, "component output route ID diverged"));
+                }
+                self.validate_component_call_route_hir(
+                    &resolved,
+                    std::slice::from_ref(output),
+                    false,
+                    span,
+                )?;
+                ComponentOutputRoute::Direct {
+                    output: output.clone(),
+                    origin: resolved.origin,
+                    route: resolved,
+                }
+            }
+            _ => return Err(self.invariant(span, "component output route contract diverged")),
+        };
         let mut arguments = Vec::with_capacity(params.len());
         for (param, supplied) in params.iter().zip(supplied_args) {
             let source = self
@@ -9982,44 +10061,104 @@ impl Lowerer {
         }
 
         let mut resolved_events = Vec::with_capacity(events.len());
-        for (event, supplied) in events.iter().zip(supplied_events) {
+        for ((event, supplied), checked) in events
+            .iter()
+            .zip(supplied_events)
+            .zip(&checked_routes.events)
+        {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
             })?;
-            let event_origin = self.push_origin(&supplied.span, Some(origin));
-            if let Some(route) = &supplied.route {
-                resolved_events.push(ResolvedEventRoute::Direct {
-                    event: event.id,
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    route: route.clone(),
-                    origin: event_origin,
-                });
-            } else {
-                let outer = outer_component.ok_or_else(|| {
-                    self.invariant(&supplied.span, "forwarded event has no outer component")
-                })?;
-                let outer_index = outer.0 as usize;
-                let outer_event = self.component_indexes[outer_index]
-                    .events_by_name
-                    .get(&event.name)
-                    .and_then(|position| self.components[outer_index].events.get(*position))
-                    .ok_or_else(|| {
-                        self.invariant(
-                            &supplied.span,
-                            format!("forwarded event `{}` has no outer declaration", event.name),
-                        )
-                    })?
-                    .id;
-                resolved_events.push(ResolvedEventRoute::Forward {
-                    event: event.id,
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    outer_component: outer,
-                    outer_event,
-                    origin: event_origin,
-                });
+            let event_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
+                self.invariant(&supplied.span, "component event route origin is invalid")
+            })?;
+            if event_origin.parent != Some(origin)
+                || checked.event != event.id
+                || checked.name != event.name
+                || checked.payloads != event.payloads
+                || supplied.name != event.name
+            {
+                return Err(
+                    self.invariant(&supplied.span, "component event route contract diverged")
+                );
             }
+            match (&supplied.route, &checked.delivery) {
+                (Some(source), CheckedComponentEventDelivery::Direct(checked_route)) => {
+                    let resolved = self.lower_required_interaction_route(
+                        source,
+                        &interaction,
+                        &route_sources,
+                        &mut route_index,
+                        view_id,
+                        route_scope,
+                    )?;
+                    if resolved.id != *checked_route {
+                        return Err(
+                            self.invariant(&supplied.span, "component event route ID diverged")
+                        );
+                    }
+                    self.validate_component_call_route_hir(
+                        &resolved,
+                        &event.payloads,
+                        true,
+                        &supplied.span,
+                    )?;
+                    resolved_events.push(ResolvedEventRoute::Direct {
+                        event: event.id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        route: resolved,
+                        origin: checked.origin,
+                    });
+                }
+                (
+                    None,
+                    CheckedComponentEventDelivery::Forward {
+                        outer_component: checked_outer,
+                        outer_event,
+                    },
+                ) => {
+                    let outer = outer_component.ok_or_else(|| {
+                        self.invariant(&supplied.span, "forwarded event has no outer component")
+                    })?;
+                    let declaration =
+                        self.declarations
+                            .component_event(*outer_event)
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    &supplied.span,
+                                    "forwarded event has an invalid outer declaration",
+                                )
+                            })?;
+                    if *checked_outer != outer
+                        || outer_event.component != outer
+                        || declaration.name != event.name
+                        || declaration.payloads != event.payloads
+                    {
+                        return Err(self.invariant(
+                            &supplied.span,
+                            "forwarded event declaration contract diverged",
+                        ));
+                    }
+                    resolved_events.push(ResolvedEventRoute::Forward {
+                        event: event.id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        outer_component: outer,
+                        outer_event: *outer_event,
+                        origin: checked.origin,
+                    });
+                }
+                _ => {
+                    return Err(self.invariant(
+                        &supplied.span,
+                        "component event direct/forward topology diverged",
+                    ));
+                }
+            }
+        }
+        if route_index != interaction.routes.len() || route_index != route_sources.len() {
+            return Err(self.invariant(span, "component call left checked routes unconsumed"));
         }
 
         let mut resolved_slots = Vec::with_capacity(slots.len());
@@ -10041,19 +10180,6 @@ impl Lowerer {
             });
         }
 
-        let output = match (&output_ty, route) {
-            (Type::Unit, None) => ComponentOutputRoute::None,
-            (output, Some(route)) => ComponentOutputRoute::Direct {
-                output: output.clone(),
-                route: route.clone(),
-                origin,
-            },
-            _ => {
-                return Err(
-                    self.invariant(span, "component output route was not resolved by checking")
-                );
-            }
-        };
         let scope = id.as_ref().map_or_else(
             || ComponentScope::Implicit {
                 component: component_id,
@@ -10087,6 +10213,54 @@ impl Lowerer {
             storage,
             binding_site: span.line,
         });
+        Ok(())
+    }
+
+    fn validate_component_call_route_hir(
+        &self,
+        route: &ResolvedInteractionRoute,
+        source_payloads: &[Type],
+        ordered_payloads: bool,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if route.source_payloads != source_payloads || route.ordered_payloads != ordered_payloads {
+            return Err(self.invariant(span, "component route source payload contract diverged"));
+        }
+        let destinations = match &route.target {
+            ResolvedInteractionRouteTarget::TargetHandler(handler) => self
+                .declarations
+                .try_handler(*handler)
+                .ok_or_else(|| self.invariant(span, "component route handler is invalid"))?
+                .payloads
+                .clone(),
+            ResolvedInteractionRouteTarget::OutputCallback { output, .. } => vec![output.clone()],
+            ResolvedInteractionRouteTarget::NamedEvent { payloads, .. } => payloads.clone(),
+        };
+        if route.args.len() != destinations.len() {
+            return Err(self.invariant(span, "component route target cardinality diverged"));
+        }
+        for (argument, destination) in route.args.iter().zip(&destinations) {
+            match argument {
+                ResolvedInteractionRouteArg::Expression(expression) => {
+                    let retained = self.facts.try_expression_use(*expression).ok_or_else(|| {
+                        self.invariant(span, "component route expression is invalid")
+                    })?;
+                    if retained.source != *destination || retained.destination != *destination {
+                        return Err(
+                            self.invariant(span, "component route expression type diverged")
+                        );
+                    }
+                }
+                ResolvedInteractionRouteArg::Payload { index, ty } => {
+                    let source = route.source_payloads.get(*index as usize).ok_or_else(|| {
+                        self.invariant(span, "component route payload index is invalid")
+                    })?;
+                    if ty != source || ty != destination {
+                        return Err(self.invariant(span, "component route payload type diverged"));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -17796,6 +17970,306 @@ view
             .find(|call| matches!(call.output, ComponentOutputRoute::Direct { .. }))
             .unwrap();
         assert!(matches!(output.output, ComponentOutputRoute::Direct { .. }));
+    }
+
+    #[test]
+    fn component_call_routes_ignore_dynamic_and_post_lowering_raw_poison() {
+        let source = format!(
+            "app ComponentRoutePoison\n{THEME}state\n  suffix = \"checked\"\non accepted(value)\n  suffix = value\non observed(label, count)\n  suffix = label\ncomponent Routed() -> str\n  emits\n    changed(str, i64)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\", 1)\nview\n  Routed -> accepted suffix\n    events\n      changed -> observed suffix _\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "component-route-poison.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Component { route, events, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        let output = route.as_mut().unwrap();
+        output.args[0] = RouteArg::Expr(Expr::Str("poison-output".into()));
+        let event = events[0].route.as_mut().unwrap();
+        event.args[0] = RouteArg::Expr(Expr::Str("poison-event".into()));
+        let mut program = lower(checked).unwrap();
+        let checked_poison =
+            crate::codegen::generate(&program, "component-route-poison.ice").unwrap();
+        assert_eq!(checked_poison, expected);
+        assert!(!checked_poison.contains("poison-output"));
+        assert!(!checked_poison.contains("poison-event"));
+
+        let ViewNode::Component {
+            name,
+            route,
+            events,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a component call");
+        };
+        *name = "RawPoison".into();
+        let output = route.as_mut().unwrap();
+        output.handler = "raw_poison".into();
+        output.args[0] = RouteArg::Payload;
+        events[0].name = "raw_event".into();
+        let event = events[0].route.as_mut().unwrap();
+        event.handler = "raw_poison".into();
+        event.args.clear();
+        let lowered_poison =
+            crate::codegen::generate(&program, "component-route-poison.ice").unwrap();
+        assert_eq!(lowered_poison, expected);
+
+        let mut handler_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut handler_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route.as_mut().unwrap().handler = "observed".into();
+        let error = lower(handler_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut argument_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut argument_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route.as_mut().unwrap().args[0] = RouteArg::Payload;
+        let error = lower(argument_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument kind diverged"));
+
+        let mut cardinality_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut cardinality_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route
+            .as_mut()
+            .unwrap()
+            .args
+            .push(RouteArg::Expr(Expr::Str("extra".into())));
+        let error = lower(cardinality_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("arity diverged"));
+
+        let mut topology_poison = analyze(&source).unwrap();
+        let ViewNode::Component { events, .. } = &mut topology_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        events[0].route = None;
+        let error = lower(topology_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn component_call_routes_follow_slotted_interaction_analysis_order() {
+        let source = format!(
+            "app ComponentRouteSlots\n{THEME}state\n  label = \"ready\"\non accepted(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    slot Body\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  Routed -> accepted _\n    events\n      changed -> accepted _\n    Body:\n      button \"Nested\" -> accepted \"nested\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "component-route-slots.ice").unwrap();
+        assert!(generated.contains("Nested"));
+        assert!(generated.contains("ComponentRouteSlots"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_cross_owner_id_type_cardinality_and_origin_corruption() {
+        let source = format!(
+            "app ComponentRouteIdentity\n{THEME}state\n  label = \"label\"\non first(value)\n  label = value\non second(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\ncomponent Alternate() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  col\n    Routed -> first label\n      events\n        changed -> first label\n    Routed -> second label\n      events\n        changed -> second label\n"
+        );
+        let ids = |checked: &crate::CheckedDocument| {
+            let ViewNode::Layout { children, .. } = &checked.document.view else {
+                panic!("fixture root must be a layout");
+            };
+            let views = children
+                .iter()
+                .map(|child| checked.declarations.view_id(child.span()).unwrap())
+                .collect::<Vec<_>>();
+            let calls = views
+                .iter()
+                .map(|view| checked.declarations.component_call_id(*view).unwrap())
+                .collect::<Vec<_>>();
+            (views, calls)
+        };
+
+        let mut cross_owner = analyze(&source).unwrap();
+        let (views, _) = ids(&cross_owner);
+        cross_owner
+            .facts
+            .transplant_interaction_route_expression_across_views(views[0], 0, 0, views[1], 0, 0);
+        let error = lower(cross_owner).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("slot identity diverged"));
+
+        let mut route_id = analyze(&source).unwrap();
+        let (views, _) = ids(&route_id);
+        route_id.facts.swap_interaction_routes(views[0], views[1]);
+        let error = lower(route_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut handler_id = analyze(&source).unwrap();
+        let (views, _) = ids(&handler_id);
+        handler_id
+            .facts
+            .corrupt_interaction_route_handler(views[0], 0, HandlerId(1));
+        let error = lower(handler_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut component_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&component_id);
+        component_id
+            .facts
+            .corrupt_component_call_route_component(calls[0], ComponentId(1));
+        let error = lower(component_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route identity diverged"));
+
+        let mut event_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&event_id);
+        event_id.facts.corrupt_component_call_event_id(
+            calls[0],
+            0,
+            ComponentEventId {
+                component: ComponentId(1),
+                index: 0,
+            },
+        );
+        let error = lower(event_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("event route contract diverged"));
+
+        let mut payload_type = analyze(&source).unwrap();
+        let (views, _) = ids(&payload_type);
+        payload_type
+            .facts
+            .corrupt_interaction_route_source_payload(views[0], 0, 0, Type::Bool);
+        let error = lower(payload_type).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source payload contract diverged"));
+
+        let mut view_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&view_id);
+        view_id
+            .facts
+            .corrupt_component_call_route_view(calls[0], u32::MAX);
+        let error = lower(view_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route identity diverged"));
+
+        let mut origin = analyze(&source).unwrap();
+        let (_, calls) = ids(&origin);
+        origin
+            .facts
+            .corrupt_component_call_event_origin(calls[0], 0, u32::MAX);
+        let error = lower(origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is invalid"));
+    }
+
+    #[test]
+    fn imported_component_call_routes_keep_origins_markers_and_hir_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-component-route-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("routes.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentRoutes\nuse \"routes.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Imported value=label -> accepted _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Leaf() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"leaf\")\n    button \"Event\" -> emit(changed, \"leaf\")\ncomponent Imported(value:str) -> str\n  Leaf -> emit(value)\n    events\n      changed -> emit(value)\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let call_index = program
+            .calls
+            .iter()
+            .position(|call| call.component == ComponentId(0))
+            .unwrap();
+        let call = &program.calls[call_index];
+        let origin = program.origin(call.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 8);
+        let ComponentOutputRoute::Direct { route, .. } = &call.output else {
+            panic!("imported call must have a direct output route");
+        };
+        assert_eq!(
+            program.origin(route.origin).path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(route.origin).line, 8);
+        let ResolvedEventRoute::Direct { route, origin, .. } = &call.events[0] else {
+            panic!("imported call must have a direct event route");
+        };
+        assert_eq!(program.origin(*origin).parent, Some(call.origin));
+        assert_eq!(program.origin(*origin).line, 10);
+        assert_eq!(
+            program.origin(route.origin).path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(route.origin).line, 10);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 8 1 {encoded_import}")));
+
+        let ResolvedEventRoute::Direct { route, .. } = &mut program.calls[call_index].events[0]
+        else {
+            panic!("imported call must have a direct event route");
+        };
+        route.target = ResolvedInteractionRouteTarget::TargetHandler(HandlerId(u32::MAX));
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized component-call route lowering and emission performance contract"]
+    fn performance_contract_four_thousand_component_call_routes_lower_and_emit_under_two_seconds() {
+        const CALLS: usize = 4_000;
+        let mut source = format!(
+            "app ComponentRouteScale\n{THEME}state\n  count = 0\non accepted(value)\n  count = count + 1\ncomponent Emitter() -> str\n  button \"Emit\" -> emit(\"value\")\nview\n  col\n"
+        );
+        for _ in 0..CALLS {
+            source.push_str("    Emitter -> accepted _\n");
+        }
+        let checked = analyze(&source).unwrap();
+        assert_eq!(checked.facts.metrics().type_scope_env_full_clones, 0);
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "component-route-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.calls.len(), CALLS);
+        assert_eq!(
+            program
+                .calls
+                .iter()
+                .filter(|call| matches!(call.output, ComponentOutputRoute::Direct { .. }))
+                .count(),
+            CALLS
+        );
+        assert_eq!(generated.matches("let __component_content").count(), CALLS);
+        eprintln!("4k normalized component-call routes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized component-call routes lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

@@ -345,6 +345,19 @@ pub(crate) fn extern_component_semantic_key(
     )
 }
 
+pub(crate) fn component_call_route_semantic_key<'a>(
+    component: &str,
+    has_output_route: bool,
+    events: impl IntoIterator<Item = (&'a str, bool)>,
+) -> String {
+    let events = events
+        .into_iter()
+        .map(|(name, direct)| format!("{name}:{}", if direct { "direct" } else { "forward" }))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("component-call-routes|component={component}|output={has_output_route}|events={events}")
+}
+
 pub(crate) fn themer_semantic_key(function: &str, args: &[Expr], route: &Option<Route>) -> String {
     format!(
         "themer|function={function}|arguments={}|route={}",

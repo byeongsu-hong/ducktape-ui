@@ -118,6 +118,7 @@ pub(in crate::check) fn infer_components_group(
                     format!("component `{name}` requires slot `{missing}`"),
                 ));
             }
+            let route_analysis_guard = expr::HandlerAnalysisGuard::start();
             let mut routed = HashSet::new();
             for supplied in supplied_events {
                 if !routed.insert(supplied.name.as_str()) {
@@ -268,6 +269,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, route_analysis_guard.finish())?;
         }
         ViewNode::Slot { .. } => {}
         ViewNode::ExternComponent {

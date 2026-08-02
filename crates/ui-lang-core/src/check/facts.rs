@@ -579,6 +579,39 @@ pub(crate) enum CheckedComponentArgumentSource {
     Default(CheckedExprUseId),
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedComponentCallRoutes {
+    pub(crate) call: ComponentCallId,
+    pub(crate) view: ViewId,
+    pub(crate) component: ComponentId,
+    pub(crate) output: Option<CheckedComponentOutputRoute>,
+    pub(crate) events: Vec<CheckedComponentEventRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedComponentOutputRoute {
+    pub(crate) output: Type,
+    pub(crate) route: InteractionRouteId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedComponentEventRoute {
+    pub(crate) event: ComponentEventId,
+    pub(crate) name: String,
+    pub(crate) payloads: Vec<Type>,
+    pub(crate) delivery: CheckedComponentEventDelivery,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedComponentEventDelivery {
+    Direct(InteractionRouteId),
+    Forward {
+        outer_component: ComponentId,
+        outer_event: ComponentEventId,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewExprRole {
     IfCondition,
@@ -1013,6 +1046,7 @@ pub(crate) struct CheckedTooltip {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedInteractionKind {
+    ComponentCallRoutes,
     Layout,
     Text,
     RichText,
@@ -1142,6 +1176,7 @@ pub(crate) struct CheckedFacts {
     expression_uses_by_owner: HashMap<CheckedExprOwner, CheckedExprUseId>,
     component_argument_sources:
         HashMap<(ComponentCallId, ComponentParamId), CheckedComponentArgumentSource>,
+    component_call_routes: HashMap<ComponentCallId, CheckedComponentCallRoutes>,
     expressions: Vec<CheckedExpr>,
     handlers: Vec<CheckedHandler>,
     statements: Vec<Option<CheckedStatement>>,
@@ -1277,6 +1312,17 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_interaction_route_source_payload(
+        &mut self,
+        view: ViewId,
+        route: usize,
+        payload: usize,
+        ty: Type,
+    ) {
+        self.interactions.get_mut(&view).unwrap().routes[route].source_payloads[payload] = ty;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_input_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.inputs.get_mut(&view).unwrap().binding = binding;
     }
@@ -1401,6 +1447,40 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_component_call_route_component(
+        &mut self,
+        call: ComponentCallId,
+        component: ComponentId,
+    ) {
+        self.component_call_routes.get_mut(&call).unwrap().component = component;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_route_view(&mut self, call: ComponentCallId, raw: u32) {
+        self.component_call_routes.get_mut(&call).unwrap().view = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_event_id(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        id: ComponentEventId,
+    ) {
+        self.component_call_routes.get_mut(&call).unwrap().events[event].event = id;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_event_origin(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        raw: u32,
+    ) {
+        self.component_call_routes.get_mut(&call).unwrap().events[event].origin = OriginId(raw);
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_interaction_expression_origin(
         &mut self,
         view: ViewId,
@@ -1514,6 +1594,21 @@ impl CheckedFacts {
     ) {
         let source = self.interactions[&view].routes[source_route].args[source_argument];
         self.interactions.get_mut(&view).unwrap().routes[destination_route].args
+            [destination_argument] = source;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn transplant_interaction_route_expression_across_views(
+        &mut self,
+        destination_view: ViewId,
+        destination_route: usize,
+        destination_argument: usize,
+        source_view: ViewId,
+        source_route: usize,
+        source_argument: usize,
+    ) {
+        let source = self.interactions[&source_view].routes[source_route].args[source_argument];
+        self.interactions.get_mut(&destination_view).unwrap().routes[destination_route].args
             [destination_argument] = source;
     }
 
@@ -1773,6 +1868,15 @@ impl CheckedFacts {
         param: ComponentParamId,
     ) -> Option<CheckedComponentArgumentSource> {
         self.component_argument_sources.get(&(call, param)).copied()
+    }
+
+    pub(crate) fn component_call_routes(
+        &self,
+        call: ComponentCallId,
+    ) -> Option<&CheckedComponentCallRoutes> {
+        self.component_call_routes
+            .get(&call)
+            .filter(|routes| routes.call == call)
     }
 
     pub(crate) fn expression_uses(&self) -> &[CheckedExprUse] {
@@ -4482,6 +4586,175 @@ impl<'a> FactsBuilder<'a> {
         };
         if self.facts.nested_themes.insert(view, checked).is_some() {
             return Err(self.invariant(span, "nested theme facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_component_call_route_facts(
+        &mut self,
+        view: ViewId,
+        call: ComponentCallId,
+        component: ComponentId,
+        component_name: &str,
+        supplied_events: &[ComponentEventRoute],
+        output_route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let source_component = self
+            .document
+            .components
+            .get(component.0 as usize)
+            .ok_or_else(|| self.invariant(span, "component call declaration disappeared"))?;
+        if source_component.name != component_name {
+            return Err(self.invariant(span, "component call identity diverged"));
+        }
+        let output = source_component.output.clone();
+        let declared_events = source_component
+            .events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let id = ComponentEventId {
+                    component,
+                    index: index as u32,
+                };
+                let declaration = self.declarations.component_event(id).ok_or_else(|| {
+                    self.invariant(span, "component event declaration disappeared")
+                })?;
+                if declaration.name != event.name || declaration.payloads != event.payloads {
+                    return Err(self.invariant(span, "component event contract diverged"));
+                }
+                Ok((id, event.name.clone(), event.payloads.clone()))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let mut supplied_by_name = HashMap::new();
+        for supplied in supplied_events {
+            if supplied_by_name
+                .insert(supplied.name.as_str(), supplied)
+                .is_some()
+            {
+                return Err(self.invariant(&supplied.span, "duplicate component event route"));
+            }
+        }
+        let ordered_events = declared_events
+            .iter()
+            .map(|(_, name, _)| {
+                supplied_by_name
+                    .remove(name.as_str())
+                    .ok_or_else(|| self.invariant(span, "component event route disappeared"))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        if !supplied_by_name.is_empty() {
+            return Err(self.invariant(span, "component call retained an unknown event route"));
+        }
+        let semantic_key = crate::ast::component_call_route_semantic_key(
+            component_name,
+            output_route.is_some(),
+            ordered_events
+                .iter()
+                .map(|event| (event.name.as_str(), event.route.is_some())),
+        );
+        let routes = output_route
+            .iter()
+            .chain(
+                ordered_events
+                    .iter()
+                    .filter_map(|event| event.route.as_ref()),
+            )
+            .collect::<Vec<_>>();
+        self.lower_interaction_facts(
+            view,
+            CheckedInteractionKind::ComponentCallRoutes,
+            semantic_key,
+            Vec::new(),
+            routes,
+            env,
+            span,
+        )?;
+
+        let parent = self.declarations.view(view).origin;
+        let mut route_index = 0u32;
+        let checked_output = match (&output, output_route) {
+            (Type::Unit, None) => None,
+            (output, Some(_)) => {
+                let route = InteractionRouteId {
+                    widget: view,
+                    index: route_index,
+                };
+                route_index += 1;
+                Some(CheckedComponentOutputRoute {
+                    output: output.clone(),
+                    route,
+                })
+            }
+            _ => return Err(self.invariant(span, "component output route topology diverged")),
+        };
+        let scope = self.facts.view(view).scope;
+        let mut checked_events = Vec::with_capacity(declared_events.len());
+        for ((event, name, payloads), supplied) in declared_events.into_iter().zip(ordered_events) {
+            let origin = self.origins.push(&supplied.span, Some(parent));
+            let delivery = if supplied.route.is_some() {
+                let route = InteractionRouteId {
+                    widget: view,
+                    index: route_index,
+                };
+                route_index += 1;
+                CheckedComponentEventDelivery::Direct(route)
+            } else {
+                let CheckedViewScope::Component(outer_component) = scope else {
+                    return Err(self.invariant(
+                        &supplied.span,
+                        "forwarded event has no checked outer component",
+                    ));
+                };
+                let outer_event = self
+                    .declarations
+                    .component_event_by_name(outer_component, &name)
+                    .filter(|outer| outer.payloads == payloads)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &supplied.span,
+                            "forwarded event declaration contract diverged",
+                        )
+                    })?
+                    .declaration
+                    .id;
+                CheckedComponentEventDelivery::Forward {
+                    outer_component,
+                    outer_event,
+                }
+            };
+            checked_events.push(CheckedComponentEventRoute {
+                event,
+                name,
+                payloads,
+                delivery,
+                origin,
+            });
+        }
+        let interaction = self
+            .facts
+            .interaction(view)
+            .ok_or_else(|| self.invariant(span, "component routes have no interaction facts"))?;
+        if route_index as usize != interaction.routes.len() {
+            return Err(self.invariant(span, "component route cardinality diverged"));
+        }
+        let checked = CheckedComponentCallRoutes {
+            call,
+            view,
+            component,
+            output: checked_output,
+            events: checked_events,
+        };
+        if self
+            .facts
+            .component_call_routes
+            .insert(call, checked)
+            .is_some()
+        {
+            return Err(self.invariant(span, "component call routes were produced more than once"));
         }
         Ok(())
     }
@@ -9834,6 +10107,8 @@ impl<'a> FactsBuilder<'a> {
                 name,
                 args,
                 slots,
+                events,
+                route,
                 span,
                 ..
             } => {
@@ -9900,6 +10175,9 @@ impl<'a> FactsBuilder<'a> {
                 for slot in slots {
                     self.lower_view_expression_tree(&slot.content, env)?;
                 }
+                self.lower_component_call_route_facts(
+                    view, call, component, name, events, route, env, span,
+                )?;
                 CheckedViewFlow::None
             }
             ViewNode::ExternComponent {

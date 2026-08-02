@@ -90,6 +90,17 @@ the checked path root and projections, so lowering no longer re-resolves a raw
 argument expression or keeps a second argument-expression variant. Component
 calls and checked view facts share one `ComponentCallId`/`ViewId` arena.
 
+Component-call delivery is now a completed route sub-slice. A dedicated checked
+call-route record fixes the call, view, and component IDs; exact output type;
+declared event IDs, names, payload types, and direct/forward topology; outer
+event IDs; ordered route IDs; and parented physical origins. Direct output and
+named-event routes lower to `ResolvedInteractionRoute`, including target IDs,
+checked expression-use IDs, payload indexes, and source/destination types.
+Generation no longer receives a raw `Route`, `Expr`, or source component
+declaration for this path, and the former raw route callback helper family is
+removed. Component root/slot child traversal and the general expression
+fallback remain explicit later slices; they are not part of this route cut.
+
 Normalized component records carry root/import locations through `OriginId`.
 The table's parent links are scaffolding for future expansion stacks: current
 lowering errors and generated source markers do not traverse them and continue
