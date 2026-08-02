@@ -3136,14 +3136,9 @@ impl LoweredProgram {
             .filter(|declaration| declaration.kind == ExternKind::Component)
             .collect::<Vec<_>>();
         if self.extern_component_declarations.len() != expected.len() {
-            let origin = self.extern_component_declarations.first().map_or_else(
-                || {
-                    expected
-                        .first()
-                        .map_or(OriginId(u32::MAX), |item| item.declaration.origin)
-                },
-                |item| item.origin,
-            );
+            let origin = expected
+                .first()
+                .map_or(OriginId(u32::MAX), |item| item.declaration.origin);
             return Err(self.invariant_at_origin(
                 origin,
                 "extern component declaration HIR cardinality diverged",
@@ -3161,11 +3156,6 @@ impl LoweredProgram {
                         resolved.ty == *ty
                             && resolved.mode == extern_component_argument_mode(*borrowed, ty)
                     });
-            let origin = if self.origins.try_get(resolved.origin).is_some() {
-                resolved.origin
-            } else {
-                declaration.declaration.origin
-            };
             if resolved.id != declaration.declaration.id
                 || resolved.origin != declaration.declaration.origin
                 || resolved.name != declaration.name
@@ -3175,9 +3165,10 @@ impl LoweredProgram {
                 || declaration.error.is_some()
                 || !parameters_match
             {
-                return Err(
-                    self.invariant_at_origin(origin, "extern component declaration HIR diverged")
-                );
+                return Err(self.invariant_at_origin(
+                    declaration.declaration.origin,
+                    "extern component declaration HIR diverged",
+                ));
             }
         }
         Ok(&self.extern_component_declarations)
@@ -14316,6 +14307,35 @@ view
     }
 
     #[test]
+    fn extern_component_raw_declarations_cannot_enable_codegen_helpers() {
+        let source = format!(
+            "app ExternHelperPoison\nextern crate::backend\n  component native_surface(active:bool) -> unit\n{THEME}state\n  active = false\nview\n  extern native_surface(active)\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert!(!expected.contains("type __IceEventStream"));
+        assert!(!expected.contains("fn __ice_map_editor_binding"));
+        assert!(!expected.contains("struct __IceWidgetTarget"));
+
+        program.document.functions[0].kind = ExternKind::EventFilter;
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        program.document.functions[0].kind = ExternKind::EditorBinding;
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let declaration = &mut program.document.functions[0];
+        declaration.kind = ExternKind::Component;
+        declaration.params[0].1 = Type::WidgetTarget;
+        declaration.output = Type::WidgetTarget;
+        declaration.progress = Some(Type::WidgetTarget);
+        declaration.error = Some(Type::WidgetTarget);
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn extern_component_lowering_rejects_cross_owner_identity_route_origin_and_id_corruption() {
         let source = format!(
             "app ExternIdentity\nextern crate::backend\n  component first_surface(active:bool) -> bool\n  component second_surface(active:bool) -> bool\n{THEME}state\n  active = false\non first_changed(next)\non second_changed(next)\nview\n  col\n    extern first_surface(active) -> first_changed _\n    extern second_surface(active) -> second_changed _\n"
@@ -14436,6 +14456,35 @@ view
         assert_eq!(error.line, 4);
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn extern_component_declaration_invariants_use_checked_origins() {
+        let source = format!(
+            "app ExternDeclarationOrigins\nextern crate::backend\n  component first_surface() -> unit\n  component second_surface() -> unit\n{THEME}view\n  text \"ready\"\n"
+        );
+
+        let mut swapped = lower(analyze(&source).unwrap()).unwrap();
+        let first_origin = swapped.extern_component_declarations[0].origin;
+        let second_origin = swapped.extern_component_declarations[1].origin;
+        let expected_line = swapped.origin(first_origin).line;
+        swapped.extern_component_declarations[0].origin = second_origin;
+        swapped.extern_component_declarations[1].origin = first_origin;
+        let error = crate::codegen::generate(&swapped, "extern-origin-swap.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("declaration HIR diverged"));
+
+        let mut invalid_first = lower(analyze(&source).unwrap()).unwrap();
+        let expected_origin = invalid_first.extern_component_declarations[0].origin;
+        let expected_line = invalid_first.origin(expected_origin).line;
+        invalid_first.extern_component_declarations[0].origin = OriginId(u32::MAX);
+        invalid_first.extern_component_declarations.pop();
+        let error = crate::codegen::generate(&invalid_first, "extern-invalid-first-origin.ice")
+            .unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("HIR cardinality diverged"));
     }
 
     #[test]

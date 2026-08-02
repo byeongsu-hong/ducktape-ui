@@ -102,17 +102,12 @@ pub(in crate::codegen) fn generate_extern_probes(
     out: &mut String,
     program: &LoweredProgram,
     document: &Document,
-) -> Result<(), Error> {
-    let component_declarations = program.extern_component_declarations()?;
-    let component_ids = component_declarations
-        .iter()
-        .map(|declaration| declaration.id)
-        .collect::<std::collections::HashSet<_>>();
-    if document
-        .functions
-        .iter()
-        .any(|item| item.kind == ExternKind::EventFilter)
-    {
+    component_declarations: &[ResolvedExternComponentDeclaration],
+    component_ids: &HashSet<ExternFnId>,
+) {
+    if document.functions.iter().enumerate().any(|(index, item)| {
+        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EventFilter
+    }) {
         writeln!(out, "#[cfg(not(target_arch = \"wasm32\"))] type __IceEventStream<T> = ::iced::futures::stream::BoxStream<'static, T>; #[cfg(target_arch = \"wasm32\")] type __IceEventStream<T> = ::iced::futures::stream::LocalBoxStream<'static, T>;").unwrap();
     }
     for item in &document.structs {
@@ -384,15 +379,16 @@ pub(in crate::codegen) fn generate_extern_probes(
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    Ok(())
 }
 
-pub(in crate::codegen) fn generate_editor_binding_mapper(out: &mut String, document: &Document) {
-    if !document
-        .functions
-        .iter()
-        .any(|item| item.kind == ExternKind::EditorBinding)
-    {
+pub(in crate::codegen) fn generate_editor_binding_mapper(
+    out: &mut String,
+    document: &Document,
+    component_ids: &HashSet<ExternFnId>,
+) {
+    if !document.functions.iter().enumerate().any(|(index, item)| {
+        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EditorBinding
+    }) {
         return;
     }
     writeln!(
