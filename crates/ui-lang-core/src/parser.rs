@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::semantic::*;
 use crate::{Error, SourceRange, SymbolKind};
 use std::cell::RefCell;
 use std::collections::BTreeMap;

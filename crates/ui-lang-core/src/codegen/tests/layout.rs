@@ -796,9 +796,7 @@ view
         generated.contains("pub(crate) selected: ::std::option::Option<::std::string::String>")
     );
     assert!(generated.contains("::std::vec![\"List\".to_owned(), \"Board\".to_owned()]"));
-    assert!(generated.contains(
-        "let __pick_selected = self.selected.clone(); let __pick = { let __pick_options"
-    ));
+    assert!(generated.contains("let __pick_selected = self.selected.clone(); let __pick_options"));
     assert!(
         generated.contains("::iced::widget::pick_list(__pick_options, __pick_selected.clone()")
     );

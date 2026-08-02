@@ -291,7 +291,7 @@ view
         configuration,
         panes,
         ..
-    } = &document.view
+    } = &document.source_document().view
     else {
         panic!("panes view")
     };
@@ -359,7 +359,7 @@ view
         text task.title
 "#;
     let document = analyze(source).unwrap();
-    let ViewNode::PaneGrid { templates, .. } = &document.view else {
+    let ViewNode::PaneGrid { templates, .. } = &document.source_document().view else {
         panic!("panes view")
     };
     assert_eq!(templates.len(), 1);
@@ -545,7 +545,12 @@ view
       text "Preview"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[3].params[0].ty.display(), "str?");
+    assert_eq!(
+        document.source_document().handlers[3].params[0]
+            .ty
+            .display(),
+        "str?"
+    );
 
     let error = analyze(&source.replace("#work maximize", "#missing maximize")).unwrap_err();
     assert_eq!(error.code, "E188");

@@ -366,6 +366,7 @@ impl Lowerer {
                 span,
                 canvas_locals: false,
                 own_view_locals: false,
+                allowed_own_view_locals: None,
                 family: "tooltip",
             };
             let root_scope = graph.root_scope();
