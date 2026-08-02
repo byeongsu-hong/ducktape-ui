@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::semantic::*;
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 
@@ -901,16 +902,16 @@ pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedAppSettings, CheckedBinaryOperator, CheckedBooleanControl, CheckedCallArgument,
     CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
-    CheckedComboBox, CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId,
-    CheckedExprKind, CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedExternViewAdapter,
-    CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
-    CheckedInteractionKind, CheckedInteractionRoute, CheckedKeyedLength, CheckedLayout,
-    CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchArm, CheckedMatchPattern,
-    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
-    CheckedPaneCustomStyle, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
-    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
-    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
-    CheckedProjection, CheckedProjectionKind, CheckedResponsiveLength, CheckedRouteArgKind,
+    CheckedComboBox, CheckedComponentArgumentSource, CheckedComponentEventDelivery,
+    CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
+    CheckedExprUseId, CheckedExternViewAdapter, CheckedFacts, CheckedInitializerCoercion,
+    CheckedInput, CheckedInteraction, CheckedInteractionKind, CheckedInteractionRoute,
+    CheckedKeyedLength, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown,
+    CheckedMatchArm, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid, CheckedPaneGridStyle,
+    CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite,
+    CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot,
+    CheckedPickList, CheckedProjectionKind, CheckedResponsiveLength, CheckedRouteArgKind,
     CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
     CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
     CheckedView, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,

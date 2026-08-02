@@ -1,115 +1,14 @@
 [source AST import]
-src/codegen.rs 1 0aa1e53a820312b67736ac2cdbda5a1e
 [source AST semantic reference]
-src/codegen.rs 68 823c0a97e74c85326f972d9f4ba09b5f
-src/codegen/application.rs 18 25e29179f8818353282cc8100b819a48
-src/codegen/canvas.rs 13 dedb3b588ab817c51d03f7b622994c46
-src/codegen/canvas/commands.rs 8 f1813cd8bbe28d5c1cf93599ce2ae1cc
-src/codegen/canvas/events.rs 78 a20a043e7a887216a0bbb58d4d995c7f
-src/codegen/canvas/style.rs 9 1232765fe2b033ca0db1bcf2e897dcf1
-src/codegen/expr.rs 293 467caa1b8d15f082bd6d61f613c06b11
-src/codegen/expr/binding.rs 290 a9ab516574ad9110f3f81b589c1b1572
-src/codegen/expr/children.rs 5 85e201e19beef74f89df01987ec3b6a4
-src/codegen/expr/discovery.rs 69 cca25954b76c05b042e8568a22356529
-src/codegen/expr/routes.rs 39 8eee862cea74aa45124dda7834749aac
-src/codegen/probes.rs 48 d3d4d8dc2a5022741eec540554cd1bba
-src/codegen/runtime.rs 43 e12b32c88e4a23ac0a18d6016eabf0cd
-src/codegen/settings.rs 3 e781417a63da97c0b8c68e23c087cabe
-src/codegen/statement.rs 45 3df4fb3235e806655360a4ab8579c1c6
-src/codegen/statement/task.rs 18 cfb735f520bd5f9923c7041fdf983c6f
-src/codegen/statement/view_fn.rs 1 e3ec06f1d5af38d7fc345d9fde463ae1
-src/codegen/style/helpers.rs 85 eb8616377752eaf8f6c1e705ec3b299d
-src/codegen/subscription.rs 51 196a4af62b4360dec796ec7003176f22
-src/codegen/testing.rs 65 b10d702d279cc4efbb5d795bed4ab69c
-src/codegen/view.rs 35 930b3878916e0f120c9aa564bb286bb6
-src/codegen/view/button.rs 5 603c7e8695d58c8a2ffb4776d607e602
-src/codegen/view/container.rs 8 29247deb7afce1cf63d9d95e488625fd
-src/codegen/view/content.rs 28 c014d4c33a56f0562d7750e0e6b35175
-src/codegen/view/controls.rs 13 79c9c71bcdc19aaf6bc7fdbe74e6788d
-src/codegen/view/documents.rs 13 54c38d9e2bbba714a3bad5f00a0c893b
-src/codegen/view/editor.rs 12 1c295f539a4b67d1b977877d085e0abc
-src/codegen/view/foundation.rs 8 d3c4fed65c2dc4272035bbe0bf0ef5e0
-src/codegen/view/input.rs 7 905ef9f70a4d91e48ec02dbe22d62c2b
-src/codegen/view/layout.rs 24 ec1d9c1a7d36a743b9eea2a41128cf4b
-src/codegen/view/markdown.rs 2 730d2d34e6f087c0689dec42b3eb21db
-src/codegen/view/media.rs 20 3f2bec4af015a98350177497155e1ff8
-src/codegen/view/pane.rs 13 1af1792f9fd229cd2cd57010d3afc787
-src/codegen/view/range_controls.rs 6 6d94869cb3d173a9e2344e25852d53aa
-src/codegen/view/selection.rs 7 a2648d7a8ce5c0a75e89cddaa9773a7f
-src/codegen/view/structure.rs 24 f9fd39e5b90a933a7c64598c7388cb0c
-src/codegen/view/table.rs 12 f515ffa62bf12b2e6dc96dd1ce94ee3d
-src/codegen/view/text.rs 3 32e502cf8be19458ab8740d8df2c9f8c
-src/codegen/view/themer_shader.rs 2 49dbdb6207a45dd1df15008c0826f3e6
 [checked-document escape]
-src/codegen.rs 3 e0f88dc8ca3e4938d7462f21d4913100
-src/codegen/application.rs 1 70bc4898a51079f50eb0813afb376810
-src/codegen/expr.rs 1 f53af1902b94a0fc4f80366f1ad68dd8
-src/codegen/expr/discovery.rs 1 c539f025a2098447f9b3f7181f13bcad
-src/codegen/statement/view_fn.rs 1 8d476074766251183ce5ed7dcfec31f9
-src/codegen/style/model.rs 1 e6f23d2bc9577ea26a26b29bded08072
 [raw document wrapper]
-src/codegen.rs 3 b92f966a113e31237a953c3435ef8eee
-src/codegen/expr/children.rs 1 8ee95879b8d2d07bff64f1d18e1e7da9
-src/codegen/statement/view_fn.rs 1 0a6afed65123de586dfcb8f3ef2d52c1
-src/codegen/style/model.rs 1 d9930ed416210b027f669e4c746c4188
-src/codegen/testing.rs 1 b577600645de096428b861a4280c9bb6
-src/codegen/view.rs 4 c0d12692d9f4ab477c1e5ef0b6b94fc1
-src/codegen/view/button.rs 1 e46a6ded96de699c8658bc3efa0e4d0f
-src/codegen/view/container.rs 2 0d113cff100d562e82f2391330f3e00b
-src/codegen/view/content.rs 1 8bcf8881081fcbc05566375c450914ce
-src/codegen/view/content_primitives.rs 3 5db4dbb5e1c4ed9adda8c37e3895228b
-src/codegen/view/controls.rs 1 b43bbed07b5d430b2ab7593e4f84e2eb
-src/codegen/view/documents.rs 1 0df3ca606aaed8442276197f2081a7e0
-src/codegen/view/editor.rs 1 b9ef8bd653deb41cafa44fe13da2a937
-src/codegen/view/extern_component.rs 1 bda2ca7034351ee43a55f9249e4ce811
-src/codegen/view/foundation.rs 1 0aa2f84bef937fbd1eaa5eeec98fe8b9
-src/codegen/view/input.rs 1 02a7c2e4168388d2b8be7c55820d11c9
-src/codegen/view/layout.rs 1 195edfe9c6ad3cbd7c836e2af8e4a518
-src/codegen/view/markdown.rs 1 f4f0d5a17a2d1cb06aaa03524f0d94f1
-src/codegen/view/media.rs 1 08a6329273328a075fe1948147db2829
-src/codegen/view/pane.rs 3 9efbb8c6cb0570d9ae8f3351f4b92332
-src/codegen/view/range_controls.rs 2 c61083539f02fd4ce10e6c46a0a58b23
-src/codegen/view/selection.rs 2 3117150665859b61682fddad31959469
-src/codegen/view/structure.rs 1 27d0b56ef9b62c1591a36fb19f09fa67
-src/codegen/view/table.rs 2 0c3f4794d7dce7399871752e17507cdb
-src/codegen/view/text.rs 1 67ec104045bf50a91038883a31a5f75f
-src/codegen/view/themer_shader.rs 2 30990359c1f1a99c18066af6e2fee087
 [checker semantic reference]
-src/codegen.rs 5 30d70a578bddf803157030e2fa37cb04
-src/codegen/application.rs 1 70829a2e039693bd849b5125437b12d5
-src/codegen/canvas/style.rs 7 ac2c208ed531e661eb6555b89acdcfb3
-src/codegen/expr.rs 62 d0017d028ee92accbb622232dd990d19
-src/codegen/expr/binding.rs 4 cfd942c917f8d175a546d0da665a1a57
-src/codegen/view/container.rs 3 867d5fb63cb969d05e90024534c36259
-src/codegen/view/content.rs 2 06663c59a194751a66ba44bcf01e45ff
-src/codegen/view/editor.rs 1 07e441c77bcd90f44dbc9eff5fd1cc01
-src/codegen/view/markdown.rs 2 5b447eb9ddf81a4a690d10b980ee63e6
-src/codegen/view/pane.rs 4 af8426c8905b7614f2f5628014232005
 [checked-facts escape]
-src/codegen.rs 1 d906fd5e76af0560597bc6b08f19a6aa
-src/codegen/expr.rs 8 cdf9bdfe759cde57d94090b529c1caef
-src/codegen/statement/view_fn.rs 1 98604f3ab7bb3a8303c6e7953aedde83
 [declaration-index escape]
-src/codegen/expr.rs 4 05dbffbfa3bf7cf1e82093e471d0fdbe
 [type re-analysis]
-src/codegen/expr.rs 1 ffb5d685b815a1b47c170ba8285d9517
 [extern re-resolution]
-src/codegen/expr.rs 2 bdbca5ffa107b670ec2966f8f3107952
 [raw expression fallback]
-src/codegen/expr.rs 4 f5e36ab3cf1b20d00b155ef7df1aaa3a
 [Document reference]
-src/codegen.rs 2 2124288c2ec8ce98af5793eba9f55102
-src/codegen/expr.rs 4 eead9066cb1f9913287ed9015d508a0c
-src/codegen/expr/discovery.rs 5 db4ab16e70fe420eff4d89c947658bae
-src/codegen/expr/routes.rs 7 3cb1266b7674e1de74a33d1e72acd29b
-src/codegen/probes.rs 2 289b1b18bc0d6b930af54ac321c14038
-src/codegen/runtime.rs 7 75e4d2e27d307c6941f5979b3f996b1c
-src/codegen/style/helpers.rs 2 8186b2a95890740408c9061ab63899a9
-src/codegen/view.rs 2 5b5d7d1b8f0f28258e34196b3b7e437b
 [Expr reference]
-src/codegen/expr.rs 27 1d145ba63281a22fc172e1a706f99eca
-src/codegen/expr/routes.rs 1 0e734ea0b4c23f061a47e6e89be3c1d8
 [Route reference]
-src/codegen/expr/routes.rs 7 a2e687c7e7b3eab76b5d9e9efe3bd003
 [Statement reference]
-src/codegen/runtime.rs 10 6baff4eb64b0197b70578e69624401b8

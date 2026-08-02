@@ -233,7 +233,7 @@ impl Lowerer {
         Ok(declaration)
     }
 
-    fn resolved_extern_view_function(
+    pub(super) fn resolved_extern_view_function(
         &self,
         declaration: &crate::hir::ExternDeclaration,
     ) -> ResolvedExternViewFunction {
@@ -245,7 +245,7 @@ impl Lowerer {
         }
     }
 
-    fn lower_extern_view_arguments(
+    pub(super) fn lower_extern_view_arguments(
         &self,
         id: ViewId,
         origin: OriginId,
@@ -330,7 +330,7 @@ impl Lowerer {
             .transpose()
     }
 
-    fn extern_view_expression(
+    pub(super) fn extern_view_expression(
         &self,
         id: ViewId,
         origin: OriginId,

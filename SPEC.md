@@ -490,6 +490,19 @@ cross-widget identity attacks, malformed facts, imported origins, native Rust
 generation, and a mixed 4,000-node lower+emit budget provide the executable
 evidence.
 
+Component-call direct output and named-event routes are a completed private HIR
+sub-slice. A checked call-route contract owns the stable call, view, component,
+event, outer-event, and ordered route IDs; exact output/source/target payload
+types; direct/forward topology; checked expression owners and payload indexes;
+and physical origin parents. Lowering publishes `ResolvedInteractionRoute`
+values for direct delivery and fixed IDs for forwards. Component rendering
+consumes those records and does not receive raw `Route`, route `Expr`, or source
+component declarations. Post-check dynamic and static poisoning,
+post-lowering raw poisoning, cross-owner and valid-ID/type/cardinality/origin
+corruption, imported diagnostics/markers, the lexical ratchet, and a 4,000-call
+lower+emit budget provide executable evidence. Component root and slot child
+topology plus the general expression fallback remain later HIR slices.
+
 Markdown is a completed document-content HIR slice. Its checked contract owns
 the exact markdown state reference, every dynamic setting and style operand,
 font selection, viewer extern identity and arguments, optional link route, and
@@ -527,6 +540,18 @@ discovery. Cross-owner and invalid-ID corruption, post-check and post-lowering
 raw poisoning, imported origins and diagnostics, native Rust fragments, the
 lexical HIR ratchet, and a mixed 4,000-node lower+emit budget provide the
 executable evidence.
+
+Nested Theme is a completed wrapper HIR slice. A shared `ViewId` owns the
+checked preset/factory identity, ordered factory arguments, text/background
+theme colors, gradient discriminator and stop-color order, and physical
+origin. Dynamic factory, angle, and stop-offset operands use deterministic
+checked expression-use IDs. Lowering fixes the factory Rust path and argument
+mode and publishes `ResolvedNestedTheme`; generation consumes that record and
+the checked expressions while retaining only the child subtree and common
+widget identity as raw view topology. Post-check static drift fails with E196,
+post-lowering preset/factory/color/gradient poisoning cannot change output,
+and imported diagnostics, cross-owner corruption, the lexical ratchet, and a
+4,000-node lower+emit contract cover the boundary.
 
 The Rust adapter is one manifest-relative include:
 

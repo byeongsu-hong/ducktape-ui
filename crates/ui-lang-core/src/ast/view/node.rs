@@ -345,6 +345,19 @@ pub(crate) fn extern_component_semantic_key(
     )
 }
 
+pub(crate) fn component_call_route_semantic_key<'a>(
+    component: &str,
+    has_output_route: bool,
+    events: impl IntoIterator<Item = (&'a str, bool)>,
+) -> String {
+    let events = events
+        .into_iter()
+        .map(|(name, direct)| format!("{name}:{}", if direct { "direct" } else { "forward" }))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("component-call-routes|component={component}|output={has_output_route}|events={events}")
+}
+
 pub(crate) fn themer_semantic_key(function: &str, args: &[Expr], route: &Option<Route>) -> String {
     format!(
         "themer|function={function}|arguments={}|route={}",
@@ -379,7 +392,107 @@ pub(crate) fn shader_semantic_key(
     )
 }
 
+fn nested_theme_background_semantic_key(background: &Option<BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+pub(crate) fn nested_theme_semantic_key(
+    preset: &ThemePreset,
+    text: &Option<String>,
+    background: &Option<BackgroundValue>,
+) -> String {
+    let preset = match preset {
+        ThemePreset::Default => "default".into(),
+        ThemePreset::App => "app".into(),
+        ThemePreset::BuiltIn(name) => format!("built-in:{name}"),
+        ThemePreset::Factory(factory) => {
+            format!("factory:{}:{}", factory.function, factory.args.len())
+        }
+    };
+    let text = text
+        .as_ref()
+        .map(|color| format!("color:{color}"))
+        .unwrap_or_else(|| "none".into());
+    format!(
+        "nested-theme|preset={preset}|text={}|background={}",
+        text,
+        nested_theme_background_semantic_key(background)
+    )
+}
+
+pub(crate) fn nested_theme_expression_roots<'a>(
+    preset: &'a ThemePreset,
+    background: &'a Option<BackgroundValue>,
+) -> Vec<&'a Expr> {
+    let mut expressions = match preset {
+        ThemePreset::Factory(factory) => factory.args.iter().collect(),
+        ThemePreset::Default | ThemePreset::App | ThemePreset::BuiltIn(_) => Vec::new(),
+    };
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        expressions.push(angle);
+        expressions.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    expressions
+}
+
 impl ViewNode {
+    pub(crate) fn identity(&self) -> Option<&Id> {
+        match self {
+            Self::Layout { id, .. }
+            | Self::Container { id, .. }
+            | Self::Overlay { id, .. }
+            | Self::Text { id, .. }
+            | Self::RichText { id, .. }
+            | Self::Input { id, .. }
+            | Self::Button { id, .. }
+            | Self::Checkbox { id, .. }
+            | Self::Toggler { id, .. }
+            | Self::Slider { id, .. }
+            | Self::Progress { id, .. }
+            | Self::Radio { id, .. }
+            | Self::PickList { id, .. }
+            | Self::ComboBox { id, .. }
+            | Self::Rule { id, .. }
+            | Self::QrCode { id, .. }
+            | Self::Space { id, .. }
+            | Self::KeyedColumn { id, .. }
+            | Self::Lazy { id, .. }
+            | Self::Markdown { id, .. }
+            | Self::TextEditor { id, .. }
+            | Self::Table { id, .. }
+            | Self::Component { id, .. }
+            | Self::ExternComponent { id, .. }
+            | Self::Themer { id, .. }
+            | Self::Shader { id, .. }
+            | Self::Media { id, .. }
+            | Self::Tooltip { id, .. }
+            | Self::MouseArea { id, .. }
+            | Self::ResizeHandle { id, .. }
+            | Self::Canvas { id, .. }
+            | Self::Theme { id, .. }
+            | Self::Float { id, .. }
+            | Self::Pin { id, .. }
+            | Self::Sensor { id, .. }
+            | Self::Responsive { id, .. } => id.as_ref(),
+            Self::PaneGrid { .. }
+            | Self::If { .. }
+            | Self::Match { .. }
+            | Self::For { .. }
+            | Self::Slot { .. } => None,
+        }
+    }
+
     pub fn span(&self) -> &Span {
         match self {
             Self::Layout { span, .. }

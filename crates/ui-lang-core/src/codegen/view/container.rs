@@ -3,22 +3,24 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_container(
     container: &ResolvedContainer,
-    id: &Option<Id>,
-    content: &ViewNode,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    content: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.program();
-    let span = Span::line(container.source_line);
-    let accessibility_key =
-        accessibility_key_code(id.as_ref(), "container", &span, scope, env, document)?;
-    let child_scope = id.as_ref().map_or_else(
-        || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
+    let accessibility_key = resolved_accessibility_key_code(
+        identity,
+        "container",
+        container.origin,
+        scope,
+        env,
+        document,
     )?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let mut style = container.utility_style.clone();
     let mut surface = container.surface.clone();
@@ -35,11 +37,11 @@ pub(in crate::codegen) fn render_container(
         style.border_width = 0;
     }
     let mut code = String::from("::iced::widget::container(__container_content)");
-    if let Some(id) = id {
+    if let Some(identity) = identity {
         write!(
             code,
             ".id(::iced::widget::Id::from({}))",
-            id_code(id, scope, env, document)?
+            resolved_view_identity_code(identity, scope, env, document)?
         )
         .unwrap();
     }
@@ -70,7 +72,7 @@ pub(in crate::codegen) fn render_container(
             write!(
                 code,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -95,7 +97,7 @@ pub(in crate::codegen) fn render_container(
         write!(
             code,
             ".clip({})",
-            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -178,9 +180,9 @@ fn resolved_container_padding_code(
     {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -211,10 +213,10 @@ fn append_resolved_container_dimensions(
             ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
             ResolvedContainerLength::FixedF64(expression) => format!(
                 "{} as f32",
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
             ),
             ResolvedContainerLength::FixedLength(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
             }
         };
         write!(code, ".{method}({value})").unwrap();
@@ -230,7 +232,7 @@ fn resolved_container_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -254,13 +256,13 @@ fn resolved_container_background_code(
         ResolvedContainerBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();
@@ -289,7 +291,7 @@ fn resolved_container_radius_code(
         .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
-    let corner = |value: Option<CheckedExprUseId>| {
+    let corner = |value: Option<ResolvedExpressionId>| {
         value
             .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
             .transpose()
@@ -362,7 +364,7 @@ fn resolved_container_surface_style_value(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -386,7 +388,7 @@ fn resolved_container_surface_style_value(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -395,7 +397,7 @@ fn resolved_container_surface_style_value(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -412,34 +414,34 @@ fn resolved_container_surface_style_value(
 }
 
 fn resolved_container_clamped_f32(
-    expression: CheckedExprUseId,
+    expression: ResolvedExpressionId,
     minimum: &str,
     maximum: &str,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_overlay(
-    id: &Option<Id>,
+    identity: Option<&ResolvedViewIdentity>,
     overlay: &ResolvedOverlay,
-    content: &ViewNode,
-    layer: &ViewNode,
-    document: &RenderDocument<'_>,
+    content: ViewId,
+    layer: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.program();
-    let child_scope = rendered_child_scope(id.as_ref(), scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let layer = render_node(layer, document, message, env, &child_scope, slot)?;
-    let visible = checked_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
-    let padding = checked_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
+    let visible = resolved_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
+    let padding = resolved_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
     let backdrop = resolved_theme_color(&overlay.backdrop);
     let dismiss = overlay.dismiss.as_ref().map_or_else(
         || Ok(format!("{message}::__ExternNoop")),
@@ -459,5 +461,5 @@ pub(in crate::codegen) fn render_overlay(
     let rendered = format!(
         "{{ let __overlay_base: __IceElement<'_, {message}> = {content}; let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if {visible} {{ let __overlay_layer: __IceElement<'_, {message}> = {layer}; let __overlay_backdrop = ::iced::widget::container(::iced::widget::space()).width(::iced::Fill).height(::iced::Fill).style(move |_| ::iced::widget::container::Style {{ background: ::std::option::Option::Some(::iced::Background::Color({backdrop})), ..::iced::widget::container::Style::default() }}); let __overlay_backdrop: __IceElement<'_, {message}> = ::iced::widget::mouse_area(__overlay_backdrop).on_press({dismiss}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}).into(); let __overlay_panel = ::iced::widget::mouse_area(__overlay_layer).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}); let __overlay_panel: __IceElement<'_, {message}> = ::iced::widget::container(__overlay_panel).width(::iced::Fill).height(::iced::Fill).padding({padding} as f32).align_x(::iced::alignment::Horizontal::{align_x}).align_y(::iced::alignment::Vertical::{align_y}).into(); let __overlay_surface: __IceElement<'_, {message}> = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_backdrop).push(__overlay_panel).into(); __overlay_stack.push(::iced::widget::float(__overlay_surface).translate(|_, _| ::iced::Vector::new(::core::f32::EPSILON, 0.0))).into() }} else {{ __overlay_stack.into() }} }}"
     );
-    identify_rendered(rendered, id.as_ref(), message, env, document, scope)
+    identify_rendered(rendered, identity, message, env, document, scope)
 }
