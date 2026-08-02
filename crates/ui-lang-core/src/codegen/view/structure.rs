@@ -1,29 +1,21 @@
 use super::*;
 
 pub(in crate::codegen) fn render_structure(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
-    let id = match node {
-        ViewNode::Theme { id, .. }
-        | ViewNode::Float { id, .. }
-        | ViewNode::Pin { id, .. }
-        | ViewNode::Sensor { id, .. }
-        | ViewNode::Responsive { id, .. }
-        | ViewNode::KeyedColumn { id, .. }
-        | ViewNode::Lazy { id, .. } => id.as_ref(),
-        _ => None,
-    };
-    let child_scope = rendered_child_scope(id, scope, env, document)?;
-    let rendered = match node {
-        ViewNode::Theme { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let program = document.program();
-            let theme = program.resolved_nested_theme_for(node)?;
+    let view = document.resolved_view(node)?;
+    let identity = view.identity.as_ref();
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let rendered = match &view.kind {
+        ResolvedViewKind::Theme { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let program = document;
+            let theme = program.resolved_nested_theme(node)?;
             let preset = resolved_theme_preset_code(&theme.preset, env, program)?;
             let text = theme.text.as_ref().map(resolved_theme_color).map_or_else(
                 || "::std::option::Option::None".into(),
@@ -42,75 +34,42 @@ pub(in crate::codegen) fn render_structure(
                 "{{ let __theme_content: __IceElement<'_, {message}> = {content}; ::ui_lang_runtime::dynamic_themer({preset}, __theme_content, {text}, {background}).into() }}"
             ))
         }
-        ViewNode::Float { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let program = document.hir();
-            let float = program.resolved_float_for(node)?;
+        ResolvedViewKind::Float { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let program = document;
+            let float = program.resolved_float(node)?;
             render_resolved_float(float, program, message, env, content)
         }
-        ViewNode::Pin { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let program = document.hir();
-            let pin = program.resolved_pin_for(node)?;
+        ResolvedViewKind::Pin { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let program = document;
+            let pin = program.resolved_pin(node)?;
             render_resolved_pin(pin, program, message, env, content)
         }
-        ViewNode::Sensor { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let program = document.hir();
-            let sensor = program.resolved_sensor_for(node)?;
+        ResolvedViewKind::Sensor { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let program = document;
+            let sensor = program.resolved_sensor(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
-        ViewNode::Responsive { content, .. } => {
-            let program = document.hir();
-            let responsive = program.resolved_responsive_for(node)?;
-            let builder = match (&responsive.kind, content) {
-                (
-                    ResolvedResponsiveKind::Breakpoint { breakpoint },
-                    ResponsiveContent::Breakpoint { narrow, wide, .. },
-                ) => {
+        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
+            let program = document;
+            let responsive = program.resolved_responsive(node)?;
+            let builder = match &responsive.kind {
+                ResolvedResponsiveKind::Breakpoint { breakpoint } => {
                     let breakpoint =
-                        checked_expr_use_code(program, *breakpoint, env, ValueMode::Owned)?;
+                        resolved_expr_use_code(program, *breakpoint, env, ValueMode::Owned)?;
                     let breakpoint =
                         format!("(({breakpoint}) as f32).max(f32::EPSILON).min(f32::MAX)");
-                    let narrow = render_node(narrow, document, message, env, &child_scope, slot)?;
-                    let wide = render_node(wide, document, message, env, &child_scope, slot)?;
+                    let narrow = render_node(*narrow, document, message, env, &child_scope, slot)?;
+                    let wide = render_node(*wide, document, message, env, &child_scope, slot)?;
                     format!(
                         "move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }}"
                     )
                 }
-                (
-                    ResolvedResponsiveKind::Size { width, height },
-                    ResponsiveContent::Size { content, .. },
-                ) => {
-                    let mut child_env = ScopedBindingEnv::new(env);
-                    child_env.insert(
-                        width.name.clone(),
-                        checked_local_binding(
-                            LocalBindingTypeSource::Checked(program),
-                            width.local,
-                            "(__size.width as f64)".into(),
-                            true,
-                        ),
-                    );
-                    child_env.insert(
-                        height.name.clone(),
-                        checked_local_binding(
-                            LocalBindingTypeSource::Checked(program),
-                            height.local,
-                            "(__size.height as f64)".into(),
-                            true,
-                        ),
-                    );
-                    let content =
-                        render_node(content, document, message, &child_env, &child_scope, slot)?;
-                    format!(
-                        "move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }}"
-                    )
-                }
                 _ => {
-                    return Err(Error::new(
-                        "E196",
-                        node.span(),
+                    return Err(document.invariant_at_origin(
+                        view.origin,
                         "responsive source tree diverged from normalized HIR",
                     ));
                 }
@@ -128,36 +87,81 @@ pub(in crate::codegen) fn render_structure(
             }
             Ok(format!("{code}.into()"))
         }
-        ViewNode::KeyedColumn { child, .. } => {
-            let program = document.hir();
-            let keyed = program.resolved_keyed_column_for(node)?;
-            render_keyed_column(keyed, child, document, message, env, &child_scope, slot)
+        ResolvedViewKind::ResponsiveSize { content } => {
+            let program = document;
+            let responsive = program.resolved_responsive(node)?;
+            let ResolvedResponsiveKind::Size { width, height } = &responsive.kind else {
+                return Err(document.invariant_at_origin(
+                    view.origin,
+                    "responsive size topology diverged from normalized HIR",
+                ));
+            };
+            let mut child_env = ScopedBindingEnv::new(env);
+            child_env.insert(
+                width.name.clone(),
+                resolved_local_binding(
+                    LocalBindingTypeSource::Resolved(program),
+                    width.local,
+                    "(__size.width as f64)".into(),
+                    true,
+                ),
+            );
+            child_env.insert(
+                height.name.clone(),
+                resolved_local_binding(
+                    LocalBindingTypeSource::Resolved(program),
+                    height.local,
+                    "(__size.height as f64)".into(),
+                    true,
+                ),
+            );
+            let content = render_node(*content, document, message, &child_env, &child_scope, slot)?;
+            let builder = format!(
+                "move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }}"
+            );
+            let mut code = format!("::iced::widget::responsive({builder})");
+            for (method, length) in [("width", &responsive.width), ("height", &responsive.height)] {
+                if let Some(length) = length {
+                    write!(
+                        code,
+                        ".{method}({})",
+                        resolved_responsive_length_code(length, program, env)?
+                    )
+                    .unwrap();
+                }
+            }
+            Ok(format!("{code}.into()"))
         }
-        ViewNode::Lazy { child, .. } => {
-            let program = document.hir();
-            let lazy = program.resolved_lazy_for(node)?;
+        ResolvedViewKind::KeyedColumn { child } => {
+            let program = document;
+            let keyed = program.resolved_keyed_column(node)?;
+            render_keyed_column(keyed, *child, document, message, env, &child_scope, slot)
+        }
+        ResolvedViewKind::Lazy { child } => {
+            let program = document;
+            let lazy = program.resolved_lazy(node)?;
             let binding_name = &lazy.binding.name;
             let dependency =
-                checked_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
+                resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
             let mut child_env = HashMap::new();
             child_env.insert(
                 binding_name.clone(),
-                checked_local_binding(
-                    LocalBindingTypeSource::Checked(program),
+                resolved_local_binding(
+                    LocalBindingTypeSource::Resolved(program),
                     lazy.binding.local,
                     binding_name.clone(),
                     false,
                 ),
             );
             let child = render_node(
-                child,
+                *child,
                 document,
                 message,
                 &child_env,
                 "__lazy_scope.clone()",
                 None,
             )?;
-            let dependency_rust = lazy.binding.ty.rust(&document.structs);
+            let dependency_rust = rust_type_code(program, &lazy.binding.ty);
             Ok(format!(
                 "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))
@@ -165,7 +169,7 @@ pub(in crate::codegen) fn render_structure(
         _ => return Ok(None),
     }?;
     Ok(Some(identify_rendered(
-        rendered, id, message, env, document, scope,
+        rendered, identity, message, env, document, scope,
     )?))
 }
 
@@ -179,10 +183,10 @@ fn render_resolved_float(
     let checked_f32 = |expression| -> Result<String, Error> {
         Ok(format!(
             "{} as f32",
-            checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
         ))
     };
-    let scale = checked_expr_use_code(program, float.scale, env, ValueMode::Owned)?;
+    let scale = resolved_expr_use_code(program, float.scale, env, ValueMode::Owned)?;
     let scale = format!("(({scale}) as f32).max(f32::EPSILON).min(f32::MAX)");
     let mut translate_env = ScopedBindingEnv::new(env);
     for (geometry, code) in float.geometry.iter().zip([
@@ -197,16 +201,16 @@ fn render_resolved_float(
     ]) {
         translate_env.insert(
             geometry.name.clone(),
-            checked_local_binding(
-                LocalBindingTypeSource::Checked(program),
+            resolved_local_binding(
+                LocalBindingTypeSource::Resolved(program),
                 geometry.local,
                 code.into(),
                 true,
             ),
         );
     }
-    let x = checked_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?;
-    let y = checked_expr_use_code(program, float.y, &translate_env, ValueMode::Owned)?;
+    let x = resolved_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?;
+    let y = resolved_expr_use_code(program, float.y, &translate_env, ValueMode::Owned)?;
     let mut code = format!(
         "{{ let __float_content: __IceElement<'_, {message}> = {content}; let __float = ::iced::widget::float(__float_content).scale({scale}).translate(move |__original, __viewport| ::iced::Vector::new({x} as f32, {y} as f32))"
     );
@@ -252,8 +256,8 @@ fn render_resolved_pin(
     env: &dyn BindingEnvironment,
     content: String,
 ) -> Result<String, Error> {
-    let x = checked_expr_use_code(program, pin.x, env, ValueMode::Owned)?;
-    let y = checked_expr_use_code(program, pin.y, env, ValueMode::Owned)?;
+    let x = resolved_expr_use_code(program, pin.x, env, ValueMode::Owned)?;
+    let y = resolved_expr_use_code(program, pin.y, env, ValueMode::Owned)?;
     let mut code = format!(
         "{{ let __pin_content: __IceElement<'_, {message}> = {content}; ::iced::widget::pin(__pin_content).x({x} as f32).y({y} as f32)"
     );
@@ -283,10 +287,10 @@ fn resolved_pin_length_code(
         ResolvedPinLength::Shrink => "::iced::Shrink".into(),
         ResolvedPinLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedPinLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -304,10 +308,10 @@ fn resolved_responsive_length_code(
         ResolvedResponsiveLength::Shrink => "::iced::Shrink".into(),
         ResolvedResponsiveLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedResponsiveLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -326,7 +330,7 @@ fn resolved_float_radius_code(
         return Ok(None);
     }
     let code = |expression| -> Result<String, Error> {
-        let value = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+        let value = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
         Ok(format!("(({value}) as f32).max(0.0).min(f32::MAX)"))
     };
     let base = radius
@@ -387,12 +391,12 @@ fn render_resolved_sensor(
         write!(
             code,
             ".key({})",
-            checked_expr_use_code(program, key, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, key, env, ValueMode::Owned)?
         )
         .unwrap();
     }
     if let Some(anticipate) = sensor.anticipate {
-        let anticipate = checked_expr_use_code(program, anticipate, env, ValueMode::Owned)?;
+        let anticipate = resolved_expr_use_code(program, anticipate, env, ValueMode::Owned)?;
         write!(
             code,
             ".anticipate((({anticipate}) as f32).max(0.0).min(f32::MAX))"
@@ -400,7 +404,7 @@ fn render_resolved_sensor(
         .unwrap();
     }
     if let Some(delay) = sensor.delay_ms {
-        let delay = checked_expr_use_code(program, delay, env, ValueMode::Owned)?;
+        let delay = resolved_expr_use_code(program, delay, env, ValueMode::Owned)?;
         write!(
             code,
             ".delay(::std::time::Duration::from_millis(u64::try_from({delay}).unwrap_or(0)))"

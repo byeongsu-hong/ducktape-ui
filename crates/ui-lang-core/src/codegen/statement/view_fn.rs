@@ -5,9 +5,7 @@ pub(in crate::codegen) fn generate_view(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
     let daemon = program.settings().kind == ProgramKind::Daemon;
-    let render_document = RenderDocument::new(program);
     let mounted = program
         .components()
         .iter()
@@ -24,20 +22,20 @@ pub(in crate::codegen) fn generate_view(
                 local: true,
                 state: None,
                 owner: program
-                    .checked_facts()
+                    .expressions()
                     .daemon_window_local()
                     .map(BindingOwner::Local),
             },
         );
     }
     let root_scope = if mounted.is_empty() {
-        rust_string(&document.app)
+        rust_string(program.app_name())
     } else {
         "__ice_root_scope_ref".into()
     };
     let rendered_root = render_node_if_present(
-        &document.view,
-        &render_document,
+        program.app_view(),
+        program,
         message,
         &env,
         &root_scope,
@@ -69,10 +67,10 @@ pub(in crate::codegen) fn generate_view(
         let root_scope_code = if daemon {
             format!(
                 "format!(\"{{}}/{{:?}}\", {}, window)",
-                rust_string(&document.app)
+                rust_string(program.app_name())
             )
         } else {
-            format!("{}.to_owned()", rust_string(&document.app))
+            format!("{}.to_owned()", rust_string(program.app_name()))
         };
         let begin = mounted
             .iter()

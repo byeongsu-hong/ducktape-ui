@@ -82,8 +82,8 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
             if let Some(disabled) = disabled {
@@ -116,8 +116,8 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
             if let Some(disabled) = disabled {
@@ -300,8 +300,8 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(
@@ -338,8 +338,8 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
-            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             let Type::List(option_type) = expr_type(options, env, document, span)? else {
                 return Err(Error::new("E129", span, "pick options must be a list"));
             };
@@ -414,9 +414,9 @@ pub(in crate::check) fn infer_controls_group(
             span,
             ..
         } => {
-            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             record_read(state, span);
             check_id(id, env, document, ids, span)?;
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             let Some(Type::Combo(option_type)) = env.get_type(state) else {
                 return Err(Error::new(
                     "E129",

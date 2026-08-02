@@ -345,6 +345,19 @@ pub(crate) fn extern_component_semantic_key(
     )
 }
 
+pub(crate) fn component_call_route_semantic_key<'a>(
+    component: &str,
+    has_output_route: bool,
+    events: impl IntoIterator<Item = (&'a str, bool)>,
+) -> String {
+    let events = events
+        .into_iter()
+        .map(|(name, direct)| format!("{name}:{}", if direct { "direct" } else { "forward" }))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("component-call-routes|component={component}|output={has_output_route}|events={events}")
+}
+
 pub(crate) fn themer_semantic_key(function: &str, args: &[Expr], route: &Option<Route>) -> String {
     format!(
         "themer|function={function}|arguments={}|route={}",
@@ -434,6 +447,52 @@ pub(crate) fn nested_theme_expression_roots<'a>(
 }
 
 impl ViewNode {
+    pub(crate) fn identity(&self) -> Option<&Id> {
+        match self {
+            Self::Layout { id, .. }
+            | Self::Container { id, .. }
+            | Self::Overlay { id, .. }
+            | Self::Text { id, .. }
+            | Self::RichText { id, .. }
+            | Self::Input { id, .. }
+            | Self::Button { id, .. }
+            | Self::Checkbox { id, .. }
+            | Self::Toggler { id, .. }
+            | Self::Slider { id, .. }
+            | Self::Progress { id, .. }
+            | Self::Radio { id, .. }
+            | Self::PickList { id, .. }
+            | Self::ComboBox { id, .. }
+            | Self::Rule { id, .. }
+            | Self::QrCode { id, .. }
+            | Self::Space { id, .. }
+            | Self::KeyedColumn { id, .. }
+            | Self::Lazy { id, .. }
+            | Self::Markdown { id, .. }
+            | Self::TextEditor { id, .. }
+            | Self::Table { id, .. }
+            | Self::Component { id, .. }
+            | Self::ExternComponent { id, .. }
+            | Self::Themer { id, .. }
+            | Self::Shader { id, .. }
+            | Self::Media { id, .. }
+            | Self::Tooltip { id, .. }
+            | Self::MouseArea { id, .. }
+            | Self::ResizeHandle { id, .. }
+            | Self::Canvas { id, .. }
+            | Self::Theme { id, .. }
+            | Self::Float { id, .. }
+            | Self::Pin { id, .. }
+            | Self::Sensor { id, .. }
+            | Self::Responsive { id, .. } => id.as_ref(),
+            Self::PaneGrid { .. }
+            | Self::If { .. }
+            | Self::Match { .. }
+            | Self::For { .. }
+            | Self::Slot { .. } => None,
+        }
+    }
+
     pub fn span(&self) -> &Span {
         match self {
             Self::Layout { span, .. }

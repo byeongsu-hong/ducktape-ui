@@ -248,8 +248,8 @@ view
     button "Save" disabled=!can_submit -> submit
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.derived[0].ty, Type::Str);
-    assert_eq!(document.derived[1].ty, Type::Bool);
+    assert_eq!(document.source_document().derived[0].ty, Type::Str);
+    assert_eq!(document.source_document().derived[1].ty, Type::Bool);
 
     let forward = source.replace(
         "normalized = trim(draft)\n  can_submit = !loading && !empty(normalized)",

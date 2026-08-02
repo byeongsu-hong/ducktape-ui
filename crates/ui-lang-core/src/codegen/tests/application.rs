@@ -1,7 +1,7 @@
 use super::*;
 use crate::codegen::{
-    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_expr_use_code, checked_state_env,
-    reset_binding_env_metrics,
+    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_state_env,
+    reset_binding_env_metrics, resolved_expr_use_code,
 };
 
 #[test]
@@ -938,14 +938,19 @@ view
   Label value=count
 "#;
     let program = crate::lower::lower(crate::analyze(source).unwrap()).unwrap();
-    let call = program
-        .component_call(program.document().view.span())
-        .unwrap();
+    let crate::lower::ResolvedViewKind::Component { call } = program
+        .resolved_view(program.app_view())
+        .map(|view| &view.kind)
+        .unwrap()
+    else {
+        panic!("application root is not a component call")
+    };
+    let call = program.component_call_by_id(*call).unwrap();
     let expression = call.arguments[0].expression;
     let mut env = checked_state_env(&program, "self");
     env.get_mut("count").unwrap().owner = None;
 
-    let error = checked_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
+    let error = resolved_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
     assert_eq!(error.code, "E196");
     assert!(error.message.contains("mismatched emission owner"));
 }

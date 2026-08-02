@@ -1020,12 +1020,6 @@ pub enum LengthValue {
     Fixed(Expr),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImageFilter {
-    Linear,
-    Nearest,
-}
-
 #[derive(Clone, Debug)]
 pub struct TooltipOptions {
     pub position: TooltipPosition,

@@ -730,7 +730,7 @@ impl AnalysisDb {
             && cached.fingerprint == graph.fingerprint
         {
             let cached_analysis = Arc::clone(&cached.analysis);
-            check_assets(&cached_analysis.document, &graph.loaded)
+            check_assets(cached_analysis.document.source_document(), &graph.loaded)
                 .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
             let (source_stamps, asset_stamps) = self.analysis_stamps(&cached_analysis);
             let now = Instant::now();
@@ -757,9 +757,9 @@ impl AnalysisDb {
         let document = analyze_loaded_without_assets(&graph.loaded);
         self.metrics.elapsed.check += started.elapsed();
         let document = document?;
-        let asset_dependencies = asset_dependencies(&document, &graph.loaded);
+        let asset_dependencies = asset_dependencies(document.source_document(), &graph.loaded);
         self.replace_root_assets(root.clone(), asset_dependencies.iter().cloned().collect());
-        check_assets(&document, &graph.loaded)
+        check_assets(document.source_document(), &graph.loaded)
             .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
         self.metrics.symbols_indexed += document.symbols().len();
         let mut dependencies = graph.loaded.dependencies.clone();
@@ -2014,7 +2014,7 @@ mod tests {
         db.remove_overlay(&link).unwrap();
         let analysis = db.query_root(&a).unwrap();
 
-        assert_eq!(analysis.document.app, "A");
+        assert_eq!(analysis.document.source_document().app, "A");
     }
 
     #[cfg(unix)]
@@ -2041,7 +2041,7 @@ mod tests {
         let analysis = db.query_root(&root).unwrap();
 
         assert!(invalidation.changed);
-        assert_eq!(analysis.document.app, "Demo");
+        assert_eq!(analysis.document.source_document().app, "Demo");
         assert_eq!(
             db.overlay_store
                 .sources_by_path
@@ -2210,7 +2210,7 @@ mod tests {
         let analyzed = db.analyze_overlay_candidate(&root, candidate).unwrap();
         let current = db.query_root(&root).unwrap();
 
-        assert_eq!(analyzed.document.app, "Candidate");
+        assert_eq!(analyzed.document.source_document().app, "Candidate");
         assert!(analyzed.dependencies.contains(&pending));
         assert!(Arc::ptr_eq(&retained, &current));
     }
