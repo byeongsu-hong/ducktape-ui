@@ -803,6 +803,17 @@ or routes. Raw-poisoning, cross-owner and invalid-ID attacks, imported physical
 origins and generated markers, native output tests, the lexical boundary
 ratchet, and an ignored 4,000-Markdown lower+emit contract cover the boundary.
 
+ExternComponent has a complete private HIR boundary. Its checked facts freeze
+the exact component extern ID, Rust path, ordered parameter and argument types,
+borrow modes, output type, route, and parented physical origins. Lowering
+publishes `ResolvedExternComponent` only after validating expression owners,
+route payloads, declaration identity, and complete cardinality. Production
+emission consumes that record and checked expression IDs; raw function names,
+arguments, borrow choices, and routes are not reread. Direct, component-local,
+output, and unit delivery; raw-poisoning; cross-owner and corrupt-ID attacks;
+imported source markers and source-mapped `E196`; native output; the lexical
+ratchet; and an ignored 4,000-component lower+emit contract cover the boundary.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

@@ -496,6 +496,17 @@ names, arguments, and routes cannot affect output after lowering. Structural
 and cross-owner corruption, raw poisoning, imported-origin/source-marker,
 native generation, and 4,000-node performance contracts cover the boundary.
 
+ExternComponent is a completed native-boundary HIR slice. Its checked contract
+owns the exact component extern identity and Rust path, ordered parameter and
+argument types, borrow modes, output type, optional route, and their source
+origins. Lowering resolves those facts into `ResolvedExternComponent` and
+validates expression and route ownership before generation. Generation consumes
+that record and checked expression IDs; raw function names, arguments, borrow
+decisions, and routes cannot affect output after lowering. Direct,
+component-local, output, and unit delivery, corruption and raw poisoning,
+imported diagnostics/source markers, native generation, and 4,000-node
+performance contracts cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

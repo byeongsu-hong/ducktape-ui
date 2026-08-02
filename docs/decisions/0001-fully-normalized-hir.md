@@ -519,6 +519,18 @@ pre-/post-lowering raw poisoning, imported-origin and source-marker coverage,
 native generation, and a 4,000-node lower+emit budget provide the executable
 evidence.
 
+ExternComponent is a completed native-boundary slice. Its checked contract
+freezes the exact component extern ID and Rust path, parameter types and borrow
+modes, ordered argument expressions, output type, optional route, and parented
+widget/declaration/argument/route origins. Lowering publishes
+`ResolvedExternComponent` after validating complete expression and route
+ownership. Production emission consumes only that record and checked
+expression IDs; raw function names, argument syntax, borrow decisions, and
+routes cannot affect output after lowering. Direct, component-local, output,
+and unit routes; raw poisoning; cross-owner and corrupt-ID failures; imported
+source markers and diagnostics; native generation; and a 4,000-node lower+emit
+budget provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,
