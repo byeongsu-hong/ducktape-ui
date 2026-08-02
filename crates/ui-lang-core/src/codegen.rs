@@ -176,16 +176,26 @@ fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
     );
 }
 
+enum LocalBindingTypeSource<'a> {
+    Checked(&'a LoweredProgram),
+    Hir(&'a ResolvedMatchBinding),
+}
+
 fn checked_local_binding(
-    program: &LoweredProgram,
+    source: LocalBindingTypeSource<'_>,
     local_id: CheckedLocalId,
     code: String,
     is_local: bool,
 ) -> Binding {
-    let local = program.checked_facts().local(local_id);
+    let ty = match source {
+        LocalBindingTypeSource::Checked(program) => {
+            program.checked_facts().local(local_id).ty.clone()
+        }
+        LocalBindingTypeSource::Hir(payload) => payload.ty.clone(),
+    };
     Binding {
         code,
-        ty: local.ty.clone(),
+        ty,
         local: is_local,
         state: None,
         owner: Some(BindingOwner::Local(local_id)),

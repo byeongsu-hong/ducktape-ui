@@ -11,13 +11,21 @@ pub(in crate::codegen) fn render_table(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.hir();
+    if columns.len() != table.columns.len() {
+        return Err(program.invariant_at_origin(table.origin, "table HIR column length diverged"));
+    }
     let rows = checked_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
     let item_name = &table.row.name;
     let row_rust = table.row.ty.rust(document.extern_structs());
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),
-        checked_local_binding(program, table.row.local, item_name.clone(), true),
+        checked_local_binding(
+            LocalBindingTypeSource::Checked(program),
+            table.row.local,
+            item_name.clone(),
+            true,
+        ),
     );
     let mut column_codes = Vec::with_capacity(columns.len());
     for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
@@ -137,7 +145,12 @@ pub(in crate::codegen) fn render_keyed_column(
     let mut child_env = ScopedBindingEnv::new(env);
     child_env.insert(
         item_name.clone(),
-        checked_local_binding(program, keyed.item.local, item_name.clone(), false),
+        checked_local_binding(
+            LocalBindingTypeSource::Checked(program),
+            keyed.item.local,
+            item_name.clone(),
+            false,
+        ),
     );
     let key = checked_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");

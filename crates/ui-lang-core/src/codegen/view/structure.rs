@@ -99,11 +99,21 @@ pub(in crate::codegen) fn render_structure(
             let mut child_env = ScopedBindingEnv::new(env);
             child_env.insert(
                 width.name.clone(),
-                checked_local_binding(program, width.local, "(__size.width as f64)".into(), true),
+                checked_local_binding(
+                    LocalBindingTypeSource::Checked(program),
+                    width.local,
+                    "(__size.width as f64)".into(),
+                    true,
+                ),
             );
             child_env.insert(
                 height.name.clone(),
-                checked_local_binding(program, height.local, "(__size.height as f64)".into(), true),
+                checked_local_binding(
+                    LocalBindingTypeSource::Checked(program),
+                    height.local,
+                    "(__size.height as f64)".into(),
+                    true,
+                ),
             );
             let content = render_node(*content, document, message, &child_env, &child_scope, slot)?;
             let builder = format!(
@@ -136,7 +146,12 @@ pub(in crate::codegen) fn render_structure(
             let mut child_env = HashMap::new();
             child_env.insert(
                 binding_name.clone(),
-                checked_local_binding(program, lazy.binding.local, binding_name.clone(), false),
+                checked_local_binding(
+                    LocalBindingTypeSource::Checked(program),
+                    lazy.binding.local,
+                    binding_name.clone(),
+                    false,
+                ),
             );
             let child = render_node(
                 *child,
@@ -186,7 +201,12 @@ fn render_resolved_float(
     ]) {
         translate_env.insert(
             geometry.name.clone(),
-            checked_local_binding(program, geometry.local, code.into(), true),
+            checked_local_binding(
+                LocalBindingTypeSource::Checked(program),
+                geometry.local,
+                code.into(),
+                true,
+            ),
         );
     }
     let x = checked_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?;

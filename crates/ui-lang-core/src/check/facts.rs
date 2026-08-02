@@ -514,6 +514,7 @@ pub(crate) enum CheckedResponsiveLength {
 pub(crate) struct CheckedMatchArm {
     pub(crate) pattern: CheckedMatchPattern,
     pub(crate) binding: Option<CheckedLocalId>,
+    pub(crate) children: Vec<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -599,6 +600,7 @@ pub(crate) struct CheckedComponentCallRoutes {
 pub(crate) struct CheckedComponentOutputRoute {
     pub(crate) output: Type,
     pub(crate) route: InteractionRouteId,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -612,10 +614,16 @@ pub(crate) struct CheckedComponentEventRoute {
 
 #[derive(Clone, Debug)]
 pub(crate) enum CheckedComponentEventDelivery {
-    Direct(InteractionRouteId),
+    Direct {
+        route: InteractionRouteId,
+        origin: OriginId,
+    },
     Forward {
         outer_component: ComponentId,
+        outer_component_name: String,
         outer_event: ComponentEventId,
+        outer_event_name: String,
+        outer_payloads: Vec<Type>,
     },
 }
 
@@ -1320,6 +1328,19 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn swap_interaction_route_origins(
+        &mut self,
+        view: ViewId,
+        first: usize,
+        second: usize,
+    ) {
+        let routes = &mut self.interactions.get_mut(&view).unwrap().routes;
+        let first_origin = routes[first].origin;
+        routes[first].origin = routes[second].origin;
+        routes[second].origin = first_origin;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_interaction_route_source_payload(
         &mut self,
         view: ViewId,
@@ -1489,6 +1510,102 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn swap_component_call_direct_route_origins(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+    ) {
+        let routes = self.component_call_routes.get_mut(&call).unwrap();
+        let output = routes.output.as_mut().unwrap();
+        let CheckedComponentEventDelivery::Direct { origin, .. } =
+            &mut routes.events[event].delivery
+        else {
+            panic!("test event route must be direct");
+        };
+        std::mem::swap(&mut output.origin, origin);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_forward_outer_component(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        component: ComponentId,
+    ) {
+        let CheckedComponentEventDelivery::Forward {
+            outer_component, ..
+        } = &mut self.component_call_routes.get_mut(&call).unwrap().events[event].delivery
+        else {
+            panic!("test event route must be forwarded");
+        };
+        *outer_component = component;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_forward_outer_event(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        outer_event: ComponentEventId,
+    ) {
+        let CheckedComponentEventDelivery::Forward {
+            outer_event: id, ..
+        } = &mut self.component_call_routes.get_mut(&call).unwrap().events[event].delivery
+        else {
+            panic!("test event route must be forwarded");
+        };
+        *id = outer_event;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_forward_outer_component_name(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        name: &str,
+    ) {
+        let CheckedComponentEventDelivery::Forward {
+            outer_component_name,
+            ..
+        } = &mut self.component_call_routes.get_mut(&call).unwrap().events[event].delivery
+        else {
+            panic!("test event route must be forwarded");
+        };
+        *outer_component_name = name.to_owned();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_forward_outer_event_name(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        name: &str,
+    ) {
+        let CheckedComponentEventDelivery::Forward {
+            outer_event_name, ..
+        } = &mut self.component_call_routes.get_mut(&call).unwrap().events[event].delivery
+        else {
+            panic!("test event route must be forwarded");
+        };
+        *outer_event_name = name.to_owned();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_call_forward_outer_payload(
+        &mut self,
+        call: ComponentCallId,
+        event: usize,
+        payload: Type,
+    ) {
+        let CheckedComponentEventDelivery::Forward { outer_payloads, .. } =
+            &mut self.component_call_routes.get_mut(&call).unwrap().events[event].delivery
+        else {
+            panic!("test event route must be forwarded");
+        };
+        outer_payloads[0] = payload;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_interaction_expression_origin(
         &mut self,
         view: ViewId,
@@ -1639,6 +1756,40 @@ impl CheckedFacts {
             panic!("test view must be match");
         };
         arms[arm].binding = Some(CheckedLocalId(raw));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_match_pattern(
+        &mut self,
+        view: ViewId,
+        arm: usize,
+        pattern: CheckedMatchPattern,
+    ) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms[arm].pattern = pattern;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_match_arm(&mut self, view: ViewId, arm: usize) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms.remove(arm);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_match_arm_origin(&mut self, view: ViewId, arm: usize, origin: OriginId) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms[arm].origin = origin;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_local_type(&mut self, local: CheckedLocalId, ty: Type) {
+        self.locals[local.0 as usize].ty = ty;
     }
 
     #[cfg(test)]
@@ -4687,6 +4838,15 @@ impl<'a> FactsBuilder<'a> {
             span,
         )?;
 
+        let interaction_route_origins = self
+            .facts
+            .interaction(view)
+            .ok_or_else(|| self.invariant(span, "component routes have no interaction facts"))?
+            .routes
+            .iter()
+            .map(|route| route.origin)
+            .collect::<Vec<_>>();
+
         let parent = self.declarations.view(view).origin;
         let mut route_index = 0u32;
         let checked_output = match (&output, output_route) {
@@ -4696,10 +4856,16 @@ impl<'a> FactsBuilder<'a> {
                     widget: view,
                     index: route_index,
                 };
+                let origin = *interaction_route_origins
+                    .get(route_index as usize)
+                    .ok_or_else(|| {
+                        self.invariant(span, "component output route origin disappeared")
+                    })?;
                 route_index += 1;
                 Some(CheckedComponentOutputRoute {
                     output: output.clone(),
                     route,
+                    origin,
                 })
             }
             _ => return Err(self.invariant(span, "component output route topology diverged")),
@@ -4713,8 +4879,16 @@ impl<'a> FactsBuilder<'a> {
                     widget: view,
                     index: route_index,
                 };
+                let route_origin = *interaction_route_origins
+                    .get(route_index as usize)
+                    .ok_or_else(|| {
+                        self.invariant(&supplied.span, "component event route origin disappeared")
+                    })?;
                 route_index += 1;
-                CheckedComponentEventDelivery::Direct(route)
+                CheckedComponentEventDelivery::Direct {
+                    route,
+                    origin: route_origin,
+                }
             } else {
                 let CheckedViewScope::Component(outer_component) = scope else {
                     return Err(self.invariant(
@@ -4722,6 +4896,17 @@ impl<'a> FactsBuilder<'a> {
                         "forwarded event has no checked outer component",
                     ));
                 };
+                let outer_component_name = self
+                    .document
+                    .components
+                    .get(outer_component.0 as usize)
+                    .map(|component| component.name.clone())
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &supplied.span,
+                            "forwarded event outer component contract diverged",
+                        )
+                    })?;
                 let outer_event = self
                     .declarations
                     .component_event_by_name(outer_component, &name)
@@ -4732,11 +4917,13 @@ impl<'a> FactsBuilder<'a> {
                             "forwarded event declaration contract diverged",
                         )
                     })?
-                    .declaration
-                    .id;
+                    .clone();
                 CheckedComponentEventDelivery::Forward {
                     outer_component,
-                    outer_event,
+                    outer_component_name,
+                    outer_event: outer_event.declaration.id,
+                    outer_event_name: outer_event.name,
+                    outer_payloads: outer_event.payloads,
                 }
             };
             checked_events.push(CheckedComponentEventRoute {
@@ -4747,11 +4934,7 @@ impl<'a> FactsBuilder<'a> {
                 origin,
             });
         }
-        let interaction = self
-            .facts
-            .interaction(view)
-            .ok_or_else(|| self.invariant(span, "component routes have no interaction facts"))?;
-        if route_index as usize != interaction.routes.len() {
+        if route_index as usize != interaction_route_origins.len() {
             return Err(self.invariant(span, "component route cardinality diverged"));
         }
         let checked = CheckedComponentCallRoutes {
@@ -9164,6 +9347,18 @@ impl<'a> FactsBuilder<'a> {
                     checked_arms.push(CheckedMatchArm {
                         pattern,
                         binding,
+                        children: arm
+                            .children
+                            .iter()
+                            .map(|child| {
+                                self.declarations.view_id(child.span()).ok_or_else(|| {
+                                    self.invariant(
+                                        &arm.span,
+                                        "match arm child has no shared view ID",
+                                    )
+                                })
+                            })
+                            .collect::<Result<_, _>>()?,
                         origin: arm_origin,
                     });
                 }

@@ -88,7 +88,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            for event in &call.events {
+            for (event_index, event) in call.events.iter().enumerate() {
                 let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
@@ -105,16 +105,56 @@ pub(in crate::codegen) fn render_content(
                         )?
                     }
                     ResolvedEventRoute::Forward {
-                        outer_component, ..
+                        event: callee_event,
+                        name: callee_event_name,
+                        payloads: callee_payloads,
+                        outer_component,
+                        outer_component_name,
+                        outer_event,
+                        outer_event_name,
+                        outer_payloads,
+                        origin,
+                        ..
                     } => {
-                        let outer = &document.program().component(*outer_component).name;
-                        component_event(env, outer, event.name())
+                        let program = document.program();
+                        program.validate_component_call_event_contract(
+                            call,
+                            event_index,
+                            *callee_event,
+                            callee_event_name,
+                            callee_payloads,
+                            *origin,
+                        )?;
+                        let outer = program
+                            .try_component(*outer_component)
+                            .filter(|component| {
+                                component.id == *outer_component
+                                    && component.name == *outer_component_name
+                                    && outer_event.component == *outer_component
+                                    && *outer_event_name == *callee_event_name
+                                    && outer_payloads == callee_payloads
+                                    && program.component_event_matches(
+                                        *outer_event,
+                                        outer_event_name,
+                                        outer_payloads,
+                                    )
+                            })
                             .ok_or_else(|| {
-                                document.invariant_at_origin(
-                                    view.origin,
+                                program.invariant_at_origin(
+                                    *origin,
+                                    format!(
+                                        "lowered forwarded event `{}` has an invalid outer contract",
+                                        callee_event_name
+                                    ),
+                                )
+                            })?;
+                        component_event(env, &outer.name, outer_event_name)
+                            .ok_or_else(|| {
+                                program.invariant_at_origin(
+                                    *origin,
                                     format!(
                                         "lowered forwarded event `{}` is absent from component context",
-                                        event.name()
+                                        callee_event_name
                                     ),
                                 )
                             })?

@@ -5,13 +5,13 @@ use crate::check::{
     CheckedComboBox, CheckedComponentArgumentSource, CheckedComponentEventDelivery, CheckedExprId,
     CheckedExprKind, CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
     CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
-    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchPattern,
-    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
-    CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding,
-    CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate,
-    CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind,
-    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchArm,
+    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
+    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
+    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
+    CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
+    CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
     ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
@@ -1432,7 +1432,10 @@ pub(crate) enum ResolvedEventRoute {
         name: String,
         payloads: Vec<Type>,
         outer_component: ComponentId,
+        outer_component_name: String,
         outer_event: ComponentEventId,
+        outer_event_name: String,
+        outer_payloads: Vec<Type>,
         origin: OriginId,
     },
 }
@@ -3490,6 +3493,45 @@ impl LoweredProgram {
             .get(id.component.0 as usize)
             .and_then(|component| component.events.get(id.index as usize))
             .is_some_and(|event| event.id == id && event.name == name && event.payloads == payloads)
+    }
+
+    pub(crate) fn validate_component_call_event_contract(
+        &self,
+        call: &ComponentCall,
+        index: usize,
+        event: ComponentEventId,
+        name: &str,
+        payloads: &[Type],
+        origin: OriginId,
+    ) -> Result<(), Error> {
+        let checked_routes = self.facts.component_call_routes(call.id).ok_or_else(|| {
+            self.invariant_at_origin(
+                call.origin,
+                "lowered component call has no checked event routes",
+            )
+        })?;
+        let checked = checked_routes.events.get(index).ok_or_else(|| {
+            self.invariant_at_origin(
+                call.origin,
+                "lowered component call has an unmatched event route",
+            )
+        })?;
+        if checked_routes.call != call.id
+            || checked_routes.component != call.component
+            || checked_routes.events.len() != call.events.len()
+            || event.component != call.component
+            || checked.event != event
+            || checked.name != name
+            || checked.payloads != payloads
+            || checked.origin != origin
+            || !self.component_event_matches(event, name, payloads)
+        {
+            return Err(self.invariant_at_origin(
+                checked.origin,
+                format!("lowered component event `{name}` has an invalid callee contract"),
+            ));
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -9003,6 +9045,18 @@ impl Lowerer {
         {
             return Err(self.invariant(span, "component call route identity diverged"));
         }
+        let route_expression_count = interaction
+            .routes
+            .iter()
+            .flat_map(|route| &route.args)
+            .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+            .count();
+        if interaction.expression_count as usize != route_expression_count {
+            return Err(self.invariant_at_origin(
+                origin,
+                "component call route expression cardinality diverged",
+            ));
+        }
         self.validate_interaction_expression_graphs(
             view_id,
             route_scope,
@@ -9021,6 +9075,12 @@ impl Lowerer {
         let output = match (&output_ty, route, &checked_routes.output) {
             (Type::Unit, None, None) => ComponentOutputRoute::None,
             (output, Some(source), Some(checked)) if checked.output == *output => {
+                self.validate_component_call_route_origin(
+                    checked.origin,
+                    &source.span,
+                    origin,
+                    "component output route",
+                )?;
                 let resolved = self.lower_required_interaction_route(
                     source,
                     &interaction,
@@ -9029,7 +9089,7 @@ impl Lowerer {
                     view_id,
                     route_scope,
                 )?;
-                if resolved.id != checked.route {
+                if resolved.id != checked.route || resolved.origin != checked.origin {
                     return Err(self.invariant(span, "component output route ID diverged"));
                 }
                 self.validate_component_call_route_hir(
@@ -9040,7 +9100,7 @@ impl Lowerer {
                 )?;
                 ComponentOutputRoute::Direct {
                     output: output.clone(),
-                    origin: resolved.origin,
+                    origin: checked.origin,
                     route: resolved,
                 }
             }
@@ -9098,11 +9158,13 @@ impl Lowerer {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
             })?;
-            let event_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
-                self.invariant(&supplied.span, "component event route origin is invalid")
-            })?;
-            if event_origin.parent != Some(origin)
-                || checked.event != event.id
+            self.validate_component_call_route_origin(
+                checked.origin,
+                &supplied.span,
+                origin,
+                "component event route",
+            )?;
+            if checked.event != event.id
                 || checked.name != event.name
                 || checked.payloads != event.payloads
                 || supplied.name != event.name
@@ -9112,7 +9174,19 @@ impl Lowerer {
                 );
             }
             match (&supplied.route, &checked.delivery) {
-                (Some(source), CheckedComponentEventDelivery::Direct(checked_route)) => {
+                (
+                    Some(source),
+                    CheckedComponentEventDelivery::Direct {
+                        route: checked_route,
+                        origin: checked_route_origin,
+                    },
+                ) => {
+                    self.validate_component_call_route_origin(
+                        *checked_route_origin,
+                        &source.span,
+                        origin,
+                        "component event direct route",
+                    )?;
                     let resolved = self.lower_required_interaction_route(
                         source,
                         &interaction,
@@ -9121,10 +9195,9 @@ impl Lowerer {
                         view_id,
                         route_scope,
                     )?;
-                    if resolved.id != *checked_route {
-                        return Err(
-                            self.invariant(&supplied.span, "component event route ID diverged")
-                        );
+                    if resolved.id != *checked_route || resolved.origin != *checked_route_origin {
+                        return Err(self
+                            .invariant(&supplied.span, "component event route identity diverged"));
                     }
                     self.validate_component_call_route_hir(
                         &resolved,
@@ -9144,28 +9217,50 @@ impl Lowerer {
                     None,
                     CheckedComponentEventDelivery::Forward {
                         outer_component: checked_outer,
+                        outer_component_name,
                         outer_event,
+                        outer_event_name,
+                        outer_payloads,
                     },
                 ) => {
                     let outer = outer_component.ok_or_else(|| {
-                        self.invariant(&supplied.span, "forwarded event has no outer component")
+                        self.invariant_at_origin(
+                            checked.origin,
+                            "forwarded event has no outer component",
+                        )
                     })?;
+                    let outer_contract = self
+                        .components
+                        .get(checked_outer.0 as usize)
+                        .filter(|component| {
+                            component.id == *checked_outer
+                                && component.name == *outer_component_name
+                        })
+                        .ok_or_else(|| {
+                            self.invariant_at_origin(
+                                checked.origin,
+                                "forwarded event has an invalid outer component",
+                            )
+                        })?;
                     let declaration =
                         self.declarations
                             .component_event(*outer_event)
                             .ok_or_else(|| {
-                                self.invariant(
-                                    &supplied.span,
+                                self.invariant_at_origin(
+                                    checked.origin,
                                     "forwarded event has an invalid outer declaration",
                                 )
                             })?;
                     if *checked_outer != outer
                         || outer_event.component != outer
-                        || declaration.name != event.name
-                        || declaration.payloads != event.payloads
+                        || outer_contract.name != *outer_component_name
+                        || declaration.name != *outer_event_name
+                        || declaration.payloads != *outer_payloads
+                        || *outer_event_name != event.name
+                        || *outer_payloads != event.payloads
                     {
-                        return Err(self.invariant(
-                            &supplied.span,
+                        return Err(self.invariant_at_origin(
+                            checked.origin,
                             "forwarded event declaration contract diverged",
                         ));
                     }
@@ -9174,7 +9269,10 @@ impl Lowerer {
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
                         outer_component: outer,
+                        outer_component_name: outer_component_name.clone(),
                         outer_event: *outer_event,
+                        outer_event_name: outer_event_name.clone(),
+                        outer_payloads: outer_payloads.clone(),
                         origin: checked.origin,
                     });
                 }
@@ -9299,6 +9397,49 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+
+    fn validate_component_call_route_origin(
+        &self,
+        origin: OriginId,
+        source: &Span,
+        parent: OriginId,
+        label: &str,
+    ) -> Result<(), Error> {
+        let retained = self.origins.try_get(origin).ok_or_else(|| {
+            self.component_call_invariant_at_span(source, format!("{label} origin is invalid"))
+        })?;
+        let (expected_path, expected_line) = self
+            .origins
+            .source_origin(source.line)
+            .map_or((None, source.line), |(path, line)| (Some(path), line));
+        if retained.path.as_deref() != expected_path
+            || retained.line != expected_line
+            || retained.column != source.column
+            || retained.parent != Some(parent)
+        {
+            return Err(self.component_call_invariant_at_span(
+                source,
+                format!("{label} physical origin diverged"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn component_call_invariant_at_span(&self, source: &Span, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some((path, line)) = self.origins.source_origin(source.line) else {
+            return Error::new("E196", source, message);
+        };
+        Error::new(
+            "E196",
+            &Span {
+                line,
+                column: source.column,
+            },
+            message,
+        )
+        .at_path(path.display().to_string())
     }
 
     fn resolve_writable(
@@ -11583,7 +11724,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let overlay = program.overlays.values().next().unwrap();
         let origin = program.origin(overlay.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
@@ -11595,6 +11736,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        program.overlays.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -11780,7 +11927,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let container = program.containers.values().next().unwrap();
         let origin = program.origin(container.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
@@ -11789,6 +11936,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.containers.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -11980,7 +12133,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let layout = program.layouts.values().next().unwrap();
         let origin = program.origin(layout.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
@@ -11995,6 +12148,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.layouts.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -12223,7 +12382,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let text = program.texts.values().next().unwrap();
         let root_origin = program.origin(text.origin);
         assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
@@ -12242,6 +12401,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.texts.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -12558,7 +12723,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let input = program.inputs.values().next().unwrap();
         let input_origin = program.origin(input.origin);
         assert_eq!(input_origin.path.as_deref(), Some(imported.as_path()));
@@ -12577,6 +12742,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.inputs.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -14822,7 +14993,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let editor = program.text_editors.values().next().unwrap();
         let editor_origin = program.origin(editor.origin);
         assert_eq!(editor_origin.path.as_deref(), Some(imported.as_path()));
@@ -14836,6 +15007,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.text_editors.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -15788,6 +15965,65 @@ view
     }
 
     #[test]
+    fn pane_grid_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pane-grid-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let source = format!(
+            "app PaneGridOrigins\n{THEME}view\n  panes #work\n    pane files\n      text \"Files\"\n"
+        );
+        let pane_line = source
+            .lines()
+            .position(|line| line.trim_start().starts_with("panes #work"))
+            .unwrap()
+            + 1;
+        fs::write(&root, source).unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pane_grid = program
+            .pane_grids
+            .values()
+            .next()
+            .expect("imported pane grid must be normalized");
+        let origin = program.origin(pane_grid.origin);
+        assert_eq!(origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(origin.line, pane_line);
+        let pane_origin = program.origin(pane_grid.panes[0].origin);
+        assert_eq!(pane_origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(pane_origin.line, pane_line + 1);
+        assert_eq!(pane_origin.parent, Some(pane_grid.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_root = crate::codegen::encode_source_path(&root.display().to_string());
+        assert!(generated.contains(&format!(
+            "// __ICE_SOURCE {} 1 {encoded_root}",
+            pane_line + 2
+        )));
+
+        program.pane_grids.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.pane_grids.values_mut().next().unwrap().panes.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn malformed_checked_pane_expression_local_and_origin_ids_do_not_panic() {
         let source = format!(
             "app InvalidPaneFacts\nextern crate::backend\n  Task(id:i64, title:str)\n{THEME}state\n  tasks:[Task] = []\nview\n  panes #work gap=8.0\n    pane files\n      text \"Files\"\n    pane task in tasks by=task.id\n      text task.title\n"
@@ -15876,6 +16112,64 @@ view
         templates[0].key = Expr::Bool(false);
         templates[0].pane.name = "poisoned_template".into();
         templates[0].pane.maximized = Some("poisoned_template_maximized".into());
+    }
+
+    #[test]
+    fn imported_table_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-table-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("table-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedTable\nuse \"table-card.ice\"\n{THEME}view\n  TableCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component TableCard()\n  state\n    rows:[str] = [\"A\"]\n  table row in rows\n    col\n      header\n        text \"Name\"\n      cell\n        text row\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let table = program
+            .tables
+            .values()
+            .next()
+            .expect("imported table must be normalized");
+        let origin = program.origin(table.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+        let column_origin = program.origin(table.columns[0].origin);
+        assert_eq!(column_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(column_origin.line, 5);
+        assert_eq!(column_origin.parent, Some(table.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.tables.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.tables.values_mut().next().unwrap().columns.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -16088,7 +16382,118 @@ view
             ResolvedMatchPattern::None
         ));
         assert!(resolved.arms[1].binding.is_none());
+        assert_eq!(resolved.arms[0].children, vec![ViewId(1)]);
+        assert_eq!(resolved.arms[1].children, vec![ViewId(2)]);
         assert_ne!(resolved.arms[0].origin, resolved.arms[1].origin);
+    }
+
+    #[test]
+    fn match_lowering_rejects_checked_pattern_coverage_drift() {
+        let enum_source = format!(
+            "app MatchCoverage\n{THEME}enum Status\n  ready\n  done\nstate\n  status:Status = Status.ready\nview\n  match status\n    Status.ready\n      text \"ready\"\n    Status.done\n      text \"done\"\n"
+        );
+        let mut checked = analyze(&enum_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let ready = checked
+            .declarations
+            .enum_decl_by_name("Status")
+            .unwrap()
+            .variants[0]
+            .declaration
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 1, CheckedMatchPattern::Enum(ready));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duplicate case"));
+
+        let option_source = format!(
+            "app MatchWildcard\n{THEME}state\n  choice:str? = none\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 0, CheckedMatchPattern::Wildcard);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("wildcard topology"));
+
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked.facts.remove_match_arm(view, 1);
+        let ViewNode::Match { arms, .. } = &mut checked.document.view else {
+            panic!("fixture root must be match");
+        };
+        arms.remove(1);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("children diverged from checked topology")
+        );
+    }
+
+    #[test]
+    fn match_lowering_rejects_raw_arm_child_reassignment() {
+        let source = format!(
+            "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  col\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        let moved = arms[0].children.pop().unwrap();
+        arms[1].children.insert(0, moved);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked arm topology"));
+    }
+
+    #[test]
+    fn normal_and_flex_match_codegen_ignore_raw_arm_child_reassignment() {
+        for layout in ["col", "flex dir=column"] {
+            let source = format!(
+                "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  {layout}\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+            );
+            let mut program = lower(analyze(&source).unwrap()).unwrap();
+            let expected = crate::codegen::generate(&program, "match-topology.ice").unwrap();
+            let ViewNode::Layout { children, .. } = &mut program.document.view else {
+                panic!("fixture root must be a layout");
+            };
+            let ViewNode::Match { arms, .. } = &mut children[0] else {
+                panic!("fixture child must be match");
+            };
+            let moved = arms[0].children.pop().unwrap();
+            arms[1].children.insert(0, moved);
+
+            let actual = crate::codegen::generate(&program, "match-topology.ice").unwrap();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
@@ -16237,6 +16642,387 @@ view
             assert_eq!(error.line, line);
             program.interaction_widgets.insert(id, interaction);
         }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn match_codegen_consumes_the_resolved_binding_type() {
+        let source = format!(
+            "app ResolvedMatchBinding\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        let local = program.match_views.values().next().unwrap().arms[0]
+            .binding
+            .as_ref()
+            .unwrap()
+            .local;
+        program.facts.corrupt_local_type(local, Type::Bool);
+
+        let actual = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_match_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-match-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("choice-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedMatch\nuse \"choice-card.ice\"\n{THEME}view\n  ChoiceCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ChoiceCard()\n  state\n    choice:str? = some(\"ready\")\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n",
+        )
+        .unwrap();
+
+        let mut checked = analyze_file(&root).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let match_origin = checked.facts.view(view).origin;
+        checked
+            .facts
+            .corrupt_match_arm_origin(view, 1, match_origin);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert!(error.message.contains("checked parent or source"));
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let resolved = program
+            .match_views
+            .values()
+            .next()
+            .expect("imported match must be normalized");
+        let origin = program.origin(resolved.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+        let arm_origin = program.origin(resolved.arms[0].origin);
+        assert_eq!(arm_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(arm_origin.line, 6);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.match_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.match_views.values_mut().next().unwrap().arms[0].binding = None;
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_for_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-for-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("iteration-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedFor\nuse \"iteration-card.ice\"\n{THEME}view\n  IterationCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component IterationCard()\n  state\n    items:[str] = [\"A\", \"B\"]\n  col\n    for item in items\n      text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let iteration = program
+            .iterations
+            .values()
+            .next()
+            .expect("imported for must be normalized");
+        let origin = program.origin(iteration.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        // Flow nodes emit their children inline, so the generated marker belongs to the
+        // imported body while the normalized iteration retains the flow's own origin.
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        program.iterations.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_if_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-if-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("conditional-card.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedConditional\nuse \"conditional-card.ice\"\n{THEME}view\n  ConditionalCard\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ConditionalCard()\n  col\n    if true\n      text \"Visible\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let conditional = program
+            .conditionals
+            .values()
+            .next()
+            .expect("imported if must be normalized");
+        let origin = program.origin(conditional.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.conditionals.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_keyed_column_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-keyed-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("keyed-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedKeyed\nuse \"keyed-card.ice\"\n{THEME}view\n  KeyedCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component KeyedCard()\n  state\n    items:[i64] = [1, 2]\n  keyed item in items by=item\n    text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let keyed = program
+            .keyed_columns
+            .values()
+            .next()
+            .expect("imported keyed column must be normalized");
+        let origin = program.origin(keyed.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.keyed_columns.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_lazy_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-lazy-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("lazy-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedLazy\nuse \"lazy-card.ice\"\n{THEME}view\n  LazyCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component LazyCard()\n  lazy \"Hello\" as cached\n    text cached\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let lazy = program
+            .lazy_views
+            .values()
+            .next()
+            .expect("imported lazy must be normalized");
+        let origin = program.origin(lazy.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.lazy_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_responsive_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-responsive-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("responsive-card.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedResponsive\nuse \"responsive-card.ice\"\n{THEME}view\n  ResponsiveCard\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ResponsiveCard()\n  responsive at=600.0 w=fill h=40.0\n    text \"Narrow\"\n    text \"Wide\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let responsive = program
+            .responsives
+            .values()
+            .next()
+            .expect("imported responsive must be normalized");
+        let origin = program.origin(responsive.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.responsives.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_pin_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pin-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("pin-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedPin\nuse \"pin-card.ice\"\n{THEME}view\n  PinCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component PinCard()\n  pin x=0.0 y=0.0\n    text \"Pinned\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pin = program
+            .pins
+            .values()
+            .next()
+            .expect("imported pin must be normalized");
+        let origin = program.origin(pin.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.pins.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -17164,6 +17950,81 @@ view
     }
 
     #[test]
+    fn component_call_routes_reject_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app ComponentRouteExpressionCardinality\n{THEME}state\n  active = false\non output(next)\n  active = next\non event(next)\n  active = next\ncomponent Routed() -> bool\n  emits\n    changed(bool)\n  col\n    button \"Output\" -> emit(true)\n    button \"Event\" -> emit(changed, true)\nview\n  Routed -> output !active\n    events\n      changed -> event !active\n"
+        );
+        for count in [1, 3] {
+            let mut checked = analyze(&source).unwrap();
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            checked
+                .facts
+                .corrupt_interaction_expression_count(view, count);
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(
+                error.message.contains("expression cardinality diverged"),
+                "unexpected expression-count diagnostic: {}",
+                error.message
+            );
+        }
+
+        let mut invalid_last_graph = analyze(&source).unwrap();
+        let view = invalid_last_graph
+            .declarations
+            .view_id(invalid_last_graph.document.view.span())
+            .unwrap();
+        invalid_last_graph.facts.corrupt_expression_first_child(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: view,
+                index: 1,
+            }),
+            u32::MAX,
+        );
+        let error = lower(invalid_last_graph).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_sibling_route_origin_swaps() {
+        let source = format!(
+            "app ComponentRouteOriginSwap\n{THEME}state\n  label = \"ready\"\non accepted(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  Routed -> accepted \"output\"\n    events\n      changed -> accepted \"event\"\n"
+        );
+        let call_id = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            (view, checked.declarations.component_call_id(view).unwrap())
+        };
+
+        let mut interaction_only = analyze(&source).unwrap();
+        let (view, _) = call_id(&interaction_only);
+        interaction_only
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        let error = lower(interaction_only).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut fully_swapped = analyze(&source).unwrap();
+        let (view, call) = call_id(&fully_swapped);
+        fully_swapped
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        fully_swapped
+            .facts
+            .swap_component_call_direct_route_origins(call, 0);
+        let error = lower(fully_swapped).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+    }
+
+    #[test]
     fn component_call_routes_reject_cross_owner_id_type_cardinality_and_origin_corruption() {
         let source = format!(
             "app ComponentRouteIdentity\n{THEME}state\n  label = \"label\"\non first(value)\n  label = value\non second(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\ncomponent Alternate() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  col\n    Routed -> first label\n      events\n        changed -> first label\n    Routed -> second label\n      events\n        changed -> second label\n"
@@ -17260,6 +18121,250 @@ view
     }
 
     #[test]
+    fn imported_forward_routes_validate_stable_outer_contracts_and_callback_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-component-forward-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("forward.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentForward\nuse \"forward.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Outer\n    events\n      changed -> accepted _\n      renamed -> accepted _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Leaf()\n  emits\n    changed(str)\n    renamed(str)\n  button \"Emit\" -> emit(changed, \"leaf\")\ncomponent Outer()\n  emits\n    changed(str)\n    renamed(str)\n  Leaf\n    forward\n      changed\n      renamed\ncomponent Mirror()\n  emits\n    changed(str)\n  space\n",
+        )
+        .unwrap();
+
+        let forward_call = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.components[1].root.span())
+                .unwrap();
+            checked.declarations.component_call_id(view).unwrap()
+        };
+        fn forwarded_event(program: &mut LoweredProgram) -> &mut ResolvedEventRoute {
+            program
+                .calls
+                .iter_mut()
+                .flat_map(|call| &mut call.events)
+                .find(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                .unwrap()
+        }
+        fn forwarded_events(program: &mut LoweredProgram) -> &mut Vec<ResolvedEventRoute> {
+            &mut program
+                .calls
+                .iter_mut()
+                .find(|call| {
+                    call.events.len() >= 2
+                        && call
+                            .events
+                            .iter()
+                            .all(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                })
+                .unwrap()
+                .events
+        }
+
+        let mut invalid_component = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component);
+        invalid_component
+            .facts
+            .corrupt_component_call_forward_outer_component(call, 0, ComponentId(u32::MAX));
+        let error = lower(invalid_component).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_event = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event);
+        invalid_event
+            .facts
+            .corrupt_component_call_forward_outer_event(
+                call,
+                0,
+                ComponentEventId {
+                    component: ComponentId(1),
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_event).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_component_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component_name);
+        invalid_component_name
+            .facts
+            .corrupt_component_call_forward_outer_component_name(call, 0, "poisoned");
+        let error = lower(invalid_component_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_event_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event_name);
+        invalid_event_name
+            .facts
+            .corrupt_component_call_forward_outer_event_name(call, 0, "poisoned");
+        let error = lower(invalid_event_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_payload = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_payload);
+        invalid_payload
+            .facts
+            .corrupt_component_call_forward_outer_payload(call, 0, Type::Bool);
+        let error = lower(invalid_payload).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_lowered_id = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = invalid_lowered_id
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component, ..
+                }) => Some(outer_component),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        *forward = ComponentId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_lowered_id, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_callee_event = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { event, .. } = forwarded_event(&mut invalid_callee_event)
+        else {
+            unreachable!();
+        };
+        *event = ComponentEventId {
+            component: ComponentId(0),
+            index: u32::MAX,
+        };
+        let error =
+            crate::codegen::generate(&invalid_callee_event, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_forward_origin = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { origin, .. } =
+            forwarded_event(&mut invalid_forward_origin)
+        else {
+            unreachable!();
+        };
+        *origin = OriginId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_forward_origin, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_name = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { name, .. } = forwarded_event(&mut invalid_callee_name)
+        else {
+            unreachable!();
+        };
+        *name = "poisoned".into();
+        let error =
+            crate::codegen::generate(&invalid_callee_name, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_payloads = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { payloads, .. } =
+            forwarded_event(&mut invalid_callee_payloads)
+        else {
+            unreachable!();
+        };
+        *payloads = vec![Type::Bool];
+        let error =
+            crate::codegen::generate(&invalid_callee_payloads, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_event_order = lower(analyze_file(&root).unwrap()).unwrap();
+        forwarded_events(&mut invalid_event_order).swap(0, 1);
+        let error =
+            crate::codegen::generate(&invalid_event_order, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut missing_callback = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = missing_callback
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                    ..
+                }) => Some((
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                )),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        let (outer_component, outer_component_name, outer_event, outer_event_name, outer_payloads) =
+            forward;
+        *outer_component = ComponentId(2);
+        *outer_component_name = "Mirror".into();
+        *outer_event = ComponentEventId {
+            component: ComponentId(2),
+            index: 0,
+        };
+        *outer_event_name = "changed".into();
+        *outer_payloads = vec![Type::Str];
+        let error =
+            crate::codegen::generate(&missing_callback, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("absent from component context"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_component_call_routes_keep_origins_markers_and_hir_diagnostics() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -17285,6 +18390,28 @@ view
         )
         .unwrap();
 
+        let mut swapped_origins = analyze_file(&root).unwrap();
+        let imported_call_view = swapped_origins
+            .declarations
+            .view_id(swapped_origins.document.components[1].root.span())
+            .unwrap();
+        let imported_call = swapped_origins
+            .declarations
+            .component_call_id(imported_call_view)
+            .unwrap();
+        swapped_origins
+            .facts
+            .swap_interaction_route_origins(imported_call_view, 0, 1);
+        swapped_origins
+            .facts
+            .swap_component_call_direct_route_origins(imported_call, 0);
+        let error = lower(swapped_origins).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert_eq!(error.column, 1);
+
         let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let call_index = program
             .calls
@@ -17295,24 +18422,33 @@ view
         let origin = program.origin(call.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(origin.line, 8);
-        let ComponentOutputRoute::Direct { route, .. } = &call.output else {
+        let ComponentOutputRoute::Direct {
+            route,
+            origin: output_origin_id,
+            ..
+        } = &call.output
+        else {
             panic!("imported call must have a direct output route");
         };
-        assert_eq!(
-            program.origin(route.origin).path.as_deref(),
-            Some(imported.as_path())
-        );
-        assert_eq!(program.origin(route.origin).line, 8);
+        let output_origin = program.origin(*output_origin_id);
+        assert_eq!(output_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(output_origin.line, 8);
+        assert_eq!(output_origin.column, 1);
+        assert_eq!(output_origin.parent, Some(call.origin));
+        assert_eq!(route.origin, *output_origin_id);
         let ResolvedEventRoute::Direct { route, origin, .. } = &call.events[0] else {
             panic!("imported call must have a direct event route");
         };
-        assert_eq!(program.origin(*origin).parent, Some(call.origin));
-        assert_eq!(program.origin(*origin).line, 10);
-        assert_eq!(
-            program.origin(route.origin).path.as_deref(),
-            Some(imported.as_path())
-        );
-        assert_eq!(program.origin(route.origin).line, 10);
+        let event_origin = program.origin(*origin);
+        assert_eq!(event_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_origin.line, 10);
+        assert_eq!(event_origin.column, 1);
+        assert_eq!(event_origin.parent, Some(call.origin));
+        let event_route_origin = program.origin(route.origin);
+        assert_eq!(event_route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_route_origin.line, 10);
+        assert_eq!(event_route_origin.column, 1);
+        assert_eq!(event_route_origin.parent, Some(call.origin));
 
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());

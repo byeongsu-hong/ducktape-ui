@@ -9,7 +9,7 @@ src/codegen/canvas/events.rs 78 a20a043e7a887216a0bbb58d4d995c7f
 src/codegen/canvas/style.rs 9 1232765fe2b033ca0db1bcf2e897dcf1
 src/codegen/expr.rs 169 98b50735b4e0be59f145e4b48044c00e
 src/codegen/expr/binding.rs 274 c7483f379043d0475be0571709a23ddb
-src/codegen/expr/children.rs 4 79cc71cade0fc7529cc3960f89d49c3e
+src/codegen/expr/children.rs 1 6ca96bb69df92ade6aaab76a744b7c47
 src/codegen/expr/discovery.rs 6 7550cb4e54b965a1dbc73b1f52d89b64
 src/codegen/probes.rs 48 d3d4d8dc2a5022741eec540554cd1bba
 src/codegen/runtime.rs 8 0ef1fc9918b81a99e227fa9a1b7fb671
@@ -24,20 +24,20 @@ src/codegen/view.rs 17 99ca506ef7ff36e657018e50292e31eb
 src/codegen/view/boolean.rs 13 ef43015509fb68792767c8f6a6bfc30a
 src/codegen/view/button.rs 3 ca9e8ef7311cd366a50cdc3621f2b6c2
 src/codegen/view/container.rs 9 3afd1d5c50584d288c270e684853cf75
-src/codegen/view/content.rs 10 ef8f17550d6edfab0a45c023dfc0423f
+src/codegen/view/content.rs 10 8913569a910ea70b463661c0512504b5
 src/codegen/view/controls.rs 9 3e382a86715582ed06a4c7232590d7bc
 src/codegen/view/documents.rs 5 d25978e2da656bd189c7c7b9b0f23eab
 src/codegen/view/editor.rs 14 c70750134d075380b406994cfa4a04d3
 src/codegen/view/foundation.rs 5 e01f2b6fb84c75b83b6df9ebbe8905f9
 src/codegen/view/input.rs 6 f8e786b2e0dd19884cc59b4aedf45920
-src/codegen/view/layout.rs 21 a3e38ede1f048dcb01ca3cdd5d947ba7
+src/codegen/view/layout.rs 18 d3d23752bb39228927c513e35e093721
 src/codegen/view/markdown.rs 2 8eeb0e924d7414bb079408fc53658c6d
 src/codegen/view/media.rs 13 12300e40b2e57b7eb71671c855b3b5b0
-src/codegen/view/pane.rs 12 f22ea4a62f5067b3bc8ed8e3a60e8dc0
+src/codegen/view/pane.rs 12 2d23868da96b30a8daf62df09363d51d
 src/codegen/view/range_controls.rs 4 e4157c3c7bb623f5e9f26b4e7d4c71d9
 src/codegen/view/selection.rs 5 f18bc8cb43678962a22ec7a441d10288
-src/codegen/view/structure.rs 8 0f1a3adb49d1382f78b3f8d2565d26d8
-src/codegen/view/table.rs 10 30c573d164dca8bcc53a6d2498d276e0
+src/codegen/view/structure.rs 8 443220e1441dd1ce4db8057a17fc3ba0
+src/codegen/view/table.rs 10 072e77f845a083f260215cb417807d81
 src/codegen/view/text.rs 7 16ac69e22b200e53f0c7e453c2e5c8d7
 src/codegen/view/themer_shader.rs 2 2847b76dc88c97b9809d824416ac4466
 [checked-document escape]
@@ -48,18 +48,18 @@ src/codegen/expr/discovery.rs 1 c539f025a2098447f9b3f7181f13bcad
 src/codegen/statement/view_fn.rs 1 a1aa375e19bcfb7c10650b6676cd8457
 [raw document wrapper]
 [checker semantic reference]
-src/codegen.rs 4 404f96582a77738be407abe6ea8038f2
+src/codegen.rs 4 b59bb2d2d4befb3cae3925ca0c68ee20
 src/codegen/application.rs 1 46c93e7fa43a3bb338607809392ddcfd
 src/codegen/canvas/style.rs 7 ac2c208ed531e661eb6555b89acdcfb3
 src/codegen/expr.rs 59 22d340b1fe21ded3d0eab83d67a0ab9c
 src/codegen/expr/binding.rs 4 cfd942c917f8d175a546d0da665a1a57
 src/codegen/view/container.rs 3 867d5fb63cb969d05e90024534c36259
-src/codegen/view/content.rs 2 e46deedf3bece0bc02d335141f9e8cc7
+src/codegen/view/content.rs 2 6a51c466a4cab7534de6babc48edaf10
 src/codegen/view/editor.rs 1 07e441c77bcd90f44dbc9eff5fd1cc01
 src/codegen/view/markdown.rs 2 5b447eb9ddf81a4a690d10b980ee63e6
 src/codegen/view/pane.rs 4 af8426c8905b7614f2f5628014232005
 [checked-facts escape]
-src/codegen.rs 1 cbc3001fb44327b1da0e956b1b563b49
+src/codegen.rs 1 d906fd5e76af0560597bc6b08f19a6aa
 src/codegen/expr.rs 8 0464c51b101cfd48482f1c63ecda45d5
 src/codegen/statement/view_fn.rs 1 c68a8b8e97f90e35ed617cfe52c3483e
 [declaration-index escape]
