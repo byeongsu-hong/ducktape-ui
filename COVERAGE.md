@@ -44,6 +44,9 @@ transitive reverse edges are retained. They also prove notification-free import
 edits, same-length timestamp-preserving and atomic replacements, source and
 asset symlink retargeting, stable overlay close across a root-symlink retarget,
 font deletion/recreation, and invalid icon-byte changes are observed.
+Watcher-validated source batches reuse the unchanged parsed closure. A focused
+fixture asserts one leaf edit loads, hashes, and import-scans exactly one file,
+checks only its affected root, and leaves an independent root as a cache hit.
 LSP diagnostics, the dev
 preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
 own and reuse this same DB API without global or process-persistent state.
@@ -202,8 +205,11 @@ the metadata trigger performs no content reads before the existing two-pass
 stamp verification. Configuration-change plus periodic-rescan tests cover the
 other complete-snapshot safety paths. Selective-snapshot tests prove that a known
 Rust file or source-only Ice edit performs two content reads regardless of graph
-size, while new and removed files refresh the inventory. A changed snapshot is
-settled and built while the accepted process remains alive. The shadow
+size, while new and removed files refresh the inventory. The second settled Ice
+read is retained as the analysis input; an explicit 10,000-source performance
+contract requires exactly one loaded, hashed, and scanned file, one checked
+root, and an independent root cache hit within five seconds. A changed snapshot
+is settled and built while the accepted process remains alive. The shadow
 executable is adopted only after its generated root completes a draw, atomically
 publishes the runner's exact readiness token, and is confirmed alive; failure
 and timeout tests keep the previous process and clean the candidate. This is
@@ -366,6 +372,23 @@ Windows native WGPU job requires a renderer primitive from a measured mounted
 row subtree before accepting the first frame. V1 explicitly excludes
 variable-height measurement, scrolling-ancestor touch transforms, and new Ice
 syntax.
+
+Fixed-height `TreeView` reuses the same mounted-window engine and has separate
+runtime evidence for atomic preorder validation including referenced-leaf and
+closed-subtree rejection, retained expansion, collapse selection rehoming,
+lazy-load requests, hierarchical Left/Right navigation,
+rename commit/cancel, drag-target geometry, canonical selectors, and 100,000
+logical nodes with visible-plus-overscan mounting. Headless AccessKit evidence
+checks Tree/TreeItem roles, level, sibling position and size, expanded state,
+selection, and mounted-only node count. Release contracts measure unchanged
+100,000-node rendering, flat and maximum-depth preorder reconciliation,
+late-key hierarchical toggle/navigation, and the constant-time `update_snapshot`
+plus scroll reducer with zero allocation for scalar keys. The showcase consumes
+`TreeView.Frame` through a typed extern; a first-class Ice test exercises
+hierarchical navigation plus rename focus, commit/cancel, and tree-focus
+restoration. Native and wasm minimal-feature checks
+compile the public boundary, and WGPU readiness requires both VirtualList and
+TreeView mounted-row draw probes.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
@@ -637,11 +660,16 @@ Match has a complete private HIR boundary. Its checked flow owns the stable
 value expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates the expression owner mapping and DAG, scope and value type,
 Option/Result/enum/palette pattern contracts, payload local types and owner
-roles, enum/palette declarations, and arm-origin parentage before publishing
-`ResolvedMatch`. Normal-layout and flex-layout emission consume resolved Rust
-owner/variant names and never reopen checker facts or declaration IDs. Malformed
-expression/local/enum IDs fail at the source-mapped arm during lowering;
-post-check and post-lowering AST poisoning, all typed pattern families, and an
+roles, enum/palette declarations, checked duplicate/missing/wildcard coverage,
+arm-origin parent/source identity, and each arm's ordered child view IDs before
+publishing `ResolvedMatch`. Normal-layout and flex-layout emission consume
+resolved Rust owner/variant names and the resolved payload binding type; they do
+not reopen checked Match flow/local types or pattern declaration IDs. Source arm
+nodes supply only child subtrees; their spans are mapped to stable view IDs and
+rejected if those IDs move between arms.
+Malformed expression/local/enum IDs fail at the source-mapped arm during
+lowering; post-check and post-lowering AST poisoning, checked coverage and arm
+partition corruption, all typed pattern families, imported diagnostics, and an
 ignored 4,000-node lower+emit contract cover the boundary.
 
 Table has a complete private HIR boundary. Its checked flow owns the stable row
