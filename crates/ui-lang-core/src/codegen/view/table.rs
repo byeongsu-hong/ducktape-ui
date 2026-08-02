@@ -11,6 +11,9 @@ pub(in crate::codegen) fn render_table(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.hir();
+    if columns.len() != table.columns.len() {
+        return Err(program.invariant_at_origin(table.origin, "table HIR column length diverged"));
+    }
     let rows = checked_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
     let item_name = &table.row.name;
     let row_rust = table.row.ty.rust(&document.structs);

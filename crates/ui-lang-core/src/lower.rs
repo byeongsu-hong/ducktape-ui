@@ -3331,16 +3331,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "table reached code generation with a mismatched checked view ID",
             ));
         }
         self.tables.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "table reached code generation without normalized HIR",
             )
         })
@@ -11462,6 +11460,64 @@ view
         columns[0].align_x = Some(InputAlignment::Left);
         let actual = crate::codegen::generate(&program, "lowered-table.ice").unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_table_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-table-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("table-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedTable\nuse \"table-card.ice\"\n{THEME}view\n  TableCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component TableCard()\n  state\n    rows:[str] = [\"A\"]\n  table row in rows\n    col\n      header\n        text \"Name\"\n      cell\n        text row\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let table = program
+            .tables
+            .values()
+            .next()
+            .expect("imported table must be normalized");
+        let origin = program.origin(table.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+        let column_origin = program.origin(table.columns[0].origin);
+        assert_eq!(column_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(column_origin.line, 5);
+        assert_eq!(column_origin.parent, Some(table.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.tables.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.tables.values_mut().next().unwrap().columns.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
