@@ -140,6 +140,41 @@ pub struct AnalysisInvalidation {
     pub affected_roots: BTreeSet<PathBuf>,
 }
 
+/// One source snapshot already stabilized by an external file watcher.
+///
+/// A watcher-backed caller must include every notified Ice source that belongs
+/// to the queried root. Files omitted from the batch are treated as unchanged
+/// and reuse their retained parsed representation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedSource {
+    path: PathBuf,
+    contents: Option<Vec<u8>>,
+}
+
+impl ValidatedSource {
+    pub fn new(path: impl Into<PathBuf>, contents: impl Into<Vec<u8>>) -> Self {
+        Self {
+            path: path.into(),
+            contents: Some(contents.into()),
+        }
+    }
+
+    pub fn missing(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            contents: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn contents(&self) -> Option<&[u8]> {
+        self.contents.as_deref()
+    }
+}
+
 /// Bounds how long a retained result may skip disk validation.
 ///
 /// Metadata checks catch ordinary edits cheaply. Content checks are the
@@ -281,6 +316,20 @@ impl DiskStamp {
 struct LoadedGraph {
     loaded: LoadedSource,
     fingerprint: RootFingerprint,
+    dependency_paths: HashSet<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourceLoad {
+    Disk,
+    Retained,
+}
+
+struct GraphLoader {
+    graph: LoadedGraph,
+    included: HashSet<(PathBuf, Option<String>)>,
+    stack: Vec<PathBuf>,
+    source_load: SourceLoad,
 }
 
 /// Process-local incremental storage for Ice source graphs.
@@ -627,11 +676,33 @@ impl AnalysisDb {
     }
 
     pub fn analyze_root(&mut self, path: impl AsRef<Path>) -> Result<FileAnalysis, Error> {
-        self.analyze_root_shared(path)
+        self.analyze_root_shared(path, SourceLoad::Disk)
             .map(|analysis| analysis.as_ref().clone())
     }
 
-    fn analyze_root_shared(&mut self, path: impl AsRef<Path>) -> Result<Arc<FileAnalysis>, Error> {
+    /// Analyze a root from a watcher-validated change batch.
+    ///
+    /// The supplied contents replace only their matching retained disk inputs.
+    /// Every other file in the previously loaded source closure is reused
+    /// without another read, hash, or import scan. A newly imported file still
+    /// falls back to disk because it is not part of that retained closure.
+    pub fn analyze_root_with_validated_sources(
+        &mut self,
+        path: impl AsRef<Path>,
+        sources: impl IntoIterator<Item = ValidatedSource>,
+    ) -> Result<FileAnalysis, Error> {
+        for source in sources {
+            self.install_validated_source(source)?;
+        }
+        self.analyze_root_shared(path, SourceLoad::Retained)
+            .map(|analysis| analysis.as_ref().clone())
+    }
+
+    fn analyze_root_shared(
+        &mut self,
+        path: impl AsRef<Path>,
+        source_load: SourceLoad,
+    ) -> Result<Arc<FileAnalysis>, Error> {
         let requested = path.as_ref().to_owned();
         let requested_path = absolute_lexical_path(&requested).map_err(|error| {
             file_error(
@@ -652,7 +723,7 @@ impl AnalysisDb {
         self.known_roots.insert(root.clone());
         self.dirty_roots.insert(root.clone());
         let started = Instant::now();
-        let graph = self.load_graph(&root);
+        let graph = self.load_graph(&root, source_load);
         self.metrics.elapsed.load += started.elapsed();
         let graph = graph?;
         if let Some(cached) = self.checked_roots.get(&root)
@@ -756,7 +827,7 @@ impl AnalysisDb {
             return Ok(Arc::clone(&cached.analysis));
         }
 
-        self.analyze_root_shared(&requested)
+        self.analyze_root_shared(&requested, SourceLoad::Disk)
     }
 
     /// Refresh a watched path only when it belongs to a retained source graph
@@ -986,7 +1057,58 @@ impl AnalysisDb {
         Ok(source)
     }
 
-    fn parsed_file(&mut self, path: &Path) -> Result<(FileKey, Arc<ParsedFile>), Error> {
+    fn install_validated_source(&mut self, source: ValidatedSource) -> Result<(), Error> {
+        let lexical_path = absolute_lexical_path(&source.path).map_err(|error| {
+            file_error(
+                "E181",
+                &source.path,
+                1,
+                format!("cannot resolve source path: {error}"),
+            )
+        })?;
+        if self.is_overlay_path(&lexical_path) {
+            return Ok(());
+        }
+        let path = normalize_path(&lexical_path).map_err(|error| {
+            file_error(
+                "E181",
+                &source.path,
+                1,
+                format!("cannot resolve source path: {error}"),
+            )
+        })?;
+        let Some(contents) = source.contents else {
+            self.remove_current_file(&path);
+            return Ok(());
+        };
+        self.metrics.files_loaded += 1;
+        self.metrics.bytes_loaded += contents.len();
+        let source = String::from_utf8(contents).map_err(|error| {
+            self.remove_current_file(&path);
+            file_error("E181", &path, 1, format!("cannot read .ice file: {error}"))
+        })?;
+        let source: Arc<str> = Arc::from(source);
+        let key = self.file_key(path.clone(), &source);
+        if self.current_files.get(&path) == Some(&key) && self.parsed_files.contains_key(&key) {
+            return Ok(());
+        }
+        self.replace_current_key(path.clone(), key.clone());
+        let parsed = self.scan_source(&path, Arc::clone(&source))?;
+        self.parsed_files.insert(key, parsed);
+        Ok(())
+    }
+
+    fn parsed_file(
+        &mut self,
+        path: &Path,
+        source_load: SourceLoad,
+    ) -> Result<(FileKey, Arc<ParsedFile>), Error> {
+        if source_load == SourceLoad::Retained
+            && let Some(key) = self.current_files.get(path)
+            && let Some(parsed) = self.parsed_files.get(key)
+        {
+            return Ok((key.clone(), Arc::clone(parsed)));
+        }
         let source = match self.read_source(path) {
             Ok(source) => source,
             Err(error) => {
@@ -1002,6 +1124,12 @@ impl AnalysisDb {
             return Ok((key, Arc::clone(parsed)));
         }
 
+        let parsed = self.scan_source(path, source)?;
+        self.parsed_files.insert(key.clone(), Arc::clone(&parsed));
+        Ok((key, parsed))
+    }
+
+    fn scan_source(&mut self, path: &Path, source: Arc<str>) -> Result<Arc<ParsedFile>, Error> {
         let mut lines = Vec::new();
         let mut offset = 0;
         for (index, chunk) in source.split_inclusive('\n').enumerate() {
@@ -1024,13 +1152,12 @@ impl AnalysisDb {
             offset += chunk.len();
         }
         let parsed = Arc::new(ParsedFile { source, lines });
-        self.parsed_files.insert(key.clone(), Arc::clone(&parsed));
         self.metrics.files_scanned += 1;
-        Ok((key, parsed))
+        Ok(parsed)
     }
 
-    fn load_graph(&mut self, root: &Path) -> Result<LoadedGraph, Error> {
-        let (_, parsed) = self.parsed_file(root)?;
+    fn load_graph(&mut self, root: &Path, source_load: SourceLoad) -> Result<LoadedGraph, Error> {
+        let (_, parsed) = self.parsed_file(root, source_load)?;
         if !source_is_app(&parsed.source) {
             return Err(file_error(
                 "E183",
@@ -1039,18 +1166,22 @@ impl AnalysisDb {
                 "a root must declare `app Name` or `daemon Name`; import this fragment from an app or daemon instead",
             ));
         }
-        let mut graph = LoadedGraph {
-            loaded: LoadedSource {
-                source: String::new(),
-                origins: Vec::new(),
-                dependencies: Vec::new(),
+        let mut loader = GraphLoader {
+            graph: LoadedGraph {
+                loaded: LoadedSource {
+                    source: String::new(),
+                    origins: Vec::new(),
+                    dependencies: Vec::new(),
+                },
+                fingerprint: RootFingerprint(Vec::new()),
+                dependency_paths: HashSet::new(),
             },
-            fingerprint: RootFingerprint(Vec::new()),
+            included: HashSet::new(),
+            stack: Vec::new(),
+            source_load,
         };
-        let mut included = HashSet::new();
-        let mut stack = Vec::new();
-        self.load_into(root, (root, 1), None, &mut graph, &mut included, &mut stack)?;
-        Ok(graph)
+        self.load_into(root, (root, 1), None, &mut loader)?;
+        Ok(loader.graph)
     }
 
     fn load_into(
@@ -1058,12 +1189,10 @@ impl AnalysisDb {
         path: &Path,
         imported_from: (&Path, usize),
         namespace: Option<String>,
-        graph: &mut LoadedGraph,
-        included: &mut HashSet<(PathBuf, Option<String>)>,
-        stack: &mut Vec<PathBuf>,
+        loader: &mut GraphLoader,
     ) -> Result<(), Error> {
-        if let Some(start) = stack.iter().position(|entry| entry == path) {
-            let mut cycle = stack[start..]
+        if let Some(start) = loader.stack.iter().position(|entry| entry == path) {
+            let mut cycle = loader.stack[start..]
                 .iter()
                 .map(|entry| entry.display().to_string())
                 .collect::<Vec<_>>();
@@ -1075,15 +1204,15 @@ impl AnalysisDb {
                 format!("cyclic `use`: {}", cycle.join(" -> ")),
             ));
         }
-        if !included.insert((path.to_owned(), namespace.clone())) {
+        if !loader.included.insert((path.to_owned(), namespace.clone())) {
             return Ok(());
         }
-        stack.push(path.to_owned());
-        if !graph.loaded.dependencies.contains(&path.to_owned()) {
-            graph.loaded.dependencies.push(path.to_owned());
+        loader.stack.push(path.to_owned());
+        if loader.graph.dependency_paths.insert(path.to_owned()) {
+            loader.graph.loaded.dependencies.push(path.to_owned());
         }
-        let (key, parsed) = self.parsed_file(path)?;
-        graph.fingerprint.0.push((key, namespace.clone()));
+        let (key, parsed) = self.parsed_file(path, loader.source_load)?;
+        loader.graph.fingerprint.0.push((key, namespace.clone()));
         let mut direct = BTreeSet::new();
         let mut resolved_imports = Vec::new();
         let mut first_import_error = None;
@@ -1101,9 +1230,9 @@ impl AnalysisDb {
                 .unwrap_or_else(|| Path::new("."))
                 .join(relative);
             if let Ok(candidate_path) = absolute_lexical_path(&candidate)
-                && !graph.loaded.dependencies.contains(&candidate_path)
+                && loader.graph.dependency_paths.insert(candidate_path.clone())
             {
-                graph.loaded.dependencies.push(candidate_path);
+                loader.graph.loaded.dependencies.push(candidate_path);
             }
             match self.resolve_import(&candidate, path, *line) {
                 Ok(target) => {
@@ -1141,19 +1270,16 @@ impl AnalysisDb {
                     let (target, child_namespace, line) = imports
                         .next()
                         .expect("every resolved import retains its source position");
-                    self.load_into(
-                        &target,
-                        (path, line),
-                        child_namespace,
-                        graph,
-                        included,
-                        stack,
-                    )?;
+                    self.load_into(&target, (path, line), child_namespace, loader)?;
                 }
                 ParsedLine::Source { range, line } => {
-                    graph.loaded.source.push_str(&parsed.source[range.clone()]);
-                    graph.loaded.source.push('\n');
-                    graph.loaded.origins.push(Origin {
+                    loader
+                        .graph
+                        .loaded
+                        .source
+                        .push_str(&parsed.source[range.clone()]);
+                    loader.graph.loaded.source.push('\n');
+                    loader.graph.loaded.origins.push(Origin {
                         path: path.to_owned(),
                         line: *line,
                         namespace: namespace.clone(),
@@ -1161,7 +1287,7 @@ impl AnalysisDb {
                 }
             }
         }
-        stack.pop();
+        loader.stack.pop();
         Ok(())
     }
 
@@ -2149,6 +2275,52 @@ mod tests {
         assert_eq!(metrics.files_scanned, 1);
         assert_eq!(metrics.roots_checked, 1);
         assert_eq!(metrics.roots_reused, 1);
+    }
+
+    #[test]
+    fn validated_leaf_source_reuses_every_other_file_in_the_retained_closure() {
+        const IMPORTS: usize = 128;
+
+        let fixture = Fixture::new();
+        let mut source = String::from("app Large\n");
+        for index in 0..IMPORTS {
+            let name = format!("part-{index:03}.ice");
+            fixture.write(&name, &format!("// fragment {index}\n"));
+            source.push_str(&format!("use \"{name}\"\n"));
+        }
+        source.push_str(
+            "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ready\"\n",
+        );
+        fixture.write("large.ice", &source);
+        fixture.write("other.ice", &inline_app("Other", "untouched"));
+        let root = fixture.path("large.ice");
+        let other = fixture.path("other.ice");
+        let changed = fixture.path("part-064.ice");
+        let changed_source = b"// changed fragment\n".to_vec();
+        let mut db = AnalysisDb::default();
+        db.query_root(&root).unwrap();
+        db.query_root(&other).unwrap();
+        db.take_metrics();
+        fs::write(&changed, &changed_source).unwrap();
+
+        db.analyze_root_with_validated_sources(
+            &root,
+            [super::ValidatedSource::new(
+                changed.clone(),
+                changed_source.clone(),
+            )],
+        )
+        .unwrap();
+        db.query_root(&other).unwrap();
+        let metrics = db.take_metrics();
+
+        assert_eq!(metrics.files_loaded, 1, "{metrics:?}");
+        assert_eq!(metrics.bytes_loaded, changed_source.len(), "{metrics:?}");
+        assert_eq!(metrics.files_hashed, 1, "{metrics:?}");
+        assert_eq!(metrics.bytes_hashed, changed_source.len(), "{metrics:?}");
+        assert_eq!(metrics.files_scanned, 1, "{metrics:?}");
+        assert_eq!(metrics.roots_checked, 1, "{metrics:?}");
+        assert_eq!(metrics.root_cache_hits, 1, "{metrics:?}");
     }
 
     #[test]

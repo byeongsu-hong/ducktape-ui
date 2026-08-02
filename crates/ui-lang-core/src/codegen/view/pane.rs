@@ -34,7 +34,12 @@ pub(in crate::codegen) fn render_pane_grid(
             if let Some(binding) = &resolved.maximized {
                 pane_env.insert(
                     binding.name.clone(),
-                    checked_local_binding(program, binding.local, "__pane_maximized".into(), true),
+                    checked_local_binding(
+                        LocalBindingTypeSource::Checked(program),
+                        binding.local,
+                        "__pane_maximized".into(),
+                        true,
+                    ),
                 );
             }
             let pane_scope = format!("format!(\"{{}}/{}\", {pane_grid_scope})", resolved.name);
@@ -62,12 +67,22 @@ pub(in crate::codegen) fn render_pane_grid(
         let mut template_env = ScopedBindingEnv::new(env);
         template_env.insert(
             item.clone(),
-            checked_local_binding(program, resolved.item.local, format!("(*{item})"), false),
+            checked_local_binding(
+                LocalBindingTypeSource::Checked(program),
+                resolved.item.local,
+                format!("(*{item})"),
+                false,
+            ),
         );
         if let Some(binding) = &resolved.pane.maximized {
             template_env.insert(
                 binding.name.clone(),
-                checked_local_binding(program, binding.local, "__pane_maximized".into(), true),
+                checked_local_binding(
+                    LocalBindingTypeSource::Checked(program),
+                    binding.local,
+                    "__pane_maximized".into(),
+                    true,
+                ),
             );
         }
         let key = checked_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;

@@ -1256,6 +1256,10 @@ impl DeclarationIndex {
         self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
+    pub(crate) fn palette_count(&self) -> usize {
+        self.palettes.len()
+    }
+
     pub(crate) fn extern_fn(&self, index: usize) -> Declaration<ExternFnId> {
         self.externs[index].declaration
     }
