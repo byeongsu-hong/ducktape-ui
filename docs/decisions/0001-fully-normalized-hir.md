@@ -5,12 +5,12 @@
 
 ## Context
 
-Successful Ice analysis currently produces a nominal `CheckedDocument`, but it
-still contains and dereferences to the source `Document`. The Rust code
-generator consumes that checked AST directly and imports checker helpers for
-some semantic decisions. As component defaults, bindings, named events, slots,
-recipes, typed matches, scoped widget identity, and asynchronous lifetimes have
-grown, this makes it increasingly easy to repeat or diverge on the same
+At the time of adoption, successful Ice analysis produced a nominal
+`CheckedDocument` that contained and dereferenced to the source `Document`.
+The Rust code generator consumed that checked AST directly and imported checker
+helpers for some semantic decisions. As component defaults, bindings, named
+events, slots, recipes, typed matches, scoped widget identity, and asynchronous
+lifetimes grew, this made it increasingly easy to repeat or diverge on the same
 decision in the checker and code generator.
 
 New Core syntax is frozen while this boundary is established. The objective is
@@ -64,7 +64,7 @@ including:
 - retained or mounted lifetime behavior and its cleanup obligations;
 - all remaining type, capability, and ownership choices required by emission.
 
-The HIR specification covers the whole accepted language. Delivery remains
+The HIR specification covers the whole accepted language. Delivery was
 incremental: component calls and contracts first, then styles and themes,
 expressions and matches, asynchronous behavior and lifetime, application
 settings and tests, and finally the remaining backend surface. Each migrated
@@ -79,10 +79,11 @@ Component and call IDs, ordered props with selected defaults, writable state
 references, direct/forwarded named events, ordered required/optional slots,
 output routes, scope identity, and storage lifetime are fixed before emission.
 The component call render path selects classified calls and contracts by source
-site and typed ID instead of repeating those decisions. Lowering still resolves
-component source names, while other unmigrated generation paths still consume
-AST names and nodes. Component state storage, boot, update, mounted cleanup, and
-call rendering consume the resolved contract.
+site and typed ID instead of repeating those decisions. At that stage, lowering
+resolved component source names while paths outside the slice still consumed
+AST names and nodes; the subsequent slices documented below removed those
+dependencies. Component state storage, boot, update, mounted cleanup, and call
+rendering consume the resolved contract.
 
 Supplied component arguments now carry an unconditional checked expression-use
 ID; defaults retain the same representation. Bind writability is decided from
@@ -99,7 +100,7 @@ checked expression-use IDs, payload indexes, and source/destination types.
 Generation no longer receives a raw `Route`, `Expr`, or source component
 declaration for this path, and the former raw route callback helper family is
 removed. Component root/slot child traversal and the general expression
-fallback remain explicit later slices; they are not part of this route cut.
+fallback were outside that route cut and were removed by subsequent slices.
 
 Normalized component records carry root/import locations through `OriginId`.
 The table's parent links are scaffolding for future expansion stacks: current
@@ -118,22 +119,10 @@ selection, static or dynamic active palettes, native theme factory calls,
 nested gradients, token references, and opacity are resolved before their
 migrated emitters run.
 
-This is deliberately not a claim that every style-shaped AST node has been
-migrated. Expression-bearing native widget status blocks and direct
-non-Canvas/non-Media/non-Tooltip view color fields remain AST-backed with the
-expression/view family.
-Palette enum paths inside the general expression emitter also remain in that
-family. Their backend helpers are removed only when those expressions and view
-options gain normalized nodes; no compatibility fallback is added.
-
-The program still owns AST-backed nodes for semantic families not yet migrated.
-The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout,
-Text, RichText, Input, Button, TextEditor, PickList, ComboBox, Slider, Progress,
-Rule, QrCode, Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
-ExternComponent, Themer, Shader, If, For, and Match therefore remain open
-implementation slices; this status
-does not satisfy the migration-complete criteria below.
+Subsequent style and view slices completed the remaining style-shaped surface.
+Expression-bearing native widget status blocks, direct view colors, palette
+enum paths, and every accepted widget option now lower to normalized HIR records
+or checked expression IDs before emission. No compatibility fallback remains.
 Migrated handler and application-setting generation uses the shared origin arena
 directly for imported and root source markers.
 
@@ -176,8 +165,8 @@ validates raw view kind/children against the stable checked topology. Invalid
 owner, topology, match binding, and enum IDs therefore fail with source-mapped
 `E196`. Imported expressions retain physical locations and parent chains;
 missing, duplicate, or leftover authoritative analyses also fail with `E196`.
-Expression-bearing widget options remain later slices, so the full-HIR
-completion criteria remain open.
+Subsequent widget slices extend the same ownership and topology guarantees to
+every expression-bearing option and close the full-HIR view boundary.
 
 Handler bodies are now a completed production HIR slice. One deterministic
 preorder arena owns app, implicit `mount`, component, and preset handlers;
@@ -601,9 +590,9 @@ is built.
 The test backend iterates only `ResolvedTest` records and checked expression
 IDs. It does not consume `TestDecl`, `TestStep`, raw `Expr`, or raw route
 semantics, and post-check expression mutations cannot affect generated Rust or
-the retained diagnostic statement. Test mount rendering still uses the general
-view renderer and therefore remains subject to the open view-structure HIR
-boundary rather than a test-specific fallback. Structural ID/owner snapshots,
+the retained diagnostic statement. Test mount rendering uses the same normalized
+general view renderer and does not retain a test-specific raw fallback.
+Structural ID/owner snapshots,
 config/target/step corruption tests, post-check AST poisoning, imported source
 locations, complete semantic-action generation, and an ignored 4,000-step
 lower+emit budget are the executable evidence.
