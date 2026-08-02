@@ -387,6 +387,23 @@ runtime list's mounted-only AccessKit collection/item contract. This is not a
 second transcript scroller: unlike variable-height `MessageScroller`, it has
 no measurement, message anchors, prepend restoration, or built-in jump control.
 
+Fixed-height `TreeView` reuses the same mounted-window engine and has separate
+runtime evidence for atomic preorder validation including referenced-leaf and
+closed-subtree rejection, retained expansion, collapse selection rehoming,
+lazy-load requests, hierarchical Left/Right navigation,
+rename commit/cancel, drag-target geometry, canonical selectors, and 100,000
+logical nodes with visible-plus-overscan mounting. Headless AccessKit evidence
+checks Tree/TreeItem roles, level, sibling position and size, expanded state,
+selection, and mounted-only node count. Release contracts measure unchanged
+100,000-node rendering, flat and maximum-depth preorder reconciliation,
+late-key hierarchical toggle/navigation, and the constant-time `update_snapshot`
+plus scroll reducer with zero allocation for scalar keys. The showcase consumes
+`TreeView.Frame` through a typed extern; a first-class Ice test exercises
+hierarchical navigation plus rename focus, commit/cancel, and tree-focus
+restoration. Native and wasm minimal-feature checks
+compile the public boundary, and WGPU readiness requires both VirtualList and
+TreeView mounted-row draw probes.
+
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values

@@ -138,6 +138,8 @@ pub mod toggle;
 pub mod toggle_group;
 #[cfg(feature = "tooltip")]
 pub mod tooltip;
+#[cfg(feature = "tree-view")]
+pub mod tree_view;
 #[cfg(feature = "typography")]
 pub mod typography;
 #[cfg(feature = "virtual-list")]

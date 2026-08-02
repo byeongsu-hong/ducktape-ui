@@ -87,6 +87,7 @@ full = [
     "toggle-group",
     "tooltip",
     "typography",
+    "tree-view",
     "virtual-list",
 ]
 theme = ["dep:iced"]
@@ -114,6 +115,7 @@ pagination = ["button"]
 skeleton = ["theme"]
 typography = ["theme"]
 virtual-list = ["theme", "dep:ui-lang-runtime"]
+tree-view = ["virtual-list"]
 attachment = ["theme"]
 bubble = ["theme"]
 button-group = ["theme"]

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:6cedd5c5919a89db660a7e3d2896140b0e1d3a067346049f66db4d389ee53174",
+  "fingerprint": "sha256:22e59967afa41e67a7128d8bc92dc8d9ffc2a96892ede3d2a8365efa58a035cd",
   "language_revision": "2.0",
   "package": {
     "name": "ducktape-ui",
@@ -567,6 +567,34 @@
         "lifetime": "retained"
       },
       {
+        "name": "LogTimeline.Frame",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
         "name": "Marker",
         "props": [
           {
@@ -731,6 +759,41 @@
         "props": [
           {
             "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "TreeView.Frame",
+        "props": [
+          {
+            "name": "count",
+            "ty": "i64",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
             "ty": "str",
             "access": "read",
             "required": true,

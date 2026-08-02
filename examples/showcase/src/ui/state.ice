@@ -36,6 +36,7 @@ state
   message_scroller:MessageScrollerState = message_scroller_state()
   log_timeline:LogTimelineState = log_timeline_state()
   virtual_list:VirtualListState = virtual_list_state()
+  tree_view:TreeViewState = tree_view_state()
   native_popover = false
   dialog_open = false
   dialog_result = "none"

@@ -72,10 +72,12 @@ jobs:
       - name: Check standalone UI feature on native and wasm
         run: |
           cargo check --locked -p ui-lang-runtime --no-default-features --features virtual-list,x11
-          cargo check --locked -p ducktape-ui --no-default-features --features button,virtual-list,x11
+          cargo check --locked -p ducktape-ui --no-default-features --features button,tree-view,virtual-list,x11
+          cargo check --locked -p ducktape-ui --no-default-features --features log-timeline,x11
           rustup target add wasm32-unknown-unknown
           cargo check --locked -p ui-lang-runtime --target wasm32-unknown-unknown --no-default-features --features virtual-list
-          cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button,virtual-list
+          cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button,tree-view,virtual-list
+          cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features log-timeline
       - name: Test native WGPU smoke harness
         run: |
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
@@ -208,6 +210,7 @@ jobs:
           cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
           cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
           cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
       - run: cargo ice compat
@@ -288,7 +291,7 @@ jobs:
             executable: target/debug/showcase.exe
             helper: target/native-wgpu-smoke.exe
             backend: dx12
-            required_draw: virtual-list
+            required_draw: virtual-list,tree-view
     env:
       WGPU_BACKEND: ${{ matrix.backend }}
       ICE_DEV_REQUIRED_DRAW: ${{ matrix.required_draw }}
