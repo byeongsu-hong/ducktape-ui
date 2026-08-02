@@ -22,6 +22,8 @@ extern crate::adapters
   MessageScrollerEvent()
   VirtualListState()
   VirtualListEvent()
+  TreeViewState()
+  TreeViewEvent()
   DropdownMenuState()
   DropdownMenuEvent()
   PopoverEvent()
@@ -94,6 +96,12 @@ extern crate::adapters
   sync virtual_list_state() -> VirtualListState
   sync virtual_list_apply(state:VirtualListState, event:VirtualListEvent) -> VirtualListState
   component virtual_list(state:&VirtualListState) -> VirtualListEvent
+  sync tree_view_state() -> TreeViewState
+  task tree_view_focus(state:TreeViewState) -> unit
+  sync tree_view_apply(state:TreeViewState, event:TreeViewEvent) -> TreeViewState
+  sync tree_view_begin_selected_rename(state:TreeViewState) -> TreeViewState
+  sync tree_view_cancel_rename(state:TreeViewState) -> TreeViewState
+  component tree_view(state:&TreeViewState) -> TreeViewEvent
   component aspect_ratio_demo() -> unit
   sync data_table_rows(query:str, sort:str, page:i64) -> [CatalogItem]
   sync data_table_page(query:str, page:i64) -> i64
