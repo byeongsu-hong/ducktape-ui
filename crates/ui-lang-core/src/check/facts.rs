@@ -256,11 +256,13 @@ pub(crate) enum CheckedViewFlow {
     },
     ResponsiveBreakpoint {
         semantic_key: String,
+        expression_count: u32,
         breakpoint: CheckedExprUseId,
         dimensions: [CheckedResponsiveLength; 2],
     },
     ResponsiveSize {
         semantic_key: String,
+        expression_count: u32,
         width: CheckedLocalId,
         height: CheckedLocalId,
         dimensions: [CheckedResponsiveLength; 2],
@@ -1899,6 +1901,58 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_local_type(&mut self, local: CheckedLocalId, ty: Type) {
         self.locals[local.0 as usize].ty = ty;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_dimension(
+        &mut self,
+        view: ViewId,
+        index: usize,
+        replacement: CheckedResponsiveLength,
+    ) {
+        let dimensions = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
+            | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
+            _ => panic!("test view must be responsive"),
+        };
+        dimensions[index] = replacement;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_expression_count(&mut self, view: ViewId, value: u32) {
+        let expression_count = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint {
+                expression_count, ..
+            }
+            | CheckedViewFlow::ResponsiveSize {
+                expression_count, ..
+            } => expression_count,
+            _ => panic!("test view must be responsive"),
+        };
+        *expression_count = value;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_dimension_expression_role(
+        &mut self,
+        view: ViewId,
+        target_index: usize,
+        source_role: CheckedViewExprRole,
+    ) {
+        let source = self.expression_uses_by_owner[&CheckedExprOwner::View {
+            view,
+            role: source_role,
+        }];
+        let dimensions = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
+            | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
+            _ => panic!("test view must be responsive"),
+        };
+        let CheckedResponsiveLength::Fixed { expression, .. } = &mut dimensions[target_index]
+        else {
+            panic!("test dimension must be fixed");
+        };
+        *expression = source;
     }
 
     #[cfg(test)]
@@ -9856,6 +9910,8 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 let semantic_key = crate::ast::responsive_semantic_key(content, width, height);
+                let expression_count =
+                    crate::ast::responsive_expression_count(content, width, height);
                 let dimensions = [
                     self.lower_responsive_length(
                         view,
@@ -9895,6 +9951,7 @@ impl<'a> FactsBuilder<'a> {
                         self.lower_view_expression_tree(wide, env)?;
                         CheckedViewFlow::ResponsiveBreakpoint {
                             semantic_key,
+                            expression_count,
                             breakpoint,
                             dimensions,
                         }
@@ -9932,6 +9989,7 @@ impl<'a> FactsBuilder<'a> {
                         self.lower_view_expression_tree(content, &scoped)?;
                         CheckedViewFlow::ResponsiveSize {
                             semantic_key,
+                            expression_count,
                             width: width_local,
                             height: height_local,
                             dimensions,
@@ -13485,6 +13543,7 @@ view
         let program = lower::lower(analyze(breakpoint_source).unwrap()).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::ResponsiveBreakpoint {
+            expression_count,
             breakpoint,
             dimensions,
             ..
@@ -13492,6 +13551,7 @@ view
         else {
             panic!("root must retain responsive breakpoint facts");
         };
+        assert_eq!(*expression_count, 2);
         assert_eq!(dimensions[0], CheckedResponsiveLength::Fill);
         assert!(matches!(
             dimensions[1],
@@ -13525,9 +13585,16 @@ view
 "#;
         let program = lower::lower(analyze(size_source).unwrap()).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
-        let CheckedViewFlow::ResponsiveSize { width, height, .. } = &checked.flow else {
+        let CheckedViewFlow::ResponsiveSize {
+            expression_count,
+            width,
+            height,
+            ..
+        } = &checked.flow
+        else {
             panic!("root must retain responsive size facts");
         };
+        assert_eq!(*expression_count, 0);
         for (local, role) in [
             (*width, CheckedViewLocalRole::ResponsiveWidth),
             (*height, CheckedViewLocalRole::ResponsiveHeight),
