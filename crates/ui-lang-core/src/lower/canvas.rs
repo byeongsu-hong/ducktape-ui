@@ -1,7 +1,3 @@
-// Stable IDs, source origins, and retained payload types are part of the
-// normalized contract even when today's single backend does not inspect them.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -18,6 +14,7 @@ pub(crate) struct ResolvedCanvas {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCanvasState {
+    #[cfg(test)]
     pub(crate) id: CanvasLocalId,
     pub(crate) local: CheckedLocalId,
     pub(crate) name: String,
@@ -68,36 +65,29 @@ pub(crate) struct ResolvedCanvasInteraction {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCanvasRoute {
+    #[cfg(test)]
     pub(crate) id: CanvasRouteId,
     pub(crate) target: ResolvedCanvasRouteTarget,
     pub(crate) args: Vec<ResolvedCanvasRouteArg>,
-    pub(crate) source_payloads: Vec<Type>,
-    pub(crate) ordered_payloads: bool,
     pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedCanvasRouteTarget {
     Handler(HandlerId),
-    ComponentOutput {
-        component: ComponentId,
-        output: Type,
-    },
-    ComponentEvent {
-        event: ComponentEventId,
-        name: String,
-        payloads: Vec<Type>,
-    },
+    ComponentOutput { component: ComponentId },
+    ComponentEvent { name: String, payloads: Vec<Type> },
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedCanvasRouteArg {
     Expression(CheckedExprUseId),
-    Payload { index: u32, ty: Type },
+    Payload { index: u32 },
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCanvasEvent {
+    #[cfg(test)]
     pub(crate) id: CanvasEventId,
     pub(crate) source: ResolvedCanvasEventSource,
     pub(crate) bindings: Vec<ResolvedCanvasEventBinding>,
@@ -105,7 +95,6 @@ pub(crate) struct ResolvedCanvasEvent {
     pub(crate) action: Option<ResolvedCanvasEventAction>,
     pub(crate) capture: bool,
     pub(crate) route_payload: bool,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,8 +115,6 @@ pub(crate) struct ResolvedCanvasEventBinding {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCanvasStateUpdate {
-    pub(crate) target: CanvasLocalId,
-    pub(crate) local: CheckedLocalId,
     pub(crate) name: String,
     pub(crate) value: CheckedExprUseId,
 }
@@ -141,33 +128,30 @@ pub(crate) enum ResolvedCanvasEventAction {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedCanvasCommand {
     Rectangle {
-        id: CanvasCommandId,
         x: CheckedExprUseId,
         y: CheckedExprUseId,
         width: CheckedExprUseId,
         height: CheckedExprUseId,
         radius: ResolvedCanvasRadius,
         paint: ResolvedCanvasPaint,
-        origin: OriginId,
     },
     Circle {
+        #[cfg(test)]
         id: CanvasCommandId,
         x: CheckedExprUseId,
         y: CheckedExprUseId,
         radius: CheckedExprUseId,
         paint: ResolvedCanvasPaint,
-        origin: OriginId,
     },
     Line {
-        id: CanvasCommandId,
         x1: CheckedExprUseId,
         y1: CheckedExprUseId,
         x2: CheckedExprUseId,
         y2: CheckedExprUseId,
         stroke: ResolvedCanvasStroke,
-        origin: OriginId,
     },
     Text {
+        #[cfg(test)]
         id: CanvasCommandId,
         value: CheckedExprUseId,
         value_type: Type,
@@ -181,10 +165,8 @@ pub(crate) enum ResolvedCanvasCommand {
         align_x: Option<TextAlignment>,
         align_y: Option<VerticalAlignment>,
         shaping: Option<TextShaping>,
-        origin: OriginId,
     },
     Image {
-        id: CanvasCommandId,
         source: CheckedExprUseId,
         source_type: Type,
         x: CheckedExprUseId,
@@ -196,10 +178,8 @@ pub(crate) enum ResolvedCanvasCommand {
         opacity: CheckedExprUseId,
         snap: CheckedExprUseId,
         radius: ResolvedCanvasRadius,
-        origin: OriginId,
     },
     Svg {
-        id: CanvasCommandId,
         source: CheckedExprUseId,
         source_type: Type,
         memory: bool,
@@ -210,32 +190,25 @@ pub(crate) enum ResolvedCanvasCommand {
         color: Option<ResolvedThemeColor>,
         rotation: CheckedExprUseId,
         opacity: CheckedExprUseId,
-        origin: OriginId,
     },
     Path {
-        id: CanvasCommandId,
         segments: Vec<ResolvedCanvasPathSegment>,
         paint: ResolvedCanvasPaint,
-        origin: OriginId,
     },
     Group {
-        id: CanvasCommandId,
         transform: ResolvedCanvasTransform,
         commands: Vec<ResolvedCanvasCommand>,
-        origin: OriginId,
     },
     If {
-        id: CanvasCommandId,
         condition: CheckedExprUseId,
         commands: Vec<ResolvedCanvasCommand>,
-        origin: OriginId,
     },
     For {
+        #[cfg(test)]
         id: CanvasCommandId,
         item: ResolvedCanvasCommandItem,
         items: CheckedExprUseId,
         commands: Vec<ResolvedCanvasCommand>,
-        origin: OriginId,
     },
 }
 
@@ -579,6 +552,7 @@ impl Lowerer {
                 return Err(self.invariant(&source.span, "canvas state contract diverged"));
             }
             states.push(ResolvedCanvasState {
+                #[cfg(test)]
                 id: state_id,
                 local,
                 name: retained.name.clone(),
@@ -856,15 +830,11 @@ impl Lowerer {
                 }
                 (RouteArg::Payload, CheckedCanvasRouteArg::Payload) => {
                     let index = if checked.ordered_payloads { payload } else { 0 };
-                    let ty = checked
-                        .source_payloads
-                        .get(index as usize)
-                        .cloned()
-                        .ok_or_else(|| {
-                            self.invariant(&source.span, "canvas route payload is out of range")
-                        })?;
+                    checked.source_payloads.get(index as usize).ok_or_else(|| {
+                        self.invariant(&source.span, "canvas route payload is out of range")
+                    })?;
                     payload += 1;
-                    args.push(ResolvedCanvasRouteArg::Payload { index, ty });
+                    args.push(ResolvedCanvasRouteArg::Payload { index });
                 }
                 _ => {
                     return Err(self.invariant(&source.span, "canvas route argument kind diverged"));
@@ -878,28 +848,23 @@ impl Lowerer {
                 }
                 ResolvedCanvasRouteTarget::Handler(*handler)
             }
-            CheckedCanvasRouteTarget::ComponentOutput { component, output } => {
+            CheckedCanvasRouteTarget::ComponentOutput { component, .. } => {
                 ResolvedCanvasRouteTarget::ComponentOutput {
                     component: *component,
-                    output: output.clone(),
                 }
             }
-            CheckedCanvasRouteTarget::ComponentEvent {
-                event,
-                name,
-                payloads,
-            } => ResolvedCanvasRouteTarget::ComponentEvent {
-                event: *event,
-                name: name.clone(),
-                payloads: payloads.clone(),
-            },
+            CheckedCanvasRouteTarget::ComponentEvent { name, payloads, .. } => {
+                ResolvedCanvasRouteTarget::ComponentEvent {
+                    name: name.clone(),
+                    payloads: payloads.clone(),
+                }
+            }
         };
         Ok(ResolvedCanvasRoute {
+            #[cfg(test)]
             id: checked.id,
             target,
             args,
-            source_payloads: checked.source_payloads.clone(),
-            ordered_payloads: checked.ordered_payloads,
             origin: checked.origin,
         })
     }
@@ -983,8 +948,6 @@ impl Lowerer {
                         self.invariant(&update.span, "canvas update target disappeared")
                     })?;
                 Ok(ResolvedCanvasStateUpdate {
-                    target: target.id,
-                    local: target.local,
                     name: target.name.clone(),
                     value: self.take_canvas_expression(canvas, expression, &update.span)?,
                 })
@@ -1002,6 +965,7 @@ impl Lowerer {
             None => None,
         };
         Ok(ResolvedCanvasEvent {
+            #[cfg(test)]
             id,
             source,
             bindings,
@@ -1009,7 +973,6 @@ impl Lowerer {
             action,
             capture: event.capture,
             route_payload: event.route_payload,
-            origin: retained.declaration.origin,
         })
     }
 
@@ -1081,31 +1044,27 @@ impl Lowerer {
         let take = |operands: &mut CanvasOperands| operands.take(self, span);
         Ok(match source {
             CanvasCommand::Rectangle { radius, paint, .. } => ResolvedCanvasCommand::Rectangle {
-                id,
                 x: take(operands)?,
                 y: take(operands)?,
                 width: take(operands)?,
                 height: take(operands)?,
                 radius: self.lower_canvas_radius(radius, operands, span)?,
                 paint: self.lower_canvas_paint(paint, operands, span)?,
-                origin,
             },
             CanvasCommand::Circle { paint, .. } => ResolvedCanvasCommand::Circle {
+                #[cfg(test)]
                 id,
                 x: take(operands)?,
                 y: take(operands)?,
                 radius: take(operands)?,
                 paint: self.lower_canvas_paint(paint, operands, span)?,
-                origin,
             },
             CanvasCommand::Line { stroke, .. } => ResolvedCanvasCommand::Line {
-                id,
                 x1: take(operands)?,
                 y1: take(operands)?,
                 x2: take(operands)?,
                 y2: take(operands)?,
                 stroke: self.lower_canvas_stroke(stroke, operands, span)?,
-                origin,
             },
             CanvasCommand::Text {
                 max_width,
@@ -1120,6 +1079,7 @@ impl Lowerer {
             } => {
                 let value = take(operands)?;
                 ResolvedCanvasCommand::Text {
+                    #[cfg(test)]
                     id,
                     value,
                     value_type: self.facts.expression_use(value).source.clone(),
@@ -1148,13 +1108,11 @@ impl Lowerer {
                     align_x: *align_x,
                     align_y: *align_y,
                     shaping: *shaping,
-                    origin,
                 }
             }
             CanvasCommand::Image { filter, radius, .. } => {
                 let source = take(operands)?;
                 ResolvedCanvasCommand::Image {
-                    id,
                     source,
                     source_type: self.facts.expression_use(source).source.clone(),
                     x: take(operands)?,
@@ -1166,13 +1124,11 @@ impl Lowerer {
                     opacity: take(operands)?,
                     snap: take(operands)?,
                     radius: self.lower_canvas_radius(radius, operands, span)?,
-                    origin,
                 }
             }
             CanvasCommand::Svg { memory, color, .. } => {
                 let source = take(operands)?;
                 ResolvedCanvasCommand::Svg {
-                    id,
                     source,
                     source_type: self.facts.expression_use(source).source.clone(),
                     memory: *memory,
@@ -1186,23 +1142,19 @@ impl Lowerer {
                         .transpose()?,
                     rotation: take(operands)?,
                     opacity: take(operands)?,
-                    origin,
                 }
             }
             CanvasCommand::Path {
                 segments, paint, ..
             } => ResolvedCanvasCommand::Path {
-                id,
                 segments: self.lower_canvas_path(segments, operands, span)?,
                 paint: self.lower_canvas_paint(paint, operands, span)?,
-                origin,
             },
             CanvasCommand::Group {
                 transform,
                 commands,
                 ..
             } => ResolvedCanvasCommand::Group {
-                id,
                 transform: self.lower_canvas_transform(transform, operands, span)?,
                 commands: self.lower_canvas_commands(
                     commands,
@@ -1211,10 +1163,8 @@ impl Lowerer {
                     command,
                     expression,
                 )?,
-                origin,
             },
             CanvasCommand::If { commands, .. } => ResolvedCanvasCommand::If {
-                id,
                 condition: take(operands)?,
                 commands: self.lower_canvas_commands(
                     commands,
@@ -1223,7 +1173,6 @@ impl Lowerer {
                     command,
                     expression,
                 )?,
-                origin,
             },
             CanvasCommand::For { item, commands, .. } => {
                 let items = take(operands)?;
@@ -1241,6 +1190,7 @@ impl Lowerer {
                     return Err(self.invariant(span, "canvas for item contract diverged"));
                 }
                 ResolvedCanvasCommand::For {
+                    #[cfg(test)]
                     id,
                     item: ResolvedCanvasCommandItem {
                         local,
@@ -1255,7 +1205,6 @@ impl Lowerer {
                         command,
                         expression,
                     )?,
-                    origin,
                 }
             }
         })

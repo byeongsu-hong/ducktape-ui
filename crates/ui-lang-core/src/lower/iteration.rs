@@ -1,13 +1,10 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedIterationBinding {
     pub(crate) local: CheckedLocalId,
     pub(crate) name: String,
+    #[cfg(test)]
     pub(crate) ty: Type,
 }
 
@@ -105,6 +102,7 @@ impl Lowerer {
             item: ResolvedIterationBinding {
                 local,
                 name: checked_item.name,
+                #[cfg(test)]
                 ty: checked_item.ty,
             },
             reconciliation_line: span.line,

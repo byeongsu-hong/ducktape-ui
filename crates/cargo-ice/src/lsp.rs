@@ -3576,7 +3576,7 @@ mod tests {
     use std::io::{BufReader, Cursor};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
     const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
     const APP_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
@@ -3620,32 +3620,26 @@ mod tests {
         db
     }
 
-    struct Fixture(PathBuf);
+    struct Fixture {
+        root: PathBuf,
+        _directory: tempfile::TempDir,
+    }
 
     impl Fixture {
         fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let path =
-                std::env::temp_dir().join(format!("cargo-ice-lsp-{}-{nonce}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
+            let directory = tempfile::tempdir().unwrap();
+            Self {
+                root: directory.path().to_owned(),
+                _directory: directory,
+            }
         }
 
         fn write(&self, relative: &str, source: &str) {
-            fs::write(self.0.join(relative), source).unwrap();
+            fs::write(self.root.join(relative), source).unwrap();
         }
 
         fn path(&self, relative: &str) -> PathBuf {
-            self.0.join(relative)
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
+            self.root.join(relative)
         }
     }
 
@@ -4244,7 +4238,7 @@ mod tests {
         });
 
         let (uri, mapped) = compiler_diagnostic_to_lsp(
-            &fixture.0,
+            &fixture.root,
             &diagnostic,
             &mut super::super::GeneratedSourceMaps::new(),
         )
@@ -4275,12 +4269,12 @@ mod tests {
 
         let warning = json!({ "reason": "compiler-message", "message": diagnostic });
         let warning_json = serde_json::to_vec(&warning).unwrap();
-        assert!(collect_cargo_lint_diagnostics(&fixture.0, &warning_json).is_empty());
+        assert!(collect_cargo_lint_diagnostics(&fixture.root, &warning_json).is_empty());
 
         let mut error = warning;
         error["message"]["level"] = json!("error");
         let error_json = serde_json::to_vec(&error).unwrap();
-        let diagnostics = collect_cargo_lint_diagnostics(&fixture.0, &error_json);
+        let diagnostics = collect_cargo_lint_diagnostics(&fixture.root, &error_json);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].0, file_path_uri(&source_path));
     }
@@ -4304,7 +4298,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write("app.ice", "app Saved\nview\n  text \"Saved\"\n");
         let uri = file_path_uri(&fixture.path("app.ice"));
-        let roots = [fixture.0.clone()];
+        let roots = [fixture.root.clone()];
         let saved = HashMap::from([(
             uri.clone(),
             "app Saved\nview\n  text \"Saved\"\n".to_owned(),
@@ -5255,7 +5249,7 @@ mod tests {
         db.set_overlay(&root, source).unwrap();
         db.set_overlay(&catalog_path, catalog).unwrap();
         db.query_root(&root).unwrap();
-        let mut workspace_index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        let mut workspace_index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         workspace_index.configure_watching(&WatchRegistrationState::Active);
 
         let warm = completion_items_at_with_db(&mut db, &documents, &position(10)).unwrap();
@@ -6182,7 +6176,7 @@ mod tests {
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let other_uri = file_path_uri(&fixture.path("other.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6343,7 +6337,7 @@ mod tests {
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6394,7 +6388,7 @@ mod tests {
         fixture.write("recipes.ice", recipes);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let recipe_uri = file_path_uri(&fixture.path("recipes.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6478,7 +6472,7 @@ mod tests {
         });
 
         let navigation =
-            navigation_at(&documents, std::slice::from_ref(&fixture.0), &params).unwrap();
+            navigation_at(&documents, std::slice::from_ref(&fixture.root), &params).unwrap();
 
         assert!(navigation.renameable());
     }
@@ -6500,7 +6494,7 @@ mod tests {
         let part_uri = file_path_uri(&part_path);
         let documents = HashMap::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
         let mut db = seeded_db(&documents);
-        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        let mut index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         index.configure_watching(&WatchRegistrationState::Unsupported);
 
         fixture.write("b.ice", &b);
@@ -6544,7 +6538,7 @@ mod tests {
             "position": { "line": 13, "character": 3 },
         });
         let mut db = seeded_db(&documents);
-        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        let mut index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         configure_validation(&WatchRegistrationState::Active, &mut db, &mut index);
 
         let stale = navigation_at_with_db(&mut db, &documents, &mut index, false, &params).unwrap();
@@ -6577,7 +6571,7 @@ mod tests {
     fn active_watcher_index_rescans_after_its_validation_epoch() {
         let fixture = Fixture::new();
         fixture.write("a.ice", "app A\nview\n  text \"A\"\n");
-        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        let mut index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         index.configure_watching(&WatchRegistrationState::Active);
         fixture.write("b.ice", "app B\nview\n  text \"B\"\n");
         let b = fixture.path("b.ice").canonicalize().unwrap();
@@ -6594,7 +6588,7 @@ mod tests {
     fn active_watcher_rescans_before_a_completeness_sensitive_request() {
         let fixture = Fixture::new();
         fixture.write("a.ice", "app A\nview\n  text \"A\"\n");
-        let mut index = WorkspaceIndex::build(vec![fixture.0.clone()]);
+        let mut index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         index.configure_watching(&WatchRegistrationState::Active);
         fixture.write("b.ice", "app B\nview\n  text \"B\"\n");
         let b = fixture.path("b.ice").canonicalize().unwrap();
@@ -6655,7 +6649,7 @@ mod tests {
         });
 
         let navigation =
-            navigation_at(&documents, std::slice::from_ref(&fixture.0), &params).unwrap();
+            navigation_at(&documents, std::slice::from_ref(&fixture.root), &params).unwrap();
 
         assert_eq!(navigation.symbol.name, "Card");
         assert!(navigation.renameable());
@@ -6672,7 +6666,7 @@ mod tests {
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6744,7 +6738,7 @@ mod tests {
         fixture.write("broken.ice", broken);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6796,7 +6790,7 @@ mod tests {
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),
@@ -6865,7 +6859,7 @@ mod tests {
         symlink("app.ice", fixture.path("link.ice")).unwrap();
         let real_uri = file_path_uri(&fixture.path("app.ice"));
         let link_uri = file_path_uri(&fixture.path("link.ice"));
-        let workspace_uri = file_path_uri(&fixture.0);
+        let workspace_uri = file_path_uri(&fixture.root);
 
         let messages = run(&[
             json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "rootUri": workspace_uri } }),

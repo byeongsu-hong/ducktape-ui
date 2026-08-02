@@ -6,7 +6,7 @@ pub(in crate::codegen) fn render_extern_component(
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.program();
+    let program = document;
     let arguments = component
         .arguments
         .iter()

@@ -2,6 +2,7 @@ use super::*;
 use crate::unqualified_name;
 use std::cell::RefCell;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExprTypeAnalysisMetrics {
     pub(crate) queries: usize,
@@ -14,6 +15,7 @@ pub(crate) struct ExprTypeAnalysisMetrics {
 #[derive(Clone, Debug)]
 pub(crate) struct ExprTypeAnalysis {
     types: HashMap<usize, Type>,
+    #[cfg(test)]
     metrics: ExprTypeAnalysisMetrics,
 }
 
@@ -22,6 +24,7 @@ impl ExprTypeAnalysis {
         self.types.get(&expr_key(expr))
     }
 
+    #[cfg(test)]
     pub(crate) fn metrics(&self) -> ExprTypeAnalysisMetrics {
         self.metrics
     }
@@ -30,8 +33,11 @@ impl ExprTypeAnalysis {
 #[derive(Default)]
 struct ActiveExprTypeAnalysis {
     types: HashMap<usize, Type>,
+    #[cfg(test)]
     queries: usize,
+    #[cfg(test)]
     cache_hits: usize,
+    #[cfg(test)]
     scoped_env_overlays: usize,
 }
 
@@ -47,6 +53,7 @@ pub(crate) trait ExprTypeEnv {
     }
 
     fn snapshot(&self) -> HashMap<String, Type> {
+        #[cfg(test)]
         super::view::record_view_env_full_clone();
         let mut snapshot = HashMap::new();
         self.visit_types(&mut |name, ty| {
@@ -133,6 +140,7 @@ struct LayeredTypeEnv<'a> {
 
 impl<'a> LayeredTypeEnv<'a> {
     fn new(base: &'a dyn ExprTypeEnv, name: &'a str, ty: Type) -> Self {
+        #[cfg(test)]
         ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
             if let Some(active) = active.borrow_mut().as_mut() {
                 active.scoped_env_overlays += 1;
@@ -292,6 +300,7 @@ pub(crate) fn analyze_expr_types(
     result?;
     refine_expr_type_evidence(expr, document, &mut active.types);
     Ok(ExprTypeAnalysis {
+        #[cfg(test)]
         metrics: ExprTypeAnalysisMetrics {
             queries: active.queries,
             nodes: active.types.len(),
@@ -466,9 +475,15 @@ pub(crate) fn expr_type(
     if let Some(cached) = ACTIVE_EXPR_TYPE_ANALYSIS.with(|active| {
         let mut active = active.borrow_mut();
         let active = active.as_mut()?;
-        active.queries += 1;
+        #[cfg(test)]
+        {
+            active.queries += 1;
+        }
         let cached = active.types.get(&key)?.clone();
-        active.cache_hits += 1;
+        #[cfg(test)]
+        {
+            active.cache_hits += 1;
+        }
         Some(cached)
     }) {
         return Ok(cached);

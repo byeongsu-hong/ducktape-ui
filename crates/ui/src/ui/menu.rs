@@ -342,8 +342,6 @@ pub fn reduce_menu(
                 };
             }
             let character = character.to_lowercase().collect::<String>();
-            // ponytail: single-character cycling avoids a timer; add timestamped
-            // buffering if multi-character typeahead becomes a real requirement.
             next.typeahead = character;
             let query = next.typeahead.as_str();
             let start = enabled
@@ -827,25 +825,20 @@ where
     let key_direction = direction;
     let item_theme = *theme;
 
-    FocusControl::new(
-        menu_item_id(menu_id, &item.id, &path),
-        content,
-        activate,
-        theme,
-    )
-    .disabled(disabled)
-    .tab_stop(selected)
-    .on_key_press(move |key, modifiers| {
-        if modifiers.control() || modifiers.alt() || modifiers.logo() {
-            return None;
-        }
-        let command = menu_command(&key, key_direction)?;
-        reduce_menu(&key_state, &key_entries, command)
-            .event
-            .map(|event| key_event(event))
-    })
-    .style(move |_iced_theme, status| menu_item_style(&item_theme, selected, status))
-    .into()
+    FocusControl::new(menu_item_id(menu_id, &item.id), content, activate, theme)
+        .disabled(disabled)
+        .tab_stop(selected)
+        .on_key_press(move |key, modifiers| {
+            if modifiers.control() || modifiers.alt() || modifiers.logo() {
+                return None;
+            }
+            let command = menu_command(&key, key_direction)?;
+            reduce_menu(&key_state, &key_entries, command)
+                .event
+                .map(|event| key_event(event))
+        })
+        .style(move |_iced_theme, status| menu_item_style(&item_theme, selected, status))
+        .into()
 }
 
 fn render_label<'a, Message>(
@@ -889,9 +882,8 @@ where
 }
 
 /// Stable focus ID. `item_id` must be unique within one menu, including nested
-/// submenus; paths are accepted for convenient callers but reordering does not
-/// change the focus identity.
-pub fn menu_item_id(menu_id: &str, item_id: &str, _path: &[usize]) -> iced::widget::Id {
+/// submenus, so reordering does not change the focus identity.
+pub fn menu_item_id(menu_id: &str, item_id: &str) -> iced::widget::Id {
     iced::widget::Id::from(format!(
         "ducktape-menu:{}:{menu_id}:{}:{item_id}",
         menu_id.len(),
@@ -899,8 +891,8 @@ pub fn menu_item_id(menu_id: &str, item_id: &str, _path: &[usize]) -> iced::widg
     ))
 }
 
-pub fn focus_menu_item<Message>(menu_id: &str, item_id: &str, path: &[usize]) -> Task<Message> {
-    iced::widget::operation::focus(menu_item_id(menu_id, item_id, path))
+pub fn focus_menu_item<Message>(menu_id: &str, item_id: &str) -> Task<Message> {
+    iced::widget::operation::focus(menu_item_id(menu_id, item_id))
 }
 
 pub fn focus_menu_state<Message>(
@@ -908,9 +900,8 @@ pub fn focus_menu_state<Message>(
     entries: &[MenuEntry],
     state: &MenuState,
 ) -> Task<Message> {
-    resolved_focus(entries, state).map_or_else(Task::none, |(path, item)| {
-        focus_menu_item(menu_id, &item.id, &path)
-    })
+    resolved_focus(entries, state)
+        .map_or_else(Task::none, |(_, item)| focus_menu_item(menu_id, &item.id))
 }
 
 pub fn menu_item_style(theme: &Theme, selected: bool, status: Status) -> focus_control::Style {
@@ -1089,18 +1080,12 @@ mod tests {
     }
 
     #[test]
-    fn stable_ids_follow_caller_item_ids_across_reordering() {
-        assert_eq!(
-            menu_item_id("file", "open", &[1, 2]),
-            menu_item_id("file", "open", &[4])
-        );
+    fn stable_ids_follow_caller_item_ids() {
+        assert_eq!(menu_item_id("file", "open"), menu_item_id("file", "open"));
+        assert_ne!(menu_item_id("file", "open"), menu_item_id("file", "close"));
         assert_ne!(
-            menu_item_id("file", "open", &[1, 2]),
-            menu_item_id("file", "close", &[1, 2])
-        );
-        assert_ne!(
-            menu_item_id("file:open", "item", &[]),
-            menu_item_id("file", "open:item", &[])
+            menu_item_id("file:open", "item"),
+            menu_item_id("file", "open:item")
         );
     }
 

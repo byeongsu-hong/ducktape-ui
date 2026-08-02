@@ -20,14 +20,16 @@ pub(crate) use crate::check::{
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
-    AppSettingExprId, AppSettingsId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
-    CanvasExpressionId, CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId,
-    ComponentId, ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId,
-    ExternRef, FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId,
-    InteractionRouteId, MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId,
-    PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
-    TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+    AppSettingExprId, AppStateId, CanvasCommandId, CanvasDeclaration, CanvasEventId,
+    CanvasExpressionId, CanvasLocalId, ComponentCallId, ComponentEventId, ComponentId,
+    ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
+    FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId, InteractionRouteId,
+    MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId,
+    PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
+    TestTargetId, TooltipExpressionId, ViewId,
 };
+#[cfg(test)]
+use crate::hir::{AppSettingsId, CanvasRouteId};
 use crate::semantic::*;
 use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
@@ -401,15 +403,15 @@ pub(crate) struct ResolvedTest {
     pub(crate) steps: Vec<ResolvedTestStep>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct ComponentParamContract {
     id: ComponentParamId,
     name: String,
     ty: Type,
     capability: ParamCapability,
+    #[cfg(test)]
     default: Option<CheckedExprUseId>,
+    #[cfg(test)]
     origin: OriginId,
 }
 
@@ -418,17 +420,12 @@ enum ParamCapability {
     Read,
     Bind,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct ComponentEventContract {
     id: ComponentEventId,
     name: String,
     payloads: Vec<Type>,
-    origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct ComponentSlotContract {
     id: ComponentSlotId,
@@ -436,8 +433,6 @@ struct ComponentSlotContract {
     optional: bool,
     origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentStateContract {
     pub(crate) id: ComponentStateId,
@@ -445,10 +440,9 @@ pub(crate) struct ComponentStateContract {
     pub(crate) ty: Type,
     pub(crate) initializer: ResolvedInitializer,
     pub(crate) span: Span,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct AppStateContract {
     pub(crate) id: AppStateId,
@@ -456,6 +450,7 @@ pub(crate) struct AppStateContract {
     pub(crate) ty: Type,
     pub(crate) initializer: ResolvedInitializer,
     pub(crate) span: Span,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -471,8 +466,6 @@ pub(crate) struct ResolvedControlledEditorBinding {
     pub(crate) name: String,
     pub(crate) action: Option<ExternFnId>,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct DerivedContract {
     pub(crate) id: crate::hir::DerivedId,
@@ -480,6 +473,7 @@ pub(crate) struct DerivedContract {
     pub(crate) ty: Type,
     pub(crate) initializer: CheckedExprUseId,
     pub(crate) span: Span,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -495,14 +489,12 @@ pub(crate) enum ResolvedType {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct ResolvedExternContract {
+    #[cfg(test)]
     pub(crate) id: ExternFnId,
     pub(crate) name: String,
     pub(crate) rust_path: String,
     pub(crate) params: Vec<ResolvedType>,
-    pub(crate) output: ResolvedType,
-    pub(crate) error: Option<ResolvedType>,
 }
 
 #[derive(Clone, Debug)]
@@ -542,17 +534,15 @@ pub(crate) enum ResolvedSubscriptionSource {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct ResolvedSubscriptionRoute {
+    #[cfg(test)]
     pub(crate) handler: HandlerId,
     pub(crate) handler_name: String,
     pub(crate) args: Vec<ResolvedRouteArg>,
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct ResolvedSubscription {
-    pub(crate) id: SubscriptionId,
     pub(crate) source: ResolvedSubscriptionSource,
     pub(crate) source_payloads: Vec<ResolvedType>,
     pub(crate) delivered_payloads: Vec<ResolvedType>,
@@ -684,17 +674,15 @@ pub(crate) struct ResolvedAnimation {
     pub(crate) repeat_forever: bool,
     pub(crate) auto_reverse: bool,
 }
-
-// These fields are the normalized compiler contract. Some are consumed only by
-// invariant tests today and remain available to later lowering slices.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedHandler {
+    #[cfg(test)]
     pub(crate) id: HandlerId,
     pub(crate) owner: HandlerOwner,
     pub(crate) name: String,
     pub(crate) params: Vec<ResolvedHandlerParam>,
     pub(crate) statements: Vec<ResolvedStatement>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -715,41 +703,31 @@ pub(crate) enum ResolvedExecutorSelection {
     Default,
     Custom { path: String, origin: OriginId },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAppExpression {
-    pub(crate) id: AppSettingExprId,
     pub(crate) expression: CheckedExprUseId,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedHandlerParam {
     pub(crate) local: crate::check::CheckedLocalId,
     pub(crate) name: String,
     pub(crate) ty: Type,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedStatement {
     pub(crate) id: StatementId,
     pub(crate) kind: ResolvedStatementKind,
     pub(crate) task: Option<TaskId>,
+    #[cfg(test)]
     pub(crate) is_final: bool,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedFontAsset {
     pub(crate) path: String,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedStatementKind {
     Let {
@@ -880,8 +858,6 @@ pub(crate) enum ResolvedTaskSource {
         output: Type,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedDefaultFont {
     pub(crate) family: FontFamily,
@@ -890,8 +866,6 @@ pub(crate) struct ResolvedDefaultFont {
     pub(crate) style: FontStyle,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedWindowIcon {
     pub(crate) path: String,
@@ -922,8 +896,6 @@ pub(crate) enum ResolvedWindowCorner {
     Round,
     RoundSmall,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedTaskTransform {
     Map {
@@ -962,8 +934,6 @@ pub(crate) enum ResolvedTaskTransform {
         task: TaskId,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedRoute {
     pub(crate) id: RouteId,
@@ -971,8 +941,6 @@ pub(crate) struct ResolvedRoute {
     pub(crate) args: Vec<ResolvedRouteArg>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedLinuxWindowSettings {
     pub(crate) application_id: Option<String>,
@@ -980,8 +948,6 @@ pub(crate) struct ResolvedLinuxWindowSettings {
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedRouteTarget {
     App {
@@ -994,8 +960,6 @@ pub(crate) enum ResolvedRouteTarget {
         name: String,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedWindowsWindowSettings {
     pub(crate) drag_and_drop: Option<bool>,
@@ -1005,12 +969,14 @@ pub(crate) struct ResolvedWindowsWindowSettings {
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedRouteArg {
     Expression(CheckedExprUseId),
-    Payload { index: u32, ty: Type },
+    Payload {
+        index: u32,
+        #[cfg(test)]
+        ty: Type,
+    },
 }
 
 /// Backend-neutral typed route argument lowering shared by handler effects and
@@ -1074,6 +1040,7 @@ fn lower_typed_payload_argument(
     }
     Ok(ResolvedRouteArg::Payload {
         index,
+        #[cfg(test)]
         ty: target.clone(),
     })
 }
@@ -1248,8 +1215,6 @@ pub(crate) enum ResolvedWindowOperation {
         args: Vec<CheckedExprUseId>,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedMacosWindowSettings {
     pub(crate) title_hidden: Option<bool>,
@@ -1258,16 +1223,12 @@ pub(crate) struct ResolvedMacosWindowSettings {
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedWasmWindowSettings {
     pub(crate) target: Option<Option<String>>,
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedWindowSettings {
     pub(crate) size: Option<(f64, f64)>,
@@ -1293,19 +1254,17 @@ pub(crate) struct ResolvedWindowSettings {
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedNamedWindow {
     pub(crate) id: NamedWindowId,
+    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) settings: ResolvedWindowSettings,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAppSettings {
+    #[cfg(test)]
     pub(crate) settings_id: AppSettingsId,
     pub(crate) app_name: String,
     pub(crate) kind: ProgramKind,
@@ -1340,8 +1299,6 @@ pub(crate) enum ComponentStorage {
     Retained,
     Mounted,
 }
-
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct ComponentContract {
     pub(crate) id: ComponentId,
@@ -1354,6 +1311,7 @@ pub(crate) struct ComponentContract {
     pub(crate) handlers: Vec<HandlerId>,
     pub(crate) root: ViewId,
     pub(crate) storage: ComponentStorage,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -1369,8 +1327,6 @@ enum ArgumentScope {
     Caller,
     Definition,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum WritableStateRef {
     App { id: AppStateId, name: String },
@@ -1399,8 +1355,6 @@ impl WritableStateRef {
         *ty == Type::Str
     }
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedArgument {
     pub(crate) param: ComponentParamId,
@@ -1409,7 +1363,6 @@ pub(crate) struct ResolvedArgument {
     pub(crate) expression: CheckedExprUseId,
     scope: ArgumentScope,
     pub(crate) writable: Option<WritableStateRef>,
-    origin: OriginId,
 }
 
 impl ResolvedArgument {
@@ -1417,8 +1370,6 @@ impl ResolvedArgument {
         self.scope == ArgumentScope::Definition
     }
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedEventRoute {
     Direct {
@@ -1456,42 +1407,27 @@ impl ResolvedEventRoute {
         }
     }
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlot {
     pub(crate) slot: ComponentSlotId,
     pub(crate) name: String,
+    #[cfg(test)]
     pub(crate) optional: bool,
     pub(crate) content: Option<ViewId>,
-    pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentScope {
-    Explicit {
-        origin: OriginId,
-    },
-    Implicit {
-        component: ComponentId,
-        call_site: usize,
-        origin: OriginId,
-    },
+    Explicit,
+    Implicit { call_site: usize },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentOutputRoute {
     None,
     Direct {
         output: Type,
         route: ResolvedInteractionRoute,
-        origin: OriginId,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentCall {
     pub(crate) id: ComponentCallId,
@@ -1511,8 +1447,6 @@ struct CallSite {
     line: usize,
     column: usize,
 }
-
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     // Adversarial tests retain a poisonable source sidecar to prove that
@@ -1579,7 +1513,6 @@ pub(crate) struct LoweredProgram {
     app_handlers: Vec<HandlerId>,
     preset_handlers: Vec<HandlerId>,
     calls: Vec<ComponentCall>,
-    calls_by_site: HashMap<CallSite, ComponentCallId>,
     styles: StyleProgram,
     origins: OriginArena,
 }
@@ -3078,14 +3011,6 @@ impl LoweredProgram {
         Ok(())
     }
 
-    pub(crate) fn program(&self) -> &Self {
-        self
-    }
-
-    pub(crate) fn hir(&self) -> &Self {
-        self
-    }
-
     pub(crate) fn app_view(&self) -> ViewId {
         self.app_view
     }
@@ -3617,8 +3542,6 @@ impl LoweredProgram {
         }
         Ok(())
     }
-
-    #[allow(dead_code)]
     pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
         &self.handlers
     }
@@ -3715,8 +3638,6 @@ impl LoweredProgram {
     ) -> Option<&crate::hir::ExternDeclaration> {
         self.declarations.try_extern_decl(id)
     }
-
-    #[allow(dead_code)]
     pub(crate) fn origin(&self, id: OriginId) -> &Origin {
         self.origins.get(id)
     }
@@ -4737,7 +4658,6 @@ impl Lowerer {
             app_handlers: self.app_handlers,
             preset_handlers: self.preset_handlers,
             calls: self.calls,
-            calls_by_site: self.calls_by_site,
             styles,
             origins: self.origins,
         })
@@ -4799,6 +4719,7 @@ impl Lowerer {
                 let origin = self.push_origin(&window.span, Some(declaration.origin));
                 ResolvedNamedWindow {
                     id: NamedWindowId(index as u32),
+                    #[cfg(test)]
                     name: window.name.clone(),
                     settings: self.lower_window_settings(Some(&window.settings), origin),
                     origin,
@@ -4816,6 +4737,7 @@ impl Lowerer {
             })
             .collect();
         Ok(ResolvedAppSettings {
+            #[cfg(test)]
             settings_id: declaration.id,
             app_name: checked.app_name,
             kind: if checked.daemon {
@@ -5854,7 +5776,6 @@ impl Lowerer {
             ));
         }
         Ok(ResolvedAppExpression {
-            id,
             expression,
             origin: declaration.origin,
         })
@@ -6253,7 +6174,6 @@ impl Lowerer {
             .map(|payload| self.resolve_type(payload, span))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedSubscription {
-            id: subscription.id,
             source,
             source_payloads,
             delivered_payloads,
@@ -6263,6 +6183,7 @@ impl Lowerer {
             window_id: subscription.window_id,
             status: subscription.status,
             route: ResolvedSubscriptionRoute {
+                #[cfg(test)]
                 handler: subscription.route.handler,
                 handler_name: subscription.route.handler_name.clone(),
                 args: route_args,
@@ -6610,6 +6531,7 @@ impl Lowerer {
             ));
         }
         Ok(ResolvedExternContract {
+            #[cfg(test)]
             id: declaration.declaration.id,
             name: declaration.name.clone(),
             rust_path: declaration.rust_path.clone(),
@@ -6618,12 +6540,6 @@ impl Lowerer {
                 .iter()
                 .map(|(_, ty)| self.resolve_type(ty, span))
                 .collect::<Result<Vec<_>, _>>()?,
-            output: self.resolve_type(&declaration.output, span)?,
-            error: declaration
-                .error
-                .as_ref()
-                .map(|error| self.resolve_type(error, span))
-                .transpose()?,
         })
     }
 
@@ -6686,6 +6602,7 @@ impl Lowerer {
                     initializer: self
                         .resolve_initializer(CheckedValueRef::AppState(declaration.id), state)?,
                     span: state.span.clone(),
+                    #[cfg(test)]
                     origin: declaration.origin,
                 })
             })
@@ -6710,6 +6627,7 @@ impl Lowerer {
                         self.invariant(&value.span, "derived value has no checked initializer")
                     })?,
                     span: value.span.clone(),
+                    #[cfg(test)]
                     origin: declaration.origin,
                 })
             })
@@ -6787,10 +6705,12 @@ impl Lowerer {
                     } else {
                         ParamCapability::Read
                     },
+                    #[cfg(test)]
                     default: self
                         .facts
                         .value_by_ref(CheckedValueRef::ComponentParam(declaration.id))
                         .initializer,
+                    #[cfg(test)]
                     origin: declaration.origin,
                 });
             }
@@ -6803,15 +6723,10 @@ impl Lowerer {
                         component: id,
                         index: index as u32,
                     };
-                    let declaration = self
-                        .declarations
-                        .component_event(event_id)
-                        .expect("indexed component event");
                     ComponentEventContract {
                         id: event_id,
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
-                        origin: declaration.declaration.origin,
                     }
                 })
                 .collect();
@@ -6903,6 +6818,7 @@ impl Lowerer {
                             state,
                         )?,
                         span: state.span.clone(),
+                        #[cfg(test)]
                         origin: declaration.origin,
                     })
                 })
@@ -6952,6 +6868,7 @@ impl Lowerer {
                 handlers: Vec::new(),
                 root,
                 storage,
+                #[cfg(test)]
                 origin,
             });
             self.component_indexes.push(ComponentIndex {
@@ -7234,11 +7151,13 @@ impl Lowerer {
             })
             .collect::<Result<Vec<_>, _>>()?;
         self.handlers.push(ResolvedHandler {
+            #[cfg(test)]
             id,
             owner: declaration.owner,
             name: handler.name.clone(),
             params,
             statements,
+            #[cfg(test)]
             origin: declaration.declaration.origin,
         });
         Ok(id)
@@ -8054,6 +7973,7 @@ impl Lowerer {
             id,
             kind,
             task: declaration.task,
+            #[cfg(test)]
             is_final: declaration.is_final,
             origin: declaration.declaration.origin,
         })
@@ -9297,7 +9217,6 @@ impl Lowerer {
                 )?;
                 ComponentOutputRoute::Direct {
                     output: output.clone(),
-                    origin: checked.origin,
                     route: resolved,
                 }
             }
@@ -9334,7 +9253,6 @@ impl Lowerer {
             } else {
                 None
             };
-            let argument_origin = self.push_origin(span, Some(origin));
             arguments.push(ResolvedArgument {
                 param: param.id,
                 name: param.name.clone(),
@@ -9342,7 +9260,6 @@ impl Lowerer {
                 expression,
                 scope,
                 writable,
-                origin: argument_origin,
             });
         }
 
@@ -9499,6 +9416,7 @@ impl Lowerer {
             resolved_slots.push(ResolvedSlot {
                 slot: declared.id,
                 name: declared.name.clone(),
+                #[cfg(test)]
                 optional: declared.optional,
                 content: supplied
                     .map(|slot| {
@@ -9512,19 +9430,14 @@ impl Lowerer {
                             })
                     })
                     .transpose()?,
-                origin: supplied.map_or(declared.origin, |slot| {
-                    self.push_origin(&slot.span, Some(origin))
-                }),
             });
         }
 
         let scope = id.as_ref().map_or_else(
             || ComponentScope::Implicit {
-                component: component_id,
                 call_site: span.line,
-                origin,
             },
-            |_| ComponentScope::Explicit { origin },
+            |_| ComponentScope::Explicit,
         );
         if call_id.0 as usize != self.calls.len() {
             return Err(self.invariant(span, "component call arena order diverged"));
@@ -18012,14 +17925,14 @@ view
         let root = program
             .calls
             .iter()
-            .find(|call| matches!(call.scope, ComponentScope::Explicit { .. }))
+            .find(|call| matches!(call.scope, ComponentScope::Explicit))
             .unwrap();
         assert!(matches!(
             root.arguments[0].writable,
             Some(WritableStateRef::App { .. })
         ));
         assert!(matches!(root.events[0], ResolvedEventRoute::Direct { .. }));
-        assert!(matches!(root.scope, ComponentScope::Explicit { .. }));
+        assert!(matches!(root.scope, ComponentScope::Explicit));
         assert!(
             root.slots
                 .iter()
@@ -18890,20 +18803,14 @@ view
         let origin = program.origin(call.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(origin.line, 8);
-        let ComponentOutputRoute::Direct {
-            route,
-            origin: output_origin_id,
-            ..
-        } = &call.output
-        else {
+        let ComponentOutputRoute::Direct { route, .. } = &call.output else {
             panic!("imported call must have a direct output route");
         };
-        let output_origin = program.origin(*output_origin_id);
+        let output_origin = program.origin(route.origin);
         assert_eq!(output_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(output_origin.line, 8);
         assert_eq!(output_origin.column, 1);
         assert_eq!(output_origin.parent, Some(call.origin));
-        assert_eq!(route.origin, *output_origin_id);
         let ResolvedEventRoute::Direct { route, origin, .. } = &call.events[0] else {
             panic!("imported call must have a direct event route");
         };

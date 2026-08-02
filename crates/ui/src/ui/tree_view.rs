@@ -1,8 +1,9 @@
 //! Ducktape-themed interface for the native fixed-height tree.
 
 use super::theme::Theme;
+use super::virtual_list::row_style;
 use iced::widget::container;
-use iced::{Background, Border, Element, Length, Padding};
+use iced::{Element, Length, Padding};
 use std::hash::Hash;
 
 pub use ui_lang_runtime::{
@@ -54,42 +55,4 @@ where
         },
         on_event,
     )
-}
-
-fn row_style(theme: &Theme, selected: bool) -> container::Style {
-    container::Style {
-        background: selected.then_some(Background::Color(theme.palette.accent)),
-        text_color: Some(if selected {
-            theme.palette.accent_foreground
-        } else {
-            theme.palette.foreground
-        }),
-        border: Border {
-            color: theme.palette.border,
-            width: 0.0,
-            radius: theme.radius.row.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::theme::{DARK, LIGHT};
-    use super::*;
-
-    #[test]
-    fn selected_row_uses_semantic_accent_tokens() {
-        for theme in [LIGHT, DARK] {
-            let selected = row_style(&theme, true);
-            assert_eq!(
-                selected.background,
-                Some(Background::Color(theme.palette.accent))
-            );
-            assert_eq!(selected.text_color, Some(theme.palette.accent_foreground));
-            let idle = row_style(&theme, false);
-            assert_eq!(idle.background, None);
-            assert_eq!(idle.text_color, Some(theme.palette.foreground));
-        }
-    }
 }

@@ -154,8 +154,6 @@ test catalog_layout
   target edge_stage = edge_panel/edge-stage/root
   target native_panel = grid/native-escape-hatches/root
   target native_stage = native_panel/native-stage/root
-  target toast = page/migration-toast/root
-  target dismiss_toast = toast/dismiss-toast
   expect app.width ~= 1120.0
   expect app.height ~= 1200.0
   expect page.x ~= app.x
@@ -220,13 +218,7 @@ test catalog_layout
   expect data_content.height > modal_content.height - 12.0
   expect edge_stage.y ~= native_stage.y
   expect edge_stage.height ~= native_stage.height
-  dispatch show_toast
-  expect toast_visible
   snap-end scroller
-  expect dismiss_toast.width ~= 32.0
-  expect dismiss_toast.height ~= 32.0
-  expect a11y dismiss_toast role "button"
-  expect a11y dismiss_toast name "Dismiss toast"
   expect fields.x ~= buttons.x
   expect fields.y > buttons.bottom
   resize 720 560

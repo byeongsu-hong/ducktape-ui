@@ -419,7 +419,6 @@ fn resolved_canvas_route_code(
             Ok(format!("({})({})", output.code, args[0]))
         }
         ResolvedCanvasRouteTarget::ComponentEvent {
-            event: _,
             name,
             payloads: expected,
         } => {

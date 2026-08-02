@@ -12,7 +12,7 @@ pub(in crate::codegen) fn render_pane_grid(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     if panes.len() != pane_grid.panes.len() || templates.len() != pane_grid.templates.len() {
         return Err(program.invariant_at_origin(
             pane_grid.origin,
@@ -199,7 +199,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
     env: &dyn BindingEnvironment,
     document: &LoweredProgram,
 ) -> Result<(), Error> {
-    let program = document.hir();
+    let program = document;
     let style = &pane_grid.style;
     let has_radius = resolved_pane_radius_present(&style.region_radius);
     let has_typed = style.region_background.is_some()
@@ -306,7 +306,7 @@ pub(in crate::codegen) fn render_pane_content(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     if pane.title.is_some() != resolved.title.is_some() {
         return Err(program.invariant_at_origin(
             resolved.origin,

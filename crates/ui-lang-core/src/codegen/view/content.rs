@@ -55,7 +55,7 @@ pub(in crate::codegen) fn render_content(
                     argument.name.clone(),
                     Binding {
                         code: resolved_expr_use_code(
-                            document.program(),
+                            document,
                             argument.expression,
                             value_env,
                             ValueMode::Borrowed,
@@ -78,7 +78,7 @@ pub(in crate::codegen) fn render_content(
                             "__value",
                             &["__value"],
                             env,
-                            document.program(),
+                            document,
                             message,
                         )?,
                         ty: output.clone(),
@@ -89,9 +89,7 @@ pub(in crate::codegen) fn render_content(
                 );
             }
             for (event_index, event) in call.events.iter().enumerate() {
-                document
-                    .program()
-                    .validate_component_call_event_contract(call, event_index)?;
+                document.validate_component_call_event_contract(call, event_index)?;
                 let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
@@ -103,7 +101,7 @@ pub(in crate::codegen) fn render_content(
                             &payloads.join(", "),
                             &payload_refs,
                             env,
-                            document.program(),
+                            document,
                             message,
                         )?
                     }
@@ -119,7 +117,7 @@ pub(in crate::codegen) fn render_content(
                         origin,
                         ..
                     } => {
-                        let program = document.program();
+                        let program = document;
                         let outer = program
                             .try_component(*outer_component)
                             .filter(|component| {
@@ -189,7 +187,7 @@ pub(in crate::codegen) fn render_content(
                     let scope = reconciliation_scope(scope, env);
                     format!("format!(\"{{}}/{}@{}\", {scope})", name, call_site)
                 }
-                ComponentScope::Explicit { .. } => resolved_view_identity_code(
+                ComponentScope::Explicit => resolved_view_identity_code(
                     view.identity.as_ref().ok_or_else(|| {
                         document.invariant_at_origin(
                             view.origin,
@@ -211,8 +209,7 @@ pub(in crate::codegen) fn render_content(
                     ComponentStorage::Stateless => unreachable!(),
                 };
                 for state in &component.states {
-                    let initial =
-                        resolved_initializer_code(&state.initializer, document.program())?;
+                    let initial = resolved_initializer_code(&state.initializer, document)?;
                     component_env.insert(
                         state.name.clone(),
                         Binding {

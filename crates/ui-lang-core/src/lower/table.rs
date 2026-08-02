@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -25,6 +21,7 @@ pub(crate) struct ResolvedTableColumn {
     pub(crate) width: Option<ResolvedTableLength>,
     pub(crate) align_x: Option<InputAlignment>,
     pub(crate) align_y: Option<VerticalAlignment>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -150,6 +147,7 @@ impl Lowerer {
                 width,
                 align_x: column.align_x,
                 align_y: column.align_y,
+                #[cfg(test)]
                 origin: column.origin,
             });
         }

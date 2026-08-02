@@ -1,14 +1,9 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedKeyedBinding {
     pub(crate) local: CheckedLocalId,
     pub(crate) name: String,
-    pub(crate) ty: Type,
 }
 
 #[derive(Clone, Debug)]
@@ -173,7 +168,6 @@ impl Lowerer {
             item: ResolvedKeyedBinding {
                 local,
                 name: checked_item.name.clone(),
-                ty: checked_item.ty.clone(),
             },
             width,
             height,

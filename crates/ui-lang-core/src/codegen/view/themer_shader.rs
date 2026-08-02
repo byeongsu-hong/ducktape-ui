@@ -56,7 +56,7 @@ pub(in crate::codegen) fn render_themer(
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.program();
+    let program = document;
     let args = extern_view_arguments(&themer.adapter, program, env)?;
     let mapped = extern_view_mapping(&themer.adapter, program, message, env)?;
     Ok(format!(
@@ -93,7 +93,7 @@ pub(in crate::codegen) fn render_shader(
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.program();
+    let program = document;
     let args = extern_view_arguments(&shader.adapter, program, env)?;
     let mut code = format!(
         "::iced::widget::Shader::new({}({args}))",

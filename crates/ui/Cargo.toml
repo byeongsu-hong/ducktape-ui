@@ -83,7 +83,6 @@ full = [
     "tabs",
     "textarea",
     "theme",
-    "toast",
     "toggle",
     "toggle-group",
     "tooltip",
@@ -149,8 +148,7 @@ resizable = ["focus-control"]
 modal = ["theme"]
 dialog = ["modal", "direction", "theme"]
 alert-dialog = ["modal", "dialog", "direction", "focus-control", "button", "theme"]
-toast = ["theme"]
-sonner = ["theme", "toast", "focus-control"]
+sonner = ["theme", "focus-control"]
 command = ["theme", "focus-control", "input", "scroll-area"]
 chart = ["theme", "iced/canvas", "iced/svg"]
 popover = ["theme"]

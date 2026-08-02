@@ -1,7 +1,7 @@
 //! Controlled edge drawer with pointer and touch drag-to-dismiss.
 
 use super::modal::{DismissReason, DismissRules, FocusScope, ModalEvent};
-use super::sheet::{SheetSide, sheet};
+use super::sheet::{SheetSide, finite_nonnegative, positive_or, sheet};
 use super::theme::Theme;
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
@@ -786,22 +786,6 @@ fn is_cancel(event: &Event, source: DragSource) -> bool {
                 DragSource::Touch(active)
             ) if *id == active
         )
-}
-
-fn positive_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() && value > 0.0 {
-        value
-    } else {
-        fallback
-    }
-}
-
-fn finite_nonnegative(value: f32) -> f32 {
-    if value.is_finite() {
-        value.max(0.0)
-    } else {
-        0.0
-    }
 }
 
 fn sanitize_fraction(value: f32) -> f32 {

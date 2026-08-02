@@ -20,7 +20,6 @@ state
   input_value = "acme-research"
 
 on noop
-  case_id = case_id
 
 on select_case(next)
   case_id = next

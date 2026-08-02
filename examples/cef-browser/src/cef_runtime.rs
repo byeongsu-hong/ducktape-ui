@@ -98,18 +98,19 @@ pub fn can_go_forward() -> bool {
 }
 
 #[cfg(feature = "cef")]
-#[cfg_attr(test, allow(dead_code))]
 mod enabled {
     use cef::rc::Rc;
     use cef::wrap_app;
     use cef::wrap_browser_process_handler;
     use cef::{
-        App, Browser, BrowserProcessHandler, BrowserSettings, CefString, Client, CommandLine,
-        ImplApp, ImplBrowser, ImplBrowserHost, ImplBrowserProcessHandler, ImplClient,
-        ImplCommandLine, ImplFrame, ImplLifeSpanHandler, ImplPreferenceManager, ImplValue,
-        LifeSpanHandler, Rect, Settings, WindowInfo, WrapApp, WrapBrowserProcessHandler,
-        WrapClient, WrapLifeSpanHandler,
+        App, Browser, BrowserProcessHandler, CefString, Client, CommandLine, ImplApp, ImplBrowser,
+        ImplBrowserHost, ImplBrowserProcessHandler, ImplClient, ImplCommandLine, ImplFrame,
+        ImplLifeSpanHandler, ImplPreferenceManager, ImplValue, LifeSpanHandler, Settings, WrapApp,
+        WrapBrowserProcessHandler, WrapClient, WrapLifeSpanHandler,
     };
+    #[cfg(not(test))]
+    use cef::{BrowserSettings, Rect, WindowInfo};
+    #[cfg(not(test))]
     use iced::window::raw_window_handle::RawWindowHandle;
     use std::cell::RefCell;
     use std::io;
@@ -122,8 +123,11 @@ mod enabled {
     };
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+    #[cfg(not(test))]
     const WINDOW_WIDTH: f32 = 1100.0;
+    #[cfg(not(test))]
     const WINDOW_HEIGHT: f32 = 760.0;
+    #[cfg(not(test))]
     const ICE_CHROME_HEIGHT: f32 = 68.0;
     const WELCOME_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -313,17 +317,17 @@ mod enabled {
         )
     }
 
+    #[cfg(test)]
     pub fn attach(url: String) -> iced::Task<super::AttachResult> {
-        #[cfg(test)]
-        {
-            let _ = url;
-            return iced::Task::done(super::AttachResult {
-                attached: false,
-                status: "CEF attachment skipped in the headless test runtime".to_owned(),
-            });
-        }
+        let _ = url;
+        iced::Task::done(super::AttachResult {
+            attached: false,
+            status: "CEF attachment skipped in the headless test runtime".to_owned(),
+        })
+    }
 
-        #[cfg(not(test))]
+    #[cfg(not(test))]
+    pub fn attach(url: String) -> iced::Task<super::AttachResult> {
         iced::window::oldest().then(move |id| {
             let url = url.clone();
             match id {
@@ -389,6 +393,7 @@ mod enabled {
         with_browser(|browser| browser.can_go_forward() != 0)
     }
 
+    #[cfg(not(test))]
     fn create_browser(
         window: &dyn iced::window::Window,
         url: &str,
@@ -450,7 +455,7 @@ mod enabled {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(not(test), target_os = "linux"))]
     fn parent_handle(
         window: &dyn iced::window::Window,
     ) -> Result<cef::sys::cef_window_handle_t, String> {
@@ -466,7 +471,7 @@ mod enabled {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(not(test), target_os = "macos"))]
     fn parent_handle(
         window: &dyn iced::window::Window,
     ) -> Result<cef::sys::cef_window_handle_t, String> {
@@ -480,7 +485,7 @@ mod enabled {
         }
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(all(not(test), target_os = "windows"))]
     fn parent_handle(
         window: &dyn iced::window::Window,
     ) -> Result<cef::sys::cef_window_handle_t, String> {

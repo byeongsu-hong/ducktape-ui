@@ -504,7 +504,7 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               restart_current
               queue
           SectionTitle title="Live stations" detail="ON AIR"
-          StationStrip albums=top_picks
+          StationStrip albums=top_picks #station-strip
             forward
               play
           SectionTitle title="Recently aired" detail="REPLAY"

@@ -11,7 +11,7 @@ pub(in crate::codegen) fn render_button(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "button", button.origin, scope, env, document)?;
     let fallback_label = match &button.content {

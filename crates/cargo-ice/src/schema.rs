@@ -2412,7 +2412,6 @@ fn test_contract() -> Value {
                 "summaries": ["semantic diagnostics", "AccessKit role/name/action inventory", "source-mapped structured changes"],
             },
         },
-        "legacyIcedTestIceSyntax": false,
         "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "general virtual clock", "built-in pixel-golden comparison", "multi-window orchestration"],
     })
 }
@@ -2471,7 +2470,6 @@ pub fn document() -> Value {
                         "TouchPhase", "Capture", "AccessibilityAction", "AccessibilityProperty", "Action", "Config",
                         "Driver", "Target", "SurfacePaint", "TextPaint", "ImagePaint", "step"
                     ],
-                    "legacyIcedTestIceApi": false,
                 },
                 "accesskit": ACCESSKIT_VERSION,
                 "accesskit_unix": ACCESSKIT_UNIX_VERSION,
@@ -3127,10 +3125,6 @@ mod tests {
             schema["backend"]["runtime"]["testing"]["module"],
             "::ui_lang_runtime::testing"
         );
-        assert_eq!(
-            schema["backend"]["runtime"]["testing"]["legacyIcedTestIceApi"],
-            false
-        );
         assert_eq!(contract["configuration"]["mount"]["children"]["max"], 1);
         assert_eq!(
             contract["configuration"]["timeout"]["syntax"],
@@ -3321,7 +3315,6 @@ mod tests {
                 .iter()
                 .any(|item| item == "AccessibilityProperty")
         );
-        assert_eq!(contract["legacyIcedTestIceSyntax"], false);
         assert_eq!(
             contract["targets"]["directIdNodes"],
             json!([

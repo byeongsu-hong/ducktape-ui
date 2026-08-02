@@ -15,7 +15,7 @@ on start
 on loaded(next)
   result = next
 
-on clipboard_read(next)
+on clipboard_read(_next)
 
 on cancel
   abort request

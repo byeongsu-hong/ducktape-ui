@@ -18,10 +18,10 @@ on start
 on tick(now)
   last = some(now)
 
-on refreshed(generation, count)
+on refreshed(_generation, count)
   refreshes = count
 
-on pointer_moved(generation, position)
+on pointer_moved(_generation, position)
   pointer = position
 
 on frame(allowed)

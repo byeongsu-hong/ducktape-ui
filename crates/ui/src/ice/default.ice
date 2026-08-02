@@ -39,8 +39,6 @@ theme contract AppTheme
   warning_dot
   avatar_bg
   avatar_fg
-  toast_bg
-  toast_fg
   border
   control_line
   input
@@ -51,7 +49,6 @@ theme contract AppTheme
   glass_regular
   glass_sheet
   shadow_popover
-  shadow_toast
   shadow_modal
   shadow_window
   shadow_window_secondary
@@ -89,8 +86,6 @@ palette app for AppTheme
   warning_dot #e3b443
   avatar_bg  #d2d0c7
   avatar_fg  #4f4d47
-  toast_bg   #26251f
-  toast_fg   #f3f1ea
   border     #e7e6e2
   control_line #e0dfd7
   input      #8a8983
@@ -101,7 +96,6 @@ palette app for AppTheme
   glass_regular #fdfcfa9e
   glass_sheet #fdfcfadb
   shadow_popover #28262221
-  shadow_toast #28262238
   shadow_modal #2826224d
   shadow_window #28262238
   shadow_window_secondary #2826221a

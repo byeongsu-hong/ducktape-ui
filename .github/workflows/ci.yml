@@ -56,8 +56,8 @@ jobs:
 
           baseline=target/ducktape-ui-api-base.json
           if ! git cat-file -e "$ICE_API_BASE_SHA:$committed" 2>/dev/null; then
-            echo "::notice::establishing the repository's first reviewed Ice API baseline"
-            exit 0
+            echo "::error file=$committed::pull request base does not contain the required reviewed Ice API baseline"
+            exit 1
           fi
           git show "$ICE_API_BASE_SHA:$committed" > "$baseline"
           cargo ice api diff "$baseline" "$baseline" > /dev/null

@@ -11,17 +11,6 @@ use ui_lang_core::{
 const FINGERPRINT_SCHEMA_VERSION: u32 = 1;
 const DIFF_SCHEMA_VERSION: u32 = 1;
 
-pub(crate) fn valid_args(args: &[String]) -> bool {
-    match args {
-        [source] => source != "diff",
-        [command, _, _] => command == "diff",
-        [command, _, _, flag, format] => {
-            command == "diff" && flag == "--format" && matches!(format.as_str(), "human" | "json")
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     match args {
         [source] if source != "diff" => emit_fingerprint(&root.join(source)),
@@ -954,7 +943,7 @@ fn push_change(
 mod tests {
     use super::{
         ApiPackage, ChangeClassification, FINGERPRINT_SCHEMA_VERSION, FingerprintDocument, diff,
-        read_fingerprint, sha256_fingerprint,
+        read_fingerprint, run, sha256_fingerprint,
     };
     use std::fs;
     use tempfile::TempDir;
@@ -980,6 +969,27 @@ mod tests {
             sha256_fingerprint(b"abc"),
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn run_owns_api_argument_validation() {
+        let temp = TempDir::new().unwrap();
+
+        let usage = run(temp.path(), &["diff".into()]).unwrap_err();
+        assert!(usage.starts_with("usage: cargo ice api"));
+
+        let format = run(
+            temp.path(),
+            &[
+                "diff".into(),
+                "baseline.json".into(),
+                "current.json".into(),
+                "--format".into(),
+                "yaml".into(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(format, "API diff format must be `human` or `json`");
     }
 
     fn source(component: &str, recipe_utility: &str, extra_token: &str) -> String {

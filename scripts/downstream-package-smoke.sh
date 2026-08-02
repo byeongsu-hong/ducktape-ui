@@ -86,8 +86,8 @@ api_breaking_error="$downstream_scratch/api-breaking-diff.stderr"
 api_corrupt="$downstream_scratch/api-corrupt.json"
 api_corrupt_error="$downstream_scratch/api-corrupt.stderr"
 
-"$cargo_ice" ice api src/ui/api/baseline.ice > "$api_baseline"
-"$cargo_ice" ice api src/ui/api/baseline.ice > "$api_repeat"
+"$cargo_ice" ice api tests/cases/api/baseline.ice > "$api_baseline"
+"$cargo_ice" ice api tests/cases/api/baseline.ice > "$api_repeat"
 if ! cmp -- "$api_baseline" "$api_repeat"; then
   echo "packaged cargo-ice emitted a non-deterministic API fingerprint" >&2
   diff -u -- "$api_baseline" "$api_repeat" >&2 || true
@@ -104,7 +104,7 @@ if ! grep -Fq '"breaking": 0' "$api_zero_report" ||
   exit 1
 fi
 
-"$cargo_ice" ice api src/ui/api/event-added.ice > "$api_event_added"
+"$cargo_ice" ice api tests/cases/api/event-added.ice > "$api_event_added"
 set +e
 "$cargo_ice" ice api diff "$api_baseline" "$api_event_added" --format json \
   > "$api_breaking_report" 2> "$api_breaking_error"

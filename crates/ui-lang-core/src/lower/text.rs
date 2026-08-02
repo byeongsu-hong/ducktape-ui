@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +48,6 @@ pub(crate) enum ResolvedTextFont {
 pub(crate) struct ResolvedTextCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +81,7 @@ pub(crate) struct ResolvedRichSpan {
     pub(crate) underline: Option<CheckedExprUseId>,
     pub(crate) strikethrough: Option<CheckedExprUseId>,
     pub(crate) utility_style: ResolvedStyle,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -107,7 +103,6 @@ pub(crate) struct ResolvedText {
     pub(crate) options: ResolvedTextOptions,
     pub(crate) utility_style: ResolvedStyle,
     pub(crate) content: ResolvedTextContent,
-    pub(crate) source_line: usize,
     pub(crate) origin: OriginId,
 }
 
@@ -314,7 +309,6 @@ impl Lowerer {
             options: resolved_options,
             utility_style,
             content,
-            source_line: span.line,
             origin,
         };
         if self.texts.insert(id, resolved).is_some() {
@@ -360,7 +354,6 @@ impl Lowerer {
                 Ok(ResolvedTextCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -522,6 +515,7 @@ impl Lowerer {
             underline,
             strikethrough,
             utility_style,
+            #[cfg(test)]
             origin,
         })
     }

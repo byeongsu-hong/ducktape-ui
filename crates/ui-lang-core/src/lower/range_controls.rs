@@ -1,7 +1,3 @@
-// Stable IDs, checked types, and physical origins are retained even when the
-// emitter does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +10,7 @@ pub(crate) enum ResolvedRangeAxis {
 pub(crate) struct ResolvedRangeCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -38,6 +35,7 @@ pub(crate) struct ResolvedSliderStatusStyle {
     pub(crate) handle_color: Option<ResolvedContainerBackground>,
     pub(crate) handle_border_color: Option<ResolvedThemeColor>,
     pub(crate) handle_border_width: Option<CheckedExprUseId>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -51,6 +49,7 @@ pub(crate) struct ResolvedSliderStyleSet {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlider {
     pub(crate) id: ViewId,
+    #[cfg(test)]
     pub(crate) value_type: Type,
     pub(crate) value: CheckedExprUseId,
     pub(crate) min: CheckedExprUseId,
@@ -318,6 +317,7 @@ impl Lowerer {
         }
         let resolved = ResolvedSlider {
             id,
+            #[cfg(test)]
             value_type: slider.value_type,
             value,
             min,
@@ -524,6 +524,7 @@ impl Lowerer {
                 Ok(Some(ResolvedRangeCustomStyle {
                     function,
                     arguments,
+                    #[cfg(test)]
                     origin,
                 }))
             }
@@ -654,6 +655,7 @@ impl Lowerer {
                 .map(|color| self.resolve_theme_color(color, span))
                 .transpose()?,
             handle_border_width,
+            #[cfg(test)]
             origin,
         })
     }

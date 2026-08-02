@@ -24,6 +24,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
+macro_rules! record_fact_metric {
+    ($expression:expr) => {
+        $expression
+    };
+}
+
+#[cfg(not(test))]
+macro_rules! record_fact_metric {
+    ($expression:expr) => {};
+}
+
+#[cfg(test)]
 #[derive(Debug, Default)]
 struct LookupCount(AtomicUsize);
 
@@ -803,22 +815,6 @@ pub(crate) enum CheckedExprKind {
     },
 }
 
-fn checked_expression_children(kind: &CheckedExprKind) -> Vec<CheckedExprId> {
-    match kind {
-        CheckedExprKind::List(values) => values.clone(),
-        CheckedExprKind::Call { arguments, .. } => arguments
-            .iter()
-            .filter_map(|argument| match argument {
-                CheckedCallArgument::Value(id) => Some(*id),
-                CheckedCallArgument::Binding(_) => None,
-            })
-            .collect(),
-        CheckedExprKind::Unary { value, .. } => vec![*value],
-        CheckedExprKind::Binary { left, right, .. } => vec![*left, *right],
-        _ => Vec::new(),
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedExpr {
     pub(crate) owner: CheckedExprUseId,
@@ -833,6 +829,7 @@ pub(crate) struct CheckedHandler {
     pub(crate) params: Vec<CheckedLocalId>,
     pub(crate) param_names: Vec<String>,
     pub(crate) param_types: Vec<Type>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -1118,7 +1115,6 @@ pub(crate) struct CheckedTask {
     pub(crate) error: Option<Type>,
     pub(crate) target: Option<CheckedEffectTarget>,
     pub(crate) is_final: bool,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1127,6 +1123,7 @@ pub(crate) enum CheckedEffectTarget {
     Extern(ExternFnId),
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CheckedFactMetrics {
     pub(crate) values: usize,
@@ -1207,6 +1204,7 @@ pub(crate) struct CheckedFacts {
     app_theme_factory: Option<CheckedAppThemeFactory>,
     app_settings: Option<CheckedAppSettings>,
     app_setting_daemon_window_local: Option<CheckedLocalId>,
+    #[cfg(test)]
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
@@ -2594,16 +2592,12 @@ impl CheckedFacts {
         &self.builtins[id.0 as usize]
     }
 
-    pub(crate) fn handler(&self, id: HandlerId) -> &CheckedHandler {
-        self.record_lookup();
-        &self.handlers[id.0 as usize]
-    }
-
     pub(crate) fn try_handler(&self, id: HandlerId) -> Option<&CheckedHandler> {
         self.record_lookup();
         self.handlers.get(id.0 as usize)
     }
 
+    #[cfg(test)]
     pub(crate) fn statement(&self, id: StatementId) -> &CheckedStatement {
         self.record_lookup();
         self.statements[id.0 as usize]
@@ -2616,23 +2610,9 @@ impl CheckedFacts {
         self.statements.get(id.0 as usize)?.as_ref()
     }
 
-    pub(crate) fn route(&self, id: RouteId) -> &CheckedRoute {
-        self.record_lookup();
-        self.routes[id.0 as usize]
-            .as_ref()
-            .expect("checked route arena must be complete")
-    }
-
     pub(crate) fn try_route(&self, id: RouteId) -> Option<&CheckedRoute> {
         self.record_lookup();
         self.routes.get(id.0 as usize)?.as_ref()
-    }
-
-    pub(crate) fn task(&self, id: TaskId) -> &CheckedTask {
-        self.record_lookup();
-        self.tasks[id.0 as usize]
-            .as_ref()
-            .expect("checked task arena must be complete")
     }
 
     pub(crate) fn try_task(&self, id: TaskId) -> Option<&CheckedTask> {
@@ -2645,6 +2625,7 @@ impl CheckedFacts {
         self.builtins.get(id.0 as usize).map(String::as_str)
     }
 
+    #[cfg(test)]
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
     }
@@ -2688,7 +2669,9 @@ pub(super) struct CheckedAnalyses {
     handler_entries: HashMap<usize, ExprTypeAnalysis>,
     handler_route_inputs: HashMap<usize, super::expr::CapturedRouteInputs>,
     preset_handlers: Vec<Handler>,
+    #[cfg(test)]
     pub(super) view_scope_env_overlays: usize,
+    #[cfg(test)]
     pub(super) view_scope_env_full_clones: usize,
     subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
     test_entries: HashMap<usize, ExprTypeAnalysis>,
@@ -2767,8 +2750,11 @@ impl CheckedAnalyses {
     }
 
     pub(super) fn extend(&mut self, other: Self) -> Result<(), Error> {
-        self.view_scope_env_overlays += other.view_scope_env_overlays;
-        self.view_scope_env_full_clones += other.view_scope_env_full_clones;
+        #[cfg(test)]
+        {
+            self.view_scope_env_overlays += other.view_scope_env_overlays;
+            self.view_scope_env_full_clones += other.view_scope_env_full_clones;
+        }
         for (owner, analysis) in other.entries {
             self.insert_expression(owner, analysis)?;
         }
@@ -3111,6 +3097,7 @@ impl FactEnv {
         self.paths.insert(name, (root, ty));
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.paths.len() + self.slots.len()
     }
@@ -3323,9 +3310,15 @@ impl<'a> FactsBuilder<'a> {
         origins: &'a mut OriginArena,
         analyses: CheckedAnalyses,
     ) -> Self {
-        let mut facts = CheckedFacts::default();
-        facts.metrics.view_scope_env_overlays = analyses.view_scope_env_overlays;
-        facts.metrics.view_scope_env_full_clones = analyses.view_scope_env_full_clones;
+        let facts = CheckedFacts::default();
+        #[cfg(test)]
+        let mut facts = facts;
+        record_fact_metric!(
+            facts.metrics.view_scope_env_overlays = analyses.view_scope_env_overlays
+        );
+        record_fact_metric!(
+            facts.metrics.view_scope_env_full_clones = analyses.view_scope_env_full_clones
+        );
         Self {
             document,
             declarations,
@@ -3359,7 +3352,9 @@ impl<'a> FactsBuilder<'a> {
         self.lower_test_expressions()?;
         self.lower_subscriptions()?;
         self.lower_handler_expressions()?;
-        self.facts.metrics.handler_auxiliary_analyses = self.analyses.handler_entries.len();
+        record_fact_metric!(
+            self.facts.metrics.handler_auxiliary_analyses = self.analyses.handler_entries.len()
+        );
         self.analyses.handler_entries.clear();
         if !self.analyses.is_empty() {
             return Err(self.invariant(
@@ -3398,12 +3393,15 @@ impl<'a> FactsBuilder<'a> {
                 "checked expression fact retained an unresolved type",
             ));
         }
-        self.facts.metrics.values = self.facts.values.len();
-        self.facts.metrics.locals = self.facts.locals.len();
-        self.facts.metrics.views = self.facts.views.len();
-        self.facts.metrics.component_slots = self.facts.component_slots.iter().map(Vec::len).sum();
-        self.facts.metrics.expression_uses = self.facts.expression_uses.len();
-        self.facts.metrics.expressions = self.facts.expressions.len();
+        record_fact_metric!(self.facts.metrics.values = self.facts.values.len());
+        record_fact_metric!(self.facts.metrics.locals = self.facts.locals.len());
+        record_fact_metric!(self.facts.metrics.views = self.facts.views.len());
+        record_fact_metric!(
+            self.facts.metrics.component_slots =
+                self.facts.component_slots.iter().map(Vec::len).sum()
+        );
+        record_fact_metric!(self.facts.metrics.expression_uses = self.facts.expression_uses.len());
+        record_fact_metric!(self.facts.metrics.expressions = self.facts.expressions.len());
         Ok(self.facts)
     }
 
@@ -3504,8 +3502,8 @@ impl<'a> FactsBuilder<'a> {
                 value.ty.clone(),
             );
         }
-        self.facts.metrics.scope_env_builds += 1;
-        self.facts.metrics.scope_env_entries += app_env.len();
+        record_fact_metric!(self.facts.metrics.scope_env_builds += 1);
+        record_fact_metric!(self.facts.metrics.scope_env_entries += app_env.len());
         let empty_env = FactEnv::default();
 
         for (index, state) in self.document.states.iter().enumerate() {
@@ -3563,8 +3561,8 @@ impl<'a> FactsBuilder<'a> {
                 value.ty.clone(),
             );
         }
-        self.facts.metrics.scope_env_builds += 1;
-        self.facts.metrics.scope_env_entries += app_env.len();
+        record_fact_metric!(self.facts.metrics.scope_env_builds += 1);
+        record_fact_metric!(self.facts.metrics.scope_env_entries += app_env.len());
 
         let lower = |this: &mut Self,
                      id: AppSettingExprId,
@@ -3800,8 +3798,8 @@ impl<'a> FactsBuilder<'a> {
                     value.ty.clone(),
                 );
             }
-            self.facts.metrics.scope_env_builds += 1;
-            self.facts.metrics.scope_env_entries += component_env.len();
+            record_fact_metric!(self.facts.metrics.scope_env_builds += 1);
+            record_fact_metric!(self.facts.metrics.scope_env_entries += component_env.len());
             for handler in &component.handlers {
                 self.lower_handler(handler_index, handler, &component_env)?;
                 handler_index += 1;
@@ -3948,12 +3946,17 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative test expression analysis")
             })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let source = analysis
             .type_of(expression)
             .cloned()
@@ -5556,13 +5559,18 @@ impl<'a> FactsBuilder<'a> {
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative media expression analysis")
                 })?;
+            #[cfg(test)]
             let metrics = analysis.metrics();
-            self.facts.metrics.view_analysis_passes += 1;
-            self.facts.metrics.type_analysis_queries += metrics.queries;
-            self.facts.metrics.type_analysis_nodes += metrics.nodes;
-            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+            record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
+            record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+            record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+            record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+            record_fact_metric!(
+                self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+            );
+            record_fact_metric!(
+                self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+            );
             let source = analysis.type_of(expression).cloned().ok_or_else(|| {
                 self.invariant(span, "missing retained media expression root type")
             })?;
@@ -5661,13 +5669,18 @@ impl<'a> FactsBuilder<'a> {
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative tooltip expression analysis")
                 })?;
+            #[cfg(test)]
             let metrics = analysis.metrics();
-            self.facts.metrics.view_analysis_passes += 1;
-            self.facts.metrics.type_analysis_queries += metrics.queries;
-            self.facts.metrics.type_analysis_nodes += metrics.nodes;
-            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+            record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
+            record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+            record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+            record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+            record_fact_metric!(
+                self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+            );
+            record_fact_metric!(
+                self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+            );
             let source = analysis.type_of(expression).cloned().ok_or_else(|| {
                 self.invariant(span, "missing retained tooltip expression root type")
             })?;
@@ -5784,7 +5797,7 @@ impl<'a> FactsBuilder<'a> {
         {
             translate_env.insert(name.into(), CheckedPathRoot::Local(local), Type::F64);
         }
-        self.facts.metrics.scope_env_overlays += 1;
+        record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
         let roots = crate::ast::float_expression_roots(scale, x, y, style);
         for (index, expression) in roots.iter().enumerate() {
             let expression_env: &dyn FactEnvironment = if matches!(index, 1 | 2) {
@@ -5838,13 +5851,18 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative float expression analysis")
             })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.view_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let source = analysis
             .type_of(expression)
             .cloned()
@@ -5933,13 +5951,18 @@ impl<'a> FactsBuilder<'a> {
             .pin_entries
             .remove(&(pin, super::expr::expr_key(expression)))
             .ok_or_else(|| self.invariant(span, "missing authoritative pin expression analysis"))?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.view_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let source = analysis
             .type_of(expression)
             .cloned()
@@ -6242,12 +6265,17 @@ impl<'a> FactsBuilder<'a> {
                     "missing authoritative interaction expression analysis",
                 )
             })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let inferred = analysis.type_of(expression).cloned().ok_or_else(|| {
             self.invariant(span, "missing retained interaction expression root type")
         })?;
@@ -6829,7 +6857,7 @@ impl<'a> FactsBuilder<'a> {
                     name: binding.clone(),
                     value: (CheckedPathRoot::Local(local), Type::Bool),
                 };
-                self.facts.metrics.scope_env_overlays += 1;
+                record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 self.lower_pane_view_body(
                     pane,
                     source,
@@ -6875,7 +6903,7 @@ impl<'a> FactsBuilder<'a> {
                 name: template.item.clone(),
                 value: (CheckedPathRoot::Local(item_local), item_ty.as_ref().clone()),
             };
-            self.facts.metrics.scope_env_overlays += 1;
+            record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
             let key = self.push_interaction_expression(
                 pane,
                 &mut expression_count,
@@ -6906,7 +6934,7 @@ impl<'a> FactsBuilder<'a> {
                         name: binding.clone(),
                         value: (CheckedPathRoot::Local(local), Type::Bool),
                     };
-                    self.facts.metrics.scope_env_overlays += 1;
+                    record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                     self.lower_pane_view_body(
                         pane,
                         &template.pane,
@@ -7296,7 +7324,7 @@ impl<'a> FactsBuilder<'a> {
                         name: item.clone(),
                         value: (CheckedPathRoot::Local(local), item_ty.as_ref().clone()),
                     };
-                    self.facts.metrics.scope_env_overlays += 1;
+                    record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                     self.lower_canvas_commands(canvas, commands, &scoped, declaration, counters)?;
                 }
                 _ => {}
@@ -7464,12 +7492,17 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative canvas expression analysis")
             })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let inferred = analysis
             .type_of(expression)
             .cloned()
@@ -7571,6 +7604,7 @@ impl<'a> FactsBuilder<'a> {
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect(),
+            #[cfg(test)]
             origin: declaration.declaration.origin,
         });
         if declaration.statement_roots.len() != handler.statements.len() {
@@ -7632,13 +7666,18 @@ impl<'a> FactsBuilder<'a> {
                     format!("missing authoritative handler expression analysis for {owner:?}"),
                 )
             })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.handler_authoritative_analyses += 1;
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.handler_authoritative_analyses += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let inferred = analysis
             .type_of(expr)
             .cloned()
@@ -8216,7 +8255,6 @@ impl<'a> FactsBuilder<'a> {
         let Some(task) = task else {
             return Ok(());
         };
-        let declaration = self.declarations.task(task);
         let slot = self
             .facts
             .tasks
@@ -8235,7 +8273,6 @@ impl<'a> FactsBuilder<'a> {
             error,
             target: None,
             is_final,
-            origin: declaration.declaration.origin,
         });
         Ok(())
     }
@@ -8800,8 +8837,8 @@ impl<'a> FactsBuilder<'a> {
                 value.ty.clone(),
             );
         }
-        self.facts.metrics.scope_env_builds += 1;
-        self.facts.metrics.scope_env_entries += env.len();
+        record_fact_metric!(self.facts.metrics.scope_env_builds += 1);
+        record_fact_metric!(self.facts.metrics.scope_env_entries += env.len());
         env
     }
 
@@ -9021,13 +9058,18 @@ impl<'a> FactsBuilder<'a> {
                 "missing authoritative subscription expression analysis",
             )
         })?;
+        #[cfg(test)]
         let metrics = analysis.metrics();
-        self.facts.metrics.subscription_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += metrics.queries;
-        self.facts.metrics.type_analysis_nodes += metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.subscription_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
+        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
+        );
         let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
             self.invariant(span, "missing retained subscription expression root type")
         })?;
@@ -9082,13 +9124,21 @@ impl<'a> FactsBuilder<'a> {
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(span, "missing authoritative view expression analysis")
         })?;
+        #[cfg(test)]
         let analysis_metrics = analysis.metrics();
-        self.facts.metrics.view_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
-        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += analysis_metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
+        record_fact_metric!(
+            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones +=
+                analysis_metrics.scoped_env_full_clones
+        );
         let inferred = analysis
             .type_of(expr)
             .cloned()
@@ -9303,13 +9353,21 @@ impl<'a> FactsBuilder<'a> {
                 "missing authoritative app-setting expression analysis",
             )
         })?;
+        #[cfg(test)]
         let analysis_metrics = analysis.metrics();
-        self.facts.metrics.app_setting_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
-        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += analysis_metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.app_setting_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
+        record_fact_metric!(
+            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones +=
+                analysis_metrics.scoped_env_full_clones
+        );
         let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
             self.invariant(span, "missing retained app-setting expression root type")
         })?;
@@ -9489,7 +9547,7 @@ impl<'a> FactsBuilder<'a> {
                     name: item.clone(),
                     value: (CheckedPathRoot::Local(local), *item_ty),
                 };
-                self.facts.metrics.scope_env_overlays += 1;
+                record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 for child in children {
                     self.lower_view_expression_tree(child, &scoped)?;
                 }
@@ -9529,7 +9587,7 @@ impl<'a> FactsBuilder<'a> {
                             name: checked.name.clone(),
                             value: (CheckedPathRoot::Local(local), checked.ty.clone()),
                         };
-                        self.facts.metrics.scope_env_overlays += 1;
+                        record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                         for child in &arm.children {
                             self.lower_view_expression_tree(child, &scoped)?;
                         }
@@ -9597,7 +9655,7 @@ impl<'a> FactsBuilder<'a> {
                     name: item.clone(),
                     value: (CheckedPathRoot::Local(local), *item_ty),
                 };
-                self.facts.metrics.scope_env_overlays += 1;
+                record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 let key_use = self.push_view_expression(
                     CheckedExprOwner::View {
                         view,
@@ -9747,7 +9805,7 @@ impl<'a> FactsBuilder<'a> {
                     name: binding.clone(),
                     value: (CheckedPathRoot::Local(local), ty),
                 };
-                self.facts.metrics.scope_env_overlays += 1;
+                record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Lazy {
                     dependency: dependency_use,
@@ -9788,7 +9846,7 @@ impl<'a> FactsBuilder<'a> {
                     name: item.clone(),
                     value: (CheckedPathRoot::Local(local), *row_ty),
                 };
-                self.facts.metrics.scope_env_overlays += 1;
+                record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 let width = self.lower_table_length(
                     view,
                     &options.width,
@@ -9985,7 +10043,7 @@ impl<'a> FactsBuilder<'a> {
                             name: height.clone(),
                             value: (CheckedPathRoot::Local(height_local), Type::F64),
                         };
-                        self.facts.metrics.scope_env_overlays += 2;
+                        record_fact_metric!(self.facts.metrics.scope_env_overlays += 2);
                         self.lower_view_expression_tree(content, &scoped)?;
                         CheckedViewFlow::ResponsiveSize {
                             semantic_key,
@@ -10767,7 +10825,7 @@ impl<'a> FactsBuilder<'a> {
         name: &str,
         span: &Span,
     ) -> Result<CheckedValueId, Error> {
-        self.facts.metrics.declaration_lookups += 1;
+        record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
         self.values_by_scope
             .get(&scope)
             .and_then(|values| values.get(name))
@@ -10791,13 +10849,21 @@ impl<'a> FactsBuilder<'a> {
             .analyses
             .remove(CheckedExprOwner::Value(owner_ref))
             .ok_or_else(|| self.invariant(span, "missing authoritative initializer analysis"))?;
+        #[cfg(test)]
         let analysis_metrics = analysis.metrics();
-        self.facts.metrics.initializer_analysis_passes += 1;
-        self.facts.metrics.type_analysis_queries += analysis_metrics.queries;
-        self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes;
-        self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits;
-        self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays;
-        self.facts.metrics.type_scope_env_full_clones += analysis_metrics.scoped_env_full_clones;
+        record_fact_metric!(self.facts.metrics.initializer_analysis_passes += 1);
+        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
+        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
+        record_fact_metric!(
+            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
+        );
+        record_fact_metric!(
+            self.facts.metrics.type_scope_env_full_clones +=
+                analysis_metrics.scoped_env_full_clones
+        );
         let lowering = ExpressionLowering {
             analysis: &analysis,
             owner: id,
@@ -10980,7 +11046,7 @@ impl<'a> FactsBuilder<'a> {
                 .as_ref()
                 .is_some_and(|item| item.name == *contract)
         {
-            self.facts.metrics.declaration_lookups += 1;
+            record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
             let id = self.declarations.palette_id(palette).ok_or_else(|| {
                 self.invariant(span, format!("missing checked palette `{palette}`"))
             })?;
@@ -11000,7 +11066,7 @@ impl<'a> FactsBuilder<'a> {
         let Some(name) = path.first() else {
             return Err(self.invariant(span, "checked path is empty"));
         };
-        self.facts.metrics.declaration_lookups += 1;
+        record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
         let (root, mut input) = env
             .get(name)
             .cloned()
@@ -11008,7 +11074,7 @@ impl<'a> FactsBuilder<'a> {
         let mut projections = Vec::with_capacity(path.len().saturating_sub(1));
         for field in &path[1..] {
             let (output, kind) = if let Type::Named(struct_name) = &input {
-                self.facts.metrics.declaration_lookups += 1;
+                record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
                 let owner = self
                     .declarations
                     .struct_decl_by_name(struct_name)
@@ -11060,7 +11126,7 @@ impl<'a> FactsBuilder<'a> {
         {
             return Ok(CheckedCallTarget::EnumVariant(variant));
         }
-        self.facts.metrics.declaration_lookups += 1;
+        record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
         if let Some(declaration) = self.declarations.extern_decl_by_name(name)
             && declaration.kind == ExternKind::Sync
         {
@@ -11071,7 +11137,7 @@ impl<'a> FactsBuilder<'a> {
         }
         let name = unqualified_name(name);
         debug_assert_ne!(name, "provided");
-        self.facts.metrics.builtin_intern_lookups += 1;
+        record_fact_metric!(self.facts.metrics.builtin_intern_lookups += 1);
         let id = if let Some(id) = self.builtins_by_name.get(name).copied() {
             id
         } else {
@@ -11084,7 +11150,7 @@ impl<'a> FactsBuilder<'a> {
     }
 
     fn enum_variant(&mut self, enum_name: &str, variant_name: &str) -> Option<EnumVariantId> {
-        self.facts.metrics.declaration_lookups += 1;
+        record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
         let owner = self.declarations.enum_decl_by_name(enum_name)?;
         self.declarations
             .enum_variant(owner.declaration.id, variant_name)
@@ -11156,7 +11222,7 @@ impl<'a> FactsBuilder<'a> {
                         name,
                         value: (CheckedPathRoot::Local(local), ty),
                     };
-                    self.facts.metrics.scope_env_overlays += 1;
+                    record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                     arguments.push(CheckedCallArgument::Value(self.lower_expr(
                         argument,
                         expected.as_ref(),
@@ -11263,7 +11329,7 @@ impl<'a> FactsBuilder<'a> {
 
             let mut checked = Vec::with_capacity(source_slots.len());
             for (index, (name, optional, span)) in source_slots.into_iter().enumerate() {
-                self.facts.metrics.component_slot_index_visits += 1;
+                record_fact_metric!(self.facts.metrics.component_slot_index_visits += 1);
                 let id = ComponentSlotId {
                     component: component_id,
                     index: index as u32,

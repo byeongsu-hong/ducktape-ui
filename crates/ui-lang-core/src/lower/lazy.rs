@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]

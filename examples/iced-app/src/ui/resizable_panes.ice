@@ -27,7 +27,7 @@ on drag_started
 on drag_ended
   dragging = false
 
-on divider_dragged(dx, dy)
+on divider_dragged(dx, _dy)
   return if dx < 0.0 && left_width + dx < 160.0
   left_width = left_width + dx
 

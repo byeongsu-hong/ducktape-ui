@@ -6,13 +6,13 @@ on entered
 
 on left
 
-on moved(x, y)
+on moved(_x, _y)
 
-on pressed(button)
+on pressed(_button)
 
-on released(button)
+on released(_button)
 
-on wheel(x, y, pixels)
+on wheel(_x, _y, _pixels)
 
 subscribe
   mouse entered -> entered

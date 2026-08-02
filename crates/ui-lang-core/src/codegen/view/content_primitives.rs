@@ -5,7 +5,7 @@ pub(in crate::codegen) fn render_rule(
     document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let thickness = resolved_expr_use_code(program, rule.thickness, env, ValueMode::Owned)?;
     let axis = match rule.axis {
         ResolvedRuleAxis::Horizontal => "horizontal",
@@ -21,7 +21,7 @@ pub(in crate::codegen) fn render_qr_code(
     document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let payload = resolved_expr_use_code(program, qr.payload, env, ValueMode::Borrowed)?;
     let data = resolved_qr_data_code(qr, &payload);
     let mut code = format!("::ui_lang_runtime::qr_code({data}.ok())");
@@ -69,7 +69,7 @@ pub(in crate::codegen) fn render_space(
     document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let mut code = String::from("::iced::widget::space()");
     for (method, length) in [
         ("width", space.width.as_ref()),

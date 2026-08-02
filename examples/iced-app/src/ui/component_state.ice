@@ -39,11 +39,10 @@ component Counter(label:str)
     checkbox "Mirror" checked=enabled -> changed _
     Flag value=draft #flag
     button "Increment" -> increment
-    match count
-      0
-        text "zero"
-      _
-        text draft
+    if count == 0
+      text "zero"
+    if count != 0
+      text draft
 
 component Loader()
   state
@@ -56,7 +55,7 @@ component Loader()
   on loaded(next)
     tasks = next
     loading = false
-  on failed(error)
+  on failed(_error)
     loading = false
   col
     input "Task" <-> query

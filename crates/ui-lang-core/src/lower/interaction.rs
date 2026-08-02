@@ -1,7 +1,3 @@
-// Stable route IDs, payload contracts, and origins are retained for backend
-// validation even when today's emitter does not inspect every field.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]

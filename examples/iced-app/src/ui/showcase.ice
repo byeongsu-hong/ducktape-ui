@@ -100,7 +100,7 @@ component EditorPanel(bind content:editor, bind heading:str, busy:bool)
     editor_command(EditorCommand)
   col gap=8.0
     input "Editor heading" <-> heading hint="Editor heading" disabled=busy
-    editor #notes <-> content -> emit(editor_command, _)
+    editor <-> content -> emit(editor_command, _)
       with
         hint="Write notes"
         w=640.0
@@ -374,7 +374,7 @@ on task_list_scrolled(x, y, _reversed_x, _reversed_y, relative_x, relative_y, _b
   scroll_relative_x = relative_x
   scroll_relative_y = relative_y
 
-on docs_link(url)
+on docs_link(_url)
 
 on editor_command(command)
   event_seen = command.save
@@ -891,17 +891,6 @@ view
           handle dynamic
             closed code="⌄" font=ui size=12.0 line-h=1.0 shape=basic
             open code="⌃" font=ui size=12.0 line-h=1.0 shape=advanced
-        if false
-          col
-            pick display_modes display_mode -> display_mode_changed _
-              with
-                style=view_picker(loading)
-                menu-style=view_menu(loading)
-              handle arrow size=12.0
-            pick display_modes display_mode -> display_mode_changed _
-              handle static code="◆" font=ui size=12.0 line-h=1.0 shape=basic
-            pick display_modes display_mode -> display_mode_changed _
-              handle none
         combo searchable_modes display_mode "Search views" -> display_mode_changed _
           with
             w=fill

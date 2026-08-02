@@ -4,9 +4,9 @@ use "themes/monochrome.ice"
 
 on opened
 
-on preedit(text, start, end)
+on preedit(_text, _start, _end)
 
-on commit(text)
+on commit(_text)
 
 on closed
 

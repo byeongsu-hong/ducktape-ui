@@ -858,7 +858,6 @@ mod canvas;
 mod cycles;
 mod declarations;
 mod expr;
-#[allow(dead_code)]
 mod facts;
 mod handler;
 mod lifecycle;

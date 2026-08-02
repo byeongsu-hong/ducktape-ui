@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_text(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     match &text.content {
         ResolvedTextContent::Plain { value } => {
             let value = resolved_expr_use_code(program, *value, env, ValueMode::Borrowed)?;
@@ -147,7 +147,7 @@ fn render_resolved_rich_text(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let spans = spans
         .iter()
         .map(|rich_span| render_resolved_rich_span(rich_span, program, env))

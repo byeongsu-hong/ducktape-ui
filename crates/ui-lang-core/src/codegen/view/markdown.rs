@@ -6,7 +6,7 @@ pub(in crate::codegen) fn render_markdown(
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let content = resolved_markdown_content(markdown, env, program)?;
     let mut settings = String::from(
         "let mut __markdown_settings = ::iced::widget::markdown::Settings::from(self.__theme());",

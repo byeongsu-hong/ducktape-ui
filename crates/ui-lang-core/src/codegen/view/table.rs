@@ -10,7 +10,7 @@ pub(in crate::codegen) fn render_table(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     if columns.len() != table.columns.len() {
         return Err(program.invariant_at_origin(table.origin, "table HIR column length diverged"));
     }
@@ -139,7 +139,7 @@ pub(in crate::codegen) fn render_keyed_column(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let items = resolved_expr_use_code(program, keyed.items, env, ValueMode::Borrowed)?;
     let item_name = &keyed.item.name;
     let mut child_env = ScopedBindingEnv::new(env);

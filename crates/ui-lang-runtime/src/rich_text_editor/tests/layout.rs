@@ -217,11 +217,11 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
         document.lines.push(line);
     }
 
-    let mut legacy_spans = Vec::new();
+    let mut reference_spans = Vec::new();
     for (line_index, signature) in signatures.iter().enumerate() {
         let ending = (line_index + 1 < signatures.len()).then_some("\n");
         if signature.segments.is_empty() {
-            legacy_spans.push(to_span(
+            reference_spans.push(to_span(
                 ending.unwrap_or_default().to_owned(),
                 signature.empty_format,
             ));
@@ -234,11 +234,11 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
             {
                 text.push_str(ending);
             }
-            legacy_spans.push(to_span(text, segment.format));
+            reference_spans.push(to_span(text, segment.format));
         }
     }
-    let legacy = GraphicsParagraph::with_spans(Text {
-        content: legacy_spans.as_slice(),
+    let reference = GraphicsParagraph::with_spans(Text {
+        content: reference_spans.as_slice(),
         bounds: Size::new(style.width, i32::MAX as f32),
         size: style.text_size,
         line_height: style.line_height,
@@ -249,15 +249,15 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
         wrapping: style.wrapping,
     });
 
-    let legacy_height = paragraph_height(&legacy, style.text_size, style.line_height);
+    let reference_height = paragraph_height(&reference, style.text_size, style.line_height);
     assert!(
-        (document.height - legacy_height).abs() < 0.01,
-        "document height {} != legacy height {legacy_height}",
+        (document.height - reference_height).abs() < 0.01,
+        "document height {} != reference height {reference_height}",
         document.height
     );
     for (line, signature) in signatures.iter().enumerate() {
         for column in [0, signature.text.len()] {
-            let expected = caret_rectangle(legacy.buffer(), Position { line, column });
+            let expected = caret_rectangle(reference.buffer(), Position { line, column });
             let actual = document.caret(Position { line, column });
             assert!(
                 (actual.x - expected.x).abs() < 0.01
@@ -266,7 +266,7 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
                 "caret mismatch at {line}:{column}: {actual:?} != {expected:?}"
             );
             let point = Point::new(expected.x, expected.y + expected.height / 2.0);
-            assert_eq!(document.hit(point), hit_position(legacy.buffer(), point));
+            assert_eq!(document.hit(point), hit_position(reference.buffer(), point));
         }
     }
 }

@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_input(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let state = resolved_input_state(input, env, program)?;
     let binding_constructor = match &state.state {
         Some(StateBinding::App(name)) => {
