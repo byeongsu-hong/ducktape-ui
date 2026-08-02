@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::check::{CheckedLocalId, CheckedValueRef, expr_type};
-use crate::hir::{HandlerId, RunSiteId};
+use crate::hir::{ExternFnId, HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
 use std::collections::HashMap;
@@ -616,7 +616,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     )
     .unwrap();
 
-    generate_extern_probes(&mut out, document);
+    generate_extern_probes(&mut out, program, document)?;
     generate_editor_binding_mapper(&mut out, document);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
     let app_settings = program.settings();

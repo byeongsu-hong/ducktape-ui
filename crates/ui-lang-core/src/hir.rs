@@ -1276,6 +1276,10 @@ impl DeclarationIndex {
         &self.externs[id.0 as usize]
     }
 
+    pub(crate) fn extern_declarations(&self) -> impl Iterator<Item = &ExternDeclaration> {
+        self.externs.iter()
+    }
+
     #[cfg(test)]
     pub(crate) fn replace_extern_param_type_for_test(
         &mut self,

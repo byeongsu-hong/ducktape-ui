@@ -1519,6 +1519,7 @@ pub(crate) struct LoweredProgram {
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     markdowns: HashMap<ViewId, ResolvedMarkdown>,
+    extern_component_declarations: Vec<ResolvedExternComponentDeclaration>,
     extern_components: HashMap<ViewId, ResolvedExternComponent>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
@@ -3124,6 +3125,62 @@ impl LoweredProgram {
 
     pub(crate) fn extern_components(&self) -> impl Iterator<Item = &ResolvedExternComponent> {
         self.extern_components.values()
+    }
+
+    pub(crate) fn extern_component_declarations(
+        &self,
+    ) -> Result<&[ResolvedExternComponentDeclaration], Error> {
+        let expected = self
+            .declarations
+            .extern_declarations()
+            .filter(|declaration| declaration.kind == ExternKind::Component)
+            .collect::<Vec<_>>();
+        if self.extern_component_declarations.len() != expected.len() {
+            let origin = self.extern_component_declarations.first().map_or_else(
+                || {
+                    expected
+                        .first()
+                        .map_or(OriginId(u32::MAX), |item| item.declaration.origin)
+                },
+                |item| item.origin,
+            );
+            return Err(self.invariant_at_origin(
+                origin,
+                "extern component declaration HIR cardinality diverged",
+            ));
+        }
+        for (resolved, declaration) in self.extern_component_declarations.iter().zip(expected) {
+            let parameters_match = declaration.params.len() == declaration.borrowed.len()
+                && resolved.parameters.len() == declaration.params.len()
+                && resolved
+                    .parameters
+                    .iter()
+                    .zip(&declaration.params)
+                    .zip(&declaration.borrowed)
+                    .all(|((resolved, (_, ty)), borrowed)| {
+                        resolved.ty == *ty
+                            && resolved.mode == extern_component_argument_mode(*borrowed, ty)
+                    });
+            let origin = if self.origins.try_get(resolved.origin).is_some() {
+                resolved.origin
+            } else {
+                declaration.declaration.origin
+            };
+            if resolved.id != declaration.declaration.id
+                || resolved.origin != declaration.declaration.origin
+                || resolved.name != declaration.name
+                || resolved.rust_path != declaration.rust_path
+                || resolved.output != declaration.output
+                || declaration.progress.is_some()
+                || declaration.error.is_some()
+                || !parameters_match
+            {
+                return Err(
+                    self.invariant_at_origin(origin, "extern component declaration HIR diverged")
+                );
+            }
+        }
+        Ok(&self.extern_component_declarations)
     }
 
     #[cfg(test)]
@@ -5289,6 +5346,7 @@ impl Lowerer {
             return Err(self.invariant_at_origin(origin, message));
         }
         let settings = self.lower_app_settings()?;
+        let extern_component_declarations = self.lower_extern_component_declarations()?;
         self.validate_test_expression_contracts()?;
         self.lower_style_program()?;
         let subscriptions = self.lower_subscriptions()?;
@@ -5418,6 +5476,7 @@ impl Lowerer {
             inputs: self.inputs,
             text_editors: self.text_editors,
             markdowns: self.markdowns,
+            extern_component_declarations,
             extern_components: self.extern_components,
             boolean_controls: self.boolean_controls,
             pick_lists: self.pick_lists,
@@ -14106,6 +14165,7 @@ view
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let component = program.extern_component(ViewId(0)).unwrap();
+        let declarations = program.extern_component_declarations().unwrap();
 
         assert_eq!(component.id, ViewId(0));
         assert_eq!(component.function.id, ExternFnId(0));
@@ -14142,6 +14202,19 @@ view
             component.route.as_ref().unwrap().source_payloads,
             vec![Type::Bool]
         );
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0].id, ExternFnId(0));
+        assert_eq!(declarations[0].name, "borrowed_surface");
+        assert_eq!(declarations[0].parameters.len(), 3);
+        assert_eq!(
+            declarations[0].parameters[0].mode,
+            ResolvedExternComponentArgumentMode::BorrowedAsRef
+        );
+        assert_eq!(
+            declarations[0].parameters[1].mode,
+            ResolvedExternComponentArgumentMode::Borrowed
+        );
+        assert_eq!(declarations[0].output, Type::Bool);
 
         let generated = crate::codegen::generate(&program, "extern-component-hir.ice").unwrap();
         assert!(generated.contains("crate::backend::borrowed_surface("));
@@ -14207,10 +14280,12 @@ view
     #[test]
     fn extern_component_codegen_ignores_every_raw_semantic_field_after_lowering() {
         let source = format!(
-            "app ExternPoison\nextern crate::backend\n  component primary_surface(active:bool) -> bool\n  component poisoned_surface(active:bool) -> bool\n{THEME}state\n  active = false\non changed(next)\nview\n  extern primary_surface(active) -> changed _\n"
+            "app ExternPoison\nextern crate::backend\n  component primary_surface(active:bool) -> bool\n  component unused_surface(label:&str, active:&bool, values:&[i64]) -> unit\n{THEME}state\n  active = false\non changed(next)\nview\n  extern primary_surface(active) -> changed _\n"
         );
         let mut program = lower(analyze(&source).unwrap()).unwrap();
         let expected = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
+        assert!(expected.contains("fn __ui_lang_check_component_unused_surface<'a>"));
+        assert!(expected.contains("arg0: &'a str, arg1: &'a bool, arg2: &'a [i64]"));
         let ViewNode::ExternComponent {
             function,
             args,
@@ -14220,9 +14295,20 @@ view
         else {
             panic!("fixture root must be an extern component");
         };
-        *function = "poisoned_surface".into();
+        *function = "POISONED_VIEW_FUNCTION".into();
         *args = vec![Expr::Str("POISONED".into())];
         *route = None;
+        for (index, declaration) in program.document.functions.iter_mut().enumerate() {
+            declaration.kind = ExternKind::Future;
+            declaration.name = format!("POISONED_DECLARATION_{index}");
+            declaration.rust_path = format!("crate::poisoned::declaration_{index}");
+            declaration.params = vec![("poisoned".into(), Type::Bytes)];
+            declaration.borrowed = vec![false];
+            declaration.progress = Some(Type::I64);
+            declaration.output = Type::Bytes;
+            declaration.error = Some(Type::Str);
+            declaration.span = Span::line(900 + index);
+        }
 
         let actual = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
         assert_eq!(actual, expected);
@@ -14312,12 +14398,16 @@ view
 
         let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let component = program.extern_components.values().next().unwrap();
+        let declaration = &program.extern_component_declarations().unwrap()[0];
         let widget_origin = program.origin(component.origin);
         assert_eq!(widget_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(widget_origin.line, 4);
         let declaration_origin = program.origin(component.function.declaration_origin);
         assert_eq!(declaration_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(declaration_origin.line, 2);
+        assert_eq!(declaration.id, ExternFnId(0));
+        assert_eq!(declaration.name, "imported_surface");
+        assert_eq!(declaration.origin, component.function.declaration_origin);
         let argument_origin = program.origin(component.arguments[0].origin);
         assert_eq!(argument_origin.parent, Some(component.origin));
         assert_eq!(argument_origin.path.as_deref(), Some(imported.as_path()));
@@ -14329,7 +14419,15 @@ view
 
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
         assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.extern_component_declarations[0].id = ExternFnId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+        program.extern_component_declarations[0].id = ExternFnId(0);
 
         program.extern_components.clear();
         let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
@@ -14366,6 +14464,38 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized extern components lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized extern-component declaration probe performance contract"]
+    fn performance_contract_four_thousand_unused_extern_component_probes_under_two_seconds() {
+        const DECLARATIONS: usize = 4_000;
+        let mut source = "app ExternProbeScale\nextern crate::backend\n".to_owned();
+        for index in 0..DECLARATIONS {
+            writeln!(
+                source,
+                "  component native_surface_{index}(label:&str, index:i64) -> unit"
+            )
+            .unwrap();
+        }
+        source.push_str(&format!("{THEME}view\n  text \"ready\"\n"));
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-probe-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.extern_component_declarations.len(), DECLARATIONS);
+        assert_eq!(
+            generated
+                .matches("fn __ui_lang_check_component_native_surface_")
+                .count(),
+            DECLARATIONS
+        );
+        eprintln!("4k normalized unused extern component probes emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized unused extern component probes emitted in {elapsed:?}"
         );
     }
 

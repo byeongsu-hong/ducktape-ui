@@ -499,13 +499,15 @@ native generation, and 4,000-node performance contracts cover the boundary.
 ExternComponent is a completed native-boundary HIR slice. Its checked contract
 owns the exact component extern identity and Rust path, ordered parameter and
 argument types, borrow modes, output type, optional route, and their source
-origins. Lowering resolves those facts into `ResolvedExternComponent` and
-validates expression and route ownership before generation. Generation consumes
-that record and checked expression IDs; raw function names, arguments, borrow
-decisions, and routes cannot affect output after lowering. Direct,
-component-local, output, and unit delivery, corruption and raw poisoning,
-imported diagnostics/source markers, native generation, and 4,000-node
-performance contracts cover the boundary.
+origins. Lowering resolves used call sites into `ResolvedExternComponent` and
+every component extern declaration, including unused declarations, into
+`ResolvedExternComponentDeclaration`. Generation consumes those records and
+checked expression IDs; component probes do not reread raw declaration names,
+Rust paths, parameter/borrow shapes, output types, or spans. Direct,
+component-local, output, and unit delivery, call-site and declaration
+raw-poisoning, corrupt declaration HIR, imported diagnostics/source markers,
+native generation, and separate 4,000-call plus 4,000-unused-probe performance
+contracts cover the boundary.
 
 The Rust adapter is one manifest-relative include:
 
@@ -522,9 +524,11 @@ the manifest-relative literal to the corresponding file in `OUT_DIR` and
 expands one `include!`. Generated Rust emits probes for every declared extern
 struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
-at runtime. Generated items suppress backend-only Rust and Clippy warnings at
-their item boundary without changing their enclosing module, visibility, or
-name resolution; compile errors remain unsuppressed.
+at runtime. Component probes are emitted from normalized declaration HIR,
+including declarations with no view call site. Generated items suppress
+backend-only Rust and Clippy warnings at their item boundary without changing
+their enclosing module, visibility, or name resolution; compile errors remain
+unsuppressed.
 
 Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
 a consuming application must declare `iced = "=0.14.0"` and

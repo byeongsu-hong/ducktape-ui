@@ -28,6 +28,22 @@ pub(crate) struct ResolvedExternComponentFunction {
     pub(crate) declaration_origin: OriginId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedExternComponentDeclarationParameter {
+    pub(crate) ty: Type,
+    pub(crate) mode: ResolvedExternComponentArgumentMode,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedExternComponentDeclaration {
+    pub(crate) id: ExternFnId,
+    pub(crate) name: String,
+    pub(crate) rust_path: String,
+    pub(crate) parameters: Vec<ResolvedExternComponentDeclarationParameter>,
+    pub(crate) output: Type,
+    pub(crate) origin: OriginId,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternComponent {
     pub(crate) id: ViewId,
@@ -38,7 +54,66 @@ pub(crate) struct ResolvedExternComponent {
     pub(crate) origin: OriginId,
 }
 
+pub(super) fn extern_component_argument_mode(
+    borrowed: bool,
+    ty: &Type,
+) -> ResolvedExternComponentArgumentMode {
+    match (borrowed, ty) {
+        (false, _) => ResolvedExternComponentArgumentMode::Owned,
+        (true, Type::Str | Type::Bytes | Type::List(_)) => {
+            ResolvedExternComponentArgumentMode::BorrowedAsRef
+        }
+        (true, _) => ResolvedExternComponentArgumentMode::Borrowed,
+    }
+}
+
 impl Lowerer {
+    pub(super) fn lower_extern_component_declarations(
+        &self,
+    ) -> Result<Vec<ResolvedExternComponentDeclaration>, Error> {
+        self.declarations
+            .extern_declarations()
+            .filter(|declaration| declaration.kind == ExternKind::Component)
+            .map(|declaration| {
+                let origin = declaration.declaration.origin;
+                self.origins.try_get(origin).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        origin,
+                        "extern component declaration origin is invalid",
+                    )
+                })?;
+                if declaration.params.len() != declaration.borrowed.len()
+                    || declaration.progress.is_some()
+                    || declaration.error.is_some()
+                {
+                    return Err(self.invariant_at_origin(
+                        origin,
+                        "extern component declaration shape diverged",
+                    ));
+                }
+                let parameters = declaration
+                    .params
+                    .iter()
+                    .zip(&declaration.borrowed)
+                    .map(
+                        |((_, ty), borrowed)| ResolvedExternComponentDeclarationParameter {
+                            ty: ty.clone(),
+                            mode: extern_component_argument_mode(*borrowed, ty),
+                        },
+                    )
+                    .collect();
+                Ok(ResolvedExternComponentDeclaration {
+                    id: declaration.declaration.id,
+                    name: declaration.name.clone(),
+                    rust_path: declaration.rust_path.clone(),
+                    parameters,
+                    output: declaration.output.clone(),
+                    origin,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn lower_extern_component(
         &mut self,
         function: &str,
@@ -127,13 +202,7 @@ impl Lowerer {
                     format!("extern component argument {index} contract diverged"),
                 ));
             }
-            let mode = match (borrowed, expected) {
-                (false, _) => ResolvedExternComponentArgumentMode::Owned,
-                (true, Type::Str | Type::Bytes | Type::List(_)) => {
-                    ResolvedExternComponentArgumentMode::BorrowedAsRef
-                }
-                (true, _) => ResolvedExternComponentArgumentMode::Borrowed,
-            };
+            let mode = extern_component_argument_mode(*borrowed, expected);
             arguments.push(ResolvedExternComponentArgument {
                 expression: *expression,
                 ty: expected.clone(),
