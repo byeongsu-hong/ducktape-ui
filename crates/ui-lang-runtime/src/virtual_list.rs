@@ -14,6 +14,7 @@
 //! supported. Scrolling ancestors that translate or clip the list on either
 //! hit-test axis require a future explicit scroll-context contract.
 
+use crate::fixed_virtualization::{FixedRowScroll, FixedRows, KeyedRows};
 use crate::{StableId, accessible};
 use iced::advanced::text;
 use iced::advanced::widget::operation::{self, Focusable};
@@ -76,7 +77,7 @@ impl VirtualListId {
     /// type-tagged namespace. Callers should use this helper instead of
     /// reconstructing selector strings.
     pub fn selector(&self) -> String {
-        self.selector_with_kind("list")
+        self.selector_with_prefix(SELECTOR_PREFIX, "list")
     }
 
     fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
@@ -90,16 +91,16 @@ impl VirtualListId {
     }
 
     fn item_selector(&self, local: u32) -> String {
-        let mut selector = self.selector_with_kind("item");
+        let mut selector = self.selector_with_prefix(SELECTOR_PREFIX, "item");
         write!(&mut selector, "/{local}").expect("writing to a String cannot fail");
         selector
     }
 
-    fn selector_with_kind(&self, kind: &str) -> String {
+    pub(crate) fn selector_with_prefix(&self, prefix: &str, kind: &str) -> String {
         let mut selector = String::with_capacity(
-            SELECTOR_PREFIX.len() + kind.len() + self.logical.len().saturating_mul(3) + 12,
+            prefix.len() + kind.len() + self.logical.len().saturating_mul(3) + 12,
         );
-        selector.push_str(SELECTOR_PREFIX);
+        selector.push_str(prefix);
         selector.push('/');
         selector.push_str(kind);
         selector.push('/');
@@ -159,35 +160,12 @@ impl VirtualListConfig {
         self.overscan
     }
 
+    const fn rows(self) -> FixedRows {
+        FixedRows::new(self.row_height, self.overscan)
+    }
+
     fn rows_per_page(self, viewport_height: f32) -> usize {
-        (viewport_height / self.row_height).floor().max(1.0) as usize
-    }
-
-    fn total_height(self, item_count: usize) -> f32 {
-        ((item_count as f64) * f64::from(self.row_height)).min(f64::from(f32::MAX)) as f32
-    }
-
-    fn max_offset(self, item_count: usize, viewport_height: f32) -> f32 {
-        (self.total_height(item_count) - viewport_height).max(0.0)
-    }
-
-    fn visible_range(self, item_count: usize, offset: f32, viewport_height: f32) -> Range<usize> {
-        if item_count == 0 || viewport_height == 0.0 {
-            return 0..0;
-        }
-        let offset = offset.clamp(0.0, self.max_offset(item_count, viewport_height));
-        let first = (offset / self.row_height).floor() as usize;
-        let end = ((offset + viewport_height) / self.row_height).ceil() as usize;
-        first..end.min(item_count)
-    }
-
-    fn mounted_range(self, item_count: usize, offset: f32, viewport_height: f32) -> Range<usize> {
-        let visible = self.visible_range(item_count, offset, viewport_height);
-        if visible.is_empty() {
-            return visible;
-        }
-        visible.start.saturating_sub(self.overscan)
-            ..visible.end.saturating_add(self.overscan).min(item_count)
+        self.rows().rows_per_page(viewport_height)
     }
 }
 
@@ -248,16 +226,31 @@ pub struct VirtualListInspection {
 }
 
 /// Retained selection and viewport state for one virtual list.
-#[derive(Debug)]
 pub struct VirtualListState<Key> {
     id: VirtualListId,
     selected: Option<Key>,
     selected_index: Option<usize>,
-    scroll_offset: f32,
-    viewport_height: f32,
-    scroll_revision: u64,
-    semantic_ids: Arc<HashMap<Key, u32>>,
-    next_semantic_id: u32,
+    scroll: FixedRowScroll,
+    keyed_rows: KeyedRows<Key>,
+}
+
+impl<Key> fmt::Debug for VirtualListState<Key>
+where
+    Key: fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VirtualListState")
+            .field("id", &self.id)
+            .field("selected", &self.selected)
+            .field("selected_index", &self.selected_index)
+            .field("scroll_offset", &self.scroll.offset())
+            .field("viewport_height", &self.scroll.viewport_height())
+            .field("scroll_revision", &self.scroll.revision())
+            .field("semantic_ids", &self.keyed_rows.local_ids())
+            .field("next_semantic_id", &self.keyed_rows.next_local_id())
+            .finish()
+    }
 }
 
 impl<Key> VirtualListState<Key>
@@ -276,11 +269,8 @@ where
             },
             selected: self.selected.clone(),
             selected_index: self.selected_index,
-            scroll_offset: self.scroll_offset,
-            viewport_height: self.viewport_height,
-            scroll_revision: self.scroll_revision,
-            semantic_ids: Arc::clone(&self.semantic_ids),
-            next_semantic_id: self.next_semantic_id,
+            scroll: self.scroll,
+            keyed_rows: self.keyed_rows.snapshot(),
         }
     }
 
@@ -311,11 +301,8 @@ where
             id,
             selected: None,
             selected_index: None,
-            scroll_offset: 0.0,
-            viewport_height: 0.0,
-            scroll_revision: 0,
-            semantic_ids: Arc::new(HashMap::new()),
-            next_semantic_id: 2,
+            scroll: FixedRowScroll::default(),
+            keyed_rows: KeyedRows::new(2),
         }
     }
 
@@ -332,34 +319,27 @@ where
     }
 
     pub const fn scroll_offset(&self) -> f32 {
-        self.scroll_offset
+        self.scroll.offset()
     }
 
     pub const fn viewport_height(&self) -> f32 {
-        self.viewport_height
+        self.scroll.viewport_height()
     }
 
     /// Returns the logical rows intersecting the viewport for the current offset.
     pub fn visible_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        config.visible_range(
-            item_count,
-            self.effective_offset(item_count, config),
-            self.viewport_height,
-        )
+        self.scroll.visible_range(item_count, config.rows())
     }
 
     /// Returns the exact range mounted by [`virtual_list`], including overscan.
     pub fn mounted_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        config.mounted_range(
-            item_count,
-            self.effective_offset(item_count, config),
-            self.viewport_height,
-        )
+        self.scroll.mounted_range(item_count, config.rows())
     }
 
     pub fn inspect(&self, item_count: usize, config: VirtualListConfig) -> VirtualListInspection {
-        let visible_range = self.visible_range(item_count, config);
-        let mounted_range = self.mounted_range(item_count, config);
+        let window = self.scroll.window(item_count, config.rows());
+        let visible_range = window.visible;
+        let mounted_range = window.mounted;
         let mounted_rows = mounted_range.len();
         VirtualListInspection {
             logical_items: item_count,
@@ -380,40 +360,48 @@ where
         key: impl Fn(&T) -> Key,
         config: VirtualListConfig,
     ) -> Result<(), VirtualListReconcileError<Key>> {
-        let mut semantic_ids = HashMap::with_capacity(items.len());
-        let mut selected_index = None;
-        let mut next_semantic_id = self.next_semantic_id;
-        for (index, item) in items.iter().enumerate() {
-            let item_key = key(item);
-            if semantic_ids.contains_key(&item_key) {
-                return Err(VirtualListReconcileError::DuplicateKey(item_key));
-            }
-            if self.selected.as_ref() == Some(&item_key) {
-                selected_index = Some(index);
-            }
-            let semantic_id = self
-                .semantic_ids
-                .get(&item_key)
-                .copied()
-                .unwrap_or_else(|| {
-                    let semantic_id = next_semantic_id;
-                    next_semantic_id = next_semantic_id
-                        .checked_add(1)
-                        .expect("virtual-list semantic identity exhausted");
-                    semantic_id
-                });
-            semantic_ids.insert(item_key, semantic_id);
-        }
-        self.semantic_ids = Arc::new(semantic_ids);
-        self.next_semantic_id = next_semantic_id;
-        self.selected_index = selected_index;
+        self.selected_index = self
+            .keyed_rows
+            .reconcile(
+                items,
+                key,
+                self.selected.as_ref(),
+                "virtual-list semantic identity exhausted",
+            )
+            .map_err(VirtualListReconcileError::DuplicateKey)?;
         if self.selected_index.is_none() {
             self.selected = None;
         }
-        let previous_offset = self.scroll_offset;
-        self.set_offset(self.scroll_offset, items.len(), config);
-        if self.scroll_offset != previous_offset {
-            self.scroll_revision = self.scroll_revision.wrapping_add(1);
+        self.scroll.reconcile(items.len(), config.rows());
+        Ok(())
+    }
+
+    /// Reconciles a filtered window without replacing the complete keyed
+    /// identity map. Product widgets use this when logical items are retained
+    /// but temporarily hidden by hierarchy or filtering.
+    pub(crate) fn reconcile_retained_window<T>(
+        &mut self,
+        items: &[T],
+        key: impl Fn(&T) -> Key,
+        config: VirtualListConfig,
+    ) -> Result<(), Key> {
+        let mut retained_index = None;
+        for (index, item) in items.iter().enumerate() {
+            let item_key = key(item);
+            if self.keyed_rows.local_id(&item_key).is_none() {
+                return Err(item_key);
+            }
+            if self.selected.as_ref() == Some(&item_key) {
+                retained_index = Some(index);
+            }
+        }
+        if self.selected.is_some() && retained_index.is_none() {
+            self.selected = None;
+        }
+        self.selected_index = retained_index;
+        self.scroll.reconcile(items.len(), config.rows());
+        if let Some(index) = retained_index {
+            self.scroll.reveal(index, items.len(), config.rows());
         }
         Ok(())
     }
@@ -428,20 +416,16 @@ where
     ) -> VirtualListOutcome<Key> {
         let previous_selected = self.selected.clone();
         let previous_range = self.visible_range(items.len(), config);
-        let previous_offset = self.scroll_offset;
-        let native_scroll = matches!(&event, VirtualListEvent::Scrolled { .. });
+        let previous_offset = self.scroll.offset();
 
         match event {
             VirtualListEvent::ViewportChanged { height } => {
-                self.viewport_height = if height.is_finite() {
-                    height.max(0.0)
-                } else {
-                    0.0
-                };
-                self.set_offset(self.scroll_offset, items.len(), config);
+                self.scroll
+                    .set_viewport_height(height, items.len(), config.rows());
             }
             VirtualListEvent::Scrolled { offset_y } => {
-                self.set_offset(offset_y, items.len(), config);
+                self.scroll
+                    .set_native_offset(offset_y, items.len(), config.rows());
             }
             VirtualListEvent::Select {
                 index,
@@ -455,7 +439,7 @@ where
                 if let Some(index) = resolved {
                     self.selected = Some(selected);
                     self.selected_index = Some(index);
-                    self.reveal(index, items.len(), config);
+                    self.scroll.reveal(index, items.len(), config.rows());
                 }
             }
             VirtualListEvent::Navigate(navigation) => {
@@ -463,24 +447,20 @@ where
                     self.selected_index,
                     items.len(),
                     navigation,
-                    config.rows_per_page(self.viewport_height),
+                    config.rows_per_page(self.scroll.viewport_height()),
                 ) {
                     self.selected = items.get(index).map(&key);
                     self.selected_index = self.selected.as_ref().map(|_| index);
-                    self.reveal(index, items.len(), config);
+                    self.scroll.reveal(index, items.len(), config.rows());
                 }
             }
-        }
-
-        if !native_scroll && self.scroll_offset != previous_offset {
-            self.scroll_revision = self.scroll_revision.wrapping_add(1);
         }
 
         VirtualListOutcome {
             selected: self.selected.clone(),
             selection_changed: self.selected != previous_selected,
             visible_range_changed: self.visible_range(items.len(), config) != previous_range,
-            scroll_changed: self.scroll_offset != previous_offset,
+            scroll_changed: self.scroll.offset() != previous_offset,
         }
     }
 
@@ -491,18 +471,7 @@ where
         item_count: usize,
         config: VirtualListConfig,
     ) -> bool {
-        let previous = self.scroll_offset;
-        if index < item_count {
-            self.scroll_offset = (index as f64 * f64::from(config.row_height)).min(f64::from(
-                config.max_offset(item_count, self.viewport_height),
-            )) as f32;
-        }
-        if self.scroll_offset != previous {
-            self.scroll_revision = self.scroll_revision.wrapping_add(1);
-            true
-        } else {
-            false
-        }
+        self.scroll.scroll_to_item(index, item_count, config.rows())
     }
 
     /// Scrolls a stable key into view and returns whether the offset changed.
@@ -519,37 +488,12 @@ where
         self.scroll_to_item(index, items.len(), config)
     }
 
-    fn reveal(&mut self, index: usize, item_count: usize, config: VirtualListConfig) {
-        let top = index as f64 * f64::from(config.row_height);
-        let bottom = top + f64::from(config.row_height);
-        let offset = f64::from(self.scroll_offset);
-        let viewport_bottom = offset + f64::from(self.viewport_height);
-        if top < offset {
-            self.set_offset(top as f32, item_count, config);
-        } else if bottom > viewport_bottom {
-            self.set_offset(
-                (bottom - f64::from(self.viewport_height)) as f32,
-                item_count,
-                config,
-            );
-        }
-    }
-
-    fn set_offset(&mut self, offset: f32, item_count: usize, config: VirtualListConfig) {
-        self.scroll_offset = if offset.is_finite() {
-            offset.clamp(0.0, config.max_offset(item_count, self.viewport_height))
-        } else {
-            0.0
-        };
-    }
-
-    fn effective_offset(&self, item_count: usize, config: VirtualListConfig) -> f32 {
-        self.scroll_offset
-            .clamp(0.0, config.max_offset(item_count, self.viewport_height))
-    }
-
     fn widget_id(&self) -> iced::advanced::widget::Id {
         self.id.widget_id("focus")
+    }
+
+    pub(crate) fn focus_task<Message>(&self) -> iced::Task<Message> {
+        iced::widget::operation::focus(self.widget_id())
     }
 
     fn scroll_id(&self) -> iced::advanced::widget::Id {
@@ -558,11 +502,14 @@ where
 
     fn semantic_id(&self, key: &Key) -> StableId {
         self.id.semantic_id(
-            *self
-                .semantic_ids
-                .get(key)
+            self.keyed_rows
+                .local_id(key)
                 .expect("virtual-list items must be reconciled before rendering"),
         )
+    }
+
+    pub(crate) fn semantic_local_id(&self, key: &Key) -> Option<u32> {
+        self.keyed_rows.local_id(key)
     }
 
     /// Returns the canonical exact selector for a reconciled item key.
@@ -570,9 +517,9 @@ where
     /// `None` means the key was not present in the latest successful
     /// reconciliation.
     pub fn item_selector(&self, key: &Key) -> Option<String> {
-        self.semantic_ids
-            .get(key)
-            .map(|local| self.id.item_selector(*local))
+        self.keyed_rows
+            .local_id(key)
+            .map(|local| self.id.item_selector(local))
     }
 }
 
@@ -627,12 +574,68 @@ where
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
-    let scroll_offset = state.effective_offset(items.len(), config);
-    let range = config.mounted_range(items.len(), scroll_offset, state.viewport_height);
-    let top = (range.start as f64 * f64::from(config.row_height)).min(f64::from(f32::MAX)) as f32;
-    let bottom = (config.total_height(items.len())
-        - (range.end as f64 * f64::from(config.row_height)) as f32)
-        .max(0.0);
+    virtual_collection(
+        state,
+        items,
+        config,
+        collection_label,
+        crate::Role::List,
+        state.id.selector(),
+        key,
+        label,
+        view,
+        |index, _, local| VirtualCollectionItemSemantics {
+            selector: state.id.item_selector(local),
+            role: crate::Role::ListItem,
+            position_in_set: index.saturating_add(1),
+            size_of_set: items.len(),
+            level: None,
+            expanded: None,
+        },
+        on_event,
+        |_| None,
+        "virtual-list",
+    )
+}
+
+pub(crate) struct VirtualCollectionItemSemantics {
+    pub(crate) selector: String,
+    pub(crate) role: crate::Role,
+    pub(crate) position_in_set: usize,
+    pub(crate) size_of_set: usize,
+    pub(crate) level: Option<usize>,
+    pub(crate) expanded: Option<bool>,
+}
+
+type ExtraKeyHandler<'a, Message> = Rc<dyn Fn(&keyboard::Key) -> Option<Message> + 'a>;
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn virtual_collection<'a, T, Key, Message, Theme, Renderer>(
+    state: &VirtualListState<Key>,
+    items: &'a [T],
+    config: VirtualListConfig,
+    collection_label: impl Into<String>,
+    collection_role: crate::Role,
+    collection_selector: impl Into<String>,
+    key: impl Fn(&T) -> Key,
+    label: impl Fn(&T) -> String,
+    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message, Theme, Renderer>,
+    item_semantics: impl Fn(usize, &T, u32) -> VirtualCollectionItemSemantics,
+    on_event: impl Fn(VirtualListEvent<Key>) -> Message + 'a,
+    on_key: impl Fn(&keyboard::Key) -> Option<Message> + 'a,
+    draw_probe: &'static str,
+) -> Element<'a, Message, Theme, Renderer>
+where
+    Key: Clone + Eq + Hash + 'static,
+    Message: Clone + 'static,
+    Theme: container::Catalog + scrollable::Catalog + 'a,
+    Renderer: text::Renderer + iced::advanced::Renderer + 'a,
+{
+    let window = state.scroll.window(items.len(), config.rows());
+    let scroll_offset = window.offset;
+    let range = window.mounted.clone();
+    let top = window.top_spacer;
+    let bottom = window.bottom_spacer;
     let mut children = Vec::with_capacity(range.len());
     let mut mounted = Vec::with_capacity(range.len());
     let mut mounted_semantic_ids = Vec::with_capacity(range.len());
@@ -642,27 +645,32 @@ where
         let selected = state.selected.as_ref() == Some(&item_key);
         let row = container(view(index, item, selected))
             .width(Length::Fill)
-            .height(config.row_height);
+            .height(config.rows().row_height());
         let semantic_key = state
-            .semantic_ids
-            .get(&item_key)
-            .copied()
+            .keyed_rows
+            .local_id(&item_key)
             .expect("virtual-list items must be reconciled before rendering");
-        let logical_id = state.id.item_selector(semantic_key);
-        let row: Element<'a, Message, Theme, Renderer> =
-            accessible(row, state.semantic_id(&item_key), crate::Role::ListItem)
-                .logical_id(logical_id)
-                .label(label(item))
-                .position_in_set(index.saturating_add(1))
-                .size_of_set(items.len())
-                .selected(selected)
-                .into();
+        let semantics = item_semantics(index, item, semantic_key);
+        let mut accessible_row = accessible(row, state.semantic_id(&item_key), semantics.role)
+            .logical_id(semantics.selector)
+            .label(label(item))
+            .position_in_set(semantics.position_in_set)
+            .size_of_set(semantics.size_of_set)
+            .selected(selected);
+        if let Some(level) = semantics.level {
+            accessible_row = accessible_row.level(level);
+        }
+        if let Some(expanded) = semantics.expanded {
+            accessible_row = accessible_row.expanded(expanded);
+        }
+        let row: Element<'a, Message, Theme, Renderer> = accessible_row.into();
         children.push((semantic_key, row));
         mounted.push((index, item_key.clone()));
         mounted_semantic_ids.push(semantic_key);
     }
 
     let on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a> = Rc::new(on_event);
+    let on_key: ExtraKeyHandler<'a, Message> = Rc::new(on_key);
     let on_scroll = Rc::clone(&on_event);
     let touch_claim = Rc::new(Cell::new(TouchClaim::None));
     let native_scroll_offset = Rc::new(Cell::new(scroll_offset));
@@ -673,6 +681,7 @@ where
         children: mounted_children,
         touch_claim: Rc::clone(&touch_claim),
         scroll_offset: Rc::clone(&native_scroll_offset),
+        draw_probe,
     });
     let content = scrollable(
         column![
@@ -716,13 +725,14 @@ where
         mounted,
         mounted_semantic_ids,
         config,
-        total_height: config.total_height(items.len()),
+        total_height: window.total_height,
         scroll_offset,
-        viewport_height: state.viewport_height,
-        scroll_revision: state.scroll_revision,
+        viewport_height: state.scroll.viewport_height(),
+        scroll_revision: state.scroll.revision(),
         native_scroll_offset,
         touch_claim,
         on_event,
+        on_key,
     };
     let active_descendant = state.selected.as_ref().and_then(|selected| {
         state
@@ -730,17 +740,13 @@ where
             .filter(|index| range.contains(index))
             .map(|_| state.semantic_id(selected))
     });
-    accessible(
-        Element::new(list),
-        state.id.semantic_id(1),
-        crate::Role::List,
-    )
-    .logical_id(state.id.selector())
-    .label(collection_label)
-    .focus_descendant()
-    .active_descendant_maybe(active_descendant)
-    .size_of_set(items.len())
-    .into()
+    accessible(Element::new(list), state.id.semantic_id(1), collection_role)
+        .logical_id(collection_selector)
+        .label(collection_label)
+        .focus_descendant()
+        .active_descendant_maybe(active_descendant)
+        .size_of_set(items.len())
+        .into()
 }
 
 struct VirtualList<'a, Key, Message, Theme, Renderer>
@@ -761,6 +767,7 @@ where
     native_scroll_offset: Rc<Cell<f32>>,
     touch_claim: Rc<Cell<TouchClaim>>,
     on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a>,
+    on_key: ExtraKeyHandler<'a, Message>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -785,6 +792,7 @@ where
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     touch_claim: Rc<Cell<TouchClaim>>,
     scroll_offset: Rc<Cell<f32>>,
+    draw_probe: &'static str,
 }
 
 struct MountedRowsState {
@@ -980,7 +988,7 @@ where
                 },
                 iced::Color::TRANSPARENT,
             );
-            crate::dev::record_draw_probe("virtual-list");
+            crate::dev::record_draw_probe(self.draw_probe);
         }
     }
 
@@ -1316,6 +1324,9 @@ where
             if let Some(navigation) = navigation {
                 shell.publish((self.on_event)(VirtualListEvent::Navigate(navigation)));
                 shell.capture_event();
+            } else if let Some(message) = (self.on_key)(key) {
+                shell.publish(message);
+                shell.capture_event();
             }
         }
     }
@@ -1424,8 +1435,8 @@ where
         shell: &mut Shell<'_, Message>,
     ) {
         let local_y = position.y - bounds.y;
-        let index =
-            ((self.native_scroll_offset.get() + local_y) / self.config.row_height).floor() as usize;
+        let index = ((self.native_scroll_offset.get() + local_y) / self.config.rows().row_height())
+            .floor() as usize;
         if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
             shell.publish((self.on_event)(VirtualListEvent::Select {
                 index: *index,
@@ -1856,8 +1867,8 @@ mod tests {
         state
             .reconcile(&["kept".to_owned()], Clone::clone, config())
             .unwrap();
-        let semantic_ids = state.semantic_ids.clone();
-        let next_semantic_id = state.next_semantic_id;
+        let keyed_rows = state.keyed_rows.snapshot();
+        let next_semantic_id = state.keyed_rows.next_local_id();
         assert_eq!(
             state.reconcile(
                 &["new".to_owned(), "new".to_owned()],
@@ -1866,8 +1877,8 @@ mod tests {
             ),
             Err(VirtualListReconcileError::DuplicateKey("new".to_owned()))
         );
-        assert_eq!(state.semantic_ids, semantic_ids);
-        assert_eq!(state.next_semantic_id, next_semantic_id);
+        assert!(state.keyed_rows.shares_ids_with(&keyed_rows));
+        assert_eq!(state.keyed_rows.next_local_id(), next_semantic_id);
     }
 
     #[test]
@@ -2163,21 +2174,22 @@ mod tests {
 
         let update = original.update_snapshot();
         assert_eq!(original.id(), update.id());
-        assert!(Arc::ptr_eq(&original.semantic_ids, &update.semantic_ids));
+        assert!(original.keyed_rows.shares_ids_with(&update.keyed_rows));
         assert_eq!(
             original.semantic_id(&"first".to_owned()),
             update.semantic_id(&"first".to_owned())
         );
 
-        assert!(Arc::ptr_eq(&original.semantic_ids, &fork.semantic_ids));
+        assert!(original.keyed_rows.shares_ids_with(&fork.keyed_rows));
         let mut reconciled_fork = fork;
         reconciled_fork
             .reconcile(&["first".to_owned()], Clone::clone, config())
             .unwrap();
-        assert!(!Arc::ptr_eq(
-            &original.semantic_ids,
-            &reconciled_fork.semantic_ids
-        ));
+        assert!(
+            !original
+                .keyed_rows
+                .shares_ids_with(&reconciled_fork.keyed_rows)
+        );
     }
 
     #[test]
@@ -3442,6 +3454,7 @@ mod tests {
             children: Vec::new(),
             touch_claim: Rc::clone(&claim),
             scroll_offset: Rc::new(Cell::new(0.0)),
+            draw_probe: "mounted-rows-test",
         };
         let mut empty_tree = WidgetTree::new(&empty as &dyn Widget<Message, (), RecordingRenderer>);
         let mut renderer = RecordingRenderer::default();
@@ -3462,6 +3475,7 @@ mod tests {
             children: vec![Element::new(FocusLeaf)],
             touch_claim: claim,
             scroll_offset: Rc::new(Cell::new(0.0)),
+            draw_probe: "mounted-rows-test",
         };
         let mut mounted_tree =
             WidgetTree::new(&mounted as &dyn Widget<Message, (), RecordingRenderer>);
@@ -3497,6 +3511,7 @@ mod tests {
             native_scroll_offset: Rc::new(Cell::new(0.0)),
             touch_claim: Rc::new(Cell::new(TouchClaim::None)),
             on_event: Rc::new(Message::List),
+            on_key: Rc::new(|_| None),
         };
         let mut element: Element<'_, Message, (), RecordingRenderer> = Element::new(list);
         let mut tree = WidgetTree::new(&element);

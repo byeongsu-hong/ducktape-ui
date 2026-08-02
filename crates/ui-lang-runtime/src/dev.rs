@@ -202,11 +202,17 @@ fn required_draw_completed(required: Option<&str>) -> bool {
     let Some(required) = required else {
         return true;
     };
-    DRAW_PROBES
+    let probes = DRAW_PROBES
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .as_ref()
-        .is_some_and(|probes| probes.contains(required))
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(probes) = probes.as_ref() else {
+        return false;
+    };
+    required
+        .split(',')
+        .map(str::trim)
+        .filter(|probe| !probe.is_empty())
+        .all(|probe| probes.contains(probe))
 }
 
 impl ReadyConfig {
@@ -369,9 +375,17 @@ mod tests {
     #[test]
     fn required_draw_probe_blocks_readiness_until_the_widget_draws() {
         const PROBE: &str = "virtual-list-test-probe";
+        const TREE_PROBE: &str = "tree-view-test-probe";
         assert!(!required_draw_completed(Some(PROBE)));
         record_draw_probe(PROBE);
         assert!(required_draw_completed(Some(PROBE)));
+        assert!(!required_draw_completed(Some(
+            "virtual-list-test-probe, tree-view-test-probe"
+        )));
+        record_draw_probe(TREE_PROBE);
+        assert!(required_draw_completed(Some(
+            "virtual-list-test-probe, tree-view-test-probe"
+        )));
         assert!(required_draw_completed(None));
     }
 
