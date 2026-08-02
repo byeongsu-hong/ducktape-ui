@@ -494,7 +494,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, and Float families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Float, and Pin families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -558,7 +558,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, and Float remain open HIR slices.
+ResizeHandle, Sensor, Float, and Pin remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -633,6 +633,16 @@ complete arena consumption before publishing `ResolvedFloat`. Production
 emission reads only that record and checked IDs. Structural, malformed-ID,
 post-check expression/static mutation, post-lowering AST/theme poisoning, and
 an ignored 4,000-node lower+emit contract cover the boundary.
+
+Pin has a complete private HIR boundary. Stable expression owners retain both
+position operands and any fixed width or height. A semantic key freezes absent,
+fill, fill-portion, shrink, and fixed length topology, including fill-portion
+values. Lowering validates scope, expression DAGs, exact position and length
+types, and complete arena consumption before publishing `ResolvedPin`; fixed
+numeric and native-length operands become distinct HIR variants. Production
+emission reads only that record and checked IDs. Structural, malformed-ID,
+post-check expression/static mutation, post-lowering AST poisoning, and an
+ignored 4,000-node lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
