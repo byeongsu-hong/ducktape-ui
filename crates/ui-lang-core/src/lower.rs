@@ -3377,16 +3377,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "pane grid reached code generation with a mismatched checked view ID",
             ));
         }
         self.pane_grids.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "pane grid reached code generation without normalized HIR",
             )
         })
@@ -11640,6 +11638,65 @@ view
                 .is_none()
         );
         crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn pane_grid_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pane-grid-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let source = format!(
+            "app PaneGridOrigins\n{THEME}view\n  panes #work\n    pane files\n      text \"Files\"\n"
+        );
+        let pane_line = source
+            .lines()
+            .position(|line| line.trim_start().starts_with("panes #work"))
+            .unwrap()
+            + 1;
+        fs::write(&root, source).unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pane_grid = program
+            .pane_grids
+            .values()
+            .next()
+            .expect("imported pane grid must be normalized");
+        let origin = program.origin(pane_grid.origin);
+        assert_eq!(origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(origin.line, pane_line);
+        let pane_origin = program.origin(pane_grid.panes[0].origin);
+        assert_eq!(pane_origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(pane_origin.line, pane_line + 1);
+        assert_eq!(pane_origin.parent, Some(pane_grid.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_root = crate::codegen::encode_source_path(&root.display().to_string());
+        assert!(generated.contains(&format!(
+            "// __ICE_SOURCE {} 1 {encoded_root}",
+            pane_line + 2
+        )));
+
+        program.pane_grids.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.pane_grids.values_mut().next().unwrap().panes.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
 
         fs::remove_dir_all(directory).unwrap();
     }
