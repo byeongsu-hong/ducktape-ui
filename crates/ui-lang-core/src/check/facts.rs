@@ -906,6 +906,27 @@ pub(crate) struct CheckedTextEditor {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedPickList {
+    pub(crate) id: ViewId,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) menu_style: Option<ExternFnId>,
+    pub(crate) handle_origins: Vec<OriginId>,
+    pub(crate) status_origins: Vec<OriginId>,
+    pub(crate) menu_origin: Option<OriginId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedComboBox {
+    pub(crate) id: ViewId,
+    pub(crate) binding: CheckedValueRef,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) menu_style: Option<ExternFnId>,
+    pub(crate) icon_origin: Option<OriginId>,
+    pub(crate) status_origins: Vec<OriginId>,
+    pub(crate) menu_origin: Option<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -920,6 +941,8 @@ pub(crate) enum CheckedInteractionKind {
     RichText,
     Input,
     TextEditor,
+    PickList,
+    ComboBox,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -1006,6 +1029,8 @@ pub(crate) struct CheckedFacts {
     texts: HashMap<ViewId, CheckedText>,
     inputs: HashMap<ViewId, CheckedInput>,
     text_editors: HashMap<ViewId, CheckedTextEditor>,
+    pick_lists: HashMap<ViewId, CheckedPickList>,
+    combo_boxes: HashMap<ViewId, CheckedComboBox>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1156,6 +1181,25 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.text_editors.get_mut(&view).unwrap().binding = binding;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_combo_box_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
+        self.combo_boxes.get_mut(&view).unwrap().binding = binding;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pick_list_style(&mut self, view: ViewId, function: ExternFnId) {
+        self.pick_lists.get_mut(&view).unwrap().style = Some(function);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_pick_list_status_origins(&mut self, view: ViewId) {
+        self.pick_lists
+            .get_mut(&view)
+            .unwrap()
+            .status_origins
+            .swap(0, 1);
     }
 
     #[cfg(test)]
@@ -1327,6 +1371,14 @@ impl CheckedFacts {
 
     pub(crate) fn text_editor(&self, id: ViewId) -> Option<&CheckedTextEditor> {
         self.text_editors.get(&id).filter(|editor| editor.id == id)
+    }
+
+    pub(crate) fn pick_list(&self, id: ViewId) -> Option<&CheckedPickList> {
+        self.pick_lists.get(&id).filter(|pick| pick.id == id)
+    }
+
+    pub(crate) fn combo_box(&self, id: ViewId) -> Option<&CheckedComboBox> {
+        self.combo_boxes.get(&id).filter(|combo| combo.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3388,6 +3440,194 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "input facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pick_list_facts(
+        &mut self,
+        pick: ViewId,
+        options: &Expr,
+        selected: &Expr,
+        config: &PickListOptions,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            pick,
+            CheckedInteractionKind::PickList,
+            crate::ast::pick_list_semantic_key(config, route),
+            crate::ast::pick_list_expression_roots(options, selected, config)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            crate::ast::pick_list_routes(config, route),
+            env,
+            span,
+        )?;
+        let resolve = |call: &Option<ExternCall>, kind: ExternKind, label: &str| {
+            call.as_ref()
+                .map(|call| {
+                    self.declarations
+                        .extern_decl_by_name(&call.function)
+                        .filter(|function| function.kind == kind)
+                        .map(|function| function.declaration.id)
+                        .ok_or_else(|| {
+                            self.invariant(span, format!("pick {label} extern disappeared"))
+                        })
+                })
+                .transpose()
+        };
+        let style = resolve(&config.custom_style, ExternKind::PickListStyle, "style")?;
+        let menu_style = resolve(
+            &config.custom_menu_style,
+            ExternKind::MenuStyle,
+            "menu style",
+        )?;
+        let parent = self.declarations.view(pick).origin;
+        let handle_origins = match &config.handle {
+            Some(PickListHandle::Static(icon)) => vec![self.origins.push(&icon.span, Some(parent))],
+            Some(PickListHandle::Dynamic { closed, open }) => vec![
+                self.origins.push(&closed.span, Some(parent)),
+                self.origins.push(&open.span, Some(parent)),
+            ],
+            Some(PickListHandle::Arrow { .. } | PickListHandle::None) | None => Vec::new(),
+        };
+        let status_origins = [
+            &config.style.active,
+            &config.style.hovered,
+            &config.style.opened,
+            &config.style.opened_hovered,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|status| {
+            self.origins
+                .push(status.span.as_ref().unwrap_or(span), Some(parent))
+        })
+        .collect();
+        let menu_origin = config.menu_style.as_ref().map(|menu| {
+            self.origins
+                .push(menu.span.as_ref().unwrap_or(span), Some(parent))
+        });
+        if self
+            .facts
+            .pick_lists
+            .insert(
+                pick,
+                CheckedPickList {
+                    id: pick,
+                    style,
+                    menu_style,
+                    handle_origins,
+                    status_origins,
+                    menu_origin,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "pick facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_combo_box_facts(
+        &mut self,
+        combo: ViewId,
+        state: &str,
+        selected: &Expr,
+        placeholder: &str,
+        options: &ComboBoxOptions,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            combo,
+            CheckedInteractionKind::ComboBox,
+            crate::ast::combo_box_semantic_key(state, placeholder, options, route),
+            crate::ast::combo_box_expression_roots(selected, options)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            crate::ast::combo_box_routes(options, route),
+            env,
+            span,
+        )?;
+        let binding = env
+            .get(state)
+            .and_then(|(root, ty)| {
+                matches!(ty, Type::Combo(_))
+                    .then_some(match root {
+                        CheckedPathRoot::Value(value) => Some(*value),
+                        _ => None,
+                    })
+                    .flatten()
+            })
+            .ok_or_else(|| self.invariant(span, "combo lost its checked state binding"))?;
+        let resolve = |call: &Option<ExternCall>, kind: ExternKind, label: &str| {
+            call.as_ref()
+                .map(|call| {
+                    self.declarations
+                        .extern_decl_by_name(&call.function)
+                        .filter(|function| function.kind == kind)
+                        .map(|function| function.declaration.id)
+                        .ok_or_else(|| {
+                            self.invariant(span, format!("combo {label} extern disappeared"))
+                        })
+                })
+                .transpose()
+        };
+        let style = resolve(&options.custom_style, ExternKind::InputStyle, "style")?;
+        let menu_style = resolve(
+            &options.custom_menu_style,
+            ExternKind::MenuStyle,
+            "menu style",
+        )?;
+        let parent = self.declarations.view(combo).origin;
+        let icon_origin = options
+            .icon
+            .as_ref()
+            .map(|icon| self.origins.push(&icon.span, Some(parent)));
+        let status_origins = [
+            &options.style.active,
+            &options.style.hovered,
+            &options.style.focused,
+            &options.style.focused_hovered,
+            &options.style.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|status| {
+            self.origins
+                .push(status.span.as_ref().unwrap_or(span), Some(parent))
+        })
+        .collect();
+        let menu_origin = options.menu_style.as_ref().map(|menu| {
+            self.origins
+                .push(menu.span.as_ref().unwrap_or(span), Some(parent))
+        });
+        if self
+            .facts
+            .combo_boxes
+            .insert(
+                combo,
+                CheckedComboBox {
+                    id: combo,
+                    binding,
+                    style,
+                    menu_style,
+                    icon_origin,
+                    status_origins,
+                    menu_origin,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "combo facts were produced more than once"));
         }
         Ok(())
     }
@@ -7949,6 +8189,46 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_text_editor_facts(view, binding, disabled, options, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::PickList {
+                options,
+                selected,
+                options_config,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_pick_list_facts(
+                    view,
+                    options,
+                    selected,
+                    options_config,
+                    route,
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::ComboBox {
+                state,
+                selected,
+                placeholder,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_combo_box_facts(
+                    view,
+                    state,
+                    selected,
+                    placeholder,
+                    options,
+                    route,
+                    env,
+                    span,
+                )?;
                 CheckedViewFlow::None
             }
             ViewNode::Layout {

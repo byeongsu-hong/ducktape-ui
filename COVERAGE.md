@@ -747,6 +747,21 @@ controlled-state IDs, same-kind identity swaps, pre-/post-lowering poisoning,
 imported origin chains, complete native generation, the lexical boundary
 ratchet, and an ignored 4,000-editor lower+emit contract cover the boundary.
 
+PickList and ComboBox have complete private HIR boundaries. Their checked
+interaction records freeze every option-expression slot, generic selection
+type, selection/input/hover/open/close route, exact custom widget/menu style
+extern, font and handle/icon topology, parented status/menu origins, and the
+exact `CheckedValueRef` behind each `combo[T]` state. Lowering publishes
+`ResolvedPickList` and `ResolvedComboBox` with resolved dimensions, typography,
+fonts, colors, gradients, surfaces, handles/icons, and payload delivery.
+Production emission reads the raw source node only for its shared widget ID.
+Complete HIR assertions, expression and static poisoning, same-arena
+state/extern/route/status swaps, malformed IDs, imported physical origins,
+native output tests, and explicit 4,000-PickList plus 4,000-distinct-ComboBox
+budgets cover the boundary. App-only callbacks perform zero full binding
+environment clones; the distinct-state contract lowers in about 100 ms and
+emits in about 400 ms on the reference development machine.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

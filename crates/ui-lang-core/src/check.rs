@@ -900,19 +900,19 @@ use expr::{check_length_value, contains_ui_enum};
 pub(crate) use facts::CheckedFactMetrics;
 pub(crate) use facts::{
     CheckedAppSettings, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
-    CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
-    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
-    CheckedInteractionKind, CheckedInteractionRoute, CheckedKeyedLength, CheckedLayout,
-    CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis,
-    CheckedPaneBackground, CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid,
-    CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius,
-    CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle,
-    CheckedPaneView, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
-    CheckedResponsiveLength, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
-    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedTableLength, CheckedText,
-    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewExprRole,
-    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComboBox,
+    CheckedComponentArgumentSource, CheckedEffectTarget, CheckedExprId, CheckedExprKind,
+    CheckedExprOwner, CheckedExprUse, CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion,
+    CheckedInput, CheckedInteraction, CheckedInteractionKind, CheckedInteractionRoute,
+    CheckedKeyedLength, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern,
+    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
+    CheckedPaneCustomStyle, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
+    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
+    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
+    CheckedProjection, CheckedProjectionKind, CheckedResponsiveLength, CheckedRouteArgKind,
+    CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
+    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedView, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 

@@ -471,6 +471,19 @@ widget ID. Structural, corrupt-ID, same-kind identity-swap, pre-/post-lowering
 mutation, imported-origin, native codegen, and 4,000-editor performance
 contracts provide the executable evidence.
 
+PickList and ComboBox are completed selection-control slices. The checked
+interaction arena owns their deterministic expression and route partitions,
+generic selection types, exact widget/menu style externs, font and handle/icon
+topology, parented status/menu origins, and ComboBox's concrete
+`CheckedValueRef` state. Lowering resolves these into `ResolvedPickList` and
+`ResolvedComboBox`; production emission reads the raw node only for the shared
+widget ID. The old selection style emitter is removed. App callback emission
+also avoids snapshotting the complete binding environment when no component
+scope requires capture, preventing an App-state-count by callback-count
+quadratic path. Complete structural, corruption, raw-poisoning,
+imported-origin, native-output, and 4,000-node/distinct-state performance
+contracts provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

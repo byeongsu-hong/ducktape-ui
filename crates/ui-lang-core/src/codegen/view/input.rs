@@ -225,7 +225,7 @@ pub(super) fn resolved_input_font_code(font: &ResolvedTextFont) -> String {
     }
 }
 
-fn resolved_input_icon_code(
+pub(super) fn resolved_input_icon_code(
     icon: &ResolvedInputIcon,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,

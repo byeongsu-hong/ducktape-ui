@@ -326,6 +326,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             let Type::List(option_type) = expr_type(options, env, document, span)? else {
                 return Err(Error::new("E129", span, "pick options must be a list"));
@@ -390,6 +391,7 @@ pub(in crate::check) fn infer_controls_group(
             {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, selection_analysis_guard.finish())?;
         }
         ViewNode::ComboBox {
             state,
@@ -400,6 +402,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
             ..
         } => {
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             record_read(state, span);
             check_id(id, env, document, ids, span)?;
             let Some(Type::Combo(option_type)) = env.get_type(state) else {
@@ -480,6 +483,7 @@ pub(in crate::check) fn infer_controls_group(
             for route in [&options.open, &options.close].into_iter().flatten() {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, selection_analysis_guard.finish())?;
         }
         ViewNode::Rule {
             thickness,

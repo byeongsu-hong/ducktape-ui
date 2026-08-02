@@ -309,7 +309,7 @@ pub(in crate::codegen) fn route_callback_with_code(
     pattern: &str,
     env: &dyn BindingEnvironment,
     document: &Document,
-    render: impl FnOnce(&HashMap<String, Binding>) -> Result<String, Error>,
+    render: impl FnOnce(&dyn BindingEnvironment) -> Result<String, Error>,
 ) -> Result<String, Error> {
     let local = local_route(route, env, document)
         .map(|(component, binding)| (component.to_owned(), binding.code.clone()));
@@ -324,6 +324,10 @@ pub(in crate::codegen) fn route_callback_with_code(
         if !captures.iter().any(|(captured, _)| captured == &scope) {
             captures.push((scope, format!("__route_state_scope_{}", captures.len())));
         }
+    }
+    if captures.is_empty() {
+        let body = render(env)?;
+        return Ok(format!("move |{pattern}| {body}"));
     }
     let mut callback_env = env.snapshot();
     if let Some((component, _)) = &local {
@@ -345,15 +349,11 @@ pub(in crate::codegen) fn route_callback_with_code(
         }
     }
     let body = render(&callback_env)?;
-    if captures.is_empty() {
-        Ok(format!("move |{pattern}| {body}"))
-    } else {
-        let captures = captures
-            .iter()
-            .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
-            .collect::<String>();
-        Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
-    }
+    let captures = captures
+        .iter()
+        .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
+        .collect::<String>();
+    Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
 }
 
 pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
@@ -361,7 +361,7 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
     pattern: &str,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
-    render: impl FnOnce(&HashMap<String, Binding>) -> Result<String, Error>,
+    render: impl FnOnce(&dyn BindingEnvironment) -> Result<String, Error>,
 ) -> Result<String, Error> {
     let invariant = |message| program.invariant_at_origin(route.origin, message);
     let (component, captures_context) = match &route.target {
@@ -411,6 +411,10 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
             captures.push((scope, format!("__route_state_scope_{}", captures.len())));
         }
     }
+    if captures.is_empty() {
+        let body = render(env)?;
+        return Ok(format!("move |{pattern}| {body}"));
+    }
     let mut callback_env = env.snapshot();
     if let Some((component, _)) = &local {
         callback_env
@@ -431,15 +435,11 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
         }
     }
     let body = render(&callback_env)?;
-    if captures.is_empty() {
-        Ok(format!("move |{pattern}| {body}"))
-    } else {
-        let captures = captures
-            .iter()
-            .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
-            .collect::<String>();
-        Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
-    }
+    let captures = captures
+        .iter()
+        .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
+        .collect::<String>();
+    Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
 }
 
 pub(in crate::codegen) fn resolved_interaction_route_callback_code(

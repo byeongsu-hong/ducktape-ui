@@ -443,6 +443,21 @@ cannot affect output after lowering. Structural, corruption, same-kind identity
 swap, imported-origin, complete native generation, and 4,000-node lower+emit
 contracts provide the executable evidence.
 
+PickList and ComboBox are completed selection-control HIR slices. Their
+checked interaction contracts own the deterministic option-expression and
+route partitions, exact custom widget/menu style extern IDs, font and icon or
+handle topology, status/menu origins, and ComboBox's concrete `combo[T]`
+state identity. Lowering resolves generic `T`, optional selection values,
+dimensions, typography, fonts, theme colors, gradients, handles/icons,
+widget/menu status surfaces, and selection/input/hover/open/close delivery into
+`ResolvedPickList` and `ResolvedComboBox`. Generation consumes those records
+and checked expression IDs; it reads the source node only for its shared widget
+ID. App callbacks that require no component-scope capture emit directly from
+the borrowed binding environment instead of cloning every App binding, keeping
+4,000 distinct ComboBox states and callbacks linear. Structural, same-arena
+identity, malformed-ID, pre-/post-lowering mutation, imported-origin, native
+generation, and 4,000-node performance contracts cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

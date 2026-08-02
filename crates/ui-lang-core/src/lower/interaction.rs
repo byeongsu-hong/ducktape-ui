@@ -327,7 +327,7 @@ impl Lowerer {
             .transpose()
     }
 
-    fn lower_interaction_route(
+    pub(super) fn lower_interaction_route(
         &self,
         source: &Route,
         interaction: &CheckedInteraction,

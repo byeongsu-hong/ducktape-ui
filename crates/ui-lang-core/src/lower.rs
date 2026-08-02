@@ -1,16 +1,17 @@
 use crate::ast::*;
 use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
-    CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInput, CheckedInteraction, CheckedInteractionKind, CheckedLayout, CheckedLocalId,
-    CheckedLocalOwner, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
-    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
-    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
-    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedProjectionKind,
-    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
-    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComboBox,
+    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
+    CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
+    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedMedia,
+    CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration, CheckedPaneGrid,
+    CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius,
+    CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle,
+    CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind, CheckedTableLength,
+    CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole,
+    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
+    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -47,6 +48,7 @@ mod overlay;
 mod pane_grid;
 mod pin;
 mod responsive;
+mod selection;
 mod style;
 mod table;
 mod testing;
@@ -70,6 +72,7 @@ pub(crate) use overlay::*;
 pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
 pub(crate) use responsive::*;
+pub(crate) use selection::*;
 pub(crate) use table::*;
 pub(crate) use text::*;
 
@@ -1502,6 +1505,8 @@ pub(crate) struct LoweredProgram {
     texts: HashMap<ViewId, ResolvedText>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    pick_lists: HashMap<ViewId, ResolvedPickList>,
+    combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     controlled_inputs: Vec<ResolvedControlledInputBinding>,
     controlled_editors: Vec<ResolvedControlledEditorBinding>,
     controlled_editors_by_name: HashMap<String, usize>,
@@ -3082,6 +3087,16 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn pick_list(&self, id: ViewId) -> Option<&ResolvedPickList> {
+        self.pick_lists.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn combo_box(&self, id: ViewId) -> Option<&ResolvedComboBox> {
+        self.combo_boxes.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3315,6 +3330,62 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "text editor reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_pick_list_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedPickList, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pick list reached code generation without a shared view ID",
+            )
+        })?;
+        if self.facts.view(id).id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "pick list reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.pick_lists.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pick list reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_combo_box_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedComboBox, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "combo box reached code generation without a shared view ID",
+            )
+        })?;
+        if self.facts.view(id).id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "combo box reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.combo_boxes.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "combo box reached code generation without normalized HIR",
             )
         })
     }
@@ -4074,6 +4145,8 @@ pub(crate) struct Lowerer {
     texts: HashMap<ViewId, ResolvedText>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    pick_lists: HashMap<ViewId, ResolvedPickList>,
+    combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     controlled_inputs: Vec<AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
@@ -4821,6 +4894,8 @@ impl Lowerer {
             texts: HashMap::new(),
             inputs: HashMap::new(),
             text_editors: HashMap::new(),
+            pick_lists: HashMap::new(),
+            combo_boxes: HashMap::new(),
             controlled_inputs,
             controlled_editors,
             media: HashMap::new(),
@@ -4977,6 +5052,8 @@ impl Lowerer {
             texts: self.texts,
             inputs: self.inputs,
             text_editors: self.text_editors,
+            pick_lists: self.pick_lists,
+            combo_boxes: self.combo_boxes,
             controlled_inputs,
             controlled_editors,
             controlled_editors_by_name,
@@ -8915,6 +8992,42 @@ impl Lowerer {
             } => {
                 self.lower_text_editor(binding, disabled, options, span, outer_component)?;
             }
+            ViewNode::PickList {
+                options,
+                selected,
+                options_config,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_pick_list(
+                    options,
+                    selected,
+                    options_config,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::ComboBox {
+                state,
+                selected,
+                placeholder,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_combo_box(
+                    state,
+                    selected,
+                    placeholder,
+                    options,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+            }
             ViewNode::Layout {
                 kind,
                 options,
@@ -12522,6 +12635,314 @@ view
     }
 
     #[test]
+    fn normalizes_complete_pick_list_and_combo_box_contracts() {
+        let source = r#"app SelectionHir
+extern crate::backend
+  pick-list-style dynamic_pick(busy:bool)
+  input-style dynamic_input(busy:bool)
+  menu-style dynamic_menu(busy:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  busy = false
+  choices = ["List", "Board"]
+  modes:combo[str] = ["List", "Board"]
+  selected:str? = none
+on selected(next)
+  selected = some(next)
+on searched(next)
+on hovered(next)
+on opened
+on closed
+view
+  col
+    pick choices selected hint="Choose" w=fill menu-h=120.0 p=8.0 text-size=14.0 line-h=1.2 shape=advanced font=ui open=opened close=closed style=dynamic_pick(busy) menu-style=dynamic_menu(busy) -> selected _
+      active text=fg placeholder=danger handle=primary bg=bg border=fg border-w=1.0 r=4.0
+      hovered text=fg
+      opened text=fg
+      opened-hovered text=fg
+      menu text=fg selected-text=bg selected-bg=primary bg=bg border=fg border-w=1.0 r=6.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=4.0
+      handle dynamic
+        closed code="⌄" font=ui size=12.0 line-h=1.0 shape=basic
+        open code="⌃" font=ui size=13.0 line-h=1.1 shape=advanced
+    combo modes selected "Search modes" w=fill menu-h=120.0 p=8.0 text-size=14.0 line-h=1.2 shape=advanced font=ui input=searched hover=hovered open=opened close=closed style=dynamic_input(busy) menu-style=dynamic_menu(busy) -> selected _
+      active bg=bg border=fg border-w=1.0 r=4.0 icon=primary placeholder=danger value=fg selection=primary
+      hovered bg=bg icon=fg
+      focused bg=bg border=primary
+      focused-hovered bg=bg border=fg
+      disabled bg=bg value=danger
+      menu text=fg selected-text=bg selected-bg=primary bg=bg border=fg border-w=1.0 r=6.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=4.0
+      icon code="⌕" font=ui size=12.0 gap=6.0 side=right
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let pick = program.pick_list(ViewId(1)).unwrap();
+        assert_eq!(pick.option_type, Type::Str);
+        assert!(matches!(pick.width, Some(ResolvedContainerLength::Fill)));
+        assert!(matches!(
+            pick.menu_height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(pick.font, Some(ResolvedTextFont::Named(_))));
+        assert!(matches!(
+            pick.handle,
+            Some(ResolvedPickListHandle::Dynamic { .. })
+        ));
+        assert!(pick.open.is_some());
+        assert!(pick.close.is_some());
+        assert!(pick.custom_style.is_some());
+        assert!(pick.styles.active.is_some());
+        assert!(pick.styles.hovered.is_some());
+        assert!(pick.styles.opened.is_some());
+        assert!(pick.styles.opened_hovered.is_some());
+        assert!(pick.menu.custom.is_some());
+        assert!(pick.menu.surface.is_some());
+        assert_eq!(
+            program.origin(pick.selection.origin).parent,
+            Some(pick.origin)
+        );
+
+        let combo = program.combo_box(ViewId(2)).unwrap();
+        assert_eq!(combo.state.name, "modes");
+        assert_eq!(combo.state.option_type, Type::Str);
+        assert!(matches!(combo.font, Some(ResolvedTextFont::Named(_))));
+        assert!(combo.icon.is_some());
+        assert!(combo.input.is_some());
+        assert!(combo.hover.is_some());
+        assert!(combo.open.is_some());
+        assert!(combo.close.is_some());
+        assert!(combo.custom_style.is_some());
+        assert!(combo.styles.active.is_some());
+        assert!(combo.styles.hovered.is_some());
+        assert!(combo.styles.focused.is_some());
+        assert!(combo.styles.focused_hovered.is_some());
+        assert!(combo.styles.disabled.is_some());
+        assert!(combo.menu.custom.is_some());
+        assert!(combo.menu.surface.is_some());
+        assert_eq!(
+            program.origin(combo.selection.origin).parent,
+            Some(combo.origin)
+        );
+        for origin in [
+            pick.styles.active.as_ref().unwrap().origin,
+            pick.menu.origin.unwrap(),
+            combo.styles.active.as_ref().unwrap().origin,
+            combo.menu.origin.unwrap(),
+            combo.icon.as_ref().unwrap().origin,
+        ] {
+            assert!(program.origin(origin).parent.is_some());
+        }
+    }
+
+    #[test]
+    fn selection_lowering_uses_checked_semantics_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedSelection\n{THEME}state\n  choices = [\"One\", \"Two\"]\n  modes:combo[str] = [\"One\", \"Two\"]\n  selected:str? = none\non selected(next)\n  selected = some(next)\non opened\nview\n  col\n    pick choices selected hint=\"Choose\" w=80.0 open=opened -> selected _\n      active bg=bg border=fg border-w=1.0\n    combo modes selected \"Search\" w=80.0 open=opened -> selected _\n      active bg=bg border=fg border-w=1.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-selection.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList {
+            options,
+            selected,
+            options_config,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a pick list");
+        };
+        *options = Expr::List(vec![]);
+        *selected = Expr::None;
+        options_config.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options_config.placeholder = Some(Expr::Str("POISONED".into()));
+        let ViewNode::ComboBox {
+            selected, options, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a combo box");
+        };
+        *selected = Expr::None;
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-selection.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-selection.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList {
+            options,
+            selected,
+            options_config,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a pick list");
+        };
+        *options = Expr::List(vec![]);
+        *selected = Expr::None;
+        *options_config = PickListOptions::default();
+        route.handler = "missing".into();
+        let ViewNode::ComboBox {
+            state,
+            selected,
+            placeholder,
+            options,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a combo box");
+        };
+        *state = "missing".into();
+        *selected = Expr::None;
+        *placeholder = "POISONED".into();
+        *options = ComboBoxOptions::default();
+        route.handler = "missing".into();
+        let actual = crate::codegen::generate(&program, "lowered-selection.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList { options_config, .. } = &mut children[0] else {
+            panic!("first child must be a pick list");
+        };
+        options_config.shaping = Some(TextShaping::Advanced);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn combo_lowering_rejects_same_arena_state_identity_swaps() {
+        let source = format!(
+            "app ComboIdentity\n{THEME}state\n  first:combo[str] = [\"One\"]\n  second:combo[str] = [\"Two\"]\n  selected:str? = none\non selected(next)\nview\n  combo first selected \"Search\" -> selected _\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_combo_box_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+    }
+
+    #[test]
+    fn pick_lowering_rejects_same_kind_extern_route_and_status_identity_swaps() {
+        let source = format!(
+            "app PickIdentity\nextern crate::backend\n  pick-list-style first(flag:bool)\n  pick-list-style second(flag:bool)\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\n  flag = false\non selected(next)\nview\n  pick choices selected style=first(flag) -> selected _\n    active bg=bg\n    hovered bg=primary\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pick_list_style(ViewId(0), ExternFnId(1));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.swap_pick_list_status_origins(ViewId(0));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_interaction_route_id(ViewId(0), 0, 9);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_selection_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidSelectionFacts\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\non selected(next)\nview\n  pick choices selected -> selected _\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_pick_list_keeps_exact_widget_handle_status_menu_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-selection-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("selection.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedSelectionApp\nuse \"selection.ice\"\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\nview\n  ImportedPick choices=choices selected=selected\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedPick(choices:[str], selected:str?)\n  on picked(next)\n  pick choices selected hint=\"Imported\" -> picked _\n    active bg=bg border=fg border-w=1.0\n    menu text=fg selected-bg=primary\n    handle static code=\"⌄\" size=12.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pick = program.pick_lists.values().next().unwrap();
+        let root_origin = program.origin(pick.origin);
+        assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(root_origin.line, 3);
+        let ResolvedPickListHandle::Static(icon) = pick.handle.as_ref().unwrap() else {
+            panic!("imported pick must retain its static icon");
+        };
+        for (origin, line) in [
+            (pick.selection.origin, 3),
+            (pick.styles.active.as_ref().unwrap().origin, 4),
+            (pick.menu.origin.unwrap(), 5),
+            (icon.origin, 6),
+        ] {
+            let child = program.origin(origin);
+            assert_eq!(child.parent, Some(pick.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn normalizes_the_complete_text_editor_contract() {
         let source = r#"app EditorHir
 extern crate::backend
@@ -14268,6 +14689,74 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized inputs lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized pick-list lowering and emission performance contract"]
+    fn performance_contract_four_thousand_pick_lists_lower_and_emit_under_two_seconds() {
+        const PICKS: usize = 4_000;
+        let mut source = format!(
+            "app PickScale\n{THEME}state\n  choices = [\"One\", \"Two\"]\n  selected:str? = none\non selected(next)\nview\n  col\n"
+        );
+        for _ in 0..PICKS {
+            writeln!(
+                source,
+                "    pick choices selected hint=\"Choose\" w=240.0 p=8.0 text-size=14.0 -> selected _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "pick-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.pick_lists.len(), PICKS);
+        assert_eq!(
+            generated.matches("::iced::widget::pick_list(").count(),
+            PICKS
+        );
+        eprintln!("4k normalized pick lists lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized pick lists lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "distinct combo-state lookup and normalized emission must remain linear"]
+    fn performance_contract_four_thousand_distinct_combo_boxes_emit_under_two_seconds() {
+        const COMBOS: usize = 4_000;
+        let mut source = format!("app ComboScale\n{THEME}state\n  selected:str? = none\n");
+        for index in 0..COMBOS {
+            writeln!(source, "  choices_{index}:combo[str] = [\"Item {index}\"]").unwrap();
+        }
+        source.push_str("on selected(next)\nview\n  col\n");
+        for index in 0..COMBOS {
+            writeln!(
+                source,
+                "    combo choices_{index} selected \"Search {index}\" w=240.0 p=8.0 -> selected _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let lowered = started.elapsed();
+        let generated = crate::codegen::generate(&program, "combo-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.combo_boxes.len(), COMBOS);
+        assert_eq!(
+            generated.matches("::iced::widget::combo_box(").count(),
+            COMBOS
+        );
+        eprintln!(
+            "4k distinct normalized combo boxes lowered in {lowered:?} and emitted in {:?} ({elapsed:?} total)",
+            elapsed - lowered,
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k distinct normalized combo boxes lowered and emitted in {elapsed:?}"
         );
     }
 
