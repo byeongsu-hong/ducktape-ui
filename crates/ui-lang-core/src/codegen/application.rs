@@ -452,12 +452,8 @@ pub(in crate::codegen) fn generate_update(
         || document_pane_grids(program)
             .into_iter()
             .any(|(pane, _)| pane.resize_leeway.is_some() || pane.draggable)
-        || !controlled_state_bindings(document, false)
-            .expect("checker validates controlled input bindings")
-            .is_empty()
-        || !controlled_state_bindings(document, true)
-            .expect("checker validates controlled editor bindings")
-            .is_empty()
+        || !program.controlled_input_bindings()?.is_empty()
+        || !controlled_editor_bindings(document)?.is_empty()
         || needs_extern_noop(document);
     let task_binding = if has_fallthrough_arm {
         "let __task = "
@@ -721,10 +717,8 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
         }
     }
-    for binding in controlled_state_bindings(document, false)
-        .expect("checker validates controlled input bindings")
-    {
-        let variant = binding_variant(&binding);
+    for binding in program.controlled_input_bindings()? {
+        let variant = binding_variant(binding);
         writeln!(
             out,
             "{message}::{variant}(value) => {{ self.{binding} = value; ::iced::Task::none() }}"

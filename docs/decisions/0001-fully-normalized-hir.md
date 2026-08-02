@@ -444,6 +444,19 @@ not reread. Structural assertions, malformed facts, pre-/post-lowering AST
 poisoning, imported root/span/route origins, complete native generation, and an
 ignored 4,000-text lower+emit budget provide the executable evidence.
 
+Input is a completed controlled-content slice. The checked interaction arena
+freezes its writable state identity, expression and route partitions, static
+option topology, exact input-style extern, and parented icon and five-state
+surface origins. Lowering resolves concrete writable IDs, accessibility,
+dimensions, typography, fonts, theme colors, utilities, status surfaces, and
+payload routes into `ResolvedInput`. Checked App-level controlled bindings are
+retained by `AppStateId`; message and update generation therefore no longer
+walk the raw view graph to rediscover Input state. Production emission consumes
+the HIR record while the source node provides only the shared widget ID.
+Structural assertions, malformed expression and controlled-state IDs,
+pre-/post-lowering mutation, imported origin chains, complete native codegen,
+and an ignored 4,000-input lower+emit budget provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

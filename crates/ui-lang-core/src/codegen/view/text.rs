@@ -371,7 +371,7 @@ fn append_resolved_text_options(
     Ok(())
 }
 
-fn resolved_styled_text_font_code(
+pub(super) fn resolved_styled_text_font_code(
     font: Option<&ResolvedTextFont>,
     style: &ResolvedStyle,
 ) -> Option<String> {
@@ -411,7 +411,7 @@ fn append_resolved_text_dimensions(
     Ok(())
 }
 
-fn resolved_text_length_code(
+pub(super) fn resolved_text_length_code(
     length: &ResolvedContainerLength,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
@@ -460,7 +460,7 @@ fn resolved_text_clamped_f32(
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
-fn resolved_text_background_code(
+pub(super) fn resolved_text_background_code(
     background: &ResolvedContainerBackground,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
@@ -521,7 +521,7 @@ fn resolved_text_padding_code(
     )))
 }
 
-fn resolved_text_radius_code(
+pub(super) fn resolved_text_radius_code(
     radius: &ResolvedContainerRadius,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,

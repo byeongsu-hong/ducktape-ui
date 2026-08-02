@@ -571,7 +571,7 @@ impl Lowerer {
             .transpose()
     }
 
-    fn resolve_text_font(
+    pub(super) fn resolve_text_font(
         &self,
         font: Option<&FontPreset>,
         origin: OriginId,

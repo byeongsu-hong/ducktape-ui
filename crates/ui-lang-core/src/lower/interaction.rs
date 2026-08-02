@@ -376,6 +376,12 @@ impl Lowerer {
         if source_args.len() != checked.args.len() {
             return Err(self.invariant(&source.span, "interaction route arity diverged"));
         }
+        let mut expected_expression_index = interaction.option_expressions.len() as u32
+            + interaction.routes[..route_index]
+                .iter()
+                .flat_map(|route| &route.args)
+                .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+                .count() as u32;
         let mut payload = 0u32;
         let mut args = Vec::with_capacity(checked.args.len());
         for (raw, retained) in source_args.iter().zip(&checked.args) {
@@ -388,16 +394,17 @@ impl Lowerer {
                                 "interaction route expression ID is invalid",
                             )
                         })?;
-                    if !matches!(
-                        checked_expression.owner,
-                        CheckedExprOwner::Interaction(InteractionExpressionId {
-                            widget: owner,
-                            ..
-                        }) if owner == widget
-                    ) {
+                    let expected_owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                        widget,
+                        index: expected_expression_index,
+                    });
+                    expected_expression_index += 1;
+                    if checked_expression.owner != expected_owner
+                        || self.facts.expression_use_by_owner(expected_owner) != Some(*expression)
+                    {
                         return Err(self.invariant(
                             &source.span,
-                            "interaction route expression owner diverged",
+                            "interaction route expression slot identity diverged",
                         ));
                     }
                     args.push(ResolvedInteractionRouteArg::Expression(*expression));

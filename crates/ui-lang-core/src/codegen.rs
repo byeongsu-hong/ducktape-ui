@@ -1,8 +1,5 @@
 use crate::ast::*;
-use crate::check::{
-    CheckedLocalId, CheckedValueRef, controlled_editor_bindings, controlled_state_bindings,
-    expr_type,
-};
+use crate::check::{CheckedLocalId, CheckedValueRef, controlled_editor_bindings, expr_type};
 use crate::hir::{HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
@@ -570,18 +567,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
         }
     }
-    for binding in controlled_state_bindings(document, false)
-        .expect("checker validates controlled input bindings")
-    {
-        writeln!(out, "{}(::std::string::String),", binding_variant(&binding)).unwrap();
+    for binding in program.controlled_input_bindings()? {
+        writeln!(out, "{}(::std::string::String),", binding_variant(binding)).unwrap();
     }
-    for binding in controlled_state_bindings(document, true)
-        .expect("checker validates controlled editor bindings")
-    {
+    for binding in controlled_editor_bindings(document)? {
         writeln!(
             out,
             "{}(::iced::widget::text_editor::Action),",
-            editor_variant(&binding)
+            editor_variant(&binding.name)
         )
         .unwrap();
     }

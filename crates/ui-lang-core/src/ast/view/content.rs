@@ -305,6 +305,203 @@ pub struct InputOptions {
     pub style: Box<TextInputStyleSet>,
 }
 
+fn push_input_length_root<'a>(roots: &mut Vec<&'a Expr>, length: &'a Option<LengthValue>) {
+    if let Some(LengthValue::Fixed(expression)) = length {
+        roots.push(expression);
+    }
+}
+
+fn push_input_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a ContainerStyleOptions) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = &surface.background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    roots.extend(
+        [
+            &surface.border_width,
+            &surface.radius,
+            &surface.radius_top_left,
+            &surface.radius_top_right,
+            &surface.radius_bottom_right,
+            &surface.radius_bottom_left,
+            &surface.shadow_x,
+            &surface.shadow_y,
+            &surface.shadow_blur,
+            &surface.pixel_snap,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
+pub(crate) fn input_expression_roots<'a>(
+    disabled: &'a Option<Expr>,
+    options: &'a InputOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = Vec::new();
+    roots.extend(disabled);
+    roots.extend(
+        [
+            &options.accessibility.label,
+            &options.accessibility.description,
+            &options.secure,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    push_input_length_root(&mut roots, &options.width);
+    roots.extend(
+        [&options.padding, &options.text_size, &options.line_height]
+            .into_iter()
+            .flatten(),
+    );
+    if let Some(icon) = &options.icon {
+        roots.extend([&icon.size, &icon.spacing].into_iter().flatten());
+    }
+    if let Some(style) = &options.custom_style {
+        roots.extend(&style.args);
+    }
+    for style in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_input_surface_roots(&mut roots, &style.options);
+    }
+    roots
+}
+
+fn input_length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
+}
+
+fn input_surface_semantic_key(style: &TextInputStatusStyle) -> String {
+    let background = match &style.options.background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    format!(
+        "bg={background}|colors={:?}|fields={:?}",
+        [
+            style.options.text_color.as_deref(),
+            style.options.border_color.as_deref(),
+            style.options.shadow_color.as_deref(),
+            style.icon_color.as_deref(),
+            style.placeholder_color.as_deref(),
+            style.value_color.as_deref(),
+            style.selection_color.as_deref(),
+        ],
+        [
+            style.options.border_width.is_some(),
+            style.options.radius.is_some(),
+            style.options.radius_top_left.is_some(),
+            style.options.radius_top_right.is_some(),
+            style.options.radius_bottom_right.is_some(),
+            style.options.radius_bottom_left.is_some(),
+            style.options.shadow_x.is_some(),
+            style.options.shadow_y.is_some(),
+            style.options.shadow_blur.is_some(),
+            style.options.pixel_snap.is_some(),
+        ],
+    )
+}
+
+pub(crate) fn input_semantic_key(
+    label: &str,
+    binding: &str,
+    hint: &str,
+    disabled: &Option<Expr>,
+    options: &InputOptions,
+) -> String {
+    let custom = options.custom_style.as_ref().map_or_else(
+        || "none".into(),
+        |style| format!("{}:{}", style.function, style.args.len()),
+    );
+    let icon = options.icon.as_ref().map_or_else(
+        || "none".into(),
+        |icon| {
+            format!(
+                "{}:{:?}:{:?}:{}:{}",
+                icon.code_point,
+                icon.font,
+                icon.side,
+                icon.size.is_some(),
+                icon.spacing.is_some()
+            )
+        },
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .map(|style| {
+        style
+            .as_ref()
+            .map(input_surface_semantic_key)
+            .unwrap_or_else(|| "none".into())
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    let routes = [&options.change, &options.submit, &options.paste]
+        .into_iter()
+        .map(|route| {
+            route.as_ref().map_or_else(
+                || "none".into(),
+                |route| {
+                    let arguments = route
+                        .args
+                        .iter()
+                        .map(|argument| match argument {
+                            RouteArg::Expr(_) => 'e',
+                            RouteArg::Payload => 'p',
+                        })
+                        .collect::<String>();
+                    format!("{}:{arguments}", route.handler)
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(":");
+    format!(
+        "input|label={label:?}|binding={binding}|hint={hint:?}|disabled={}|a11y={}:{}|secure={}|routes={routes}|width={}|metrics={:?}|align={:?}|font={:?}|icon={icon}|custom={custom}|statuses={statuses}",
+        disabled.is_some(),
+        options.accessibility.label.is_some(),
+        options.accessibility.description.is_some(),
+        options.secure.is_some(),
+        input_length_semantic_key(&options.width),
+        [
+            options.padding.is_some(),
+            options.text_size.is_some(),
+            options.line_height.is_some(),
+        ],
+        options.align,
+        options.font,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TextOptions {
     pub width: Option<LengthValue>,

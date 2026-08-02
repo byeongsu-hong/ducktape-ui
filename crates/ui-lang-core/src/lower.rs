@@ -3,8 +3,8 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInteraction, CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner,
-    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedInput, CheckedInteraction, CheckedInteractionKind, CheckedLayout, CheckedLocalId,
+    CheckedLocalOwner, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
     CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
     CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
     CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedProjectionKind,
@@ -34,6 +34,7 @@ mod canvas;
 mod conditional;
 mod container;
 mod float;
+mod input;
 mod interaction;
 mod iteration;
 mod keyed_column;
@@ -55,6 +56,7 @@ pub(crate) use canvas::*;
 pub(crate) use conditional::*;
 pub(crate) use container::*;
 pub(crate) use float::*;
+pub(crate) use input::*;
 pub(crate) use interaction::*;
 pub(crate) use iteration::*;
 pub(crate) use keyed_column::*;
@@ -432,6 +434,12 @@ pub(crate) struct AppStateContract {
     pub(crate) initializer: ResolvedInitializer,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedControlledInputBinding {
+    state: AppStateId,
+    name: String,
 }
 
 #[allow(dead_code)]
@@ -1348,6 +1356,18 @@ impl WritableStateRef {
             | Self::ComponentState { name, .. } => name,
         }
     }
+
+    pub(crate) fn checked_ref(&self) -> CheckedValueRef {
+        match self {
+            Self::App { id, .. } => CheckedValueRef::AppState(*id),
+            Self::ComponentParam { id, .. } => CheckedValueRef::ComponentParam(*id),
+            Self::ComponentState { id, .. } => CheckedValueRef::ComponentState(*id),
+        }
+    }
+
+    pub(crate) fn accepts_type(&self, ty: &Type) -> bool {
+        *ty == Type::Str
+    }
 }
 
 #[allow(dead_code)]
@@ -1471,6 +1491,8 @@ pub(crate) struct LoweredProgram {
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
+    inputs: HashMap<ViewId, ResolvedInput>,
+    controlled_inputs: Vec<ResolvedControlledInputBinding>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3038,6 +3060,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn input(&self, id: ViewId) -> Option<&ResolvedInput> {
+        self.inputs.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3216,6 +3243,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "text reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_input_for(&self, node: &ViewNode) -> Result<&ResolvedInput, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "input reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "input reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.inputs.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "input reached code generation without normalized HIR",
             )
         })
     }
@@ -3669,6 +3722,35 @@ impl LoweredProgram {
         &self.app_states
     }
 
+    pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&str>, Error> {
+        let mut seen = HashSet::with_capacity(self.controlled_inputs.len());
+        let mut names = Vec::with_capacity(self.controlled_inputs.len());
+        for binding in &self.controlled_inputs {
+            let state = self
+                .app_states
+                .get(binding.state.0 as usize)
+                .filter(|state| {
+                    state.id == binding.state && state.name == binding.name && state.ty == Type::Str
+                })
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        self.document.view.span(),
+                        "controlled input binding does not match its normalized app state",
+                    )
+                })?;
+            if !seen.insert(state.id) {
+                return Err(Error::new(
+                    "E196",
+                    self.document.view.span(),
+                    "controlled input binding is duplicated in normalized HIR",
+                ));
+            }
+            names.push(state.name.as_str());
+        }
+        Ok(names)
+    }
+
     pub(crate) fn derived(&self) -> &[DerivedContract] {
         &self.derived
     }
@@ -3873,6 +3955,8 @@ pub(crate) struct Lowerer {
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
+    inputs: HashMap<ViewId, ResolvedInput>,
+    controlled_inputs: Vec<AppStateId>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4593,6 +4677,7 @@ impl Lowerer {
             facts,
             declarations,
             origins,
+            controlled_inputs,
             ..
         } = checked;
         let component_ids = declarations.component_ids();
@@ -4614,6 +4699,8 @@ impl Lowerer {
             containers: HashMap::new(),
             layouts: HashMap::new(),
             texts: HashMap::new(),
+            inputs: HashMap::new(),
+            controlled_inputs,
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4669,6 +4756,25 @@ impl Lowerer {
         for mount in mounts {
             self.lower_view(&mount, None)?;
         }
+        let controlled_inputs = self
+            .controlled_inputs
+            .iter()
+            .map(|id| {
+                app_states
+                    .get(id.0 as usize)
+                    .filter(|state| state.id == *id && state.ty == Type::Str)
+                    .map(|state| ResolvedControlledInputBinding {
+                        state: *id,
+                        name: state.name.clone(),
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled input binding is outside the app-state arena",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
         let styles = self.styles.finish().ok_or_else(|| {
             Error::new(
                 "E196",
@@ -4704,6 +4810,8 @@ impl Lowerer {
             containers: self.containers,
             layouts: self.layouts,
             texts: self.texts,
+            inputs: self.inputs,
+            controlled_inputs,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -8611,6 +8719,25 @@ impl Lowerer {
             ViewNode::Text { span, .. } | ViewNode::RichText { span, .. } => {
                 self.lower_text(node, span, outer_component)?;
             }
+            ViewNode::Input {
+                label,
+                binding,
+                hint,
+                disabled,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_input(
+                    label,
+                    binding,
+                    hint,
+                    disabled,
+                    options,
+                    span,
+                    outer_component,
+                )?;
+            }
             ViewNode::Layout {
                 kind,
                 options,
@@ -11883,6 +12010,341 @@ view
     }
 
     #[test]
+    fn normalizes_the_complete_input_contract() {
+        let source = r#"app InputHir
+extern crate::backend
+  input-style dynamic_input(disabled:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  value = ""
+  disabled = false
+  secure = true
+on changed(next)
+  value = next
+on submitted
+on pasted(next)
+  value = next
+view
+  input "Secret" #secret label="Secure input" description="Private value" <-> value hint="Paste token" disabled=disabled secure=secure change=changed submit=submitted paste=pasted w=240.0 p=8.0 text-size=14.0 line-h=1.2 align=center font=mono style=dynamic_input(disabled)
+    active bg=bg border=fg border-w=1.0 r=4.0 icon=primary placeholder=danger value=fg selection=primary
+    hovered bg=bg border=primary border-w=1.0 r=10.0 icon=fg placeholder=danger value=fg selection=primary
+    focused bg=bg border=primary border-w=1.0 r=10.0
+    focused-hovered bg=bg border=fg border-w=1.0 r=10.0
+    disabled bg=bg border=primary border-w=1.0 r=10.0 value=danger
+    icon code="•" font=ui size=12.0 gap=4.0 side=right
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let input = program.input(ViewId(0)).unwrap();
+
+        assert_eq!(input.label, "Secret");
+        assert_eq!(input.hint, "Paste token");
+        assert!(matches!(
+            input.binding,
+            WritableStateRef::App { ref name, .. } if name == "value"
+        ));
+        assert!(input.disabled.is_some());
+        assert!(input.accessibility_label.is_some());
+        assert!(input.accessibility_description.is_some());
+        assert!(input.secure.is_some());
+        assert!(input.change.is_some());
+        assert!(input.submit.is_some());
+        assert!(input.paste.is_some());
+        assert!(matches!(
+            input.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(input.align, Some(ResolvedInputAlignment::Center));
+        assert!(matches!(input.font, Some(ResolvedTextFont::Monospace)));
+        let icon = input.icon.as_ref().unwrap();
+        assert_eq!(icon.code_point, '•');
+        assert_eq!(icon.side, ResolvedInputIconSide::Right);
+        assert!(matches!(icon.font, Some(ResolvedTextFont::Named(_))));
+        assert!(icon.size.is_some());
+        assert!(icon.spacing.is_some());
+        assert!(input.custom_style.is_some());
+        assert!(input.styles.active.is_some());
+        assert!(input.styles.hovered.is_some());
+        assert!(input.styles.focused.is_some());
+        assert!(input.styles.focused_hovered.is_some());
+        assert!(input.styles.disabled.is_some());
+
+        let checked = program.checked_facts().interaction(input.id).unwrap();
+        for index in 0..checked.expression_count {
+            let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: input.id,
+                index,
+            });
+            let expression = program
+                .checked_facts()
+                .expression_use_by_owner(owner)
+                .unwrap();
+            assert_eq!(
+                program.checked_facts().expression_use(expression).owner,
+                owner
+            );
+        }
+        for route in [&input.change, &input.submit, &input.paste]
+            .into_iter()
+            .flatten()
+        {
+            assert_eq!(program.origin(route.origin).parent, Some(input.origin));
+        }
+        assert_eq!(program.origin(icon.origin).parent, Some(input.origin));
+        for status in [
+            &input.styles.active,
+            &input.styles.hovered,
+            &input.styles.focused,
+            &input.styles.focused_hovered,
+            &input.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(input.origin));
+        }
+    }
+
+    #[test]
+    fn input_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedInput\nextern crate::backend\n  input-style dynamic_input(disabled:bool)\n{THEME}state\n  value = \"\"\n  disabled = false\non changed(next)\n  value = next\nview\n  input \"Field\" <-> value hint=\"Type\" disabled=disabled secure=false change=changed w=80.0 p=4.0 text-size=14.0 line-h=1.2 align=center style=dynamic_input(disabled)\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-input.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Input {
+            disabled, options, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be input");
+        };
+        *disabled = Some(Expr::Bool(true));
+        options.secure = Some(Expr::Bool(true));
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding = Some(Expr::F64(999.0));
+        options.text_size = Some(Expr::F64(999.0));
+        options.line_height = Some(Expr::F64(999.0));
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(true);
+        let active = options.style.active.as_mut().unwrap();
+        active.options.border_width = Some(Expr::F64(999.0));
+        active.options.radius = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-input.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Input { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be input");
+        };
+        options.align = Some(InputAlignment::Right);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let ViewNode::Input { options, .. } = &mut changed_route.document.view else {
+            panic!("fixture root must be input");
+        };
+        options.change.as_mut().unwrap().handler = "missing".into();
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn input_lowering_rejects_same_arena_binding_identity_swaps() {
+        let app_source = format!(
+            "app AppBindingIdentity\n{THEME}state\n  first = \"\"\n  second = \"\"\nview\n  input \"Field\" <-> first\n"
+        );
+        let mut checked = analyze(&app_source).unwrap();
+        checked
+            .facts
+            .corrupt_input_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+
+        let param_source = format!(
+            "app ParamBindingIdentity\n{THEME}state\n  first = \"\"\n  second = \"\"\ncomponent Field(bind first:str, bind second:str)\n  input \"Field\" <-> first\nview\n  Field first<->first second<->second\n"
+        );
+        let mut checked = analyze(&param_source).unwrap();
+        let input = checked
+            .declarations
+            .view_id(checked.document.components[0].root.span())
+            .unwrap();
+        checked.facts.corrupt_input_binding(
+            input,
+            CheckedValueRef::ComponentParam(ComponentParamId {
+                component: ComponentId(0),
+                index: 1,
+            }),
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+
+        let state_source = format!(
+            "app ComponentStateBindingIdentity\n{THEME}component Field()\n  state\n    first = \"\"\n    second = \"\"\n  input \"Field\" <-> first\nview\n  Field\n"
+        );
+        let mut checked = analyze(&state_source).unwrap();
+        let input = checked
+            .declarations
+            .view_id(checked.document.components[0].root.span())
+            .unwrap();
+        checked.facts.corrupt_input_binding(
+            input,
+            CheckedValueRef::ComponentState(ComponentStateId {
+                component: ComponentId(0),
+                index: 1,
+            }),
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+    }
+
+    #[test]
+    fn input_lowering_rejects_same_widget_route_expression_transplants() {
+        let source = format!(
+            "app InputRouteIdentity\n{THEME}state\n  value = \"\"\non changed(next)\n  value = next\non pasted(next)\n  value = next\nview\n  input \"Field\" <-> value change=changed(\"change\") paste=pasted(\"paste\")\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .transplant_interaction_route_expression(ViewId(0), 0, 0, 1, 0);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("route expression slot identity diverged")
+        );
+    }
+
+    #[test]
+    fn input_codegen_ignores_raw_widget_contract_after_lowering() {
+        let source = format!(
+            "app LoweredInput\n{THEME}state\n  value = \"\"\n  spare = \"\"\n  disabled = false\non changed(next)\n  value = next\nview\n  input \"Field\" #field <-> value hint=\"Type\" disabled=disabled change=changed w=80.0\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-input.ice").unwrap();
+
+        let ViewNode::Input {
+            label,
+            binding,
+            hint,
+            disabled,
+            options,
+            styles,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be input");
+        };
+        *label = "POISONED LABEL".into();
+        *binding = "missing".into();
+        *hint = "POISONED HINT".into();
+        *disabled = Some(Expr::Bool(true));
+        *options = InputOptions::default();
+        styles.clear();
+
+        let actual = crate::codegen::generate(&program, "lowered-input.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+
+        program.controlled_inputs[0].state = AppStateId(1);
+        let error = crate::codegen::generate(&program, "lowered-input.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled input binding"));
+
+        program.controlled_inputs[0].state = AppStateId(u32::MAX);
+        let error = crate::codegen::generate(&program, "lowered-input.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled input binding"));
+    }
+
+    #[test]
+    fn malformed_checked_input_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidInputFacts\n{THEME}state\n  value = \"\"\n  disabled = false\nview\n  input \"Invalid\" <-> value disabled=disabled\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_input_keeps_widget_icon_status_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-input-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("field.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedInputApp\nuse \"field.ice\"\n{THEME}state\n  value = \"\"\nview\n  ImportedField value<->value\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedField(bind value:str)\n  on changed(next)\n  input \"Imported\" <-> value change=changed\n    active bg=bg border=fg border-w=1.0\n    icon code=\"•\" size=12.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let input = program.inputs.values().next().unwrap();
+        let input_origin = program.origin(input.origin);
+        assert_eq!(input_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(input_origin.line, 3);
+        for (child, line) in [
+            (input.change.as_ref().unwrap().origin, 3),
+            (input.styles.active.as_ref().unwrap().origin, 4),
+            (input.icon.as_ref().unwrap().origin, 5),
+        ] {
+            let child = program.origin(child);
+            assert_eq!(child.parent, Some(input.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sensor_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedSensor\n{THEME}state\n  active = true\non shown(width, height)\non hidden\nview\n  sensor show=shown hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
@@ -13293,6 +13755,35 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized text nodes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized input lowering and emission performance contract"]
+    fn performance_contract_four_thousand_inputs_lower_and_emit_under_two_seconds() {
+        const INPUTS: usize = 4_000;
+        let mut source = format!("app InputScale\n{THEME}state\n  value = \"\"\nview\n  col\n");
+        for index in 0..INPUTS {
+            writeln!(
+                source,
+                "    input \"Field {index}\" <-> value hint=\"Type\" w=240.0 p=8.0 text-size=14.0"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "input-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.inputs.len(), INPUTS);
+        assert_eq!(
+            generated.matches("::iced::widget::text_input(").count(),
+            INPUTS
+        );
+        eprintln!("4k normalized inputs lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized inputs lowered and emitted in {elapsed:?}"
         );
     }
 

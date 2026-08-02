@@ -2,22 +2,26 @@ use crate::ast::*;
 use crate::{CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 
+struct CheckOutput {
+    analyses: facts::CheckedAnalyses,
+    controlled_inputs: Vec<crate::hir::AppStateId>,
+}
+
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     let reachable = reachable_components(&document);
     let reachable_handlers = reachable_handlers(&document, &reachable);
     let usage = UsageSession::start(&document, &reachable, &reachable_handlers);
     let mut origins = crate::hir::OriginArena::default();
     let mut declarations = crate::hir::DeclarationIndex::build(&document, &mut origins);
-    let initializer_analyses = check(
+    let checked = check(
         &mut document,
         &reachable,
         &reachable_handlers,
         &declarations,
     )?;
     declarations.finalize_checked_handlers(&document)?;
-    let facts = without_usage(|| {
-        facts::build(&document, &declarations, &mut origins, initializer_analyses)
-    })?;
+    let facts =
+        without_usage(|| facts::build(&document, &declarations, &mut origins, checked.analyses))?;
     let mut warnings = unreachable_component_warnings(&document, &reachable);
     warnings.extend(unreachable_handler_warnings(
         &document,
@@ -47,6 +51,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         warnings,
         reachable,
         reachable_handlers.app,
+        checked.controlled_inputs,
     ))
 }
 
@@ -59,7 +64,7 @@ fn check(
     reachable: &HashSet<String>,
     reachable_handlers: &HandlerReachability,
     declarations: &crate::hir::DeclarationIndex,
-) -> Result<facts::CheckedAnalyses, Error> {
+) -> Result<CheckOutput, Error> {
     check_unique(document)?;
     check_fonts(document)?;
     check_slots(document)?;
@@ -361,9 +366,14 @@ fn check(
         pane_grids.extend(static_pane_grids(mount, &view_states, document)?);
         operation_ids.extend(widget_operation_ids(mount, &view_states, document)?);
     }
-    for binding in controlled_state_bindings(document, false)? {
-        if let Some(state) = document.states.iter().find(|state| state.name == binding) {
-            record_write(&binding, &state.span);
+    let controlled_input_names = controlled_state_bindings(document, false)?;
+    for binding in &controlled_input_names {
+        if let Some(state) = document
+            .states
+            .iter()
+            .find(|state| state.name == binding.as_str())
+        {
+            record_write(binding, &state.span);
         }
     }
     for binding in controlled_state_bindings(document, true)? {
@@ -548,7 +558,27 @@ fn check(
         .retain(|key, _| test_expression_keys.contains(key));
     initializer_analyses.retain_tests(test_analyses)?;
     initializer_analyses.extend(view_analysis_guard.finish())?;
-    Ok(initializer_analyses)
+    let controlled_inputs = controlled_input_names
+        .into_iter()
+        .map(|name| {
+            let index = document
+                .states
+                .iter()
+                .position(|state| state.name == name)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        document.view.span(),
+                        "checked input binding is not an app state",
+                    )
+                })?;
+            Ok(declarations.app_state(index).id)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok(CheckOutput {
+        analyses: initializer_analyses,
+        controlled_inputs,
+    })
 }
 
 fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {
@@ -828,7 +858,7 @@ pub(crate) use facts::{
     CheckedAppSettings, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
-    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedInteraction,
+    CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
     CheckedInteractionKind, CheckedInteractionRoute, CheckedKeyedLength, CheckedLayout,
     CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis,
     CheckedPaneBackground, CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid,

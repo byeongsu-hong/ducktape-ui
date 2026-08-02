@@ -44,6 +44,7 @@ pub struct CheckedDocument {
     warnings: Vec<Warning>,
     reachable_components: HashSet<String>,
     reachable_handlers: HashSet<String>,
+    controlled_inputs: Vec<hir::AppStateId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -139,6 +140,7 @@ pub struct CheckedSymbol {
 }
 
 impl CheckedDocument {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         document: Document,
         facts: check::CheckedFacts,
@@ -147,6 +149,7 @@ impl CheckedDocument {
         warnings: Vec<Warning>,
         reachable_components: HashSet<String>,
         reachable_handlers: HashSet<String>,
+        controlled_inputs: Vec<hir::AppStateId>,
     ) -> Self {
         Self {
             document,
@@ -157,6 +160,7 @@ impl CheckedDocument {
             warnings,
             reachable_components,
             reachable_handlers,
+            controlled_inputs,
         }
     }
 

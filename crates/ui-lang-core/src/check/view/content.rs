@@ -181,6 +181,7 @@ pub(in crate::check) fn infer_content_group(
             record_read(binding, span);
             record_write(binding, span);
             check_id(id, env, document, ids, span)?;
+            let input_analysis_guard = expr::HandlerAnalysisGuard::start();
             let Some(binding_ty) = env.get_type(binding) else {
                 return Err(Error::new(
                     "E120",
@@ -228,6 +229,7 @@ pub(in crate::check) fn infer_content_group(
             }
             check_text_input_styles(&options.style, env, document, span, "input")?;
             check_styles(styles, document, span, StyleTarget::Input(options))?;
+            retain_interaction_analyses(span, input_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

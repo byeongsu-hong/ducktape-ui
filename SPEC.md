@@ -413,6 +413,21 @@ pre-/post-lowering AST mutation, imported root/span/route source maps, complete
 native text codegen, and a 4,000-node lower+emit budget provide the executable
 evidence.
 
+Input is a completed controlled-content HIR slice. Its checked interaction
+contract owns the exact writable string-state reference, option expressions,
+accessibility values, change/submit/paste routes, icon and custom-style
+identity, and active/hovered/focused/focused-hovered/disabled surface origins.
+Lowering resolves concrete App, bind-prop, or component-state IDs plus lengths,
+typography, fonts, theme colors, utility style, status surfaces, and payload
+delivery into `ResolvedInput`. The checked document separately retains every
+App state reached through controlled Input composition as an `AppStateId`, so
+message variants and update arms do not traverse the source view tree.
+Generation consumes the normalized record and checked expression IDs; it does
+not reread the label, binding name, hint, disabled/accessibility/secure values,
+routes, options, styles, or extern name. Mutation, corrupt-ID, imported-origin,
+complete native generation, and 4,000-node lower+emit contracts provide the
+executable evidence.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

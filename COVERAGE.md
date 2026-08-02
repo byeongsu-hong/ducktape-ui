@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -714,6 +714,22 @@ node supplies only the shared widget ID. Structural assertions, malformed
 expression facts, pre-lowering expression/static mutation, post-lowering plain
 and rich content poisoning, imported root/span/route origins, complete native
 text generation, the lexical HIR-boundary ratchet, and an ignored 4,000-text
+lower+emit contract cover the boundary.
+
+Input has a complete private HIR boundary. Its checked interaction record
+freezes the writable string-state identity, deterministic option-expression
+partition, accessibility values, three route contracts, width and typography,
+font and icon topology, exact custom input-style extern, five status surfaces,
+utility style, and parented physical origins. Lowering resolves the binding to
+an App, bind-prop, or component-state ID and normalizes all routes, lengths,
+fonts, theme colors, gradients, borders, radii, and status overrides into
+`ResolvedInput`. App-level controlled bindings are retained as checked
+`AppStateId`s, so message and update generation no longer rediscovers Input
+bindings through the source view tree. Production emission reads the raw node
+only for its shared widget ID. Structural assertions, malformed expression and
+controlled-state IDs, pre-lowering expression/static mutation, post-lowering
+contract poisoning, imported widget/icon/status/route origins, complete native
+input generation, the lexical boundary ratchet, and an ignored 4,000-input
 lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
