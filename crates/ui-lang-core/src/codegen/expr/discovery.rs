@@ -5,7 +5,7 @@ pub(in crate::codegen) fn resolved_initializer_code(
     initializer: &ResolvedInitializer,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let mut code = checked_expr_use_code(
+    let mut code = resolved_expr_use_code(
         program,
         initializer.expression,
         &HashMap::new(),
@@ -109,7 +109,7 @@ pub(in crate::codegen) fn generate_pane_types(
                 out,
                 "{}({}),",
                 pane_template_variant(&template.item.name),
-                template.key_type.rust(&program.document().structs)
+                rust_type_code(program, &template.key_type)
             )
             .unwrap();
         }
@@ -227,105 +227,19 @@ pub(in crate::codegen) fn document_pane_grids(
         .collect()
 }
 
-pub(in crate::codegen) fn uses_canvas(document: &Document) -> bool {
-    !canvases(document).is_empty()
+pub(in crate::codegen) fn uses_canvas(program: &LoweredProgram) -> bool {
+    !program.resolved_canvases().is_empty()
 }
 
-pub(in crate::codegen) fn canvases(
-    document: &Document,
-) -> Vec<(&CanvasOptions, &[State], &[CanvasEvent])> {
-    fn collect<'a>(
-        node: &'a ViewNode,
-        output: &mut Vec<(&'a CanvasOptions, &'a [State], &'a [CanvasEvent])>,
-    ) {
-        match node {
-            ViewNode::Canvas {
-                options,
-                locals,
-                events,
-                ..
-            } => output.push((options, locals, events)),
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                for node in panes
-                    .iter()
-                    .flat_map(PaneView::nodes)
-                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                {
-                    collect(node, output);
-                }
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            } => collect(content, output),
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
-        }
-    }
-    let mut output = Vec::new();
-    collect(&document.view, &mut output);
-    for component in &document.components {
-        collect(&component.root, &mut output);
-    }
-    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
-        collect(mount, &mut output);
-    }
-    output
+pub(in crate::codegen) fn canvases(program: &LoweredProgram) -> Vec<&ResolvedCanvas> {
+    program.resolved_canvases()
 }
 
-pub(in crate::codegen) fn canvas_cache_groups(document: &Document) -> Vec<&str> {
+pub(in crate::codegen) fn canvas_cache_groups(program: &LoweredProgram) -> Vec<&str> {
     let mut groups = Vec::new();
-    for group in canvases(document)
+    for group in canvases(program)
         .into_iter()
-        .filter_map(|(options, _, _)| options.cache_group.as_deref())
+        .filter_map(|canvas| canvas.options.cache_group.as_deref())
     {
         if !groups.contains(&group) {
             groups.push(group);
@@ -334,10 +248,10 @@ pub(in crate::codegen) fn canvas_cache_groups(document: &Document) -> Vec<&str> 
     groups
 }
 
-pub(in crate::codegen) fn canvas_events(document: &Document) -> Vec<&CanvasEvent> {
-    canvases(document)
+pub(in crate::codegen) fn canvas_events(program: &LoweredProgram) -> Vec<&ResolvedCanvasEvent> {
+    canvases(program)
         .into_iter()
-        .flat_map(|(_, _, events)| events)
+        .flat_map(|canvas| &canvas.events)
         .collect()
 }
 
@@ -349,55 +263,17 @@ pub(in crate::codegen) fn canvas_group_symbol(group: &str) -> String {
     }
 }
 
-pub(in crate::codegen) fn needs_extern_noop(document: &Document) -> bool {
-    fn contains(node: &ViewNode) -> bool {
-        match node {
-            ViewNode::ExternComponent { route: None, .. }
-            | ViewNode::Themer { route: None, .. }
-            | ViewNode::Shader { route: None, .. } => true,
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => children.iter().any(contains),
-            ViewNode::Match { arms, .. } => arms.iter().flat_map(|arm| &arm.children).any(contains),
-            ViewNode::Tooltip { content, tip, .. } => contains(content) || contains(tip),
-            ViewNode::Overlay { .. } => true,
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => panes
-                .iter()
-                .flat_map(PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                .any(contains),
-            ViewNode::Table { columns, .. } => columns
-                .iter()
-                .any(|column| contains(&column.header) || contains(&column.cell)),
-            ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. } => contains(content),
-            ViewNode::Component { slots, .. } => slots.iter().any(|slot| contains(&slot.content)),
-            ViewNode::KeyedColumn { child, .. } | ViewNode::Lazy { child, .. } => contains(child),
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            } => contains(content),
-            ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. } => contains(content),
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    contains(narrow) || contains(wide)
-                }
-                ResponsiveContent::Size { content, .. } => contains(content),
-            },
-            _ => false,
-        }
-    }
-    contains(&document.view)
-        || document.components.iter().any(|item| contains(&item.root))
-        || document
-            .tests
-            .iter()
-            .filter_map(|test| test.mount.as_ref())
-            .any(contains)
+pub(in crate::codegen) fn needs_extern_noop(program: &LoweredProgram) -> bool {
+    program
+        .extern_components()
+        .any(|component| component.route.is_none())
+        || program
+            .themers()
+            .any(|themer| themer.adapter.route.is_none())
+        || program
+            .shaders()
+            .any(|shader| shader.adapter.route.is_none())
+        || program
+            .resolved_views()
+            .any(|view| matches!(view.kind, ResolvedViewKind::Overlay { .. }))
 }

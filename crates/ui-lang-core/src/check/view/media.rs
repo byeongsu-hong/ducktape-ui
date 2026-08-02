@@ -15,8 +15,8 @@ pub(in crate::check) fn infer_media_group(
             options,
             span,
         } => {
-            let media_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let media_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_accessibility_options(&options.accessibility, env, document, span)?;
             if options.accessibility.label.is_none() && options.accessibility.description.is_some()
             {
@@ -156,8 +156,8 @@ pub(in crate::check) fn infer_media_group(
             tip,
             span,
         } => {
-            let tooltip_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let tooltip_analysis_guard = expr::HandlerAnalysisGuard::start();
             for (value, label) in [
                 (&options.gap, "tooltip gap"),
                 (&options.padding, "tooltip padding"),
@@ -235,8 +235,8 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(interaction) = &options.interaction_expr {
                 require_type(
                     &expr_type(interaction, env, document, span)?,
@@ -289,8 +289,8 @@ pub(in crate::check) fn infer_media_group(
             content,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(route) = &options.drag {
                 infer_ordered_payload_route(
                     route,
@@ -315,8 +315,8 @@ pub(in crate::check) fn infer_media_group(
             events,
             span,
         } => {
-            let canvas_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let canvas_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "canvas size")?;
             }

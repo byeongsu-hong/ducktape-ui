@@ -118,7 +118,7 @@ pub(in crate::codegen) fn canvas_radius_code(
         .all
         .map(|value| canvas_expr_code(value, env, program))
         .transpose()?;
-    let corner = |value: Option<CheckedExprUseId>| {
+    let corner = |value: Option<ResolvedExpressionId>| {
         value
             .map(|value| canvas_expr_code(value, env, program))
             .transpose()
@@ -141,8 +141,8 @@ pub(in crate::codegen) fn canvas_radius_code(
 }
 
 pub(in crate::codegen) fn canvas_point_code(
-    x: CheckedExprUseId,
-    y: CheckedExprUseId,
+    x: ResolvedExpressionId,
+    y: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
@@ -154,8 +154,8 @@ pub(in crate::codegen) fn canvas_point_code(
 }
 
 pub(in crate::codegen) fn canvas_size_code(
-    width: CheckedExprUseId,
-    height: CheckedExprUseId,
+    width: ResolvedExpressionId,
+    height: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
@@ -167,15 +167,15 @@ pub(in crate::codegen) fn canvas_size_code(
 }
 
 pub(in crate::codegen) fn canvas_expr_code(
-    value: CheckedExprUseId,
+    value: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    checked_expr_use_code(program, value, env, ValueMode::Owned)
+    resolved_expr_use_code(program, value, env, ValueMode::Owned)
 }
 
 pub(in crate::codegen) fn canvas_clamped_f32_code(
-    value: CheckedExprUseId,
+    value: ResolvedExpressionId,
     min: &str,
     max: &str,
     env: &dyn BindingEnvironment,

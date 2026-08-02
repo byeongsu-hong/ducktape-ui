@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_markdown(
     markdown: &ResolvedMarkdown,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
@@ -62,7 +62,7 @@ pub(in crate::codegen) fn render_markdown(
             .iter()
             .zip(&viewer.borrowed)
             .map(|(argument, borrowed)| {
-                checked_expr_use_code(
+                resolved_expr_use_code(
                     program,
                     *argument,
                     env,
@@ -111,12 +111,12 @@ fn resolved_markdown_content<'a>(
 }
 
 fn resolved_markdown_f32(
-    expression: CheckedExprUseId,
+    expression: ResolvedExpressionId,
     minimum: &str,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min(f32::MAX)"))
 }
 
@@ -193,7 +193,7 @@ fn append_resolved_markdown_style(
         write!(
             code,
             " __markdown_settings.style.inline_code_highlight.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -222,9 +222,9 @@ fn resolved_markdown_padding(
     {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());

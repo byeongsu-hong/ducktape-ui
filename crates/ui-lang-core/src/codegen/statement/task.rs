@@ -9,7 +9,7 @@ fn resolved_effect_call(
 ) -> Result<String, Error> {
     let args = args
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     match target {
@@ -65,12 +65,14 @@ pub(in crate::codegen) fn task_source_code(
     Ok(match source {
         ResolvedTaskSource::Done { value, .. } => format!(
             "::iced::Task::done({})",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
-        ResolvedTaskSource::None { output, .. } => format!(
-            "::iced::Task::<{}>::none()",
-            output.rust(program.extern_structs())
-        ),
+        ResolvedTaskSource::None { output, .. } => {
+            format!(
+                "::iced::Task::<{}>::none()",
+                rust_type_code(program, output)
+            )
+        }
         ResolvedTaskSource::Effect {
             kind, target, args, ..
         } => resolved_effect_call(*kind, target, args, program, env)?,
@@ -105,7 +107,7 @@ pub(in crate::codegen) fn task_flow_code(
                         owner: Some(BindingOwner::Local(*local)),
                     },
                 )]);
-                let value = checked_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
                 task = if *input_fallible {
                     format!("({task}).map(move |result| result.map(|{binding}| {value}))")
                 } else {
@@ -161,7 +163,7 @@ pub(in crate::codegen) fn task_flow_code(
                         owner: Some(BindingOwner::Local(*local)),
                     },
                 )]);
-                let value = checked_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *value, &map_env, ValueMode::Owned)?;
                 task = format!("({task}).map_err(move |{binding}| {value})");
             }
             ResolvedTaskTransform::Collect { .. } => task = format!("({task}).collect()"),

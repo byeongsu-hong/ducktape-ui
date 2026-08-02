@@ -118,6 +118,7 @@ pub(in crate::check) fn infer_components_group(
                     format!("component `{name}` requires slot `{missing}`"),
                 ));
             }
+            let route_analysis_guard = expr::HandlerAnalysisGuard::start();
             let mut routed = HashSet::new();
             for supplied in supplied_events {
                 if !routed.insert(supplied.name.as_str()) {
@@ -268,6 +269,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, route_analysis_guard.finish())?;
         }
         ViewNode::Slot { .. } => {}
         ViewNode::ExternComponent {
@@ -278,6 +280,7 @@ pub(in crate::check) fn infer_components_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let extern_component_analysis_guard = expr::HandlerAnalysisGuard::start();
             let component = extern_function(document, function, ExternKind::Component, span)?;
             check_call_args(component, args, env, document, span)?;
             match (&component.output, route) {
@@ -300,6 +303,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, extern_component_analysis_guard.finish())?;
         }
         ViewNode::Themer {
             function,
@@ -309,6 +313,7 @@ pub(in crate::check) fn infer_components_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let themer_analysis_guard = expr::HandlerAnalysisGuard::start();
             let themer = extern_function(document, function, ExternKind::Themer, span)?;
             check_call_args(themer, args, env, document, span)?;
             match (&themer.output, route) {
@@ -331,6 +336,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, themer_analysis_guard.finish())?;
         }
         ViewNode::Shader {
             function,
@@ -342,6 +348,7 @@ pub(in crate::check) fn infer_components_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let shader_analysis_guard = expr::HandlerAnalysisGuard::start();
             let shader = extern_function(document, function, ExternKind::Shader, span)?;
             check_call_args(shader, args, env, document, span)?;
             for length in [width, height].into_iter().flatten() {
@@ -367,6 +374,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, shader_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

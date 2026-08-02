@@ -666,12 +666,6 @@ pub(crate) fn overlay_semantic_key(options: &OverlayOptions) -> String {
     )
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum PaneAxis {
-    Horizontal,
-    Vertical,
-}
-
 #[derive(Clone, Debug)]
 pub enum PaneConfiguration {
     Pane(String),
@@ -806,13 +800,6 @@ pub struct PaddingOptions {
     pub left: Option<Expr>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlexAlignment {
-    Start,
-    Center,
-    End,
-}
-
 #[derive(Clone, Debug)]
 pub enum GridSizing {
     AspectRatio { width: Expr, height: Expr },
@@ -900,10 +887,4 @@ pub enum ScrollDirection {
 pub enum ScrollAnchor {
     Start,
     End,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
 }
