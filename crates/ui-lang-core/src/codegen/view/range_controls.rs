@@ -9,10 +9,10 @@ pub(in crate::codegen) fn render_slider(
     scope: &str,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let value = checked_expr_use_code(program, slider.value, env, ValueMode::Borrowed)?;
-    let min = checked_expr_use_code(program, slider.min, env, ValueMode::Borrowed)?;
-    let max = checked_expr_use_code(program, slider.max, env, ValueMode::Borrowed)?;
-    let step = checked_expr_use_code(program, slider.step, env, ValueMode::Borrowed)?;
+    let value = resolved_expr_use_code(program, slider.value, env, ValueMode::Borrowed)?;
+    let min = resolved_expr_use_code(program, slider.min, env, ValueMode::Borrowed)?;
+    let max = resolved_expr_use_code(program, slider.max, env, ValueMode::Borrowed)?;
+    let step = resolved_expr_use_code(program, slider.step, env, ValueMode::Borrowed)?;
     let callback = resolved_interaction_route_callback_code(
         &slider.change,
         "__value",
@@ -32,7 +32,7 @@ pub(in crate::codegen) fn render_slider(
         write!(
             widget,
             ".default({})",
-            checked_expr_use_code(program, default, env, ValueMode::Borrowed)?
+            resolved_expr_use_code(program, default, env, ValueMode::Borrowed)?
         )
         .unwrap();
     }
@@ -40,7 +40,7 @@ pub(in crate::codegen) fn render_slider(
         write!(
             widget,
             ".shift_step({})",
-            checked_expr_use_code(program, shift_step, env, ValueMode::Borrowed)?
+            resolved_expr_use_code(program, shift_step, env, ValueMode::Borrowed)?
         )
         .unwrap();
     }
@@ -81,9 +81,9 @@ pub(in crate::codegen) fn render_progress(
     scope: &str,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let value = checked_expr_use_code(program, progress.value, env, ValueMode::Owned)?;
-    let min = checked_expr_use_code(program, progress.min, env, ValueMode::Owned)?;
-    let max = checked_expr_use_code(program, progress.max, env, ValueMode::Owned)?;
+    let value = resolved_expr_use_code(program, progress.value, env, ValueMode::Owned)?;
+    let min = resolved_expr_use_code(program, progress.min, env, ValueMode::Owned)?;
+    let max = resolved_expr_use_code(program, progress.max, env, ValueMode::Owned)?;
     let mut widget = "::iced::widget::progress_bar(__progress_range, __progress_value)".to_owned();
     for (method, length) in [
         ("length", progress.length.as_ref()),
@@ -125,7 +125,7 @@ fn resolved_range_custom_style_call(
         .arguments
         .iter()
         .map(|argument| {
-            checked_expr_use_code(program, *argument, env, ValueMode::Owned)
+            resolved_expr_use_code(program, *argument, env, ValueMode::Owned)
                 .map(|argument| format!(", {argument}"))
         })
         .collect::<Result<String, _>>()?;
@@ -218,7 +218,7 @@ fn append_resolved_slider_status(
             write!(
                 code,
                 " {field} = {} as f32;",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -230,7 +230,7 @@ fn append_resolved_slider_status(
         let shape = match shape {
             ResolvedSliderHandleShape::Circle(radius) => format!(
                 "::iced::widget::slider::HandleShape::Circle {{ radius: {} as f32 }}",
-                checked_expr_use_code(program, *radius, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *radius, env, ValueMode::Owned)?
             ),
             ResolvedSliderHandleShape::Rectangle { width, radius } => {
                 let radius = resolved_text_radius_code(radius, program, env)?
@@ -302,7 +302,7 @@ fn resolved_progress_style_code(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }

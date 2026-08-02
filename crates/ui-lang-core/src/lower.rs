@@ -28,6 +28,7 @@ pub(crate) use crate::hir::{
     PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
     TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
+use crate::semantic::*;
 use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,6 +40,7 @@ mod conditional;
 mod container;
 mod content_primitives;
 mod editor;
+mod expression;
 mod extern_component;
 mod extern_view_adapter;
 mod float;
@@ -71,6 +73,7 @@ pub(crate) use conditional::*;
 pub(crate) use container::*;
 pub(crate) use content_primitives::*;
 pub(crate) use editor::*;
+pub(crate) use expression::*;
 pub(crate) use extern_component::*;
 pub(crate) use extern_view_adapter::*;
 pub(crate) use float::*;
@@ -95,8 +98,6 @@ pub(crate) use text::*;
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
 pub(crate) use view_topology::*;
-
-pub(crate) type ResolvedExpressionId = CheckedExprUseId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedTestTheme {
@@ -1421,6 +1422,7 @@ impl ResolvedArgument {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedEventRoute {
     Direct {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
@@ -1428,6 +1430,7 @@ pub(crate) enum ResolvedEventRoute {
         origin: OriginId,
     },
     Forward {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
@@ -1512,8 +1515,17 @@ struct CallSite {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
+    // Adversarial tests retain a poisonable source sidecar to prove that
+    // production code generation never observes the source AST. Release
+    // builds do not store it.
+    #[cfg(test)]
     document: Document,
     app_view: ViewId,
+    expressions: ResolvedExpressionProgram,
+    // Adversarial tests retain checker facts only to verify lowering
+    // invariants after deliberate HIR corruption. Release programs do not
+    // carry checker state into the backend boundary.
+    #[cfg(test)]
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
@@ -1621,6 +1633,7 @@ fn validate_expression_declaration_references(
     Ok(())
 }
 
+#[cfg(test)]
 fn resolved_statement_semantic_key(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1798,6 +1811,7 @@ fn resolved_statement_semantic_key(
     })
 }
 
+#[cfg(test)]
 fn resolved_handler_operation_contract(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1954,9 +1968,8 @@ fn resolved_handler_operation_contract(
                     index
                         .map(|index| {
                             program
-                                .document
                                 .settings
-                                .windows
+                                .named_windows
                                 .get(index as usize)
                                 .map(|window| window.name.clone())
                                 .ok_or_else(|| {
@@ -2033,6 +2046,7 @@ fn resolved_handler_operation_contract(
 }
 
 impl LoweredProgram {
+    #[cfg(test)]
     pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
         fn validate_expression_use(
             program: &LoweredProgram,
@@ -3064,10 +3078,6 @@ impl LoweredProgram {
         Ok(())
     }
 
-    pub(crate) fn document(&self) -> &Document {
-        &self.document
-    }
-
     pub(crate) fn program(&self) -> &Self {
         self
     }
@@ -3096,13 +3106,31 @@ impl LoweredProgram {
         &self.settings.app_name
     }
 
-    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
-        &self.document.structs
+    pub(crate) fn struct_declarations(&self) -> &[crate::hir::StructDeclaration] {
+        self.declarations.struct_declarations()
     }
 
-    #[allow(dead_code)]
+    pub(crate) fn enum_declarations(&self) -> &[crate::hir::EnumDeclaration] {
+        self.declarations.enum_declarations()
+    }
+
+    pub(crate) fn extern_functions(&self) -> impl Iterator<Item = &crate::hir::ExternDeclaration> {
+        self.declarations.extern_declarations()
+    }
+
+    pub(crate) fn struct_rust_path_by_name(&self, name: &str) -> Option<&str> {
+        self.declarations
+            .struct_decl_by_name(name)
+            .map(|declaration| declaration.rust_path.as_str())
+    }
+
+    #[cfg(test)]
     pub(crate) fn checked_facts(&self) -> &CheckedFacts {
         &self.facts
+    }
+
+    pub(crate) fn expressions(&self) -> &ResolvedExpressionProgram {
+        &self.expressions
     }
 
     pub(crate) fn subscriptions(&self) -> &[ResolvedSubscription] {
@@ -3355,6 +3383,7 @@ impl LoweredProgram {
         self.named_type_rust_paths.get(&id).map(String::as_str)
     }
 
+    #[cfg(test)]
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
         &self.declarations
     }
@@ -3378,16 +3407,14 @@ impl LoweredProgram {
                     state.id == binding.state && state.name == binding.name && state.ty == Type::Str
                 })
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled input binding does not match its normalized app state",
                     )
                 })?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled input binding is duplicated in normalized HIR",
                 ));
             }
@@ -3404,9 +3431,8 @@ impl LoweredProgram {
         for binding in &self.controlled_editors {
             let state = self.validate_controlled_editor_binding(binding)?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding is duplicated in normalized HIR",
                 ));
             }
@@ -3425,9 +3451,8 @@ impl LoweredProgram {
             .and_then(|index| self.controlled_editors.get(*index))
             .filter(|binding| binding.name == name)
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "normalized editor is absent from the controlled binding index",
                 )
             })?;
@@ -3446,9 +3471,8 @@ impl LoweredProgram {
                 state.id == binding.state && state.name == binding.name && state.ty == Type::Editor
             })
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding does not match its normalized app state",
                 )
             })?;
@@ -3457,9 +3481,8 @@ impl LoweredProgram {
                 .try_extern_decl(action)
                 .filter(|function| function.kind == ExternKind::EditorAction)
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled editor action does not match its normalized extern",
                     )
                 })?;
@@ -3499,35 +3522,96 @@ impl LoweredProgram {
         &self,
         call: &ComponentCall,
         index: usize,
-        event: ComponentEventId,
-        name: &str,
-        payloads: &[Type],
-        origin: OriginId,
     ) -> Result<(), Error> {
-        let checked_routes = self.facts.component_call_routes(call.id).ok_or_else(|| {
-            self.invariant_at_origin(
-                call.origin,
-                "lowered component call has no checked event routes",
-            )
-        })?;
-        let checked = checked_routes.events.get(index).ok_or_else(|| {
+        let resolved = call.events.get(index).ok_or_else(|| {
             self.invariant_at_origin(
                 call.origin,
                 "lowered component call has an unmatched event route",
             )
         })?;
-        if checked_routes.call != call.id
-            || checked_routes.component != call.component
-            || checked_routes.events.len() != call.events.len()
+        let (route_index, event, name, payloads, origin) = match resolved {
+            ResolvedEventRoute::Direct {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            }
+            | ResolvedEventRoute::Forward {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            } => (*route_index, *event, name, payloads, *origin),
+        };
+        let origin_is_valid = self
+            .origins
+            .try_get(origin)
+            .is_some_and(|resolved| resolved.parent == Some(call.origin));
+        let forward_is_valid = match resolved {
+            ResolvedEventRoute::Direct { .. } => true,
+            ResolvedEventRoute::Forward {
+                outer_component,
+                outer_component_name,
+                outer_event,
+                outer_event_name,
+                outer_payloads,
+                ..
+            } => self
+                .try_component(*outer_component)
+                .is_some_and(|component| {
+                    component.id == *outer_component
+                        && component.name == *outer_component_name
+                        && outer_event.component == *outer_component
+                        && outer_event_name == name
+                        && outer_payloads == payloads
+                        && self.component_event_matches(
+                            *outer_event,
+                            outer_event_name,
+                            outer_payloads,
+                        )
+                }),
+        };
+        if route_index as usize != index
             || event.component != call.component
-            || checked.event != event
-            || checked.name != name
-            || checked.payloads != payloads
-            || checked.origin != origin
+            || !origin_is_valid
+            || !forward_is_valid
             || !self.component_event_matches(event, name, payloads)
         {
+            let diagnostic_origin = if route_index as usize != index {
+                call.events
+                    .iter()
+                    .find_map(|candidate| match candidate {
+                        ResolvedEventRoute::Direct {
+                            route_index,
+                            origin,
+                            ..
+                        }
+                        | ResolvedEventRoute::Forward {
+                            route_index,
+                            origin,
+                            ..
+                        } if *route_index as usize == index => Some(*origin),
+                        ResolvedEventRoute::Direct { .. } | ResolvedEventRoute::Forward { .. } => {
+                            None
+                        }
+                    })
+                    .filter(|origin| {
+                        self.origins
+                            .try_get(*origin)
+                            .is_some_and(|resolved| resolved.parent == Some(call.origin))
+                    })
+                    .unwrap_or(if origin_is_valid { origin } else { call.origin })
+            } else if origin_is_valid {
+                origin
+            } else {
+                call.origin
+            };
             return Err(self.invariant_at_origin(
-                checked.origin,
+                diagnostic_origin,
                 format!("lowered component event `{name}` has an invalid callee contract"),
             ));
         }
@@ -4593,9 +4677,13 @@ impl Lowerer {
             .iter()
             .map(|preset| preset.name.clone())
             .collect();
+        let expressions = ResolvedExpressionProgram::from_checked(&self.facts, &self.declarations);
         Ok(LoweredProgram {
+            #[cfg(test)]
             document: self.document,
             app_view: app_view_id,
+            expressions,
+            #[cfg(test)]
             facts: self.facts,
             declarations: self.declarations,
             settings,
@@ -9259,10 +9347,11 @@ impl Lowerer {
         }
 
         let mut resolved_events = Vec::with_capacity(events.len());
-        for ((event, supplied), checked) in events
+        for (event_route_index, ((event, supplied), checked)) in events
             .iter()
             .zip(supplied_events)
             .zip(&checked_routes.events)
+            .enumerate()
         {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
@@ -9315,6 +9404,7 @@ impl Lowerer {
                         &supplied.span,
                     )?;
                     resolved_events.push(ResolvedEventRoute::Direct {
+                        route_index: event_route_index as u32,
                         event: event.id,
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
@@ -9374,6 +9464,7 @@ impl Lowerer {
                         ));
                     }
                     resolved_events.push(ResolvedEventRoute::Forward {
+                        route_index: event_route_index as u32,
                         event: event.id,
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
@@ -10152,16 +10243,16 @@ view
         assert_eq!(
             handler_snapshot(&program),
             r#"h0 App mount params=[] @19:1
-  s0 task=None final=false let request CheckedLocalId(0) = CheckedExprUseId(2) @20:1
+  s0 task=None final=false let request LocalId(0) = ExpressionId(2) @20:1
   s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
-h1 App loaded params=["next:i64:CheckedLocalId(1)"] @22:1
-  s2 task=None final=true assign value:i64, value=CheckedExprUseId(4), at=None, move=false @23:1
+h1 App loaded params=["next:i64:LocalId(1)"] @22:1
+  s2 task=None final=true assign value:i64, value=ExpressionId(4), at=None, move=false @23:1
 h2 Component(ComponentId(0)) start params=[] @27:1
   s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
-h3 Component(ComponentId(0)) done params=["next:i64:CheckedLocalId(2)"] @29:1
-  s4 task=None final=true assign local:i64, value=CheckedExprUseId(6), at=None, move=false @30:1
+h3 Component(ComponentId(0)) done params=["next:i64:LocalId(2)"] @29:1
+  s4 task=None final=true assign local:i64, value=ExpressionId(6), at=None, move=false @30:1
 h4 Preset(0) preset seeded params=[] @16:1
-  s5 task=None final=true assign value:i64, value=CheckedExprUseId(7), at=None, move=false @18:1
+  s5 task=None final=true assign value:i64, value=ExpressionId(7), at=None, move=false @18:1
 "#
         );
     }
@@ -10208,8 +10299,8 @@ view
             "s1 task=Some(TaskId(1)) final=true sip r0 -> app h1 progressed (payload 0:f64)",
             "r1 -> app h2 downloaded (payload 0:bytes)",
             "s2 task=Some(TaskId(2)) final=true flow source=[t3 Stream Extern(ExternFnId(1))",
-            "t4 map value:i64/local=CheckedLocalId(0)",
-            "t5 then value:i64/local=CheckedLocalId(1) -> t5 Task Extern(ExternFnId(2))",
+            "t4 map value:i64/local=LocalId(0)",
+            "t5 then value:i64/local=LocalId(1) -> t5 Task Extern(ExternFnId(2))",
             "t6 collect",
             "r2 -> app h3 collected (payload 0:[i64])",
             "r3 -> app h4 planned (payload 0:i64)",
@@ -18589,7 +18680,9 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("invalid callee contract"));
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 12);
+        // A corrupted event-origin ID cannot map itself, so the normalized
+        // call origin is the stable source-mapped fallback.
+        assert_eq!(error.line, 10);
         assert_eq!(error.column, 1);
 
         let mut invalid_callee_name = lower(analyze_file(&root).unwrap()).unwrap();
@@ -18913,10 +19006,10 @@ view
         );
         assert_eq!(
             snapshot,
-            "app AppStateId(0) progress Animation(F64) use=CheckedExprUseId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
-             derived DerivedId(0) total F64 use=CheckedExprUseId(1) None line=22\n\
-             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=CheckedExprUseId(2) None line=23\n\
-             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=CheckedExprUseId(3) None line=25 animation=None\n"
+            "app AppStateId(0) progress Animation(F64) use=ExpressionId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
+             derived DerivedId(0) total F64 use=ExpressionId(1) None line=22\n\
+             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=ExpressionId(2) None line=23\n\
+             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=ExpressionId(3) None line=25 animation=None\n"
         );
 
         let generated = crate::codegen::generate(&program, "initializers.ice").unwrap();

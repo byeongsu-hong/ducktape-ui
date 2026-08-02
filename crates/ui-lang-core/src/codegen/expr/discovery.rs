@@ -5,7 +5,7 @@ pub(in crate::codegen) fn resolved_initializer_code(
     initializer: &ResolvedInitializer,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let mut code = checked_expr_use_code(
+    let mut code = resolved_expr_use_code(
         program,
         initializer.expression,
         &HashMap::new(),
@@ -109,7 +109,7 @@ pub(in crate::codegen) fn generate_pane_types(
                 out,
                 "{}({}),",
                 pane_template_variant(&template.item.name),
-                template.key_type.rust(&program.document().structs)
+                rust_type_code(program, &template.key_type)
             )
             .unwrap();
         }

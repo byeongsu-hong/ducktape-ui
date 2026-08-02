@@ -8,8 +8,8 @@ pub(in crate::codegen) fn render_boolean_control(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let label = checked_expr_use_code(program, control.label, env, ValueMode::Owned)?;
-    let checked = checked_expr_use_code(program, control.checked, env, ValueMode::Owned)?;
+    let label = resolved_expr_use_code(program, control.label, env, ValueMode::Owned)?;
+    let checked = resolved_expr_use_code(program, control.checked, env, ValueMode::Owned)?;
     let rendered = match (&control.kind, &control.style) {
         (ResolvedBooleanKind::Checkbox, ResolvedBooleanStyle::Checkbox(style)) => {
             let disabled = resolved_boolean_disabled(control, program, env)?;
@@ -81,7 +81,7 @@ pub(in crate::codegen) fn render_boolean_control(
             let value = control.value.ok_or_else(|| {
                 program.invariant_at_origin(control.origin, "normalized radio value disappeared")
             })?;
-            let value = checked_expr_use_code(program, value, env, ValueMode::Owned)?;
+            let value = resolved_expr_use_code(program, value, env, ValueMode::Owned)?;
             // Iced's native callback provides its internal bool selection marker. Ice radios
             // deliberately discard it and route the declared `value: T` instead.
             let callback = resolved_interaction_route_callback_code(
@@ -133,7 +133,7 @@ fn resolved_boolean_identity_code(
         Ok(format!(
             "format!(\"{{}}/{}({{}})\", {scope}, {})",
             identity.name,
-            checked_expr_use_code(program, key, env, ValueMode::Borrowed)?
+            resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?
         ))
     } else {
         Ok(format!("format!(\"{{}}/{}\", {scope})", identity.name))
@@ -165,7 +165,7 @@ fn resolved_boolean_disabled(
 ) -> Result<String, Error> {
     control
         .disabled
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()
         .map(|value| value.unwrap_or_else(|| "false".into()))
 }
@@ -179,13 +179,13 @@ fn resolved_boolean_accessibility(
     let label = control
         .options
         .accessibility_label
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| fallback.into());
     let description = control
         .options
         .accessibility_description
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .map(|value| format!(".description({value})"))
         .unwrap_or_default();
@@ -204,7 +204,7 @@ fn append_resolved_boolean_options(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, 1))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -213,7 +213,7 @@ fn append_resolved_boolean_options(
         write!(
             code,
             ".text_size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            checked_expr_use_code(program, text_size, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, text_size, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -229,7 +229,7 @@ fn append_resolved_boolean_options(
         write!(
             code,
             ".text_line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            checked_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -267,7 +267,7 @@ fn append_resolved_boolean_options(
             |value| {
                 Ok::<_, Error>(format!(
                     "Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                    checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                 ))
             },
         )?;
@@ -276,7 +276,7 @@ fn append_resolved_boolean_options(
             |value| {
                 Ok::<_, Error>(format!(
                     "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                    checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                 ))
             },
         )?;
@@ -512,7 +512,7 @@ fn append_resolved_toggler_status(
         write!(
             code,
             " __style.padding_ratio = (({}) as f32).max(0.0).min(0.5);",
-            checked_expr_use_code(program, ratio, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, ratio, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -614,7 +614,7 @@ fn resolved_boolean_custom_style(
             let arguments = style
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = arguments
                 .into_iter()
@@ -649,7 +649,7 @@ fn append_resolved_boolean_metric(
         write!(
             code,
             " {field} = {} as f32;",
-            checked_expr_use_code(program, value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, value, env, ValueMode::Owned)?
         )
         .unwrap();
     }

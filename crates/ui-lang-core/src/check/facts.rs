@@ -3,14 +3,19 @@ use super::expr::{
     unify_type_evidence,
 };
 use super::*;
+#[cfg(test)]
+use crate::hir::DerivedId;
 use crate::hir::{
-    AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
-    CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
-    ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, FloatExpressionId, HandlerId, InteractionExpressionId, InteractionRouteId,
-    MediaExpressionId, OriginArena, OriginId, PaletteId, PinExpressionId, RouteId, StatementId,
-    StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId,
-    ViewId,
+    AppSettingExprId, CanvasCommandId, CanvasEventId, CanvasExpressionId, CanvasLocalId,
+    CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
+    ComponentSlotId, DeclarationIndex, EnumVariantId, ExternFnId, ExternRef, FloatExpressionId,
+    HandlerId, InteractionExpressionId, InteractionRouteId, MediaExpressionId, OriginArena,
+    OriginId, PaletteId, PinExpressionId, RouteId, StatementId, StructFieldId, SubscriptionId,
+    TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+};
+pub(crate) use crate::hir::{
+    ExpressionId as CheckedExprUseId, ExpressionNodeId as CheckedExprId, LocalId as CheckedLocalId,
+    ValueRef as CheckedValueRef,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -29,12 +34,6 @@ impl Clone for LookupCount {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprUseId(u32);
-
 #[cfg(test)]
 impl CheckedExprUseId {
     pub(crate) fn invalid_for_test() -> Self {
@@ -44,9 +43,6 @@ impl CheckedExprUseId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedLocalId(u32);
 
 #[cfg(test)]
 impl CheckedLocalId {
@@ -62,14 +58,6 @@ pub(crate) struct CheckedBuiltinId(u32);
 enum ValueScope {
     App,
     Component(ComponentId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum CheckedValueRef {
-    AppState(AppStateId),
-    Derived(DerivedId),
-    ComponentParam(ComponentParamId),
-    ComponentState(ComponentStateId),
 }
 
 #[derive(Clone, Debug)]
@@ -11532,13 +11520,13 @@ view
 
         assert_eq!(
             facts.structural_snapshot(),
-            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(CheckedExprUseId(0)) origin=o0
-value v1 AppState(AppStateId(1)) color:Color init=Some(CheckedExprUseId(1)) origin=o1
-value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(CheckedExprUseId(2)) origin=o2
-value v3 Derived(DerivedId(0)) name:Str init=Some(CheckedExprUseId(3)) origin=o3
-value v4 Derived(DerivedId(1)) visible:Bool init=Some(CheckedExprUseId(4)) origin=o4
-value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(CheckedExprUseId(5)) origin=o6
-value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(CheckedExprUseId(6)) origin=o7
+            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(ExpressionId(0)) origin=o0
+value v1 AppState(AppStateId(1)) color:Color init=Some(ExpressionId(1)) origin=o1
+value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(ExpressionId(2)) origin=o2
+value v3 Derived(DerivedId(0)) name:Str init=Some(ExpressionId(3)) origin=o3
+value v4 Derived(DerivedId(1)) visible:Bool init=Some(ExpressionId(4)) origin=o4
+value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(ExpressionId(5)) origin=o6
+value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(ExpressionId(6)) origin=o7
 use u0 Value(AppState(AppStateId(0))) root=e1 source=Named("User") destination=Named("User") coercion=None origin=o0
 use u1 Value(AppState(AppStateId(1))) root=e5 source=Color destination=Color coercion=None origin=o1
 use u2 Value(AppState(AppStateId(2))) root=e6 source=Named("Mode") destination=Named("Mode") coercion=None origin=o2
@@ -11573,7 +11561,7 @@ expr e19 path Value(ComponentState(ComponentStateId { component: ComponentId(0),
 expr e20 str "Open" : Str origin=o26
 view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
 view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
-view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(9) } origin=o17
+view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: ExpressionId(9) } origin=o17
 view w3 text Component(ComponentId(0)) parent=Some(ViewId(2)) children=[] flow=None origin=o18
 view w4 layout App parent=None children=[ViewId(5), ViewId(6)] flow=None origin=o19
 view w5 component App parent=Some(ViewId(4)) children=[] flow=None origin=o20
@@ -13157,27 +13145,24 @@ state
 view
   svg "icon.svg" w=48.0 h=shrink fit=scale-down rotate=rotation.solid(radians(0.1)) opacity=0.9 color=fg hover=primary style=dynamic_svg(active) label="Icon" description="Status icon"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().media(ViewId(0)).unwrap();
+        let checked_document = analyze(source).unwrap();
         let ViewNode::Media {
             kind,
             source,
             options,
             ..
-        } = &program.document().view
+        } = &checked_document.document.view
         else {
             panic!("fixture root must be media");
         };
+        let expected_expression_count = crate::ast::media_expression_roots(source, options).len();
+        let expected_semantic_key = crate::ast::media_semantic_key(*kind, options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().media(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::media_expression_roots(source, options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::media_semantic_key(*kind, options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -13214,21 +13199,18 @@ view
     text "Hover"
     text "Tip"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
-        let ViewNode::Tooltip { options, .. } = &program.document().view else {
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &checked_document.document.view else {
             panic!("fixture root must be a tooltip");
         };
+        let expected_expression_count = crate::ast::tooltip_expression_roots(options).len();
+        let expected_semantic_key = crate::ast::tooltip_semantic_key(options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::tooltip_expression_roots(options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::tooltip_semantic_key(options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -13272,7 +13254,19 @@ view
     sensor show=resized resize=resized hide=hidden key=active anticipate=16.0 delay=20
       text "Observed"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Layout { children, .. } = &checked_document.document.view else {
+            panic!("fixture root must be a column");
+        };
+        let expected_sensor_key = match &children[2] {
+            ViewNode::Sensor { options, .. } => crate::ast::sensor_semantic_key(options),
+            _ => panic!("third child must be a sensor"),
+        };
+        let expected_mouse_key = match &children[0] {
+            ViewNode::MouseArea { options, .. } => crate::ast::mouse_area_semantic_key(options),
+            _ => panic!("first child must be a mouse area"),
+        };
+        let program = lower::lower(checked_document).unwrap();
         let facts = program.checked_facts();
         assert_eq!(facts.interactions.len(), 7);
         let layout = facts.interaction(ViewId(0)).expect("checked root layout");
@@ -13336,23 +13330,8 @@ view
             assert_eq!(expression.source, expected);
             assert_eq!(expression.destination, expected);
         }
-        let ViewNode::Layout { children, .. } = &program.document().view else {
-            panic!("fixture root must be a column");
-        };
-        let ViewNode::Sensor { options, .. } = &children[2] else {
-            panic!("third child must be a sensor");
-        };
-        assert_eq!(
-            sensor.semantic_key,
-            crate::ast::sensor_semantic_key(options)
-        );
-        assert_eq!(
-            mouse.semantic_key,
-            crate::ast::mouse_area_semantic_key(match &children[0] {
-                ViewNode::MouseArea { options, .. } => options,
-                _ => panic!("first child must be a mouse area"),
-            })
-        );
+        assert_eq!(sensor.semantic_key, expected_sensor_key);
+        assert_eq!(mouse.semantic_key, expected_mouse_key);
         for id in [ViewId(2), ViewId(4), ViewId(6)] {
             assert_eq!(
                 facts.interaction(id).expect("checked child text").kind,
@@ -13380,7 +13359,12 @@ view
   float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0
     text "Floating"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Float { style, .. } = &checked_document.document.view else {
+            panic!("root must be a float");
+        };
+        let expected_semantic_key = crate::ast::float_semantic_key(style);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Float {
             semantic_key,
@@ -13424,10 +13408,7 @@ view
                 "missing float expression {index}"
             );
         }
-        let ViewNode::Float { style, .. } = &program.document().view else {
-            panic!("root must be a float");
-        };
-        assert_eq!(semantic_key, &crate::ast::float_semantic_key(style));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]
@@ -13450,7 +13431,12 @@ view
   pin w=fill h=height x=offset y=8.0
     text "Pinned"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Pin { width, height, .. } = &checked_document.document.view else {
+            panic!("root must be a pin");
+        };
+        let expected_semantic_key = crate::ast::pin_semantic_key(width, height);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Pin {
             semantic_key,
@@ -13472,10 +13458,7 @@ view
                 "missing pin expression {index}"
             );
         }
-        let ViewNode::Pin { width, height, .. } = &program.document().view else {
-            panic!("root must be a pin");
-        };
-        assert_eq!(semantic_key, &crate::ast::pin_semantic_key(width, height));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]

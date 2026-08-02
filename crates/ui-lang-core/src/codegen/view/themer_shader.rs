@@ -14,7 +14,7 @@ fn extern_view_arguments(
                 ResolvedExternViewArgumentMode::BorrowedAsRef
                 | ResolvedExternViewArgumentMode::Borrowed => ValueMode::Borrowed,
             };
-            let code = checked_expr_use_code(program, argument.expression, env, value_mode)?;
+            let code = resolved_expr_use_code(program, argument.expression, env, value_mode)?;
             Ok(match argument.mode {
                 ResolvedExternViewArgumentMode::Owned => code,
                 ResolvedExternViewArgumentMode::BorrowedAsRef => {
@@ -62,7 +62,7 @@ pub(in crate::codegen) fn render_themer(
     Ok(format!(
         "{{ let (__theme, __content, __text_color, __background) = {}({args}); let mut __themer = ::iced::widget::themer(__theme, __content); if let ::std::option::Option::Some(__text_color) = __text_color {{ __themer = __themer.text_color(__text_color); }} if let ::std::option::Option::Some(__background) = __background {{ __themer = __themer.background(__background); }} let __themed: __IceElement<'_, {}> = __themer.into(); __themed.map({mapped}).into() }}",
         themer.adapter.function.rust_path,
-        themer.adapter.output.rust(document.extern_structs())
+        rust_type_code(program, &themer.adapter.output)
     ))
 }
 
@@ -79,10 +79,10 @@ fn shader_length_code(
         ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
         ResolvedContainerLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedContainerLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -113,7 +113,7 @@ pub(in crate::codegen) fn render_shader(
         }
     }
     let mapped = extern_view_mapping(&shader.adapter, program, message, env)?;
-    let output = shader.adapter.output.rust(document.extern_structs());
+    let output = rust_type_code(program, &shader.adapter.output);
     Ok(format!(
         "{{ let __shader: __IceElement<'_, {output}> = {code}.into(); __shader.map({mapped}).into() }}"
     ))

@@ -28,6 +28,7 @@ pub struct ApiSurface {
 
 impl ApiSurface {
     pub fn from_checked(document: &CheckedDocument) -> Self {
+        let document = document.source_document();
         let mut components = document
             .components
             .iter()

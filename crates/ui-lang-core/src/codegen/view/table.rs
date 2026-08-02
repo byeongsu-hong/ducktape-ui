@@ -14,14 +14,14 @@ pub(in crate::codegen) fn render_table(
     if columns.len() != table.columns.len() {
         return Err(program.invariant_at_origin(table.origin, "table HIR column length diverged"));
     }
-    let rows = checked_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
+    let rows = resolved_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
     let item_name = &table.row.name;
-    let row_rust = table.row.ty.rust(document.extern_structs());
+    let row_rust = rust_type_code(program, &table.row.ty);
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),
-        checked_local_binding(
-            LocalBindingTypeSource::Checked(program),
+        resolved_local_binding(
+            LocalBindingTypeSource::Resolved(program),
             table.row.local,
             item_name.clone(),
             true,
@@ -100,7 +100,7 @@ pub(in crate::codegen) fn render_table(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, {entries}))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?,
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?,
             )
             .unwrap();
         }
@@ -121,10 +121,10 @@ fn resolved_table_length_code(
         ResolvedTableLength::Shrink => "::iced::Shrink".into(),
         ResolvedTableLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedTableLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -140,19 +140,19 @@ pub(in crate::codegen) fn render_keyed_column(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let items = checked_expr_use_code(program, keyed.items, env, ValueMode::Borrowed)?;
+    let items = resolved_expr_use_code(program, keyed.items, env, ValueMode::Borrowed)?;
     let item_name = &keyed.item.name;
     let mut child_env = ScopedBindingEnv::new(env);
     child_env.insert(
         item_name.clone(),
-        checked_local_binding(
-            LocalBindingTypeSource::Checked(program),
+        resolved_local_binding(
+            LocalBindingTypeSource::Resolved(program),
             keyed.item.local,
             item_name.clone(),
             false,
         ),
     );
-    let key = checked_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
+    let key = resolved_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
@@ -162,7 +162,7 @@ pub(in crate::codegen) fn render_keyed_column(
         write!(
             code,
             ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-            checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -183,7 +183,7 @@ pub(in crate::codegen) fn render_keyed_column(
         write!(
             code,
             ".max_width({} as f32)",
-            checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -211,10 +211,10 @@ fn resolved_keyed_length_code(
         ResolvedKeyedLength::Shrink => "::iced::Shrink".into(),
         ResolvedKeyedLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedKeyedLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -236,7 +236,7 @@ fn resolved_keyed_padding_code(
     }
     let code = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+            .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
             .transpose()
     };
     let all = code(padding.all)?.unwrap_or_else(|| "0.0".into());

@@ -36,7 +36,7 @@ pub(in crate::codegen) fn render_text_editor(
         .unwrap_or_else(|| "\"Editor\"".to_owned());
     let disabled = editor
         .disabled
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?;
     let mut code = format!("::iced::widget::text_editor(&{})", state.code);
     if let Some(identity) = identity {
@@ -54,7 +54,7 @@ pub(in crate::codegen) fn render_text_editor(
         write!(
             code,
             ".width((({}) as f32).max(0.0).min(f32::MAX))",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -76,7 +76,7 @@ pub(in crate::codegen) fn render_text_editor(
             write!(
                 code,
                 ".{method}((({}) as f32).max({min}).min(f32::MAX))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -85,11 +85,11 @@ pub(in crate::codegen) fn render_text_editor(
         let line_height = match line_height {
             ResolvedTextLineHeight::Relative(value) => format!(
                 "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
             ResolvedTextLineHeight::Absolute(value) => format!(
                 "::iced::widget::text::LineHeight::Absolute((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
         };
         write!(code, ".line_height({line_height})").unwrap();
@@ -217,14 +217,14 @@ fn resolved_editor_state<'a>(
 }
 
 fn checked_editor_args_suffix(
-    arguments: &[CheckedExprUseId],
+    arguments: &[ResolvedExpressionId],
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     arguments
         .iter()
         .map(|argument| {
-            checked_expr_use_code(program, *argument, env, ValueMode::Owned)
+            resolved_expr_use_code(program, *argument, env, ValueMode::Owned)
                 .map(|argument| format!(", {argument}"))
         })
         .collect()

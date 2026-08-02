@@ -79,7 +79,7 @@ fn render_resolved_regular_layout(
         write!(
             body,
             " let __grid_columns = usize::try_from({}).unwrap_or(0).max(1);",
-            checked_expr_use_code(program, columns, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, columns, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -143,7 +143,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -160,7 +160,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".max_width({} as f32)",
-                checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -191,7 +191,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".clip({})",
-                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
@@ -208,7 +208,7 @@ fn render_resolved_regular_layout(
                 write!(
                     body,
                     ".{method}(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                    checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
                 )
                 .unwrap();
             }
@@ -248,7 +248,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".spacing(::ui_lang_runtime::bounded_spacing({}, {entries}))",
-                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -263,8 +263,8 @@ fn render_resolved_regular_layout(
         if let Some(height) = &grid.height {
             match height {
                 ResolvedGridHeight::AspectRatio { width, height } => {
-                    let width = checked_expr_use_code(program, *width, env, ValueMode::Owned)?;
-                    let height = checked_expr_use_code(program, *height, env, ValueMode::Owned)?;
+                    let width = resolved_expr_use_code(program, *width, env, ValueMode::Owned)?;
+                    let height = resolved_expr_use_code(program, *height, env, ValueMode::Owned)?;
                     write!(
                         body,
                         ".height(::iced::widget::grid::Sizing::AspectRatio(((({width}) / ({height})) as f32).max(f32::EPSILON).min(f32::MAX)))"
@@ -298,7 +298,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".clip({})",
-                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
@@ -426,7 +426,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".gap({} as f32)",
-            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -438,7 +438,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".{method}({} as f32)",
-            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -447,7 +447,7 @@ fn render_resolved_flexbox(
             write!(
                 body,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -464,7 +464,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".max_width({} as f32)",
-            checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if let Some(max_width) = style.max_width {
@@ -474,7 +474,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".max_height({} as f32)",
-            checked_expr_use_code(program, max_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -482,7 +482,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".clip({})",
-            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if style.clip {
@@ -562,7 +562,7 @@ fn render_resolved_scroll(
         write!(
             code,
             ".auto_scroll({})",
-            checked_expr_use_code(program, auto_scroll, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, auto_scroll, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -653,7 +653,7 @@ fn render_flex_children(
                 let program = document;
                 let conditional = program.resolved_conditional(*child)?;
                 let condition =
-                    checked_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
+                    resolved_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
                 if condition == "false" {
                     continue;
                 }
@@ -672,7 +672,7 @@ fn render_flex_children(
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
                 let items =
-                    checked_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
@@ -683,8 +683,8 @@ fn render_flex_children(
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
-                    checked_local_binding(
-                        LocalBindingTypeSource::Checked(program),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
                         iteration.item.local,
                         item_name.clone(),
                         false,
@@ -707,7 +707,7 @@ fn render_flex_children(
                         .invariant_at_origin(view.origin, "flex match HIR arm length diverged"));
                 }
                 let value =
-                    checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
                 for (arm_children, resolved_arm) in arms.iter().zip(&resolved.arms) {
                     write!(
@@ -721,7 +721,7 @@ fn render_flex_children(
                         let name = payload.name.clone();
                         child_env.insert(
                             name.clone(),
-                            checked_local_binding(
+                            resolved_local_binding(
                                 LocalBindingTypeSource::Hir(payload),
                                 payload.local,
                                 name,
@@ -794,7 +794,7 @@ fn resolved_flex_item_code(
         write!(
             code,
             ".order({} as i64)",
-            checked_expr_use_code(program, order, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, order, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -803,7 +803,7 @@ fn resolved_flex_item_code(
             write!(
                 code,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -816,11 +816,11 @@ fn resolved_flex_item_code(
             }
             ResolvedContainerFlexBasis::Fixed(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Fixed({} as f32)",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
             ResolvedContainerFlexBasis::Percent(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Percent(({} as f32) / 100.0)",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
         };
         write!(code, ".basis({basis})").unwrap();
@@ -857,11 +857,11 @@ fn resolved_flex_margin_code(
         ResolvedContainerFlexMargin::Auto => "::ui_lang_runtime::FlexMargin::Auto".to_owned(),
         ResolvedContainerFlexMargin::Fixed(value) => format!(
             "::ui_lang_runtime::FlexMargin::Fixed({} as f32)",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
         ResolvedContainerFlexMargin::Percent(value) => format!(
             "::ui_lang_runtime::FlexMargin::Percent(({} as f32) / 100.0)",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
     })
 }
@@ -918,7 +918,7 @@ fn resolved_layout_padding_code(
     }
     let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -964,10 +964,10 @@ fn resolved_layout_length_code(
         ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
         ResolvedContainerLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedContainerLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -979,7 +979,7 @@ fn resolved_layout_clamped_f32(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
@@ -1000,7 +1000,7 @@ fn resolved_scroll_bar_code(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, 2))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -1074,7 +1074,7 @@ fn resolved_scroll_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -1210,7 +1210,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -1234,7 +1234,7 @@ fn append_resolved_scroll_surface(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -1243,7 +1243,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -1271,13 +1271,13 @@ fn resolved_layout_background_code(
         ResolvedContainerBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();

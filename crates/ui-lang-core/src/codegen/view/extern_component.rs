@@ -16,7 +16,7 @@ pub(in crate::codegen) fn render_extern_component(
                 ResolvedExternComponentArgumentMode::BorrowedAsRef
                 | ResolvedExternComponentArgumentMode::Borrowed => ValueMode::Borrowed,
             };
-            let code = checked_expr_use_code(program, argument.expression, env, value_mode)?;
+            let code = resolved_expr_use_code(program, argument.expression, env, value_mode)?;
             Ok(match argument.mode {
                 ResolvedExternComponentArgumentMode::Owned => code,
                 ResolvedExternComponentArgumentMode::BorrowedAsRef => {

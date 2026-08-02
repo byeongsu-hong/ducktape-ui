@@ -20,18 +20,18 @@ pub(in crate::codegen) fn render_button(
     };
     let accessibility_label = button
         .accessibility_label
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or(fallback_label);
     let accessibility_description = button
         .accessibility_description
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .map(|value| format!(".description({value})"))
         .unwrap_or_default();
     let disabled = button
         .disabled
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let activate = resolved_interaction_route_code(&button.route, &[], env, program, message)?;
@@ -99,7 +99,7 @@ pub(in crate::codegen) fn render_button(
         write!(
             code,
             ".padding({} as f32)",
-            checked_expr_use_code(program, padding, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -107,7 +107,7 @@ pub(in crate::codegen) fn render_button(
         write!(
             code,
             ".clip({})",
-            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -180,7 +180,7 @@ fn resolved_button_style_code(
             let arguments = style
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = arguments
                 .into_iter()
@@ -359,7 +359,7 @@ fn append_resolved_button_status(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -383,7 +383,7 @@ fn append_resolved_button_status(
             write!(
                 code,
                 " {field} = {} as f32;",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -392,7 +392,7 @@ fn append_resolved_button_status(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }

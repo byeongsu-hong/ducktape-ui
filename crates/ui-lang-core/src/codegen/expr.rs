@@ -1,9 +1,4 @@
 use super::*;
-use crate::check::{
-    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,
-    CheckedExprUseId, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
-    CheckedProjection, CheckedUnaryOperator,
-};
 use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
@@ -216,7 +211,7 @@ pub(in crate::codegen) fn binding_env_metrics() -> BindingEnvMetrics {
 
 #[derive(Clone, Copy)]
 enum ExprNode {
-    Checked(CheckedExprId),
+    Resolved(ResolvedExpressionNodeId),
 }
 
 enum ExprNodeKind<'a> {
@@ -245,9 +240,9 @@ enum ExprNodeKind<'a> {
 }
 
 enum ExprPath<'a> {
-    Checked {
-        root: &'a CheckedPathRoot,
-        projections: &'a [CheckedProjection],
+    Resolved {
+        root: &'a ResolvedPathRoot,
+        projections: &'a [ResolvedProjection],
     },
 }
 
@@ -255,13 +250,16 @@ enum ExprPath<'a> {
 enum ExprCallTarget<'a> {
     Builtin(&'a str),
     Extern(ExternFnId),
-    EnumVariant(crate::hir::EnumVariantId),
+    EnumVariant {
+        enum_rust_name: &'a str,
+        variant_name: &'a str,
+    },
 }
 
 #[derive(Clone, Copy)]
 enum ExprArgument {
     Value(ExprNode),
-    Binding(CheckedLocalId),
+    Binding(ResolvedLocalId),
 }
 
 struct ExprArguments(Vec<ExprArgument>);
@@ -273,12 +271,12 @@ impl ExprArguments {
             Some(ExprArgument::Binding(_)) => Err(Error::new(
                 "E196",
                 &Span::line(1),
-                "checked expression binding used as a value",
+                "normalized expression binding used as a value",
             )),
             None => Err(Error::new(
                 "E196",
                 &Span::line(1),
-                "checked expression argument is missing",
+                "normalized expression argument is missing",
             )),
         }
     }
@@ -287,10 +285,10 @@ impl ExprArguments {
         &self,
         index: usize,
         context: &'a ExprEmission<'a>,
-    ) -> Result<(&'a str, Option<CheckedLocalId>), Error> {
+    ) -> Result<(&'a str, Option<ResolvedLocalId>), Error> {
         match self.0.get(index) {
             Some(ExprArgument::Binding(id)) => {
-                Ok((&context.program.checked_facts().local(*id).name, Some(*id)))
+                Ok((&context.program.expressions().local(*id).name, Some(*id)))
             }
             _ => Err(Error::new(
                 "E196",
@@ -312,7 +310,7 @@ impl ExprArguments {
                 ExprArgument::Binding(_) => Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "checked binding reached ordinary argument emission",
+                    "normalized binding reached ordinary argument emission",
                 )),
             })
             .collect()
@@ -320,78 +318,73 @@ impl ExprArguments {
 }
 
 struct ExprEmission<'a> {
-    document: &'a Document,
     program: &'a LoweredProgram,
 }
 
 impl<'a> ExprEmission<'a> {
-    fn for_checked(program: &'a LoweredProgram) -> Self {
-        Self {
-            document: program.document(),
-            program,
-        }
+    fn for_resolved(program: &'a LoweredProgram) -> Self {
+        Self { program }
     }
 
     fn kind(&self, node: ExprNode) -> ExprNodeKind<'a> {
         match node {
-            ExprNode::Checked(id) => {
-                let expression = self.program.checked_facts().expression(id);
+            ExprNode::Resolved(id) => {
+                let expression = self.program.expressions().expression(id);
                 match &expression.kind {
-                    CheckedExprKind::Bool(value) => ExprNodeKind::Bool(*value),
-                    CheckedExprKind::I64(value) => ExprNodeKind::I64(*value),
-                    CheckedExprKind::F64(value) => ExprNodeKind::F64(*value),
-                    CheckedExprKind::Str(value) => ExprNodeKind::Str(value),
-                    CheckedExprKind::Bytes(values) => ExprNodeKind::Bytes(values),
-                    CheckedExprKind::List(values) => {
-                        ExprNodeKind::List(values.iter().copied().map(ExprNode::Checked).collect())
+                    ResolvedExpressionKind::Bool(value) => ExprNodeKind::Bool(*value),
+                    ResolvedExpressionKind::I64(value) => ExprNodeKind::I64(*value),
+                    ResolvedExpressionKind::F64(value) => ExprNodeKind::F64(*value),
+                    ResolvedExpressionKind::Str(value) => ExprNodeKind::Str(value),
+                    ResolvedExpressionKind::Bytes(values) => ExprNodeKind::Bytes(values),
+                    ResolvedExpressionKind::List(values) => {
+                        ExprNodeKind::List(values.iter().copied().map(ExprNode::Resolved).collect())
                     }
-                    CheckedExprKind::None => ExprNodeKind::None,
-                    CheckedExprKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
-                    CheckedExprKind::Path { root, projections } => {
-                        ExprNodeKind::Path(ExprPath::Checked { root, projections })
+                    ResolvedExpressionKind::None => ExprNodeKind::None,
+                    ResolvedExpressionKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
+                    ResolvedExpressionKind::Path { root, projections } => {
+                        ExprNodeKind::Path(ExprPath::Resolved { root, projections })
                     }
-                    CheckedExprKind::Call { target, arguments } => ExprNodeKind::Call {
+                    ResolvedExpressionKind::Call { target, arguments } => ExprNodeKind::Call {
                         target: match target {
-                            CheckedCallTarget::Builtin(id) => {
-                                ExprCallTarget::Builtin(self.program.checked_facts().builtin(*id))
+                            ResolvedCallTarget::Builtin(name) => ExprCallTarget::Builtin(name),
+                            ResolvedCallTarget::Extern(function) => {
+                                ExprCallTarget::Extern(*function)
                             }
-                            CheckedCallTarget::Extern(reference) => {
-                                ExprCallTarget::Extern(reference.id)
-                            }
-                            CheckedCallTarget::EnumVariant(id) => ExprCallTarget::EnumVariant(*id),
+                            ResolvedCallTarget::EnumVariant {
+                                enum_rust_name,
+                                variant_name,
+                            } => ExprCallTarget::EnumVariant {
+                                enum_rust_name,
+                                variant_name,
+                            },
                         },
                         arguments: ExprArguments(
                             arguments
                                 .iter()
                                 .map(|argument| match argument {
-                                    CheckedCallArgument::Value(id) => {
-                                        ExprArgument::Value(ExprNode::Checked(*id))
+                                    ResolvedCallArgument::Value(id) => {
+                                        ExprArgument::Value(ExprNode::Resolved(*id))
                                     }
-                                    CheckedCallArgument::Binding(id) => ExprArgument::Binding(*id),
+                                    ResolvedCallArgument::Binding(id) => ExprArgument::Binding(*id),
                                 })
                                 .collect(),
                         ),
                     },
-                    CheckedExprKind::Unary { operator, value } => ExprNodeKind::Unary {
+                    ResolvedExpressionKind::Unary { operator, value } => ExprNodeKind::Unary {
                         op: match operator {
-                            CheckedUnaryOperator::BooleanNot => UnaryOp::Not,
-                            CheckedUnaryOperator::NumericNegation(_) => UnaryOp::Neg,
+                            ResolvedUnaryOperator::BooleanNot => UnaryOp::Not,
+                            ResolvedUnaryOperator::NumericNegation => UnaryOp::Neg,
                         },
-                        value: ExprNode::Checked(*value),
+                        value: ExprNode::Resolved(*value),
                     },
-                    CheckedExprKind::Binary {
+                    ResolvedExpressionKind::Binary {
                         operator,
                         left,
                         right,
                     } => ExprNodeKind::Binary {
-                        left: ExprNode::Checked(*left),
-                        op: match operator {
-                            CheckedBinaryOperator::Boolean(op)
-                            | CheckedBinaryOperator::Equality { op, .. }
-                            | CheckedBinaryOperator::Ordering { op, .. }
-                            | CheckedBinaryOperator::Arithmetic { op, .. } => *op,
-                        },
-                        right: ExprNode::Checked(*right),
+                        left: ExprNode::Resolved(*left),
+                        op: *operator,
+                        right: ExprNode::Resolved(*right),
                     },
                 }
             }
@@ -400,7 +393,7 @@ impl<'a> ExprEmission<'a> {
 
     fn ty(&self, node: ExprNode, _env: &dyn BindingEnvironment) -> Result<Type, Error> {
         match node {
-            ExprNode::Checked(id) => Ok(self.program.checked_facts().expression(id).ty.clone()),
+            ExprNode::Resolved(id) => Ok(self.program.expressions().expression(id).ty.clone()),
         }
     }
 
@@ -456,20 +449,20 @@ fn expr_node_code(
             env.contains_key(&format!("\0slot-provided:{slot}"))
                 .to_string()
         }
-        ExprNodeKind::Path(ExprPath::Checked { root, projections }) => {
-            checked_path_code(root, projections, env, context, mode)?
+        ExprNodeKind::Path(ExprPath::Resolved { root, projections }) => {
+            resolved_path_code(root, projections, env, context, mode)?
         }
         ExprNodeKind::Call { target, arguments } => {
             let args = arguments;
             let name = match target {
-                ExprCallTarget::EnumVariant(id) => {
-                    let program = context.program;
-                    let variant = program.declarations().enum_variant_decl(id);
-                    let owner = program.declarations().enum_decl(id.owner);
+                ExprCallTarget::EnumVariant {
+                    enum_rust_name,
+                    variant_name,
+                } => {
                     return Ok(format!(
                         "{}::{}({})",
-                        owner.rust_name,
-                        pascal(&variant.name),
+                        enum_rust_name,
+                        pascal(variant_name),
                         expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
                     ));
                 }
@@ -1880,7 +1873,6 @@ fn expr_builtin_group_6(
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
-    let document = context.document;
     Ok(Some(match name {
         "trim" => format!(
             "({}).trim().to_owned()",
@@ -1955,12 +1947,7 @@ fn expr_builtin_group_6(
             "({}).as_ref().is_some_and(::iced::task::Handle::is_aborted)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
-        _ => {
-            let function = find_extern_function(document, name, ExternKind::Sync)
-                .expect("checker accepts only declared sync calls");
-            let args = expr_node_list_code(&args.values()?, env, context)?;
-            format!("{}({args})", function.rust_path)
-        }
+        _ => return Ok(None),
     }))
 }
 
@@ -1976,17 +1963,17 @@ fn expr_node_list_code(
         .join(", "))
 }
 
-fn checked_path_code(
-    root: &CheckedPathRoot,
-    projections: &[CheckedProjection],
+fn resolved_path_code(
+    root: &ResolvedPathRoot,
+    projections: &[ResolvedProjection],
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
     let program = context.program;
     let (mut code, mut ty, root_local) = match root {
-        CheckedPathRoot::Value(value_ref) => {
-            let value = program.checked_facts().value_by_ref(*value_ref);
+        ResolvedPathRoot::Value(value_ref) => {
+            let value = program.expressions().value(*value_ref);
             let origin = program.origin(value.origin);
             let span = Span {
                 line: origin.line,
@@ -2014,8 +2001,8 @@ fn checked_path_code(
             }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
-        CheckedPathRoot::Local(id) => {
-            let local = program.checked_facts().local(*id);
+        ResolvedPathRoot::Local(id) => {
+            let local = program.expressions().local(*id);
             let origin = program.origin(local.origin);
             let span = Span {
                 line: origin.line,
@@ -2043,34 +2030,17 @@ fn checked_path_code(
             }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
-        CheckedPathRoot::EnumVariant(id) => {
-            let variant = program
-                .declarations()
-                .try_enum_variant_decl(*id)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        &Span::line(1),
-                        "checked path references an invalid enum variant ID",
-                    )
-                })?;
-            let owner = program
-                .declarations()
-                .try_enum_decl(id.owner)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        &Span::line(1),
-                        "checked path references an invalid enum ID",
-                    )
-                })?;
-            return Ok(format!("{}::{}", owner.rust_name, pascal(&variant.name)));
+        ResolvedPathRoot::EnumVariant {
+            enum_rust_name,
+            variant_name,
+        } => {
+            return Ok(format!("{}::{}", enum_rust_name, pascal(variant_name)));
         }
-        CheckedPathRoot::Palette(id) => {
+        ResolvedPathRoot::Palette(id) => {
             let palette = &program.theme().palettes[id.0 as usize];
             return Ok(format!(
                 "{}::{}",
-                generated_named_rust(&program.theme().contract.name),
+                canonical_rust_type_name(&program.theme().contract.name),
                 pascal(&palette.name)
             ));
         }
@@ -2079,17 +2049,17 @@ fn checked_path_code(
     let mut owned_projection = false;
     for projection in projections {
         match projection.kind {
-            crate::check::CheckedProjectionKind::Struct(_) => {
+            ResolvedProjectionKind::Struct(_) => {
                 write!(code, ".{}", projection.field).unwrap();
             }
-            crate::check::CheckedProjectionKind::OptionalWidgetTarget => {
+            ResolvedProjectionKind::OptionalWidgetTarget => {
                 code = format!(
                     "({code}).as_ref().map(|value| value.{}.clone())",
                     projection.field
                 );
                 owned_projection = true;
             }
-            crate::check::CheckedProjectionKind::Native => {
+            ResolvedProjectionKind::Native => {
                 if let Some((native, _)) =
                     native_field_projection(&projection.input, &projection.field, &code)
                 {
@@ -2267,22 +2237,22 @@ fn expr_animation_at_code(
     }
 }
 
-pub(in crate::codegen) fn checked_expr_use_code(
+pub(in crate::codegen) fn resolved_expr_use_code(
     program: &LoweredProgram,
-    expression_use: CheckedExprUseId,
+    expression_use: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let facts = program.checked_facts();
-    let expression_use = facts.expression_use(expression_use);
-    let context = ExprEmission::for_checked(program);
-    let code = expr_node_code(ExprNode::Checked(expression_use.root), env, &context, mode)?;
+    let expressions = program.expressions();
+    let expression_use = expressions.expression_use(expression_use);
+    let context = ExprEmission::for_resolved(program);
+    let code = expr_node_code(ExprNode::Resolved(expression_use.root), env, &context, mode)?;
     Ok(match &expression_use.coercion {
-        CheckedInitializerCoercion::None => code,
-        CheckedInitializerCoercion::ListToCombo { .. } => {
+        ResolvedInitializerCoercion::None => code,
+        ResolvedInitializerCoercion::ListToCombo { .. } => {
             format!("::iced::widget::combo_box::State::new({code})")
         }
-        CheckedInitializerCoercion::ValueToAnimation { value } => {
+        ResolvedInitializerCoercion::ValueToAnimation { value } => {
             let code = if *value == Type::F64 {
                 format!("({code}) as f32")
             } else {
@@ -2290,18 +2260,18 @@ pub(in crate::codegen) fn checked_expr_use_code(
             };
             format!("::iced::Animation::new({code})")
         }
-        CheckedInitializerCoercion::StrToMarkdown => {
-            match &facts.expression(expression_use.root).kind {
-                CheckedExprKind::Str(value) => format!(
+        ResolvedInitializerCoercion::StrToMarkdown => {
+            match &expressions.expression(expression_use.root).kind {
+                ResolvedExpressionKind::Str(value) => format!(
                     "::iced::widget::markdown::Content::parse({})",
                     rust_string(value)
                 ),
                 _ => format!("::iced::widget::markdown::Content::parse(&({code}))"),
             }
         }
-        CheckedInitializerCoercion::StrToEditor => {
-            match &facts.expression(expression_use.root).kind {
-                CheckedExprKind::Str(value) => format!(
+        ResolvedInitializerCoercion::StrToEditor => {
+            match &expressions.expression(expression_use.root).kind {
+                ResolvedExpressionKind::Str(value) => format!(
                     "::iced::widget::text_editor::Content::with_text({})",
                     rust_string(value)
                 ),
@@ -2311,34 +2281,31 @@ pub(in crate::codegen) fn checked_expr_use_code(
     })
 }
 
-pub(in crate::codegen) fn checked_expr_node_code(
+pub(in crate::codegen) fn resolved_expr_node_code(
     program: &LoweredProgram,
-    expression_use: CheckedExprUseId,
-    node: CheckedExprId,
+    expression_use: ResolvedExpressionId,
+    node: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let expression = program
-        .checked_facts()
-        .try_expression(node)
-        .ok_or_else(|| {
-            Error::new(
-                "E196",
-                &Span::line(1),
-                "checked test expression node is outside its arena",
-            )
-        })?;
+    let expression = program.expressions().try_expression(node).ok_or_else(|| {
+        Error::new(
+            "E196",
+            &Span::line(1),
+            "normalized test expression node is outside its arena",
+        )
+    })?;
     if expression.owner != expression_use {
         return Err(Error::new(
             "E196",
             &Span::line(1),
-            "checked test expression node belongs to another expression use",
+            "normalized test expression node belongs to another expression use",
         ));
     }
     expr_node_code(
-        ExprNode::Checked(node),
+        ExprNode::Resolved(node),
         env,
-        &ExprEmission::for_checked(program),
+        &ExprEmission::for_resolved(program),
         mode,
     )
 }

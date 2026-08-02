@@ -24,8 +24,8 @@ impl Clone for Binding {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::codegen) enum BindingOwner {
-    Value(CheckedValueRef),
-    Local(CheckedLocalId),
+    Value(ResolvedValueRef),
+    Local(ResolvedLocalId),
 }
 
 #[derive(Clone)]
@@ -248,7 +248,7 @@ pub(in crate::codegen) fn checked_state_env(
                     ty: state.ty.clone(),
                     local: false,
                     state: Some(StateBinding::App(state.name.clone())),
-                    owner: Some(BindingOwner::Value(CheckedValueRef::AppState(state.id))),
+                    owner: Some(BindingOwner::Value(ResolvedValueRef::AppState(state.id))),
                 },
             )
         })
@@ -261,7 +261,7 @@ pub(in crate::codegen) fn checked_state_env(
                 ty: derived.ty.clone(),
                 local: true,
                 state: None,
-                owner: Some(BindingOwner::Value(CheckedValueRef::Derived(derived.id))),
+                owner: Some(BindingOwner::Value(ResolvedValueRef::Derived(derived.id))),
             },
         )
     }));

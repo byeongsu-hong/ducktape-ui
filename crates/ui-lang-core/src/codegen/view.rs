@@ -36,7 +36,7 @@ fn resolved_view_identity_code(
     program: &LoweredProgram,
 ) -> Result<String, Error> {
     if let Some(key) = identity.key {
-        let key = checked_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+        let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
         Ok(format!(
             "format!(\"{{}}/{}({{}})\", {scope}, {key})",
             identity.name

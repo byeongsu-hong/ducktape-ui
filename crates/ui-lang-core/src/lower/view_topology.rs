@@ -197,6 +197,7 @@ pub(crate) enum ResolvedViewKind {
 }
 
 impl ResolvedViewKind {
+    #[cfg(test)]
     fn contract_kind(&self) -> &'static str {
         match self {
             Self::Layout { .. } => "layout",
@@ -692,6 +693,7 @@ impl Lowerer {
 }
 
 impl LoweredProgram {
+    #[cfg(test)]
     pub(crate) fn validate_view_hir(&self) -> Result<(), Error> {
         if self.views.len() != self.facts.views().len() {
             return Err(self.invariant_at_origin(
@@ -774,6 +776,7 @@ impl LoweredProgram {
         self.validate_view_roots()
     }
 
+    #[cfg(test)]
     fn validate_view_family_cardinality(&self) -> Result<(), Error> {
         macro_rules! expect {
             ($actual:expr, $label:literal, $($pattern:pat_param)|+) => {{
@@ -915,6 +918,7 @@ impl LoweredProgram {
         Ok(())
     }
 
+    #[cfg(test)]
     fn resolved_view_children(&self, view: &ResolvedView) -> Result<Vec<ViewId>, Error> {
         Ok(match &view.kind {
             ResolvedViewKind::Layout { children }
@@ -985,6 +989,7 @@ impl LoweredProgram {
         })
     }
 
+    #[cfg(test)]
     fn validate_view_family(&self, view: &ResolvedView) -> Result<(), Error> {
         match view.kind {
             ResolvedViewKind::Layout { .. } => self.resolved_layout(view.id).map(|_| ()),
@@ -1053,6 +1058,7 @@ impl LoweredProgram {
         }
     }
 
+    #[cfg(test)]
     fn validate_view_roots(&self) -> Result<(), Error> {
         let expected_test_mounts = self
             .tests

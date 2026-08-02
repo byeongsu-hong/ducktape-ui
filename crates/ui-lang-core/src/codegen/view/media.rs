@@ -122,7 +122,7 @@ fn render_resolved_mouse_area(
         write!(
             code,
             ".interaction({})",
-            checked_expr_use_code(program, interaction, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, interaction, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -186,10 +186,10 @@ fn render_resolved_tooltip(
         ResolvedTooltipPosition::Right => "Right",
         ResolvedTooltipPosition::FollowCursor => "FollowCursor",
     };
-    let gap = checked_expr_use_code(program, tooltip.gap, env, ValueMode::Owned)?;
-    let padding = checked_expr_use_code(program, tooltip.padding, env, ValueMode::Owned)?;
-    let delay = checked_expr_use_code(program, tooltip.delay_ms, env, ValueMode::Owned)?;
-    let snap = checked_expr_use_code(program, tooltip.snap, env, ValueMode::Owned)?;
+    let gap = resolved_expr_use_code(program, tooltip.gap, env, ValueMode::Owned)?;
+    let padding = resolved_expr_use_code(program, tooltip.padding, env, ValueMode::Owned)?;
+    let delay = resolved_expr_use_code(program, tooltip.delay_ms, env, ValueMode::Owned)?;
+    let snap = resolved_expr_use_code(program, tooltip.snap, env, ValueMode::Owned)?;
     let mut code = format!(
         "{{ let __tooltip_content: __IceElement<'_, {message}> = {content}; let __tooltip_tip: __IceElement<'_, {message}> = {tip}; ::iced::widget::tooltip(__tooltip_content, __tooltip_tip, ::iced::widget::tooltip::Position::{position}).gap(::ui_lang_runtime::bounded_table_metric({gap}, 1)).padding(::ui_lang_runtime::bounded_table_metric({padding}, 1)).delay(::std::time::Duration::from_millis(u64::try_from({delay}).unwrap_or(0))).snap_within_viewport({snap})"
     );
@@ -225,7 +225,7 @@ fn append_resolved_tooltip_style(
             let arguments = style
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = if arguments.is_empty() {
                 String::new()
@@ -296,7 +296,7 @@ fn append_resolved_tooltip_style(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -320,7 +320,7 @@ fn append_resolved_tooltip_style(
             write!(
                 code,
                 " {field} = {} as f32;",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -329,7 +329,7 @@ fn append_resolved_tooltip_style(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, pixel_snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, pixel_snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -347,11 +347,11 @@ fn resolved_tooltip_background(
             format!("::iced::Background::Color({})", resolved_theme_color(color))
         }
         ResolvedTooltipBackground::Linear { angle, stops } => {
-            let angle = checked_expr_use_code(program, *angle, env, ValueMode::Owned)?;
+            let angle = resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?;
             let mut code =
                 format!("::iced::Background::from(::iced::gradient::Linear::new({angle} as f32)");
             for stop in stops {
-                let offset = checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?;
+                let offset = resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?;
                 write!(
                     code,
                     ".add_stop({offset} as f32, {})",
@@ -412,7 +412,7 @@ fn render_resolved_media(
     } else {
         ValueMode::Owned
     };
-    let source = checked_expr_use_code(program, media.source, env, source_mode)?;
+    let source = resolved_expr_use_code(program, media.source, env, source_mode)?;
     let mut code = match media.kind {
         ResolvedMediaKind::Image => format!("::iced::widget::image({source})"),
         ResolvedMediaKind::Viewer if media.source_type == Type::Str => format!(
@@ -432,7 +432,7 @@ fn render_resolved_media(
         write!(
             code,
             ".content_fit({})",
-            checked_expr_use_code(program, fit, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, fit, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -440,7 +440,7 @@ fn render_resolved_media(
         write!(
             code,
             ".rotation({})",
-            checked_expr_use_code(program, rotation, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, rotation, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -544,7 +544,7 @@ fn render_resolved_media(
         write!(
             code,
             ".expand({})",
-            checked_expr_use_code(program, expand, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, expand, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -573,11 +573,11 @@ fn render_resolved_media(
             "format!(\"{{}}/@media:{}\", {reconciliation_scope})",
             span.line
         );
-        let label = checked_expr_use_code(program, label, env, ValueMode::Owned)?;
+        let label = resolved_expr_use_code(program, label, env, ValueMode::Owned)?;
         let description = options
             .accessibility_description
             .map(|description| {
-                checked_expr_use_code(program, description, env, ValueMode::Owned)
+                resolved_expr_use_code(program, description, env, ValueMode::Owned)
                     .map(|value| format!(".description({value})"))
             })
             .transpose()?
@@ -605,7 +605,7 @@ fn append_resolved_media_dimensions(
             }
             ResolvedMediaLength::Shrink => "::iced::Shrink".into(),
             ResolvedMediaLength::Fixed { expression, source } => {
-                let value = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?;
                 if *source == Type::Length {
                     value
                 } else {
@@ -627,7 +627,7 @@ fn resolved_media_svg_style(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = if arguments.is_empty() {
         String::new()
@@ -644,7 +644,7 @@ fn resolved_media_clamped_f32(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
@@ -656,7 +656,7 @@ fn resolved_media_scale_bound(
     match bound {
         ResolvedMediaScaleBound::Default(value) => Ok(format!("{value:?}")),
         ResolvedMediaScaleBound::Expression(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
         }
     }
 }
@@ -700,6 +700,6 @@ fn resolved_media_u32(
 ) -> Result<String, Error> {
     Ok(format!(
         "({}).clamp(0, u32::MAX as i64) as u32",
-        checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+        resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
     ))
 }

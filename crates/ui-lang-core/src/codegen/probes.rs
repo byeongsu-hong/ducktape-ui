@@ -101,48 +101,58 @@ fn style_probe(
 pub(in crate::codegen) fn generate_extern_probes(
     out: &mut String,
     program: &LoweredProgram,
-    document: &Document,
     component_declarations: &[ResolvedExternComponentDeclaration],
     component_ids: &HashSet<ExternFnId>,
 ) {
-    if document.functions.iter().enumerate().any(|(index, item)| {
-        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EventFilter
+    if program.extern_functions().any(|item| {
+        !component_ids.contains(&item.declaration.id) && item.kind == ExternKind::EventFilter
     }) {
         writeln!(out, "#[cfg(not(target_arch = \"wasm32\"))] type __IceEventStream<T> = ::iced::futures::stream::BoxStream<'static, T>; #[cfg(target_arch = \"wasm32\")] type __IceEventStream<T> = ::iced::futures::stream::LocalBoxStream<'static, T>;").unwrap();
     }
-    for item in &document.structs {
-        writeln!(out, "{}", source_marker(&item.span)).unwrap();
+    for item in program.struct_declarations() {
+        writeln!(
+            out,
+            "{}",
+            source_marker_for_origin(program, item.declaration.origin)
+        )
+        .unwrap();
         writeln!(
             out,
             "#[allow(dead_code, non_snake_case)] fn __ui_lang_check_{}(_value: &{}) {{",
             item.name, item.rust_path
         )
         .unwrap();
-        for (field, ty) in &item.fields {
+        for field in &item.fields {
             writeln!(
                 out,
-                "let _: &{} = &_value.{field};",
-                ty.rust(&document.structs)
+                "let _: &{} = &_value.{};",
+                rust_type_code(program, &field.ty),
+                field.name
             )
             .unwrap();
         }
         writeln!(out, "}}").unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    for (index, item) in document.functions.iter().enumerate() {
-        if component_ids.contains(&ExternFnId(index as u32)) {
+    for item in program.extern_functions() {
+        if component_ids.contains(&item.declaration.id) {
             continue;
         }
-        writeln!(out, "{}", source_marker(&item.span)).unwrap();
+        writeln!(
+            out,
+            "{}",
+            source_marker_for_origin(program, item.declaration.origin)
+        )
+        .unwrap();
         let params = item
             .params
             .iter()
             .enumerate()
             .map(|(index, (_, ty))| {
                 let ty = if item.borrowed[index] {
-                    borrowed_type(ty, document)
+                    borrowed_type(ty, program)
                 } else {
-                    ty.rust(&document.structs)
+                    rust_type_code(program, ty)
                 };
                 format!("arg{index}: {ty}")
             })
@@ -153,12 +163,12 @@ pub(in crate::codegen) fn generate_extern_probes(
             .collect::<Vec<_>>()
             .join(", ");
         let output = item.error.as_ref().map_or_else(
-            || item.output.rust(&document.structs),
+            || rust_type_code(program, &item.output),
             |error| {
                 format!(
                     "::std::result::Result<{}, {}>",
-                    item.output.rust(&document.structs),
-                    error.rust(&document.structs)
+                    rust_type_code(program, &item.output),
+                    rust_type_code(program, error)
                 )
             },
         );
@@ -212,10 +222,12 @@ pub(in crate::codegen) fn generate_extern_probes(
                 "#[allow(dead_code)] fn __ui_lang_check_sip_{}({params}) {{ let _: ::iced::Task<()> = ::iced::Task::sip({}({args}), |value| {{ let _: {} = value; }}, |value| {{ let _: {output} = value; }}); }}",
                 item.name,
                 item.rust_path,
-                item.progress
-                    .as_ref()
-                    .expect("sip extern has a progress type")
-                    .rust(&document.structs)
+                rust_type_code(
+                    program,
+                    item.progress
+                        .as_ref()
+                        .expect("sip extern has a progress type")
+                )
             )
             .unwrap(),
             ExternKind::Recipe => writeln!(
@@ -300,7 +312,7 @@ pub(in crate::codegen) fn generate_extern_probes(
                 .chain(
                     item.params
                         .iter()
-                        .map(|(_, ty)| ty.rust(&document.structs)),
+                        .map(|(_, ty)| rust_type_code(program, ty)),
                 )
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -352,11 +364,11 @@ pub(in crate::codegen) fn generate_extern_probes(
             .map(|(index, parameter)| {
                 let ty = match parameter.mode {
                     ResolvedExternComponentArgumentMode::Owned => {
-                        parameter.ty.rust(&document.structs)
+                        rust_type_code(program, &parameter.ty)
                     }
                     ResolvedExternComponentArgumentMode::BorrowedAsRef
                     | ResolvedExternComponentArgumentMode::Borrowed => {
-                        borrowed_type(&parameter.ty, document)
+                        borrowed_type(&parameter.ty, program)
                     }
                 };
                 format!("arg{index}: {ty}")
@@ -373,7 +385,7 @@ pub(in crate::codegen) fn generate_extern_probes(
             declaration.name,
             if borrowed { "<'a>" } else { "" },
             if borrowed { "a" } else { "static" },
-            declaration.output.rust(&document.structs),
+            rust_type_code(program, &declaration.output),
             declaration.rust_path
         )
         .unwrap();
@@ -383,11 +395,11 @@ pub(in crate::codegen) fn generate_extern_probes(
 
 pub(in crate::codegen) fn generate_editor_binding_mapper(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     component_ids: &HashSet<ExternFnId>,
 ) {
-    if !document.functions.iter().enumerate().any(|(index, item)| {
-        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EditorBinding
+    if !program.extern_functions().any(|item| {
+        !component_ids.contains(&item.declaration.id) && item.kind == ExternKind::EditorBinding
     }) {
         return;
     }

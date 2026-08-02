@@ -72,7 +72,7 @@ pub(in crate::codegen) fn render_container(
             write!(
                 code,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -97,7 +97,7 @@ pub(in crate::codegen) fn render_container(
         write!(
             code,
             ".clip({})",
-            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -180,9 +180,9 @@ fn resolved_container_padding_code(
     {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -213,10 +213,10 @@ fn append_resolved_container_dimensions(
             ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
             ResolvedContainerLength::FixedF64(expression) => format!(
                 "{} as f32",
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
             ),
             ResolvedContainerLength::FixedLength(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
             }
         };
         write!(code, ".{method}({value})").unwrap();
@@ -232,7 +232,7 @@ fn resolved_container_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -256,13 +256,13 @@ fn resolved_container_background_code(
         ResolvedContainerBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();
@@ -291,7 +291,7 @@ fn resolved_container_radius_code(
         .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
-    let corner = |value: Option<CheckedExprUseId>| {
+    let corner = |value: Option<ResolvedExpressionId>| {
         value
             .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
             .transpose()
@@ -364,7 +364,7 @@ fn resolved_container_surface_style_value(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -388,7 +388,7 @@ fn resolved_container_surface_style_value(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -397,7 +397,7 @@ fn resolved_container_surface_style_value(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -414,13 +414,13 @@ fn resolved_container_surface_style_value(
 }
 
 fn resolved_container_clamped_f32(
-    expression: CheckedExprUseId,
+    expression: ResolvedExpressionId,
     minimum: &str,
     maximum: &str,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
@@ -440,8 +440,8 @@ pub(in crate::codegen) fn render_overlay(
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let layer = render_node(layer, document, message, env, &child_scope, slot)?;
-    let visible = checked_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
-    let padding = checked_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
+    let visible = resolved_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
+    let padding = resolved_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
     let backdrop = resolved_theme_color(&overlay.backdrop);
     let dismiss = overlay.dismiss.as_ref().map_or_else(
         || Ok(format!("{message}::__ExternNoop")),

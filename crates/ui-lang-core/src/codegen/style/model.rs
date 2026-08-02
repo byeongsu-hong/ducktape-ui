@@ -116,7 +116,7 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
                 ResolvedExternViewArgumentMode::BorrowedAsRef
                 | ResolvedExternViewArgumentMode::Borrowed => ValueMode::Borrowed,
             };
-            let code = checked_expr_use_code(program, argument.expression, env, mode)?;
+            let code = resolved_expr_use_code(program, argument.expression, env, mode)?;
             Ok(match argument.mode {
                 ResolvedExternViewArgumentMode::Owned => code,
                 ResolvedExternViewArgumentMode::BorrowedAsRef => {
@@ -141,7 +141,7 @@ pub(in crate::codegen) fn resolved_app_theme_factory_code(
     let args = factory
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, argument.expression, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!("{}({args})", function.rust_path))
@@ -159,13 +159,13 @@ pub(in crate::codegen) fn resolved_background_code(
         ResolvedBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();

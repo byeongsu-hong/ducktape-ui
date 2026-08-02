@@ -1,8 +1,25 @@
 use crate::ast::*;
+use crate::semantic::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+pub(crate) fn canonical_rust_type_name(name: &str) -> String {
+    if name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        name.to_owned()
+    } else {
+        format!(
+            "__IceType0{}",
+            name.bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    }
+}
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -40,6 +57,17 @@ arena_id!(RouteId);
 arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
+arena_id!(ExpressionNodeId);
+arena_id!(ExpressionId);
+arena_id!(LocalId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ValueRef {
+    AppState(AppStateId),
+    Derived(DerivedId),
+    ComponentParam(ComponentParamId),
+    ComponentState(ComponentStateId),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TestTargetId {
@@ -635,7 +663,7 @@ impl DeclarationIndex {
                 EnumDeclaration {
                     declaration: Declaration { id, origin },
                     name: item.name.clone(),
-                    rust_name: generated_named_rust(&item.name),
+                    rust_name: canonical_rust_type_name(&item.name),
                     variants,
                 }
             })
@@ -1029,6 +1057,10 @@ impl DeclarationIndex {
             .collect()
     }
 
+    pub(crate) fn enum_declarations(&self) -> &[EnumDeclaration] {
+        &self.enums
+    }
+
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
     }
@@ -1189,6 +1221,10 @@ impl DeclarationIndex {
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
         let id = self.structs_by_name.get(name)?;
         self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn struct_declarations(&self) -> &[StructDeclaration] {
+        &self.structs
     }
 
     pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {

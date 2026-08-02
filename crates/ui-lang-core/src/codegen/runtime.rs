@@ -12,7 +12,7 @@ pub(in crate::codegen) fn generate_keyboard_types(
         )
     }) && !canvas_events(program)
         .iter()
-        .any(|event| matches!(event.source, SubscriptionSource::Keyboard(_)))
+        .any(|event| matches!(event.source, ResolvedCanvasEventSource::Keyboard(_)))
     {
         return;
     }
@@ -41,7 +41,76 @@ pub(crate) struct __IceKeyRelease {
     );
 }
 
-pub(in crate::codegen) fn generate_system_types(out: &mut String) {
+fn statements_contain(
+    statements: &[ResolvedStatement],
+    predicate: &impl Fn(&ResolvedStatement) -> bool,
+) -> bool {
+    statements.iter().any(|statement| {
+        predicate(statement)
+            || match &statement.kind {
+                ResolvedStatementKind::TaskGroup { statements, .. } => {
+                    statements_contain(statements, predicate)
+                }
+                ResolvedStatementKind::Abortable { task, .. } => {
+                    statements_contain(std::slice::from_ref(task), predicate)
+                }
+                _ => false,
+            }
+    })
+}
+
+fn program_statements_contain(
+    program: &LoweredProgram,
+    predicate: impl Fn(&ResolvedStatement) -> bool,
+) -> bool {
+    program
+        .handlers()
+        .iter()
+        .any(|handler| statements_contain(&handler.statements, &predicate))
+}
+
+fn source_uses_builtin(source: &ResolvedTaskSource, expected: &str) -> bool {
+    matches!(
+        source,
+        ResolvedTaskSource::Effect {
+            target: ResolvedEffectTarget::Builtin(target),
+            ..
+        } if target == expected
+    )
+}
+
+fn program_uses_builtin_effect(program: &LoweredProgram, expected: &str) -> bool {
+    program_statements_contain(program, |statement| match &statement.kind {
+        ResolvedStatementKind::Run(run) => {
+            matches!(&run.target, ResolvedEffectTarget::Builtin(target) if target == expected)
+        }
+        ResolvedStatementKind::TaskFlow(flow) => {
+            source_uses_builtin(&flow.source, expected)
+                || flow.transforms.iter().any(|transform| match transform {
+                    ResolvedTaskTransform::Then { source, .. }
+                    | ResolvedTaskTransform::AndThen { source, .. } => {
+                        source_uses_builtin(source, expected)
+                    }
+                    _ => false,
+                })
+        }
+        _ => false,
+    })
+}
+
+fn program_uses_widget_selector(program: &LoweredProgram) -> bool {
+    program_statements_contain(program, |statement| {
+        matches!(
+            &statement.kind,
+            ResolvedStatementKind::WidgetOperation {
+                operation: ResolvedWidgetOperation::Find { .. },
+                ..
+            }
+        )
+    })
+}
+
+pub(in crate::codegen) fn generate_system_types(out: &mut String, program: &LoweredProgram) {
     out.push_str(
         r#"#[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -57,7 +126,11 @@ pub(crate) struct __IceSystemInfo {
     graphics_backend: ::std::string::String,
     graphics_adapter: ::std::string::String,
 }
-
+"#,
+    );
+    if program_uses_builtin_effect(program, "__ice_system_info") {
+        out.push_str(
+            r#"
 fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     __IceSystemInfo {
         system_name: value.system_name,
@@ -73,7 +146,8 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     }
 }
 "#,
-    );
+        );
+    }
     out.push_str(
         r#"fn __ice_system_theme(value: ::iced::theme::Mode) -> ::std::string::String {
     match value {
@@ -86,7 +160,10 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     );
 }
 
-pub(in crate::codegen) fn generate_widget_selector_types(out: &mut String) {
+pub(in crate::codegen) fn generate_widget_selector_types(
+    out: &mut String,
+    program: &LoweredProgram,
+) {
     out.push_str(
         r#"#[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -138,6 +215,11 @@ fn __ice_widget_target(
         translation_y: translation.map(|translation| translation.y as f64),
     }
 }
+"#,
+    );
+    if program_uses_widget_selector(program) {
+        out.push_str(
+            r#"
 fn __ice_widget_target_from_target(value: ::iced::widget::selector::Target) -> __IceWidgetTarget {
     use ::iced::widget::selector::Target;
     match value {
@@ -157,7 +239,8 @@ fn __ice_widget_target_from_text(value: ::iced::widget::selector::Text) -> __Ice
     }
 }
 "#,
-    );
+        );
+    }
 }
 
 pub(in crate::codegen) fn generate_canvas_types(out: &mut String, program: &LoweredProgram) {
@@ -269,11 +352,11 @@ fn __ice_canvas_interaction(value: &str) -> ::iced::mouse::Interaction {
     }
 }
 
-pub(in crate::codegen) fn borrowed_type(ty: &Type, document: &Document) -> String {
+pub(in crate::codegen) fn borrowed_type(ty: &Type, program: &LoweredProgram) -> String {
     match ty {
         Type::Str => "&'a str".into(),
         Type::Bytes => "&'a [u8]".into(),
-        Type::List(inner) => format!("&'a [{}]", inner.rust(&document.structs)),
-        _ => format!("&'a {}", ty.rust(&document.structs)),
+        Type::List(inner) => format!("&'a [{}]", rust_type_code(program, inner)),
+        _ => format!("&'a {}", rust_type_code(program, ty)),
     }
 }
