@@ -26,6 +26,8 @@ extern crate::adapters
   VirtualListEvent()
   TreeViewState()
   TreeViewEvent()
+  DataGridState()
+  DataGridEvent()
   DropdownMenuState()
   DropdownMenuEvent()
   PopoverEvent()
@@ -109,6 +111,10 @@ extern crate::adapters
   sync tree_view_begin_selected_rename(state:TreeViewState) -> TreeViewState
   sync tree_view_cancel_rename(state:TreeViewState) -> TreeViewState
   component tree_view(state:&TreeViewState) -> TreeViewEvent
+  sync data_grid_state() -> DataGridState
+  task data_grid_focus(state:DataGridState) -> unit
+  sync data_grid_apply(state:DataGridState, event:DataGridEvent) -> DataGridState
+  component data_grid(state:&DataGridState) -> DataGridEvent
   component aspect_ratio_demo() -> unit
   sync data_table_rows(query:str, sort:str, page:i64) -> [CatalogItem]
   sync data_table_page(query:str, page:i64) -> i64

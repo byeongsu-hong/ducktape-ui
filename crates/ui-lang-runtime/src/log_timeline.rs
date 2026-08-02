@@ -309,9 +309,7 @@ where
     /// Moving away from the live edge pauses following; a paused timeline stays
     /// paused even when the requested key is at the tail.
     pub fn scroll_to_key(&mut self, key: &Key, config: VirtualListConfig) -> bool {
-        let changed = self
-            .list
-            .scroll_to_key(key.clone(), &self.keys, Clone::clone, config);
+        let changed = self.list.scroll_to_key(key, self.keys.len(), config);
         if self.following_tail && !self.at_live_edge(config) {
             self.following_tail = false;
         }

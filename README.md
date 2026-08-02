@@ -413,6 +413,13 @@ movement, lazy-load requests, rename state, drag targets, and native Tree/
 TreeItem semantics. No `virtual-for`, `tree-for`, or other Core syntax is
 involved.
 
+The adjacent 100,000-by-16 [`DataGrid`](crates/ui/docs/data-grid.md) virtualizes
+fixed-height keyed rows across fixed-pixel typed columns. The runtime owns the
+active cell, selected row, two-axis scrolling, headless inspection, and mounted
+Grid/Row/ColumnHeader/Cell semantics; the typed application boundary owns sort
+order, edit values, validation, and native editor focus. It does not extend
+`DataTableState` or add grid syntax to Ice Core.
+
 ```ice
 test counter_contract
   preset test

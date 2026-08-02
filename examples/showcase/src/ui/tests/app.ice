@@ -398,6 +398,35 @@ test tree_view_native_boundary
   expect text "Selected 0"
   capture tree_view_hierarchical_navigation
 
+test data_grid_native_boundary
+  preset test
+  viewport 760 460
+  mount
+    DataGrid.Frame #data-grid-frame
+      with
+        title="Data grid"
+        description="Only mounted fixed rows cross the typed extern boundary."
+        rows=100000
+        columns=16
+      box #data-grid-stage w=fill h=300.0
+        extern data_grid(data_grid) -> data_grid_changed _
+  target grid_stage = #data-grid-frame/root/data-grid-stage
+  expect grid_stage.height ~= 300.0
+  expect text "Repository item 00000"
+  click grid_stage
+  idle
+  key home
+  key f2
+  idle
+  replace "Renamed grid cell"
+  key enter
+  idle
+  expect text "Renamed grid cell"
+  key end
+  key arrow-down
+  idle
+  capture data_grid_keyboard_editing
+
 test modal_trigger_is_only_the_action
   preset test
   viewport 560 240

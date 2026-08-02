@@ -132,8 +132,20 @@ impl FingerprintDocument {
             api: &self.api,
         };
         let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
-        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+        Ok(sha256_fingerprint(&bytes))
     }
+}
+
+fn sha256_fingerprint(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let digest = Sha256::digest(bytes);
+    let mut fingerprint = String::with_capacity("sha256:".len() + digest.len() * 2);
+    fingerprint.push_str("sha256:");
+    for byte in digest {
+        write!(&mut fingerprint, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    fingerprint
 }
 
 fn read_fingerprint(path: &Path) -> Result<FingerprintDocument, String> {
@@ -942,7 +954,7 @@ fn push_change(
 mod tests {
     use super::{
         ApiPackage, ChangeClassification, FINGERPRINT_SCHEMA_VERSION, FingerprintDocument, diff,
-        read_fingerprint,
+        read_fingerprint, sha256_fingerprint,
     };
     use std::fs;
     use tempfile::TempDir;
@@ -960,6 +972,14 @@ mod tests {
     fn fingerprint(source: &str) -> FingerprintDocument {
         let checked = analyze(source).unwrap();
         FingerprintDocument::new(package(), ApiSurface::from_checked(&checked)).unwrap()
+    }
+
+    #[test]
+    fn sha256_fingerprint_uses_the_canonical_lowercase_text_format() {
+        assert_eq!(
+            sha256_fingerprint(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     fn source(component: &str, recipe_utility: &str, extra_token: &str) -> String {

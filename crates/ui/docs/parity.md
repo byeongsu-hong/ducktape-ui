@@ -88,6 +88,14 @@ windows retain state for their shared owned keys, and the renderer-only feature
 boundary compiles on native and wasm. Variable-height measurement is
 intentionally out of scope.
 
+`TreeView` and `DataGrid` are additional iced-specific product primitives on
+that collection engine. TreeView owns keyed preorder expansion and hierarchical
+navigation. DataGrid virtualizes fixed-height keyed rows across fixed-pixel
+typed columns, owns one active cell and selected row, and delegates sort order
+and edit values to the application. Its mounted-only AccessKit hierarchy uses
+Grid/Row/ColumnHeader/Cell roles. Variable-height rows, resizable columns,
+column virtualization, and range selection are intentionally out of scope.
+
 `LogTimeline` is a second iced-specific product primitive composed directly
 from `VirtualListState`. It is restricted to caller-owned, append-only,
 fixed-height log rows and adds live-tail following, deliberate pause/resume,
