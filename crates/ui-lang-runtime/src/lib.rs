@@ -19,6 +19,8 @@ pub mod testing;
 #[path = "testing_minimal.rs"]
 pub mod testing;
 #[cfg(feature = "virtual-list")]
+mod tree_view;
+#[cfg(feature = "virtual-list")]
 mod virtual_list;
 mod zstack;
 
@@ -30,6 +32,8 @@ pub use resize_handle::*;
 #[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use selectable_text::*;
+#[cfg(feature = "virtual-list")]
+pub use tree_view::*;
 #[cfg(feature = "virtual-list")]
 pub use virtual_list::*;
 pub use zstack::*;
@@ -156,6 +160,8 @@ struct Semantics<Message> {
     value: Option<String>,
     checked: Option<bool>,
     selected: Option<bool>,
+    expanded: Option<bool>,
+    level: Option<usize>,
     position_in_set: Option<usize>,
     size_of_set: Option<usize>,
     active_descendant: Option<StableId>,
@@ -190,6 +196,8 @@ impl<Message> Semantics<Message> {
             value: None,
             checked: None,
             selected: None,
+            expanded: None,
+            level: None,
             position_in_set: None,
             size_of_set: None,
             active_descendant: None,
@@ -348,6 +356,18 @@ where
     /// Marks whether this semantic item is selected.
     pub fn selected(mut self, selected: bool) -> Self {
         self.semantics.selected = Some(selected);
+        self
+    }
+
+    /// Marks a hierarchical item as expanded or collapsed.
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.semantics.expanded = Some(expanded);
+        self
+    }
+
+    /// Sets the one-based level of an item in a hierarchical collection.
+    pub fn level(mut self, level: usize) -> Self {
+        self.semantics.level = Some(level);
         self
     }
 
@@ -1133,6 +1153,12 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(selected) = semantics.selected {
             node.set_selected(selected);
+        }
+        if let Some(expanded) = semantics.expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(level) = semantics.level {
+            node.set_level(level);
         }
         if let Some(position) = semantics.position_in_set {
             node.set_position_in_set(position);

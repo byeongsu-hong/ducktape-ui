@@ -77,7 +77,7 @@ impl VirtualListId {
     /// type-tagged namespace. Callers should use this helper instead of
     /// reconstructing selector strings.
     pub fn selector(&self) -> String {
-        self.selector_with_kind("list")
+        self.selector_with_prefix(SELECTOR_PREFIX, "list")
     }
 
     fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
@@ -91,16 +91,16 @@ impl VirtualListId {
     }
 
     fn item_selector(&self, local: u32) -> String {
-        let mut selector = self.selector_with_kind("item");
+        let mut selector = self.selector_with_prefix(SELECTOR_PREFIX, "item");
         write!(&mut selector, "/{local}").expect("writing to a String cannot fail");
         selector
     }
 
-    fn selector_with_kind(&self, kind: &str) -> String {
+    pub(crate) fn selector_with_prefix(&self, prefix: &str, kind: &str) -> String {
         let mut selector = String::with_capacity(
-            SELECTOR_PREFIX.len() + kind.len() + self.logical.len().saturating_mul(3) + 12,
+            prefix.len() + kind.len() + self.logical.len().saturating_mul(3) + 12,
         );
-        selector.push_str(SELECTOR_PREFIX);
+        selector.push_str(prefix);
         selector.push('/');
         selector.push_str(kind);
         selector.push('/');
@@ -376,6 +376,36 @@ where
         Ok(())
     }
 
+    /// Reconciles a filtered window without replacing the complete keyed
+    /// identity map. Product widgets use this when logical items are retained
+    /// but temporarily hidden by hierarchy or filtering.
+    pub(crate) fn reconcile_retained_window<T>(
+        &mut self,
+        items: &[T],
+        key: impl Fn(&T) -> Key,
+        config: VirtualListConfig,
+    ) -> Result<(), Key> {
+        let mut retained_index = None;
+        for (index, item) in items.iter().enumerate() {
+            let item_key = key(item);
+            if self.keyed_rows.local_id(&item_key).is_none() {
+                return Err(item_key);
+            }
+            if self.selected.as_ref() == Some(&item_key) {
+                retained_index = Some(index);
+            }
+        }
+        if self.selected.is_some() && retained_index.is_none() {
+            self.selected = None;
+        }
+        self.selected_index = retained_index;
+        self.scroll.reconcile(items.len(), config.rows());
+        if let Some(index) = retained_index {
+            self.scroll.reveal(index, items.len(), config.rows());
+        }
+        Ok(())
+    }
+
     /// Applies a measured viewport, pointer, scroll, or keyboard interaction.
     pub fn apply<T>(
         &mut self,
@@ -462,6 +492,10 @@ where
         self.id.widget_id("focus")
     }
 
+    pub(crate) fn focus_task<Message>(&self) -> iced::Task<Message> {
+        iced::widget::operation::focus(self.widget_id())
+    }
+
     fn scroll_id(&self) -> iced::advanced::widget::Id {
         self.id.widget_id("scroll")
     }
@@ -472,6 +506,10 @@ where
                 .local_id(key)
                 .expect("virtual-list items must be reconciled before rendering"),
         )
+    }
+
+    pub(crate) fn semantic_local_id(&self, key: &Key) -> Option<u32> {
+        self.keyed_rows.local_id(key)
     }
 
     /// Returns the canonical exact selector for a reconciled item key.
@@ -536,6 +574,63 @@ where
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
+    virtual_collection(
+        state,
+        items,
+        config,
+        collection_label,
+        crate::Role::List,
+        state.id.selector(),
+        key,
+        label,
+        view,
+        |index, _, local| VirtualCollectionItemSemantics {
+            selector: state.id.item_selector(local),
+            role: crate::Role::ListItem,
+            position_in_set: index.saturating_add(1),
+            size_of_set: items.len(),
+            level: None,
+            expanded: None,
+        },
+        on_event,
+        |_| None,
+        "virtual-list",
+    )
+}
+
+pub(crate) struct VirtualCollectionItemSemantics {
+    pub(crate) selector: String,
+    pub(crate) role: crate::Role,
+    pub(crate) position_in_set: usize,
+    pub(crate) size_of_set: usize,
+    pub(crate) level: Option<usize>,
+    pub(crate) expanded: Option<bool>,
+}
+
+type ExtraKeyHandler<'a, Message> = Rc<dyn Fn(&keyboard::Key) -> Option<Message> + 'a>;
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn virtual_collection<'a, T, Key, Message, Theme, Renderer>(
+    state: &VirtualListState<Key>,
+    items: &'a [T],
+    config: VirtualListConfig,
+    collection_label: impl Into<String>,
+    collection_role: crate::Role,
+    collection_selector: impl Into<String>,
+    key: impl Fn(&T) -> Key,
+    label: impl Fn(&T) -> String,
+    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message, Theme, Renderer>,
+    item_semantics: impl Fn(usize, &T, u32) -> VirtualCollectionItemSemantics,
+    on_event: impl Fn(VirtualListEvent<Key>) -> Message + 'a,
+    on_key: impl Fn(&keyboard::Key) -> Option<Message> + 'a,
+    draw_probe: &'static str,
+) -> Element<'a, Message, Theme, Renderer>
+where
+    Key: Clone + Eq + Hash + 'static,
+    Message: Clone + 'static,
+    Theme: container::Catalog + scrollable::Catalog + 'a,
+    Renderer: text::Renderer + iced::advanced::Renderer + 'a,
+{
     let window = state.scroll.window(items.len(), config.rows());
     let scroll_offset = window.offset;
     let range = window.mounted.clone();
@@ -555,21 +650,27 @@ where
             .keyed_rows
             .local_id(&item_key)
             .expect("virtual-list items must be reconciled before rendering");
-        let logical_id = state.id.item_selector(semantic_key);
-        let row: Element<'a, Message, Theme, Renderer> =
-            accessible(row, state.semantic_id(&item_key), crate::Role::ListItem)
-                .logical_id(logical_id)
-                .label(label(item))
-                .position_in_set(index.saturating_add(1))
-                .size_of_set(items.len())
-                .selected(selected)
-                .into();
+        let semantics = item_semantics(index, item, semantic_key);
+        let mut accessible_row = accessible(row, state.semantic_id(&item_key), semantics.role)
+            .logical_id(semantics.selector)
+            .label(label(item))
+            .position_in_set(semantics.position_in_set)
+            .size_of_set(semantics.size_of_set)
+            .selected(selected);
+        if let Some(level) = semantics.level {
+            accessible_row = accessible_row.level(level);
+        }
+        if let Some(expanded) = semantics.expanded {
+            accessible_row = accessible_row.expanded(expanded);
+        }
+        let row: Element<'a, Message, Theme, Renderer> = accessible_row.into();
         children.push((semantic_key, row));
         mounted.push((index, item_key.clone()));
         mounted_semantic_ids.push(semantic_key);
     }
 
     let on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a> = Rc::new(on_event);
+    let on_key: ExtraKeyHandler<'a, Message> = Rc::new(on_key);
     let on_scroll = Rc::clone(&on_event);
     let touch_claim = Rc::new(Cell::new(TouchClaim::None));
     let native_scroll_offset = Rc::new(Cell::new(scroll_offset));
@@ -580,6 +681,7 @@ where
         children: mounted_children,
         touch_claim: Rc::clone(&touch_claim),
         scroll_offset: Rc::clone(&native_scroll_offset),
+        draw_probe,
     });
     let content = scrollable(
         column![
@@ -630,6 +732,7 @@ where
         native_scroll_offset,
         touch_claim,
         on_event,
+        on_key,
     };
     let active_descendant = state.selected.as_ref().and_then(|selected| {
         state
@@ -637,17 +740,13 @@ where
             .filter(|index| range.contains(index))
             .map(|_| state.semantic_id(selected))
     });
-    accessible(
-        Element::new(list),
-        state.id.semantic_id(1),
-        crate::Role::List,
-    )
-    .logical_id(state.id.selector())
-    .label(collection_label)
-    .focus_descendant()
-    .active_descendant_maybe(active_descendant)
-    .size_of_set(items.len())
-    .into()
+    accessible(Element::new(list), state.id.semantic_id(1), collection_role)
+        .logical_id(collection_selector)
+        .label(collection_label)
+        .focus_descendant()
+        .active_descendant_maybe(active_descendant)
+        .size_of_set(items.len())
+        .into()
 }
 
 struct VirtualList<'a, Key, Message, Theme, Renderer>
@@ -668,6 +767,7 @@ where
     native_scroll_offset: Rc<Cell<f32>>,
     touch_claim: Rc<Cell<TouchClaim>>,
     on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a>,
+    on_key: ExtraKeyHandler<'a, Message>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -692,6 +792,7 @@ where
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     touch_claim: Rc<Cell<TouchClaim>>,
     scroll_offset: Rc<Cell<f32>>,
+    draw_probe: &'static str,
 }
 
 struct MountedRowsState {
@@ -887,7 +988,7 @@ where
                 },
                 iced::Color::TRANSPARENT,
             );
-            crate::dev::record_draw_probe("virtual-list");
+            crate::dev::record_draw_probe(self.draw_probe);
         }
     }
 
@@ -1222,6 +1323,9 @@ where
             };
             if let Some(navigation) = navigation {
                 shell.publish((self.on_event)(VirtualListEvent::Navigate(navigation)));
+                shell.capture_event();
+            } else if let Some(message) = (self.on_key)(key) {
+                shell.publish(message);
                 shell.capture_event();
             }
         }
@@ -3350,6 +3454,7 @@ mod tests {
             children: Vec::new(),
             touch_claim: Rc::clone(&claim),
             scroll_offset: Rc::new(Cell::new(0.0)),
+            draw_probe: "mounted-rows-test",
         };
         let mut empty_tree = WidgetTree::new(&empty as &dyn Widget<Message, (), RecordingRenderer>);
         let mut renderer = RecordingRenderer::default();
@@ -3370,6 +3475,7 @@ mod tests {
             children: vec![Element::new(FocusLeaf)],
             touch_claim: claim,
             scroll_offset: Rc::new(Cell::new(0.0)),
+            draw_probe: "mounted-rows-test",
         };
         let mut mounted_tree =
             WidgetTree::new(&mounted as &dyn Widget<Message, (), RecordingRenderer>);
@@ -3405,6 +3511,7 @@ mod tests {
             native_scroll_offset: Rc::new(Cell::new(0.0)),
             touch_claim: Rc::new(Cell::new(TouchClaim::None)),
             on_event: Rc::new(Message::List),
+            on_key: Rc::new(|_| None),
         };
         let mut element: Element<'_, Message, (), RecordingRenderer> = Element::new(list);
         let mut tree = WidgetTree::new(&element);
