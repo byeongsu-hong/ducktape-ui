@@ -4,6 +4,8 @@ mod dashed_border;
 #[doc(hidden)]
 pub mod dev;
 mod dynamic_themer;
+#[cfg(feature = "virtual-list")]
+mod fixed_virtualization;
 mod flex;
 mod qr;
 mod resize_handle;
