@@ -56,11 +56,7 @@ impl VirtualListId {
     /// namespace still keeps native widget and accessibility identity safe if
     /// separate calls accidentally use the same logical name.
     pub fn new(logical: impl Into<String>) -> Self {
-        let namespace = NEXT_VIRTUAL_LIST_NAMESPACE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .expect("virtual-list identity namespace exhausted");
+        let namespace = allocate_virtual_namespace();
         Self {
             logical: Arc::from(logical.into()),
             namespace,
@@ -69,6 +65,10 @@ impl VirtualListId {
 
     pub fn logical(&self) -> &str {
         &self.logical
+    }
+
+    pub(crate) const fn namespace(&self) -> u32 {
+        self.namespace
     }
 
     /// Returns the canonical exact selector for this list.
@@ -80,14 +80,12 @@ impl VirtualListId {
         self.selector_with_prefix(SELECTOR_PREFIX, "list")
     }
 
-    fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
+    pub(crate) fn widget_id(&self, suffix: &str) -> iced::advanced::widget::Id {
         format!("__ice_virtual_list/{}/{suffix}", self.namespace).into()
     }
 
-    fn semantic_id(&self, local: u32) -> StableId {
-        StableId::from_node_id(accesskit::NodeId(
-            (u64::from(self.namespace) << 32) | u64::from(local),
-        ))
+    pub(crate) fn semantic_id(&self, local: u32) -> StableId {
+        semantic_id(self.namespace, local)
     }
 
     fn item_selector(&self, local: u32) -> String {
@@ -107,6 +105,20 @@ impl VirtualListId {
         push_escaped_selector_component(&mut selector, &self.logical);
         selector
     }
+}
+
+pub(crate) fn allocate_virtual_namespace() -> u32 {
+    NEXT_VIRTUAL_LIST_NAMESPACE
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .expect("virtual collection identity namespace exhausted")
+}
+
+pub(crate) fn semantic_id(namespace: u32, local: u32) -> StableId {
+    StableId::from_node_id(accesskit::NodeId(
+        (u64::from(namespace) << 32) | u64::from(local),
+    ))
 }
 
 fn push_escaped_selector_component(escaped: &mut String, value: &str) {
@@ -247,7 +259,7 @@ where
             .field("scroll_offset", &self.scroll.offset())
             .field("viewport_height", &self.scroll.viewport_height())
             .field("scroll_revision", &self.scroll.revision())
-            .field("semantic_ids", &self.keyed_rows.local_ids())
+            .field("reconciled_items", &self.keyed_rows.len())
             .field("next_semantic_id", &self.keyed_rows.next_local_id())
             .finish()
     }
@@ -475,17 +487,16 @@ where
     }
 
     /// Scrolls a stable key into view and returns whether the offset changed.
-    pub fn scroll_to_key<T>(
+    pub fn scroll_to_key(
         &mut self,
-        selected: Key,
-        items: &[T],
-        key: impl Fn(&T) -> Key,
+        selected: &Key,
+        item_count: usize,
         config: VirtualListConfig,
     ) -> bool {
-        let Some(index) = items.iter().position(|item| key(item) == selected) else {
+        let Some(index) = self.keyed_rows.index(selected) else {
             return false;
         };
-        self.scroll_to_item(index, items.len(), config)
+        self.scroll_to_item(index, item_count, config)
     }
 
     fn widget_id(&self) -> iced::advanced::widget::Id {
@@ -500,7 +511,7 @@ where
         self.id.widget_id("scroll")
     }
 
-    fn semantic_id(&self, key: &Key) -> StableId {
+    pub(crate) fn semantic_id(&self, key: &Key) -> StableId {
         self.id.semantic_id(
             self.keyed_rows
                 .local_id(key)
@@ -510,6 +521,15 @@ where
 
     pub(crate) fn semantic_local_id(&self, key: &Key) -> Option<u32> {
         self.keyed_rows.local_id(key)
+    }
+
+    pub(crate) fn index_of(&self, key: &Key) -> Option<usize> {
+        self.keyed_rows.index(key)
+    }
+
+    pub(crate) fn clear_selection(&mut self) {
+        self.selected = None;
+        self.selected_index = None;
     }
 
     /// Returns the canonical exact selector for a reconciled item key.
@@ -2445,6 +2465,7 @@ mod tests {
     fn keyboard_navigation_and_programmatic_scroll_are_bounded() {
         let items: Vec<u64> = (0..100).collect();
         let mut state = prepared_state("keyboard");
+        state.reconcile(&items, |key| *key, config()).unwrap();
         let navigate = |state: &mut VirtualListState<u64>, navigation| {
             state.apply(
                 VirtualListEvent::Navigate(navigation),
@@ -2472,9 +2493,9 @@ mod tests {
         assert_eq!(state.scroll_offset(), 840.0);
         assert_eq!(state.visible_range(items.len(), config()), 42..47);
         assert_eq!(state.mounted_range(items.len(), config()), 40..49);
-        assert!(state.scroll_to_key(84, &items, |key| *key, config()));
+        assert!(state.scroll_to_key(&84, items.len(), config()));
         assert_eq!(state.scroll_offset(), 1_680.0);
-        assert!(!state.scroll_to_key(1_000, &items, |key| *key, config()));
+        assert!(!state.scroll_to_key(&1_000, items.len(), config()));
         assert!(!state.scroll_to_item(usize::MAX, items.len(), config()));
         assert_eq!(state.scroll_offset(), 1_680.0);
     }

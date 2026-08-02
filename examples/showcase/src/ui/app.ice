@@ -79,6 +79,15 @@ view
                   box w=fill h=96.0
                     extern tree_view(tree_view) #tree-view -> tree_view_changed _
 
+            DataGrid.Frame #data-grid-panel
+              with
+                title="Data grid"
+                description="Fixed rows, typed columns, keyed cells, and native Grid semantics."
+                rows=100000
+                columns=16
+              box w=fill h=180.0
+                extern data_grid(data_grid) #data-grid -> data_grid_changed _
+
           scroll #catalog-scroll
             with
               dir=vertical

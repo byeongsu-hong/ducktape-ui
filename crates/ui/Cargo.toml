@@ -37,6 +37,7 @@ full = [
     "command",
     "context-menu",
     "data-table",
+    "data-grid",
     "date-picker",
     "dialog",
     "direction",
@@ -114,6 +115,7 @@ skeleton = ["theme"]
 typography = ["theme"]
 virtual-list = ["theme", "dep:ui-lang-runtime"]
 tree-view = ["virtual-list"]
+data-grid = ["table", "virtual-list", "ui-lang-runtime/data-grid"]
 attachment = ["theme"]
 bubble = ["theme"]
 button-group = ["theme"]

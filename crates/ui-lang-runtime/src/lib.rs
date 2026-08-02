@@ -1,6 +1,8 @@
 //! Runtime support for generated Ice applications.
 
 mod dashed_border;
+#[cfg(feature = "data-grid")]
+mod data_grid;
 #[doc(hidden)]
 pub mod dev;
 mod dynamic_themer;
@@ -25,6 +27,8 @@ mod virtual_list;
 mod zstack;
 
 pub use dashed_border::*;
+#[cfg(feature = "data-grid")]
+pub use data_grid::*;
 pub use dynamic_themer::*;
 pub use flex::*;
 pub use qr::*;
@@ -38,6 +42,8 @@ pub use tree_view::*;
 pub use virtual_list::*;
 pub use zstack::*;
 
+#[cfg(feature = "data-grid")]
+pub use accesskit::SortDirection as AccessibilitySortDirection;
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
 
 use accesskit::{Rect, Tree, TreeId};
@@ -162,6 +168,11 @@ struct Semantics<Message> {
     selected: Option<bool>,
     expanded: Option<bool>,
     level: Option<usize>,
+    row_count: Option<usize>,
+    column_count: Option<usize>,
+    row_index: Option<usize>,
+    column_index: Option<usize>,
+    sort_direction: Option<accesskit::SortDirection>,
     position_in_set: Option<usize>,
     size_of_set: Option<usize>,
     active_descendant: Option<StableId>,
@@ -198,6 +209,11 @@ impl<Message> Semantics<Message> {
             selected: None,
             expanded: None,
             level: None,
+            row_count: None,
+            column_count: None,
+            row_index: None,
+            column_index: None,
+            sort_direction: None,
             position_in_set: None,
             size_of_set: None,
             active_descendant: None,
@@ -368,6 +384,36 @@ where
     /// Sets the one-based level of an item in a hierarchical collection.
     pub fn level(mut self, level: usize) -> Self {
         self.semantics.level = Some(level);
+        self
+    }
+
+    /// Sets the total logical row count of a table or grid.
+    pub fn row_count(mut self, count: usize) -> Self {
+        self.semantics.row_count = Some(count);
+        self
+    }
+
+    /// Sets the total logical column count of a table or grid.
+    pub fn column_count(mut self, count: usize) -> Self {
+        self.semantics.column_count = Some(count);
+        self
+    }
+
+    /// Sets the one-based logical row index of a row or cell.
+    pub fn row_index(mut self, index: usize) -> Self {
+        self.semantics.row_index = Some(index);
+        self
+    }
+
+    /// Sets the one-based logical column index of a header or cell.
+    pub fn column_index(mut self, index: usize) -> Self {
+        self.semantics.column_index = Some(index);
+        self
+    }
+
+    /// Sets the current sort direction of a sortable column header.
+    pub fn sort_direction(mut self, direction: accesskit::SortDirection) -> Self {
+        self.semantics.sort_direction = Some(direction);
         self
     }
 
@@ -1159,6 +1205,21 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(level) = semantics.level {
             node.set_level(level);
+        }
+        if let Some(row_count) = semantics.row_count {
+            node.set_row_count(row_count);
+        }
+        if let Some(column_count) = semantics.column_count {
+            node.set_column_count(column_count);
+        }
+        if let Some(row_index) = semantics.row_index {
+            node.set_row_index(row_index);
+        }
+        if let Some(column_index) = semantics.column_index {
+            node.set_column_index(column_index);
+        }
+        if let Some(sort_direction) = semantics.sort_direction {
+            node.set_sort_direction(sort_direction);
         }
         if let Some(position) = semantics.position_in_set {
             node.set_position_in_set(position);

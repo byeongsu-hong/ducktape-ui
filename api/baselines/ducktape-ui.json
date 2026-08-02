@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:f2858a0c93655462f9d9fd0601698a8e0619af3f7a4ed6b0b4593038d14d8735",
+  "fingerprint": "sha256:e0b4422241ff5af1baa6427dbb8a389afa153b98b1f7e8725a4bec82d89a8dfd",
   "language_revision": "2.0",
   "package": {
     "name": "ducktape-ui",
@@ -381,6 +381,48 @@
       {
         "name": "Card.Header",
         "props": [],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "DataGrid.Frame",
+        "props": [
+          {
+            "name": "columns",
+            "ty": "i64",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "rows",
+            "ty": "i64",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
         "events": [],
         "default_output": "unit",
         "slots": [

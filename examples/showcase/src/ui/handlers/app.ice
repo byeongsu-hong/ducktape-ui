@@ -170,6 +170,12 @@ on tree_view_changed(event)
 
 on tree_view_focused
 
+on data_grid_changed(event)
+  data_grid = data_grid_apply(data_grid, event)
+  task data_grid_focus(data_grid) -> data_grid_focused
+
+on data_grid_focused
+
 on begin_tree_rename
   tree_view = tree_view_begin_selected_rename(tree_view)
   task tree_view_focus(tree_view) -> tree_view_focused

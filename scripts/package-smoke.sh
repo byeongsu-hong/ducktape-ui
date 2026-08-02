@@ -97,7 +97,7 @@ check_package_features() {
 
 check_package ui-lang-core
 check_package ui-lang-runtime
-check_package_features ui-lang-runtime virtual-list,x11
+check_package_features ui-lang-runtime data-grid,x11
 check_package ducktape-ui "${packaged_runtime_patch[@]}"
 check_package ui-lang-build "${packaged_patches[@]}"
 check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}"
