@@ -1430,7 +1430,10 @@ pub(crate) enum ResolvedEventRoute {
         name: String,
         payloads: Vec<Type>,
         outer_component: ComponentId,
+        outer_component_name: String,
         outer_event: ComponentEventId,
+        outer_event_name: String,
+        outer_payloads: Vec<Type>,
         origin: OriginId,
     },
 }
@@ -9974,6 +9977,18 @@ impl Lowerer {
         {
             return Err(self.invariant(span, "component call route identity diverged"));
         }
+        let route_expression_count = interaction
+            .routes
+            .iter()
+            .flat_map(|route| &route.args)
+            .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+            .count();
+        if interaction.expression_count as usize != route_expression_count {
+            return Err(self.invariant_at_origin(
+                origin,
+                "component call route expression cardinality diverged",
+            ));
+        }
         self.validate_interaction_expression_graphs(
             view_id,
             route_scope,
@@ -9992,6 +10007,12 @@ impl Lowerer {
         let output = match (&output_ty, route, &checked_routes.output) {
             (Type::Unit, None, None) => ComponentOutputRoute::None,
             (output, Some(source), Some(checked)) if checked.output == *output => {
+                self.validate_component_call_route_origin(
+                    checked.origin,
+                    &source.span,
+                    origin,
+                    "component output route",
+                )?;
                 let resolved = self.lower_required_interaction_route(
                     source,
                     &interaction,
@@ -10000,7 +10021,7 @@ impl Lowerer {
                     view_id,
                     route_scope,
                 )?;
-                if resolved.id != checked.route {
+                if resolved.id != checked.route || resolved.origin != checked.origin {
                     return Err(self.invariant(span, "component output route ID diverged"));
                 }
                 self.validate_component_call_route_hir(
@@ -10011,7 +10032,7 @@ impl Lowerer {
                 )?;
                 ComponentOutputRoute::Direct {
                     output: output.clone(),
-                    origin: resolved.origin,
+                    origin: checked.origin,
                     route: resolved,
                 }
             }
@@ -10069,11 +10090,13 @@ impl Lowerer {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
             })?;
-            let event_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
-                self.invariant(&supplied.span, "component event route origin is invalid")
-            })?;
-            if event_origin.parent != Some(origin)
-                || checked.event != event.id
+            self.validate_component_call_route_origin(
+                checked.origin,
+                &supplied.span,
+                origin,
+                "component event route",
+            )?;
+            if checked.event != event.id
                 || checked.name != event.name
                 || checked.payloads != event.payloads
                 || supplied.name != event.name
@@ -10083,7 +10106,19 @@ impl Lowerer {
                 );
             }
             match (&supplied.route, &checked.delivery) {
-                (Some(source), CheckedComponentEventDelivery::Direct(checked_route)) => {
+                (
+                    Some(source),
+                    CheckedComponentEventDelivery::Direct {
+                        route: checked_route,
+                        origin: checked_route_origin,
+                    },
+                ) => {
+                    self.validate_component_call_route_origin(
+                        *checked_route_origin,
+                        &source.span,
+                        origin,
+                        "component event direct route",
+                    )?;
                     let resolved = self.lower_required_interaction_route(
                         source,
                         &interaction,
@@ -10092,10 +10127,9 @@ impl Lowerer {
                         view_id,
                         route_scope,
                     )?;
-                    if resolved.id != *checked_route {
-                        return Err(
-                            self.invariant(&supplied.span, "component event route ID diverged")
-                        );
+                    if resolved.id != *checked_route || resolved.origin != *checked_route_origin {
+                        return Err(self
+                            .invariant(&supplied.span, "component event route identity diverged"));
                     }
                     self.validate_component_call_route_hir(
                         &resolved,
@@ -10115,28 +10149,50 @@ impl Lowerer {
                     None,
                     CheckedComponentEventDelivery::Forward {
                         outer_component: checked_outer,
+                        outer_component_name,
                         outer_event,
+                        outer_event_name,
+                        outer_payloads,
                     },
                 ) => {
                     let outer = outer_component.ok_or_else(|| {
-                        self.invariant(&supplied.span, "forwarded event has no outer component")
+                        self.invariant_at_origin(
+                            checked.origin,
+                            "forwarded event has no outer component",
+                        )
                     })?;
+                    let outer_contract = self
+                        .components
+                        .get(checked_outer.0 as usize)
+                        .filter(|component| {
+                            component.id == *checked_outer
+                                && component.name == *outer_component_name
+                        })
+                        .ok_or_else(|| {
+                            self.invariant_at_origin(
+                                checked.origin,
+                                "forwarded event has an invalid outer component",
+                            )
+                        })?;
                     let declaration =
                         self.declarations
                             .component_event(*outer_event)
                             .ok_or_else(|| {
-                                self.invariant(
-                                    &supplied.span,
+                                self.invariant_at_origin(
+                                    checked.origin,
                                     "forwarded event has an invalid outer declaration",
                                 )
                             })?;
                     if *checked_outer != outer
                         || outer_event.component != outer
-                        || declaration.name != event.name
-                        || declaration.payloads != event.payloads
+                        || outer_contract.name != *outer_component_name
+                        || declaration.name != *outer_event_name
+                        || declaration.payloads != *outer_payloads
+                        || *outer_event_name != event.name
+                        || *outer_payloads != event.payloads
                     {
-                        return Err(self.invariant(
-                            &supplied.span,
+                        return Err(self.invariant_at_origin(
+                            checked.origin,
                             "forwarded event declaration contract diverged",
                         ));
                     }
@@ -10145,7 +10201,10 @@ impl Lowerer {
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
                         outer_component: outer,
+                        outer_component_name: outer_component_name.clone(),
                         outer_event: *outer_event,
+                        outer_event_name: outer_event_name.clone(),
+                        outer_payloads: outer_payloads.clone(),
                         origin: checked.origin,
                     });
                 }
@@ -10262,6 +10321,49 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+
+    fn validate_component_call_route_origin(
+        &self,
+        origin: OriginId,
+        source: &Span,
+        parent: OriginId,
+        label: &str,
+    ) -> Result<(), Error> {
+        let retained = self.origins.try_get(origin).ok_or_else(|| {
+            self.component_call_invariant_at_span(source, format!("{label} origin is invalid"))
+        })?;
+        let (expected_path, expected_line) = self
+            .origins
+            .source_origin(source.line)
+            .map_or((None, source.line), |(path, line)| (Some(path), line));
+        if retained.path.as_deref() != expected_path
+            || retained.line != expected_line
+            || retained.column != source.column
+            || retained.parent != Some(parent)
+        {
+            return Err(self.component_call_invariant_at_span(
+                source,
+                format!("{label} physical origin diverged"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn component_call_invariant_at_span(&self, source: &Span, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some((path, line)) = self.origins.source_origin(source.line) else {
+            return Error::new("E196", source, message);
+        };
+        Error::new(
+            "E196",
+            &Span {
+                line,
+                column: source.column,
+            },
+            message,
+        )
+        .at_path(path.display().to_string())
     }
 
     fn resolve_writable(
@@ -18109,6 +18211,81 @@ view
     }
 
     #[test]
+    fn component_call_routes_reject_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app ComponentRouteExpressionCardinality\n{THEME}state\n  active = false\non output(next)\n  active = next\non event(next)\n  active = next\ncomponent Routed() -> bool\n  emits\n    changed(bool)\n  col\n    button \"Output\" -> emit(true)\n    button \"Event\" -> emit(changed, true)\nview\n  Routed -> output !active\n    events\n      changed -> event !active\n"
+        );
+        for count in [1, 3] {
+            let mut checked = analyze(&source).unwrap();
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            checked
+                .facts
+                .corrupt_interaction_expression_count(view, count);
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(
+                error.message.contains("expression cardinality diverged"),
+                "unexpected expression-count diagnostic: {}",
+                error.message
+            );
+        }
+
+        let mut invalid_last_graph = analyze(&source).unwrap();
+        let view = invalid_last_graph
+            .declarations
+            .view_id(invalid_last_graph.document.view.span())
+            .unwrap();
+        invalid_last_graph.facts.corrupt_expression_first_child(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: view,
+                index: 1,
+            }),
+            u32::MAX,
+        );
+        let error = lower(invalid_last_graph).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_sibling_route_origin_swaps() {
+        let source = format!(
+            "app ComponentRouteOriginSwap\n{THEME}state\n  label = \"ready\"\non accepted(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  Routed -> accepted \"output\"\n    events\n      changed -> accepted \"event\"\n"
+        );
+        let call_id = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            (view, checked.declarations.component_call_id(view).unwrap())
+        };
+
+        let mut interaction_only = analyze(&source).unwrap();
+        let (view, _) = call_id(&interaction_only);
+        interaction_only
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        let error = lower(interaction_only).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut fully_swapped = analyze(&source).unwrap();
+        let (view, call) = call_id(&fully_swapped);
+        fully_swapped
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        fully_swapped
+            .facts
+            .swap_component_call_direct_route_origins(call, 0);
+        let error = lower(fully_swapped).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+    }
+
+    #[test]
     fn component_call_routes_reject_cross_owner_id_type_cardinality_and_origin_corruption() {
         let source = format!(
             "app ComponentRouteIdentity\n{THEME}state\n  label = \"label\"\non first(value)\n  label = value\non second(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\ncomponent Alternate() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  col\n    Routed -> first label\n      events\n        changed -> first label\n    Routed -> second label\n      events\n        changed -> second label\n"
@@ -18205,6 +18382,157 @@ view
     }
 
     #[test]
+    fn imported_forward_routes_validate_stable_outer_contracts_and_callback_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-component-forward-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("forward.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentForward\nuse \"forward.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Outer\n    events\n      changed -> accepted _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Leaf()\n  emits\n    changed(str)\n  button \"Emit\" -> emit(changed, \"leaf\")\ncomponent Outer()\n  emits\n    changed(str)\n  Leaf\n    forward\n      changed\ncomponent Mirror()\n  emits\n    changed(str)\n  space\n",
+        )
+        .unwrap();
+
+        let forward_call = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.components[1].root.span())
+                .unwrap();
+            checked.declarations.component_call_id(view).unwrap()
+        };
+
+        let mut invalid_component = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component);
+        invalid_component
+            .facts
+            .corrupt_component_call_forward_outer_component(call, 0, ComponentId(u32::MAX));
+        let error = lower(invalid_component).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut invalid_event = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event);
+        invalid_event
+            .facts
+            .corrupt_component_call_forward_outer_event(
+                call,
+                0,
+                ComponentEventId {
+                    component: ComponentId(1),
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_event).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut invalid_component_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component_name);
+        invalid_component_name
+            .facts
+            .corrupt_component_call_forward_outer_component_name(call, 0, "poisoned");
+        let error = lower(invalid_component_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut invalid_event_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event_name);
+        invalid_event_name
+            .facts
+            .corrupt_component_call_forward_outer_event_name(call, 0, "poisoned");
+        let error = lower(invalid_event_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut invalid_payload = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_payload);
+        invalid_payload
+            .facts
+            .corrupt_component_call_forward_outer_payload(call, 0, Type::Bool);
+        let error = lower(invalid_payload).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut invalid_lowered_id = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = invalid_lowered_id
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component, ..
+                }) => Some(outer_component),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        *forward = ComponentId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_lowered_id, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        let mut missing_callback = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = missing_callback
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                    ..
+                }) => Some((
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                )),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        let (outer_component, outer_component_name, outer_event, outer_event_name, outer_payloads) =
+            forward;
+        *outer_component = ComponentId(2);
+        *outer_component_name = "Mirror".into();
+        *outer_event = ComponentEventId {
+            component: ComponentId(2),
+            index: 0,
+        };
+        *outer_event_name = "changed".into();
+        *outer_payloads = vec![Type::Str];
+        let error =
+            crate::codegen::generate(&missing_callback, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("absent from component context"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_component_call_routes_keep_origins_markers_and_hir_diagnostics() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -18230,6 +18558,28 @@ view
         )
         .unwrap();
 
+        let mut swapped_origins = analyze_file(&root).unwrap();
+        let imported_call_view = swapped_origins
+            .declarations
+            .view_id(swapped_origins.document.components[1].root.span())
+            .unwrap();
+        let imported_call = swapped_origins
+            .declarations
+            .component_call_id(imported_call_view)
+            .unwrap();
+        swapped_origins
+            .facts
+            .swap_interaction_route_origins(imported_call_view, 0, 1);
+        swapped_origins
+            .facts
+            .swap_component_call_direct_route_origins(imported_call, 0);
+        let error = lower(swapped_origins).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert_eq!(error.column, 1);
+
         let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let call_index = program
             .calls
@@ -18240,24 +18590,33 @@ view
         let origin = program.origin(call.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(origin.line, 8);
-        let ComponentOutputRoute::Direct { route, .. } = &call.output else {
+        let ComponentOutputRoute::Direct {
+            route,
+            origin: output_origin_id,
+            ..
+        } = &call.output
+        else {
             panic!("imported call must have a direct output route");
         };
-        assert_eq!(
-            program.origin(route.origin).path.as_deref(),
-            Some(imported.as_path())
-        );
-        assert_eq!(program.origin(route.origin).line, 8);
+        let output_origin = program.origin(*output_origin_id);
+        assert_eq!(output_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(output_origin.line, 8);
+        assert_eq!(output_origin.column, 1);
+        assert_eq!(output_origin.parent, Some(call.origin));
+        assert_eq!(route.origin, *output_origin_id);
         let ResolvedEventRoute::Direct { route, origin, .. } = &call.events[0] else {
             panic!("imported call must have a direct event route");
         };
-        assert_eq!(program.origin(*origin).parent, Some(call.origin));
-        assert_eq!(program.origin(*origin).line, 10);
-        assert_eq!(
-            program.origin(route.origin).path.as_deref(),
-            Some(imported.as_path())
-        );
-        assert_eq!(program.origin(route.origin).line, 10);
+        let event_origin = program.origin(*origin);
+        assert_eq!(event_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_origin.line, 10);
+        assert_eq!(event_origin.column, 1);
+        assert_eq!(event_origin.parent, Some(call.origin));
+        let event_route_origin = program.origin(route.origin);
+        assert_eq!(event_route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_route_origin.line, 10);
+        assert_eq!(event_route_origin.column, 1);
+        assert_eq!(event_route_origin.parent, Some(call.origin));
 
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());

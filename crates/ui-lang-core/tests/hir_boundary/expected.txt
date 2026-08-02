@@ -24,7 +24,7 @@ src/codegen/testing.rs 65 b10d702d279cc4efbb5d795bed4ab69c
 src/codegen/view.rs 35 930b3878916e0f120c9aa564bb286bb6
 src/codegen/view/button.rs 5 603c7e8695d58c8a2ffb4776d607e602
 src/codegen/view/container.rs 8 29247deb7afce1cf63d9d95e488625fd
-src/codegen/view/content.rs 28 9ccff9d211193d578de4e6196527f17f
+src/codegen/view/content.rs 27 ef9c099d582273c5526da37e77939d38
 src/codegen/view/controls.rs 13 79c9c71bcdc19aaf6bc7fdbe74e6788d
 src/codegen/view/documents.rs 13 54c38d9e2bbba714a3bad5f00a0c893b
 src/codegen/view/editor.rs 12 1c295f539a4b67d1b977877d085e0abc
@@ -54,7 +54,7 @@ src/codegen/testing.rs 1 b577600645de096428b861a4280c9bb6
 src/codegen/view.rs 4 c0d12692d9f4ab477c1e5ef0b6b94fc1
 src/codegen/view/button.rs 1 e46a6ded96de699c8658bc3efa0e4d0f
 src/codegen/view/container.rs 2 0d113cff100d562e82f2391330f3e00b
-src/codegen/view/content.rs 1 c12713e757f921911ba244de6a88dd29
+src/codegen/view/content.rs 1 3476eef0900795d08a5d9f73c51eca5e
 src/codegen/view/content_primitives.rs 3 5db4dbb5e1c4ed9adda8c37e3895228b
 src/codegen/view/controls.rs 1 b43bbed07b5d430b2ab7593e4f84e2eb
 src/codegen/view/documents.rs 1 0df3ca606aaed8442276197f2081a7e0
@@ -79,7 +79,7 @@ src/codegen/canvas/style.rs 7 ac2c208ed531e661eb6555b89acdcfb3
 src/codegen/expr.rs 62 d0017d028ee92accbb622232dd990d19
 src/codegen/expr/binding.rs 4 cfd942c917f8d175a546d0da665a1a57
 src/codegen/view/container.rs 3 867d5fb63cb969d05e90024534c36259
-src/codegen/view/content.rs 2 181d39e5d8a4649f90e45f98484787cc
+src/codegen/view/content.rs 2 8214058f871c33d173476ea124fd45d6
 src/codegen/view/editor.rs 1 07e441c77bcd90f44dbc9eff5fd1cc01
 src/codegen/view/markdown.rs 2 5b447eb9ddf81a4a690d10b980ee63e6
 src/codegen/view/pane.rs 4 af8426c8905b7614f2f5628014232005

@@ -113,14 +113,42 @@ pub(in crate::codegen) fn render_content(
                         )?
                     }
                     ResolvedEventRoute::Forward {
-                        outer_component, ..
+                        outer_component,
+                        outer_component_name,
+                        outer_event,
+                        outer_event_name,
+                        outer_payloads,
+                        origin,
+                        ..
                     } => {
-                        let outer = &document.program().component(*outer_component).name;
-                        component_event(env, outer, event.name())
+                        let program = document.program();
+                        let outer = program
+                            .try_component(*outer_component)
+                            .filter(|component| {
+                                component.id == *outer_component
+                                    && component.name == *outer_component_name
+                                    && outer_event.component == *outer_component
+                                    && *outer_event_name == event.name()
+                                    && outer_payloads == event.payloads()
+                                    && program.component_event_matches(
+                                        *outer_event,
+                                        outer_event_name,
+                                        outer_payloads,
+                                    )
+                            })
                             .ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
+                                program.invariant_at_origin(
+                                    *origin,
+                                    format!(
+                                        "lowered forwarded event `{}` has an invalid outer contract",
+                                        event.name()
+                                    ),
+                                )
+                            })?;
+                        component_event(env, &outer.name, outer_event_name)
+                            .ok_or_else(|| {
+                                program.invariant_at_origin(
+                                    *origin,
                                     format!(
                                         "lowered forwarded event `{}` is absent from component context",
                                         event.name()
